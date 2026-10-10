@@ -1,0 +1,87 @@
+# ---------------------------------------------------------------
+# .gitignore — minecraft-laya-training
+# ---------------------------------------------------------------
+
+# --- macOS / OS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# --- Editors / IDEs ---
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+*.local
+
+# --- Node.js ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.npm/
+dist/
+build/
+.cache/
+coverage/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.egg
+
+# --- LayaAir / game builds ---
+bin/
+bin-debug/
+bin-release/
+release/
+laya/air/
+layaMaxUI.ts
+
+# --- Minecraft / server artifacts ---
+run/
+logs/
+*.log
+world/
+world_nether/
+world_the_end/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+eula=true
+server.properties
+banned-*.json
+ops.json
+whitelist.json
+usercache.json
+
+# --- Logs / temp ---
+tmp/
+temp/
+*.tmp
+*.bak
