@@ -27,9 +27,16 @@ def diff(before: GameState, after: GameState) -> dict:
     }
 
 
+# Labels whose progress shows up as a net inventory gain (a drop collected or a craft produced).
+INVENTORY_LABELS = {
+    "get_wood", "mine_stone", "mine_iron", "mine_coal", "craft_pickaxe", "craft_table",
+    "craft_stone_pickaxe", "craft_furnace", "smelt_iron", "craft_iron_pickaxe",
+}
+
+
 def progressed(label: str, d: dict) -> bool:
     inv_up = any(v > 0 for v in d["inventory_delta"].values())
-    if label in ("get_wood", "mine_stone", "craft_pickaxe", "craft_stone_pickaxe"):
+    if label in INVENTORY_LABELS:
         return inv_up
     if label == "eat_food":
         return (d["food_delta"] or 0) > 0

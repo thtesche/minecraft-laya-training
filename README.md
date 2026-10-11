@@ -11,6 +11,10 @@ Laya erzeugt keinen Text und keine Tool-Argumente. Deshalb filtert der Code die 
 über ein binäres Gefahr-Gate plus die Wahl unter diesen Optionen; ein separater Python-**Executor**
 ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
+Aktueller Stand (**M2**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
+bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen). `view_blocks` liefert die Ressourcen in der Nähe
+(Holz/Stein/Eisen/Kohle mit Distanz) in den Zustand.
+
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
 ## Setup

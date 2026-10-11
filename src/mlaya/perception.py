@@ -7,6 +7,12 @@ from typing import Any
 # view_status -> structured_content shape:
 #   response.data.result.situation.{vitals,clock,position,inventory,tools,nearby,lastDeath,...}
 # read_recent_events -> response.data.result.events[] (type/observedAt/summary/...)
+# view_blocks -> response.data.result.blocks.find[] = {name, found, listed:[{x,y,z,name,distance,...}]}
+
+# Resources probed each tick to keep the progression decisions grounded in the world.
+RESOURCE_NAMES = ("logs", "stone", "iron_ore", "coal_ore")
+RESOURCE_RADIUS = 64.0
+RESOURCE_LIMIT = 4
 
 
 def get(obj: Any, *path: str, default: Any = None) -> Any:
@@ -74,6 +80,16 @@ class GameState:
     events: list[str] = field(default_factory=list)
     unread: int = 0
     survivors: list[str] = field(default_factory=list)
+    # name -> [(x, y, z, distance)] nearest first, already radius-filtered
+    resources: dict[str, list[tuple[int, int, int, float]]] = field(default_factory=dict)
+
+    def resource_nearest(self, name: str) -> tuple[int, int, int, float] | None:
+        hits = self.resources.get(name)
+        return hits[0] if hits else None
+
+    def resource_distance(self, name: str) -> float | None:
+        hit = self.resource_nearest(name)
+        return hit[3] if hit else None
 
     def as_state(self) -> dict:
         """Structured view for logging and System-2 prompts (never sent raw to Laya)."""
@@ -92,6 +108,7 @@ class GameState:
             "players": self.players,
             "last_death": self.last_death_cause,
             "events": self.events,
+            "resources": {n: hits[:2] for n, hits in self.resources.items() if hits},
         }
 
     def narrative(self) -> str:
@@ -132,6 +149,11 @@ class GameState:
         if self.last_death_cause:
             age = f" {self.last_death_age_s:.0f}s ago" if self.last_death_age_s is not None else ""
             parts.append(f"last death:{age} {self.last_death_cause}")
+        present = [(n, hits[0][3]) for n, hits in self.resources.items() if hits]
+        if present:
+            present.sort(key=lambda t: t[1])
+            parts.append("nearby resources: " + ", ".join(
+                f"{n} at {d:.0f}m" for n, d in present[:4]))
         parts[0] = parts[0][:1].upper() + parts[0][1:]
         return "You are a Minecraft bot. " + ". ".join(parts) + "."
 
@@ -216,6 +238,28 @@ def parse_status(data: dict) -> GameState:
     return gs
 
 
+def parse_resources(data: dict) -> dict[str, list[tuple[int, int, int, float]]]:
+    """view_blocks find -> {query_name: [(x, y, z, distance)]} within RESOURCE_RADIUS."""
+    blocks = get(data, "response", "data", "result", "blocks", default={}) or {}
+    groups = blocks.get("find") if isinstance(blocks, dict) else None
+    out: dict[str, list[tuple[int, int, int, float]]] = {}
+    for group in groups or []:
+        if not isinstance(group, dict) or not group.get("name"):
+            continue
+        hits: list[tuple[int, int, int, float]] = []
+        for e in group.get("listed") or []:
+            if not isinstance(e, dict):
+                continue
+            d = _num(e.get("distance"))
+            if d is None or d > RESOURCE_RADIUS or "x" not in e:
+                continue
+            hits.append((int(e["x"]), int(e["y"]), int(e["z"]), d))
+        hits.sort(key=lambda t: t[3])
+        if hits:
+            out[str(group["name"])] = hits[:RESOURCE_LIMIT]
+    return out
+
+
 def _age_seconds(now_iso: Any, then_iso: Any) -> float | None:
     if not (isinstance(now_iso, str) and isinstance(then_iso, str)):
         return None
@@ -241,4 +285,13 @@ async def build(executor) -> GameState:
     )
     gs = parse_status(coerce(status.data, status.text))
     gs.events, gs.unread = _summarize_events(coerce(events.data, events.text))
+    try:
+        blocks = await executor.read(
+            "view_blocks",
+            {"find": {"block_names": list(RESOURCE_NAMES), "limit": RESOURCE_LIMIT}},
+            "scan nearby resources to ground the next progression step",
+        )
+        gs.resources = parse_resources(coerce(blocks.data, blocks.text))
+    except Exception:
+        gs.resources = {}
     return gs

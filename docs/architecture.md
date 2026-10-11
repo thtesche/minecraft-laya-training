@@ -47,7 +47,9 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     wait_for_action (initial_wait_ms, dann poll_ms x max_polls),
     ACTION_BUSY / RESULT_NOT_RETRIEVED-Recovery. Reads sind ungated.
 [2] Perception    (src/mlaya/perception.py)
-    view_status + read_recent_events (frei) -> GameState -> kompakter NL-State (`narrative()`)
+    view_status + read_recent_events + view_blocks (alle frei) -> GameState
+    -> kompakter NL-State (`narrative()`); Ressourcen (logs/stone/iron_ore/coal_ore)
+    mit Distanz im Umkreis von 64 Blöcken.
 [3] Brain (S1)    (src/mlaya/brain.py)
     Laya-Router, EIN predict()-Pass:
       in_danger  (binäres Gate)      -> defer an die Survival-Policy
@@ -56,6 +58,10 @@ später das Kopf-Fine-Tuning (M3) verbessert.
 [4] Actions       (src/mlaya/actions.py)
     candidates(gs): gültige Labels nach Vorbedingungen (Tech-Tree-Reihenfolge)
     resolve(label, gs): Label -> echtes MCP-Tool + Argumente
+    Kaskade: get_wood -> craft_pickaxe -> craft_table -> mine_stone ->
+    craft_stone_pickaxe -> craft_furnace -> mine_iron -> mine_coal ->
+    smelt_iron -> craft_iron_pickaxe; eat_food bei Hunger, explore nur als
+    letzter Fallback (wenn nichts Produktives möglich ist).
 [5] Verify        (src/mlaya/verify.py)
     view_status erneut lesen; Soll/Ist-Delta; Fortschritt je Aktion
 [6] Memory        (src/mlaya/memory.py)
@@ -96,9 +102,38 @@ uv pip install --python .venv/bin/python -e .
 .venv/bin/python -m mlaya.cli run -n 10 # echter Loop (mutiert die Welt)
 ```
 
+## M2 — erreicht
+
+**Kriterium:** Ressourcen in der Nähe in den State aufnehmen (`view_blocks`) und die Progression
+über Steinwerkzeuge und Ofen bis zur **Eisen-Spitzhacke** führen.
+
+Verifizierter Lauf gegen die echte Welt:
+
+```
+[0] craft_table          craft_item    +crafting_table, -1 acacia_log
+[1] craft_stone_pickaxe  craft_item    +stone_pickaxe, -3 cobblestone, -2 stick
+[2] mine_iron            collect_block +3 raw_iron (+cobblestone, +dirt)
+[3] mine_coal            collect_block +3 coal
+[4] craft_furnace        craft_item    +furnace, -8 cobblestone
+[5] smelt_iron           smelt_item    -1 coal, -3 raw_iron, +3 iron_ingot
+[6] craft_iron_pickaxe   craft_item    +iron_pickaxe, -3 iron_ingot, -2 acacia_planks
+```
+
+Der State zeigt jetzt z. B.:
+`nearby resources: stone at 1m, coal_ore at 11m, iron_ore at 14m, logs at 16m.`
+
+Wichtige Umsetzungsdetails:
+
+- 3×3-Rezepte (Stein-Spitzhacke, Ofen, Eisen-Spitzhacke) laufen über
+  `temporary_workstation: true` und brauchen einen **getragenen** `crafting_table`
+  (`craft_table` vorher); Schmelzen braucht einen getragenen `furnace`.
+- `mine_iron`/`mine_coal` werden nur angeboten, wenn im Umkreis tatsächlich Erz geladen ist
+  (sonst fällt die Kaskade auf `explore` zurück).
+- `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
+  produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
+
 ## Nächste Meilensteine
 
-- **M2**: Progression-Kaskade vertiefen (Planks/Sticks/Öfen, Eisen, Nether-Gate) und `view_blocks`
-  zur Ressourcen-Erkennung nutzen (Holz/Stein in der Nähe in den State).
 - **M3**: Logs -> Datensatz -> RLCD-Kopf-Fine-Tuning; Checkpoint via `LAYA_EXTRA_MODELS` registrieren.
 - **M4**: Parameter-Layer ausbauen (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`).
+- **Offen aus M2**: Nether-Gate (Obsidian/Feuerstein) und Diamant-Kette.
