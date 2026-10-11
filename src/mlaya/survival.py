@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import copy
+
 # The server-side survival policy. These rules govern what the bot does on its own
 # whenever the model is not driving the body (danger deferrals, reflex eating, path
 # scaffolding), so they are configuration, not code that Laya re-implements.
 #
-# The values mirror the "Survival policy that works" set from the mine-ai skill:
-# deepslate/tuff scaffold blocks for underground travel, a cautious combat floor,
-# and a food reflex that eats raw food instead of hoarding it until starvation.
+# Two stages ("Stufen"):
+#   base  - cautious travel/progression, safe to leave on: don't start fights below
+#           17 health, heal back to 18 between fights, eat raw food rather than hoard.
+#   hunt  - an explicitly requested hostile hunt runs with the floor dropped to zero
+#           so the engagement actually happens, then the base stage is restored.
+# The auto-eating stage is `food.raw.allow`: "always" (base/hunt) vs "emergency_only"
+# (the server default, which only eats raw below hunger 6 AND health 10).
 #
 # The whole block is passed on every `set` because a partial block replaces the
 # policy table rather than merging into it.
-POLICY_CHANGES: dict = {
+BASE_CHANGES: dict = {
     "navigation": {
         "scaffold_blocks": [
             "dirt", "cobblestone", "cobbled_deepslate",
@@ -42,10 +48,28 @@ POLICY_CHANGES: dict = {
     },
     "food": {
         # "always" so hunger never stalls a run: the reflex eats gathered food
-        # instead of banking it until the bot starves.
+        # instead of banking it until the bot starves. At full hunger it cannot eat,
+        # so drops still accumulate into the reserve instead of being spent.
         "raw": {"allow": "always", "hunger_at_most": 20, "health_below": 10},
     },
 }
+
+# The hunt stage. `combat.engage_min_health` above the bot's current health blocks an
+# explicitly requested hunt ([HUNT_CAPABILITY_BLOCKED]); the skill's confirmed fix is
+# to drop the floor to zero for the duration of the hunt and restore it afterwards.
+# The zero floor is deliberately temporary: with it the hostile reflex will hold the
+# body and block navigation, so it is restored the moment the hunt ends.
+HUNT_CHANGES = copy.deepcopy(BASE_CHANGES)
+HUNT_CHANGES["combat"].update({
+    "engage_min_health": 0,
+    "critical_health": 0,
+    "retreat": False,
+})
+
+PRESETS: dict[str, dict] = {"base": BASE_CHANGES, "hunt": HUNT_CHANGES}
+
+# The base combat floor; a hunt at or above it would pass unmodified.
+BASE_ENGAGE_MIN_HEALTH = BASE_CHANGES["combat"]["engage_min_health"]
 
 POLICY_LIFETIME = {"kind": "session"}
 
@@ -62,13 +86,16 @@ async def read_policy(executor) -> dict:
     return _policy_node(res.data or {})
 
 
-async def apply_policy(executor, reason: str) -> dict:
-    """Set the full working survival policy against the current revision.
+async def apply_policy(executor, reason: str, preset: str = "base") -> dict:
+    """Set a survival-policy preset against the current revision.
 
     `expected_revision` is optimistic concurrency: we read it, then set. The server
     restores defaults on every death and dimension change, so this must be re-applied
     after each one (see `graph.Agent._reapply_after_death`).
     """
+    changes = PRESETS.get(preset)
+    if changes is None:
+        return {"applied": False, "error": f"unknown preset {preset!r}"}
     policy = await read_policy(executor)
     revision = policy.get("revision")
     if not revision:
@@ -76,15 +103,27 @@ async def apply_policy(executor, reason: str) -> dict:
     res = await executor.read("set_survival_policy", {
         "operation": "set",
         "expected_revision": revision,
-        "changes": POLICY_CHANGES,
+        "changes": changes,
         "lifetime": POLICY_LIFETIME,
         "reason": reason[:200],
-    }, "apply the working survival policy (scaffold, combat floor, raw food)")
+    }, f"apply the '{preset}' survival policy stage")
     effective = _policy_node(res.data or {}).get("effective") or {}
     return {
         "applied": bool(res.ok),
+        "preset": preset,
         "revision": revision,
         "status": res.status,
-        "raw_food": ((effective.get("food") or {}).get("raw")),
+        "engage_min_health": (effective.get("combat") or {}).get("engage_min_health"),
+        "raw_food": (effective.get("food") or {}).get("raw"),
         "error": None if res.ok else (res.text or "")[:300],
     }
+
+
+async def apply_hunt(executor, reason: str) -> dict:
+    """Enter the hunt stage: aggressive combat floor for a deliberately requested hunt."""
+    return await apply_policy(executor, reason, preset="hunt")
+
+
+async def restore_base(executor, reason: str) -> dict:
+    """Leave the hunt stage and re-arm the cautious base floor."""
+    return await apply_policy(executor, reason, preset="base")

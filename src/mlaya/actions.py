@@ -21,7 +21,7 @@ CRITERIA: dict[str, str] = {
     "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
-    "hunt_food": "hunt a nearby passive animal for raw meat the hunger reflex will eat",
+    "hunt_food": "hunt a nearby animal, or a lone zombie, to bank at least 16 edible items",
     "cook_food": "cook carried raw meat in the furnace so it feeds more hunger",
     "explore": "walk to new terrain to find missing resources; the last fallback",
 }
@@ -46,8 +46,12 @@ FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
 COOKED = {"beef": "cooked_beef", "porkchop": "cooked_porkchop",
           "chicken": "cooked_chicken", "mutton": "cooked_mutton",
           "rabbit": "cooked_rabbit", "cod": "cooked_cod", "salmon": "cooked_salmon"}
-# Hunt for food once hunger drops below this and nothing edible is carried.
-FOOD_LOW = 16
+# Minimum edible items to keep banked. 16 is the Nether floor (24 the real target):
+# hunger drains fast while sprinting and fighting, and death drops everything.
+FOOD_RESERVE = 16
+# Quarries that fight back, so `collect_mob_drop` must run in the hunt stage.
+HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
+                 "witch", "blaze", "piglin", "zombified_piglin"}
 
 
 @dataclass
@@ -56,6 +60,11 @@ class Action:
     tool: str
     args: dict
     rationale: str
+
+
+def is_hostile_hunt(action: "Action") -> bool:
+    """True when a hunt fights back, so it must run in the aggressive hunt stage."""
+    return action.tool == "collect_mob_drop" and action.args.get("mob_name") in HOSTILE_HUNTS
 
 
 def _logs(inv: dict[str, int]) -> int:
@@ -68,6 +77,10 @@ def _planks(inv: dict[str, int]) -> int:
 
 def _first_edible(inv: dict[str, int]) -> str | None:
     return next((n for n in inv if n in EDIBLE), None)
+
+
+def _edible_count(inv: dict[str, int]) -> int:
+    return sum(c for n, c in inv.items() if n in EDIBLE)
 
 
 def _pick_tier(inv: dict[str, int], tools: dict[str, str]) -> int:
@@ -129,6 +142,31 @@ def _safe_spider_hunt(gs: GameState) -> bool:
     return not others
 
 
+def _safe_zombie_hunt(gs: GameState) -> bool:
+    """Zombies are the skill's overworld food bank, but only in ones and twos.
+
+    Rotten flesh is the most reliable local food, so fall back to it only when the
+    target is close, health is comfortable, and no other hostile species is in the
+    neighbourhood — a pack is how a hunt turns into a death.
+    """
+    nearest = gs.mob_nearest("zombie")
+    if nearest is None or nearest > 24 or (gs.health or 0) < 18:
+        return False
+    hostiles = [(n, d) for n, k, _, d in gs.mobs
+                if k == "hostile" and d is not None and d <= 16]
+    return len(hostiles) <= 2 and all(n == "zombie" for n, _ in hostiles)
+
+
+def _food_target(gs: GameState) -> tuple[str, str] | None:
+    """The safest available food source: a passive animal first, else a lone zombie."""
+    mob = _nearest_food_mob(gs)
+    if mob is not None:
+        return mob, FOOD_MOBS[mob]
+    if _safe_zombie_hunt(gs):
+        return "zombie", "rotten_flesh"
+    return None
+
+
 def candidates(gs: GameState) -> list[str]:
     """The actions whose preconditions currently hold, in tech-tree priority order.
 
@@ -146,13 +184,17 @@ def candidates(gs: GameState) -> list[str]:
     raw_iron = inv.get("raw_iron", 0)
     iron = inv.get("iron_ingot", 0)
 
-    if gs.food is not None and gs.food < 14 and _first_edible(inv):
+    eating = gs.food is not None and gs.food < 14 and bool(_first_edible(inv))
+    if eating:
         out.append("eat_food")
-    elif (gs.food is not None and gs.food < FOOD_LOW and not _first_edible(inv)
-          and _nearest_food_mob(gs) is not None):
-        out.append("hunt_food")
     if _has(inv, "furnace") and inv.get("coal", 0) >= 1 and _first_cookable(inv):
         out.append("cook_food")
+    # Food reserve: bank FOOD_RESERVE edible items. At full hunger the reflex cannot
+    # eat, so gathered drops accumulate; when hunger drops it spends them. Never
+    # compete with eating: feed to 20 first, bank after.
+    if (_edible_count(inv) < FOOD_RESERVE and not eating
+            and _food_target(gs) is not None):
+        out.append("hunt_food")
 
     wool = _wool(inv)
     string = inv.get("string", 0)
@@ -289,13 +331,15 @@ def resolve(label: str | None, gs: GameState) -> Action | None:
                        "allow_without_shield": True},
                       "collect string from a lone spider to craft wool")
     if label == "hunt_food":
-        mob = _nearest_food_mob(gs)
-        if not mob:
+        target = _food_target(gs)
+        if not target:
             return None
+        mob, drop = target
+        count = 6 if mob in FOOD_MOBS else 10
         return Action(label, "collect_mob_drop",
-                      {"mob_name": mob, "drop_name": FOOD_MOBS[mob], "count": 6,
+                      {"mob_name": mob, "drop_name": drop, "count": count,
                        "allow_without_shield": True},
-                      f"hunt a {mob} for food")
+                      f"hunt a {mob} for {drop}")
     if label == "cook_food":
         raw = _first_cookable(inv)
         if not raw or not _has(inv, "furnace") or inv.get("coal", 0) < 1:

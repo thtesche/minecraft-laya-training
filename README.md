@@ -17,7 +17,9 @@ bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen). `view_blocks` liefert die Resso
 Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
 Respawn-Punkt), liest die anstehenden **Notifications** mit und setzt beim Start die
 **Server-Survival-Policy** (Scaffold-Blöcke, vorsichtiges Kampf-Fenster, `food.raw.allow: always`);
-gegessen wird über den Server-Reflex, Essen wird über `hunt_food`/`cook_food` beschafft.
+gegessen wird über den Server-Reflex, Essen wird über `hunt_food`/`cook_food` beschafft, das einen
+**Mindestvorrat von 16** essbaren Items hält. Die Policy läuft in zwei **Stufen** (`base` für Reisen/
+Progression, `hunt` für eine feindliche Jagd).
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
@@ -40,7 +42,8 @@ Voraussetzung: Der mine-ai MCP-Server läuft unter `http://localhost:25575/mcp`.
 .venv/bin/python -m mlaya.cli probe      # health + tools/list
 .venv/bin/python -m mlaya.cli decide     # Zustand lesen + einmal entscheiden (dry run)
 .venv/bin/python -m mlaya.cli policy     # Server-Survival-Policy anzeigen
-.venv/bin/python -m mlaya.cli policy --apply  # funktionierende Policy setzen
+.venv/bin/python -m mlaya.cli policy --apply              # Stufe `base` setzen
+.venv/bin/python -m mlaya.cli policy --apply --preset hunt  # Stufe `hunt` setzen
 .venv/bin/python -m mlaya.cli run -n 10  # Entscheidungs-Loop (führt echte Aktionen aus)
 ```
 

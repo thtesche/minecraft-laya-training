@@ -90,7 +90,8 @@ async def cmd_policy(args) -> int:
     async with MCPExecutor(settings.mcp) as executor:
         applied = None
         if getattr(args, "apply", False):
-            applied = await survival.apply_policy(executor, "manual survival policy apply")
+            applied = await survival.apply_policy(executor, "manual survival policy apply",
+                                                  preset=getattr(args, "preset", "base"))
         policy = await survival.read_policy(executor)
     print(json.dumps({
         "applied": applied,
@@ -111,7 +112,9 @@ def main(argv: list[str] | None = None) -> int:
     run = sub.add_parser("run", help="run the decision loop")
     run.add_argument("-n", "--iterations", type=int, default=0)
     pol = sub.add_parser("policy", help="show/apply the server survival policy")
-    pol.add_argument("--apply", action="store_true", help="apply the working policy set")
+    pol.add_argument("--apply", action="store_true", help="apply a policy stage")
+    pol.add_argument("--preset", choices=["base", "hunt"], default="base",
+                     help="base (cautious travel) or hunt (aggressive combat floor)")
     args = parser.parse_args(argv)
     cmd = args.cmd or "run"
     if cmd == "probe":

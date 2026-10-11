@@ -9,7 +9,7 @@ from langgraph.graph import END, StateGraph
 from . import perception
 from . import survival
 from . import verify as vmod
-from .actions import candidates, resolve
+from .actions import candidates, is_hostile_hunt, resolve
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
@@ -76,7 +76,21 @@ class Agent:
 
     async def _execute(self, state: AgentState) -> dict:
         action = state["action"]
-        res = await self.mcp.call(action.tool, action.args, action.rationale)
+        # A hostile hunt runs in the aggressive hunt stage; the base combat floor
+        # would otherwise block the engagement ([HUNT_CAPABILITY_BLOCKED]). Restore
+        # immediately afterwards: the zero floor would otherwise hold the body and
+        # block navigation until the next policy change.
+        staged = is_hostile_hunt(action)
+        if staged:
+            await survival.apply_hunt(self.mcp, f"open the hunt stage for {action.label}")
+            self.log.append({"stage": "policy", "reason": "hunt_stage_on",
+                             "label": action.label})
+        try:
+            res = await self.mcp.call(action.tool, action.args, action.rationale)
+        finally:
+            if staged:
+                await survival.restore_base(
+                    self.mcp, f"restore the base stage after {action.label}")
         return {"result": res}
 
     async def _defer(self, state: AgentState) -> dict:

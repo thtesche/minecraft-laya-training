@@ -45,7 +45,7 @@ def progressed(label: str, d: dict) -> bool:
     if label == "hunt_wool":
         return any(k.endswith("_wool") and v > 0 for k, v in d["inventory_delta"].items())
     if label == "hunt_food":
-        raw = {"beef", "porkchop", "chicken", "mutton", "rabbit"}
+        raw = {"beef", "porkchop", "chicken", "mutton", "rabbit", "rotten_flesh"}
         return any(d["inventory_delta"].get(x, 0) > 0 for x in raw)
     if label == "cook_food":
         cooked = {"cooked_beef", "cooked_porkchop", "cooked_chicken", "cooked_mutton",

@@ -72,8 +72,8 @@ später das Kopf-Fine-Tuning (M3) verbessert.
 [7] System 2      (brain.escalate_to_system2)
     struktureller Trigger (Label nicht auflösbar) -> OpenRouter wählt eine gültige Alternative
 [8] Survival      (src/mlaya/survival.py)
-    setzt die Server-Survival-Policy (Scaffold-Blöcke, Combat-Floor, Roh-Essen) beim
-    Start und erneut nach jedem Tod; `read_policy` liest Revision/`effective`/`overrides`
+    setzt die Server-Survival-Policy in zwei Stufen (`base`/`hunt`) beim Start und erneut
+    nach jedem Tod; `read_policy` liest Revision/`effective`/`overrides`
 ```
 
 ## LangGraph
@@ -167,19 +167,31 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   konnte es praktisch nie feuern. Schlimmer: die Survival-Policy wurde **nie** gesetzt. Der Server
   lief auf Default: `food.raw.allow: "emergency_only"`, `hunger_at_most: 6`, `health_below: 10` —
   der eigene Hunger-Reflex aß roh erst bei Hunger ≤ 6 **und** Health < 10.
-- **`survival.py`** setzt den vollen funktionierenden Block aus dem Skill
-  („Survival policy that works"): `navigation.scaffold_blocks` inkl. Deepslate/Tuff,
-  `hostile_avoidance_multiplier: 3`, das vorsichtige Combat-Fenster (`engage_min_health 17`,
-  `critical_health 14`, `enderman_wait_ticks 40`, Timeouts) und **`food.raw.allow: "always"`** mit
-  `hunger_at_most: 20`. `expected_revision` wird vorher aus `view_status` gelesen.
-- Verdrahtung: `_policy`/`apply_policy` beim **Start** von `run`; der Graph liest `last_death_age_s`
-  und **wiederholt** die Policy nach jedem Tod (der Server stellt bei Tod/Dimensionswechsel auf
-  Defaults zurück). `mlaya.cli policy [--apply]` zeigt/setzt sie.
-- **Essen** in `actions.py`: `hunt_food` (nächstes passives Tier aus
-  `FOOD_MOBS = cow/pig/chicken/sheep/rabbit` via `collect_mob_drop`) und `cook_food`
-  (`smelt_item` roh → gebraten im getragenen Ofen mit Kohle). `hunt_food` wird nur angeboten, wenn
-  `food < 16` **und** nichts Essbares getragen wird; die Aktion ist mit `allow_without_shield: true`
-  markiert. Der Server-Reflex übernimmt das eigentliche Essen (roh erlaubt).
+- **`survival.py`** hält die Policy als **zwei Stufen** (Presets), entlang der dokumentierten
+  Enums:
+  - **`base`** (Reisen/Progression): `navigation.scaffold_blocks` inkl. Deepslate/Tuff,
+    `hostile_avoidance_multiplier: 3`, das vorsichtige Combat-Fenster
+    (`engagement: respond_to_threats`, `engage_min_health 17`, `critical_health 14`,
+    `recover_to_health 18`, `retreat: true`, `enderman_wait_ticks 40`, Timeouts) und
+    `food.raw.allow: "always"` mit `hunger_at_most: 20`.
+  - **`hunt`** (Kampf-Stufe): dieselbe Basis mit **`engage_min_health 0`, `critical_health 0`,
+    `retreat: false`** — sonst blockiert der Combat-Floor eine ausdrücklich angeforderte Jagd mit
+    `[HUNT_CAPABILITY_BLOCKED]`. Die Null-Stufe ist bewusst **temporär**: mit ihr hält der
+    Hostile-Reflex den Körper und blockiert Navigation, deshalb direkt danach zurück auf `base`.
+  - Die dritte Stufe ist das **Auto-Essen**: `food.raw.allow` (`emergency_only` = Server-Default,
+    der erst bei Hunger ≤ 6 **und** Health < 10 isst, `always` = hier) mit den Schwellen
+    `hunger_at_most`/`health_below`.
+- Verdrahtung: `apply_policy` beim **Start** von `run` (`base`); der Graph liest `last_death_age_s`
+  und setzt `base` nach jedem Tod erneut (der Server stellt bei Tod/Dimensionswechsel auf Defaults
+  zurück). Der `execute`-Knoten schaltet für eine **feindliche** Jagd (`is_hostile_hunt`) auf `hunt`
+  und im `finally` zurück auf `base`. `mlaya.cli policy [--apply] [--preset base|hunt]`.
+- **Essen** in `actions.py`: `hunt_food` beschafft den **Mindestvorrat** (`FOOD_RESERVE = 16`;
+  Nether-Ziel 24) — nächstes passives Tier (`FOOD_MOBS = cow/pig/chicken/sheep/rabbit`) oder, als
+  Rückfall, ein **einzelner Zombie** (`rotten_flesh`, gegated: ≤2 Hostiles ≤16 m und alle Zombies,
+  Health ≥18). `cook_food` brät rohes Fleisch (`smelt_item` im getragenen Ofen mit Kohle).
+  `hunt_food` wird angeboten, solange der Vorrat < 16 ist **und** nicht gerade gegessen wird
+  („feed to 20 first, then bank"); die Aktion ist mit `allow_without_shield: true` markiert.
+  Gegessen wird über den Server-Reflex (roh erlaubt), `eat_food` bleibt der manuelle Nachschlag.
 
 ## Nächste Meilensteine
 
