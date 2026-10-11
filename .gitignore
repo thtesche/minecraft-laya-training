@@ -85,3 +85,11 @@ tmp/
 temp/
 *.tmp
 *.bak
+
+# --- Runtime state (mlaya) ---
+runs/
+*.jsonl
+MEMORY.md
+
+# --- Python venv ---
+.venv/

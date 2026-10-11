@@ -1,0 +1,29 @@
+[llm]
+model = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key_env = "OPENROUTER_API_KEY"
+max_tokens = 16384
+base_url = "https://openrouter.ai/api/v1"
+
+[mcp]
+url = "http://localhost:25575/mcp"
+health_url = "http://localhost:25575/health"
+tool_timeout_ms = 3600000
+initial_wait_ms = 5000
+poll_ms = 2000
+max_polls = 900
+max_sse_event_bytes = 16777216
+submission_prefix = ""
+
+[laya]
+model = "english"         # english checkpoint reads our English state far better than multilingual
+preload = false
+device = ""            # "" = auto (mps/cuda/cpu)
+min_confidence = 0.0   # secondary signal only
+max_len = 0            # 0 = checkpoint default
+
+[loop]
+max_iterations = 10
+max_escalations = 3
+hitl = false
+log_path = "runs/decisions.jsonl"
+memory_path = "MEMORY.md"
