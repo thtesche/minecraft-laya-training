@@ -150,6 +150,19 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   `white_wool` = 4 `string`).
 - **`white_wool` ist aus `string` craftbar** — der Server rechnet die Kette rekursiv
   (`craft_item white_bed` macht aus `string` erst Wolle, dann das Bett).
+- **Validierung (live):** die volle Kette ist durchgelaufen: `craft_table` (tagsüber) → tagsüber per
+  `navigate` zu einer Tier-Gruppe geroamt, bis ein Schaf in Simulationsreichweite geladen war →
+  `hunt_wool` (`collect_mob_drop sheep/white_wool ×3`, ergab **4 Wolle**) → `craft_bed` (`white_bed`)
+  → auf die Nacht gewartet → `sleep` **`succeeded`**, Phase **Nacht → Tag** (Nacht übersprungen).
+  `sleep` **platziert das Bett in die Welt** (das Inventar verliert es; das Bett stand danach bei
+  (−324, 124, −6) zu Füßen). Zwei Randbedingungen aus dem Live-Lauf:
+  - **`[HUNT_TARGET_NOT_LOADED]`** — die Mob-Liste reicht bis ~150 m (`nearest.position` vorhanden),
+    aber nur **geladene** (simulierte) Mobs sind jagbar (`rangeBlocks: 16`); daher muss man erst
+    hinlaufen, bis das Schaf geladen ist.
+  - **Körper-Besitz:** nachts hält der Server-`hostile_reflex` (bzw. der **Hunger**-Reflex) zeitweise
+    den Körper („No new action started; body owner: …"), sodass ein Foreground-Craft warten muss.
+    `craft_bed` kam als `cancelled` (Hunger-Reflex bei Hunger 13) zurück — das Bett war danach
+    trotzdem im Inventar, d. h. der Craft war vor der Unterbrechung schon durchgelaufen.
 - **Sicherheits-Gate für Hostile-Jagd:** Ein Spinnen-Lauf hat den Bot in ein
   Zombie/Skelett/Creeper-Feld geführt und eine Eisen-Spitzhacke gekostet. `hunt_string` ist
   daher nur erlaubt, wenn **genau eine** Spinne ≤10 m, **kein weiterer Hostile ≤16 m** und
@@ -346,9 +359,9 @@ nur eine Ebene tiefer.
 
 - **M3+ (offen):** Datensatz aus deutlich mehr Läufen bauen und gegen den Zero-Shot-Stand
   evaluieren (Accuracy/Loss auf einem größeren Held-out-Split), um einen echten Gewinn zu zeigen.
-- **Offen aus M2/M2b/M2c/M2d (Live):** `replace_tool`, `hunt_food`, `collect_drops`
-  (Entscheidung/Binding) und `recover_drops` sind **live validiert** (s. M2c/M2d). Weiterhin offen:
-  **`sleep`/`craft_bed`** — diese Welt hatte zunächst kein Schaf in Reichweite; inzwischen steht **ein
-  Schaf bei ~128 m**, sodass die Kette (`hunt_wool` → `craft_bed` → nachts `sleep`) erreichbar ist und
-  nur noch einen Lauf braucht.
-- **Offen aus M2**: Nether-Gate (Obsidian/Feuerstein) und Diamant-Kette.
+- **M2/M2b/M2c/M2d live validiert:** `replace_tool`, `hunt_food`, `collect_drops`
+  (Entscheidung/Binding), `recover_drops` (s. M2c/M2d) sowie `craft_table`, `hunt_wool`, `craft_bed`,
+  `sleep` (s. M2b) sind **live durchgelaufen**. Damit bleibt in M2/M2b/M2c/M2d kein Pfad ohne
+  Live-Lauf; die Bett-/Essensketten sind zusätzlich durch die 22 Determinismus-Tests gepinnt.
+  Offen ist die **Nether-/Diamant-Kette** (Obsidian/Feuerstein, Diamant-Werkzeuge) — die ist noch
+  nicht in `actions.py` abgebildet und wäre M2.

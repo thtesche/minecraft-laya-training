@@ -29,12 +29,14 @@ registriert — ohne Codeänderung. **M4** ergänzt einen **Parameter-Layer**: w
 mit `above: air` — und bindet sie an ein `navigate`-Ziel; bei vielen Kandidaten engt
 `predict_shortlist` sie vorher ein.
 
-Die M2c/M2d-Pfade wurden live getestet: `replace_tool` (abgenutzte Hacke → Ersatz), `hunt_food`
-(Tier gejagt, Vorrat aufgefüllt), `collect_drops` (Reflex-Kill → Drops eingesammelt) und
-`recover_drops` (Tod in Place → Ausrüstung zurückgeholt) laufen. **Vorbehalt:** `hunt_food` roamt
-ungeschützt zur nächsten Kreatur; ein Nachtlauf wanderte 159–190 m und wurde zweimal getötet
-(Totalverlust des Inventars). Nur `craft_bed`/`sleep` sind noch offen — diese Welt hatte zunächst kein
-Schaf, inzwischen steht eins bei ~128 m.
+Die M2/M2b/M2c/M2d-Pfade wurden live getestet: `replace_tool` (abgenutzte Hacke → Ersatz), `hunt_food`
+(Tier gejagt, Vorrat aufgefüllt), `collect_drops` (Reflex-Kill → Drops eingesammelt),
+`recover_drops` (Tod in Place → Ausrüstung zurückgeholt) sowie die **Bett-Kette** `craft_table` →
+`hunt_wool` (Schaf) → `craft_bed` → nachts `sleep` (Nacht wurde auf Tag übersprungen) laufen.
+**Vorbehalte:** `hunt_food` roamt ungeschützt zur nächsten Kreatur; ein Nachtlauf wanderte 159–190 m
+und wurde zweimal getötet (Totalverlust des Inventars). Und nachts hält der Server-`hostile_reflex`
+zeitweise den Körper, sodass Foreground-Aktionen warten müssen („body owner: …"); Mobs in der Liste
+(≤ ~150 m) müssen erst **geladen** sein, um jagbar zu sein (`[HUNT_TARGET_NOT_LOADED]`).
 Details + 22 Determinismus-Tests: [`docs/architecture.md`](docs/architecture.md#m2d--erreicht-auf-event-notification-typen-reagieren).
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
