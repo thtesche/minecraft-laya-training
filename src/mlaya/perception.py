@@ -11,6 +11,9 @@ from typing import Any
 
 # Resources probed each tick to keep the progression decisions grounded in the world.
 RESOURCE_NAMES = ("logs", "stone", "iron_ore", "coal_ore")
+# Ground blocks probed for the M4 parameter layer: a `view_blocks` hit whose `above` is
+# `air` is real standing ground -- the reliable way to choose a `navigate` target.
+GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
 RESOURCE_RADIUS = 64.0
 RESOURCE_LIMIT = 4
 
@@ -63,6 +66,37 @@ def _iter_items(container: Any):
                 yield str(key), int(value)
 
 
+@dataclass(frozen=True)
+class BlockHit:
+    """One `view_blocks find` hit: a concrete block, its position, and its neighbours.
+
+    `above`/`below` are the annotation the server adds to every hit; `above == "air"`
+    means the block has open space over it -- standable footing for `navigate`, or an
+    exposed ore that is easier to reach.
+    """
+
+    query: str  # the group the hit came from ("logs", "stone", ...)
+    name: str   # the concrete block ("acacia_log", "stone", ...)
+    x: int
+    y: int
+    z: int
+    distance: float
+    above: str | None = None
+    below: str | None = None
+
+    @property
+    def pos(self) -> tuple[int, int, int]:
+        return (self.x, self.y, self.z)
+
+    @property
+    def standable(self) -> bool:
+        return self.above == "air"
+
+    def as_dict(self) -> dict:
+        return {"name": self.name, "x": self.x, "y": self.y, "z": self.z,
+                "distance": self.distance, "above": self.above, "below": self.below}
+
+
 @dataclass
 class GameState:
     health: float | None = None
@@ -89,8 +123,8 @@ class GameState:
     events: list[str] = field(default_factory=list)
     unread: int = 0
     survivors: list[str] = field(default_factory=list)
-    # name -> [(x, y, z, distance)] nearest first, already radius-filtered
-    resources: dict[str, list[tuple[int, int, int, float]]] = field(default_factory=dict)
+    # name -> [BlockHit] nearest first, already radius-filtered
+    resources: dict[str, list[BlockHit]] = field(default_factory=dict)
     sleeping: bool | None = None
     minutes_to_change: float | None = None
     # (name, kind, count, nearest distance) for every nearby mob species
@@ -102,13 +136,13 @@ class GameState:
     # fresh "target died" reflex outcomes: the mob's drops are lying nearby
     drops: int = 0
 
-    def resource_nearest(self, name: str) -> tuple[int, int, int, float] | None:
+    def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
         return hits[0] if hits else None
 
     def resource_distance(self, name: str) -> float | None:
         hit = self.resource_nearest(name)
-        return hit[3] if hit else None
+        return hit.distance if hit else None
 
     def mob_nearest(self, name: str) -> float | None:
         ds = [d for n, _, _, d in self.mobs if n == name and d is not None]
@@ -137,7 +171,7 @@ class GameState:
             "unread": self.unread,
             "notifications": self.notifications,
             "sleeping": self.sleeping,
-            "resources": {n: hits[:2] for n, hits in self.resources.items() if hits},
+            "resources": {n: [h.as_dict() for h in hits[:2]] for n, hits in self.resources.items() if hits},
             "mobs": self.mobs,
         }
 
@@ -193,7 +227,8 @@ class GameState:
             parts.append(f"{self.drops} mob(s) the reflex killed dropped items nearby")
         if self.death_pos and self.last_death_age_s is not None and self.last_death_age_s <= 90:
             parts.append("gear dropped at the last death site can still be recovered")
-        present = [(n, hits[0][3]) for n, hits in self.resources.items() if hits]
+        present = [(n, hits[0].distance) for n, hits in self.resources.items()
+                   if hits and n in RESOURCE_NAMES]
         if present:
             present.sort(key=lambda t: t[1])
             parts.append("nearby resources: " + ", ".join(
@@ -350,25 +385,31 @@ def parse_status(data: dict) -> GameState:
     return gs
 
 
-def parse_resources(data: dict) -> dict[str, list[tuple[int, int, int, float]]]:
-    """view_blocks find -> {query_name: [(x, y, z, distance)]} within RESOURCE_RADIUS."""
+def parse_resources(data: dict) -> dict[str, list[BlockHit]]:
+    """view_blocks find -> {query_name: [BlockHit]} within RESOURCE_RADIUS, nearest first."""
     blocks = get(data, "response", "data", "result", "blocks", default={}) or {}
     groups = blocks.get("find") if isinstance(blocks, dict) else None
-    out: dict[str, list[tuple[int, int, int, float]]] = {}
+    out: dict[str, list[BlockHit]] = {}
     for group in groups or []:
         if not isinstance(group, dict) or not group.get("name"):
             continue
-        hits: list[tuple[int, int, int, float]] = []
+        query = str(group["name"])
+        hits: list[BlockHit] = []
         for e in group.get("listed") or []:
             if not isinstance(e, dict):
                 continue
             d = _num(e.get("distance"))
             if d is None or d > RESOURCE_RADIUS or "x" not in e:
                 continue
-            hits.append((int(e["x"]), int(e["y"]), int(e["z"]), d))
-        hits.sort(key=lambda t: t[3])
+            hits.append(BlockHit(
+                query=query,
+                name=str(e.get("name") or query),
+                x=int(e["x"]), y=int(e["y"]), z=int(e["z"]), distance=d,
+                above=e.get("above"), below=e.get("below"),
+            ))
+        hits.sort(key=lambda h: h.distance)
         if hits:
-            out[str(group["name"])] = hits[:RESOURCE_LIMIT]
+            out[query] = hits[:RESOURCE_LIMIT]
     return out
 
 
@@ -404,8 +445,9 @@ async def build(executor) -> GameState:
     try:
         blocks = await executor.read(
             "view_blocks",
-            {"find": {"block_names": list(RESOURCE_NAMES), "limit": RESOURCE_LIMIT}},
-            "scan nearby resources to ground the next progression step",
+            {"find": {"block_names": list(RESOURCE_NAMES) + list(GROUND_NAMES),
+                      "limit": RESOURCE_LIMIT}},
+            "scan nearby resources and standable ground for the next step",
         )
         gs.resources = parse_resources(coerce(blocks.data, blocks.text))
     except Exception:

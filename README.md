@@ -11,7 +11,7 @@ Laya erzeugt keinen Text und keine Tool-Argumente. Deshalb filtert der Code die 
 über ein binäres Gefahr-Gate plus die Wahl unter diesen Optionen; ein separater Python-**Executor**
 ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
-Aktueller Stand (**M2/M2b/M2c/M2d/M3**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
+Aktueller Stand (**M2/M2b/M2c/M2d/M3/M4**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
 bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen). `view_blocks` liefert die Ressourcen in der Nähe
 (Holz/Stein/Eisen/Kohle mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
 Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
@@ -24,7 +24,10 @@ abgenutzte Spitzhacke wird ersetzt (`replace_tool`), Drops von einem vom Reflex 
 eingesammelt (`collect_drops`), und frisch verlorene Ausrüstung wird an der Todesstelle geborgen
 (`recover_drops`). Seit **M3** lässt sich aus dem Run-Log ein Laya-Trainingsdatensatz bauen und der
 `choice`-Kopf nachtrainieren (RLCD); der Checkpoint wird über `LAYA_EXTRA_MODELS` unter `english`
-registriert — ohne Codeänderung.
+registriert — ohne Codeänderung. **M4** ergänzt einen **Parameter-Layer**: wo ein Label nur sagt
+*was* (z. B. `explore`), wählt Laya das *wo* aus den `view_blocks`-Kandidaten — echten Standzellen
+mit `above: air` — und bindet sie an ein `navigate`-Ziel; bei vielen Kandidaten engt
+`predict_shortlist` sie vorher ein.
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
@@ -76,3 +79,13 @@ trifft (`english`), **zeigt es um** — genau so wird das Fine-Tune ohne Codeän
 Der Reward ist der Verifier: nur Ticks, deren Aktion nachweislich Fortschritt brachte, werden zu
 Positivbeispielen (`--include-failed` für reine Imitation). Tests:
 `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests`.
+
+## M4: Parameter-Layer (Zielwahl)
+
+`src/mlaya/targets.py` baut aus den `view_blocks`-Treffern eine Kandidatenliste von
+**Standzellen** (`above: air`), `brain.choose_target` lässt Laya daraus wählen (bei mehr als
+`TARGET_K = 6` Kandidaten via `predict_shortlist`), und `actions.resolve(label, gs, target)`
+bindet das Ziel an die Werkzeug-Argumente. Erster Nutznießer ist `explore` → `navigate` mit
+echter `(x, y, z)`-Position statt eines festen `x + 16`-Offsets. Neu ist außerdem, dass die
+`view_blocks`-Abfrage zusätzlich nach `grass_block`/`sand`/`gravel`/`dirt` sucht und
+`perception.BlockHit` die `above`/`below`-Annotation der Treffer behält.

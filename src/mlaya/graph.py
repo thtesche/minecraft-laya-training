@@ -13,9 +13,13 @@ from .actions import candidates, is_hostile_hunt, resolve
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
+from .targets import ground_targets
 
 # Safe default when a chosen label cannot be resolved (should be rare; candidates are filtered).
 FALLBACK_LABEL = "get_wood"
+
+# Labels whose step needs a destination; the M4 parameter layer picks it from `view_blocks`.
+TARGET_LABELS = frozenset({"explore"})
 
 
 def _chosen(answers: dict) -> dict:
@@ -66,12 +70,19 @@ class Agent:
     async def _decide(self, state: AgentState) -> dict:
         gs = state["before"]
         decision = self.brain.decide(gs.narrative(), candidates(gs))
+        if not decision.deferred and decision.action_label in TARGET_LABELS:
+            # M4 parameter layer: turn "where?" into a Laya choice over grounded candidates.
+            targets = ground_targets(gs)
+            if targets:
+                target, meta = self.brain.choose_target(gs.narrative(), targets)
+                decision.target = target
+                decision.target_meta = meta
         return {"decision": decision, "escalated": False, "deferred": False}
 
     async def _guard(self, state: AgentState) -> dict:
         gs = state["before"]
         decision = state["decision"]
-        action = resolve(decision.action_label, gs)
+        action = resolve(decision.action_label, gs, decision.target)
         if action is not None:
             return {"action": action}
         if decision.deferred:
@@ -152,6 +163,12 @@ class Agent:
             "progressed": progressed,
             "answers": _chosen(getattr(state["decision"], "answers", {})),
         }
+        target = getattr(state["decision"], "target", None)
+        if target is not None:
+            record["target"] = getattr(target, "label", str(target))
+            meta = getattr(state["decision"], "target_meta", None)
+            if meta:
+                record["target_meta"] = meta
         self.log.append(record)
         self.history.append(record)
         iteration = state.get("iteration", 0) + 1

@@ -315,8 +315,12 @@ def candidates(gs: GameState) -> list[str]:
     return out
 
 
-def resolve(label: str | None, gs: GameState) -> Action | None:
-    """Map a Laya choice to a concrete MCP tool call, or None if preconditions fail."""
+def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
+    """Map a Laya choice to a concrete MCP tool call, or None if preconditions fail.
+
+    `target` is the M4 parameter-layer pick (a `targets.Target`); it is only used by a
+    label whose step needs a destination (`explore`), and ignored elsewhere.
+    """
     if not label:
         return None
     inv = gs.inventory
@@ -445,6 +449,11 @@ def resolve(label: str | None, gs: GameState) -> Action | None:
         return Action(label, "pick_up_items", {"recover_death_items": True},
                       "walk back to the death site and recover the dropped gear")
     if label == "explore":
+        if target is not None:
+            tx, ty, tz = target.pos
+            return Action(label, "navigate",
+                          {"x": tx, "y": ty, "z": tz, "dig": True, "scaffold": True},
+                          f"explore toward {target.name} at {tx},{ty},{tz}")
         if x is None or z is None:
             return None
         args: dict = {"x": int(x) + 16, "z": int(z), "dig": True, "scaffold": True}

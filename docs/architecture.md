@@ -274,9 +274,52 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   Gefahren-Ticks sammeln (dann liefert `graph._verify` die echten Gate-Labels) oder vorerst
   `--no-danger` und das Gate zero-shot belassen, bis beide Klassen vertreten sind.
 
+## M4 — erreicht: Parameter-Layer (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`)
+
+**Kriterium:** Ein Label sagt *was* (z. B. „explore“), aber nicht *wo*. Der Parameter-Layer füllt
+die Argumente aus dem gegroundeten Zustand: statt eines fest verdrahteten Offsets wählt Laya ein
+konkretes Ziel aus den `view_blocks`-Kandidaten, und `predict_shortlist` hält große Kandidatenmengen
+im Kopf-Budget. Es ist dieselbe Teilung wie in der Label-Schicht — **Code filtert, Laya wählt** —
+nur eine Ebene tiefer.
+
+- **Perception** (`src/mlaya/perception.py`): `view_blocks`-Treffer werden jetzt als `BlockHit`
+  behalten (`name`, `x/y/z`, `distance`, `above`, `below`). Der Server annotiert jeden Treffer mit
+  `above`/`below`; `above == "air"` ist **echter Standgrund** — laut Run-Skill der verlässliche Weg,
+  ein `navigate`-Ziel zu wählen. Zusätzlich zur Ressourcen-Suche fragt `build()` dieselbe
+  `view_blocks`-Anfrage um `GROUND_NAMES` (`grass_block`, `sand`, `gravel`, `dirt`) ab.
+- **`src/mlaya/targets.py`**: `Target` (Label + Beschreibungstext + `BlockHit`) und
+  `ground_targets(gs)`. Es behält nur Standgrund aus `DESTINATION_QUERIES` (Boden + `stone`),
+  dedupliziert pro `(x, z)`-Spalte, verwirft Gelände **unter den Füßen** (`EXPLORE_MIN_M = 4`) und
+  sortiert **am weitesten zuerst** — so ist ein Explore-Pick ein echter Schritt nach draußen; ist der
+  Bot eingeschlossen, wird stattdessen der nächste Grund angeboten. Die Texte bleiben kurz (Distanz +
+  Kompassrose), weil sich alle Optionen ein `head_max_len`-Budget teilen.
+- **Brain** (`src/mlaya/brain.py`): `TARGET_QID = "target"`, `target_question(targets)` und
+  `choose_target(state, targets)`. Bis `TARGET_K = 6` Kandidaten läuft ein normaler `predict`; ein
+  größerer Pool wird per `laya.shortlist.predict_shortlist` eingeengt, dessen `embed_fn` aus dem
+  bereits geladenen Checkpoint kommt (`embed_fn_from_agent(router.load(model))`, einmalig gecacht).
+  Kein Treffer ⇒ Rückfall auf den entferntesten Kandidaten.
+- **Graph/Actions** (`src/mlaya/graph.py`, `actions.py`): `TARGET_LABELS = {"explore"}`. `_decide`
+  baut für ein solches Label `ground_targets` und legt die Wahl als `Decision.target` (+
+  `target_meta`) ab; `_guard` ruft `resolve(label, gs, target)`. `explore` bindet dann
+  `navigate {x, y, z, dig, scaffold}` an die **echte** Zielposition (mit `y`, sonst rät `navigate`
+  über Dächer/Laubwerk); ohne Kandidaten bleibt der alte `x + 16`-Fallback. Das Action-Log trägt
+  jetzt `target` und `target_meta`.
+- **Validierung (live):** `view_blocks` lieferte 8 Gruppen × 4 Treffer; daraus 7 Standable-Kandidaten,
+  nach dem `min_distance`-Filter 4 (`grass_block` ~8 m nördlich). `ground_targets` beschriftet sie
+  korrekt (Distanz + Richtung), `predict_shortlist` (k=2 erzwungen) engt 7 → 2 ein, Laya wählt
+  `grass_block@-42,10`, und `_guard` bindet `navigate {x:-42, y:65, z:10, dig:true, scaffold:true}`.
+  Auch der Pfad ohne Shortlist (Pool ≤ `TARGET_K`) und der Rückfall ohne Kandidaten sind geprüft.
+  13 Unit-Tests (`tests/test_targets.py`, stdlib `unittest`).
+- **Vorbehalt 1 (Reichweite):** `view_blocks find` listet je Query die **nächsten** Treffer (Limit 4).
+  Die Kandidaten sind also nahes Gelände, kein Fernziel — der Parameter-Layer wählt *Richtung*, nicht
+  eine Reise über die Karte. Für echte Fernerkundung bräuchte es `view_blocks box` in einem Ring oder
+  `view_frontier` und damit eine eigene Abfrage.
+- **Vorbehalt 2 (Häufigkeit):** `explore` ist der **letzte Fallback** und feuert selten; der Mechanismus
+  ist bewusst generisch (`TARGET_LABELS`, `resolve(..., target)`), weitere Labels können ihn später
+  adoptieren.
+
 ## Nächste Meilensteine
 
-- **M4**: Parameter-Layer ausbauen (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`).
 - **M3+ (offen):** Datensatz aus deutlich mehr Läufen bauen und gegen den Zero-Shot-Stand
   evaluieren (Accuracy/Loss auf einem größeren Held-out-Split), um einen echten Gewinn zu zeigen.
 - **Offen aus M2/M2b/M2c/M2d (Live):** Ende-zu-Ende-Validierung von `sleep`/`craft_bed` (kein Schaf,
