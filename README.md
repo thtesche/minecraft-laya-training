@@ -11,9 +11,11 @@ Laya erzeugt keinen Text und keine Tool-Argumente. Deshalb filtert der Code die 
 über ein binäres Gefahr-Gate plus die Wahl unter diesen Optionen; ein separater Python-**Executor**
 ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
-Aktueller Stand (**M2**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
+Aktueller Stand (**M2/M2b**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
 bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen). `view_blocks` liefert die Ressourcen in der Nähe
-(Holz/Stein/Eisen/Kohle mit Distanz) in den Zustand.
+(Holz/Stein/Eisen/Kohle mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
+Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
+Respawn-Punkt) und liest die anstehenden **Notifications** mit.
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 

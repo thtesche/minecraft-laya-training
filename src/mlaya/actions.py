@@ -17,6 +17,10 @@ CRITERIA: dict[str, str] = {
     "craft_furnace": "craft a furnace at a crafting table from eight cobblestone",
     "smelt_iron": "smelt raw iron into iron ingots in the furnace the bot carries",
     "craft_iron_pickaxe": "craft an iron pickaxe at a crafting table from three iron ingots and sticks",
+    "sleep": "sleep in a carried bed at night to skip to morning and set the respawn point",
+    "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
+    "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
+    "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
     "explore": "walk to new terrain to find missing resources; the last fallback",
 }
 
@@ -75,6 +79,30 @@ def _can_sticks(inv: dict[str, int], logs: int, planks: int) -> bool:
     return inv.get("stick", 0) >= 2 or planks >= 2 or logs >= 1
 
 
+def _wool(inv: dict[str, int]) -> int:
+    return sum(c for n, c in inv.items() if n.endswith("_wool"))
+
+
+def _has_bed(inv: dict[str, int]) -> bool:
+    return any(n.endswith("_bed") for n in inv)
+
+
+def _safe_spider_hunt(gs: GameState) -> bool:
+    """Only farm spider string when the fight is a lone, close, healthy one.
+
+    Hunting hostiles is the single most expensive mistake this bot has made (a
+    spider run walked it into a zombie/skeleton pack and cost an iron pickaxe), so
+    string farming requires: one spider within 10m, no other hostile within 16m,
+    and health at least 16.
+    """
+    spider = gs.mob_nearest("spider")
+    if spider is None or spider > 10 or (gs.health or 0) < 16:
+        return False
+    others = [d for n, k, _, d in gs.mobs
+              if k == "hostile" and n != "spider" and d is not None and d <= 16]
+    return not others
+
+
 def candidates(gs: GameState) -> list[str]:
     """The actions whose preconditions currently hold, in tech-tree priority order.
 
@@ -95,8 +123,17 @@ def candidates(gs: GameState) -> list[str]:
     if gs.food is not None and gs.food < 14 and _first_edible(inv):
         out.append("eat_food")
 
+    wool = _wool(inv)
+    string = inv.get("string", 0)
+    bed = _has_bed(inv)
+    # Night + a carried bed: sleeping skips to morning and pins the respawn point.
+    if gs.phase == "night" and not gs.sleeping and bed:
+        out.append("sleep")
+
     # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
-    if logs == 0 and planks == 0 and (tier == 0 or inv.get("stick", 0) < 2):
+    need_wood = (tier == 0 or not table
+                 or (not bed and (wool >= 3 or string >= 12)))
+    if logs == 0 and planks == 0 and need_wood:
         out.append("get_wood")
     if (logs >= 1 or planks >= 5) and tier == 0:
         out.append("craft_pickaxe")
@@ -110,6 +147,15 @@ def candidates(gs: GameState) -> list[str]:
         out.append("smelt_iron")
     if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
         out.append("craft_iron_pickaxe")
+    # Bed chain: a bed lets `sleep` skip the night and set the respawn point.
+    if not bed:
+        if table and (wool >= 3 or string >= 12) and (logs >= 1 or planks >= 3):
+            out.append("craft_bed")
+        elif wool < 3 and string < 12:
+            if gs.mob_nearest("sheep") is not None:
+                out.append("hunt_wool")
+            elif _safe_spider_hunt(gs):
+                out.append("hunt_string")
     if tier >= STONE_PICK_TIER and tier < IRON_PICK_TIER and raw_iron + iron < 3 and gs.resource_distance("iron_ore") is not None:
         out.append("mine_iron")
     if tier >= STONE_PICK_TIER and tier < IRON_PICK_TIER and raw_iron >= 1 and coal < 1 and gs.resource_distance("coal_ore") is not None:
@@ -186,6 +232,31 @@ def resolve(label: str | None, gs: GameState) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": "iron_pickaxe"}], "temporary_workstation": True},
                       "craft an iron pickaxe for mining diamonds")
+    if label == "sleep":
+        if gs.phase != "night" or gs.sleeping or not _has_bed(inv):
+            return None
+        return Action(label, "sleep", {},
+                      "sleep through the night and set the respawn point")
+    if label == "craft_bed":
+        if not _has(inv, "crafting_table") or (_wool(inv) < 3 and inv.get("string", 0) < 12) \
+                or (_logs(inv) < 1 and _planks(inv) < 3):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": "white_bed"}], "temporary_workstation": True},
+                      "craft a bed from wool or string and planks")
+    if label == "hunt_wool":
+        if _wool(inv) >= 3:
+            return None
+        return Action(label, "collect_mob_drop",
+                      {"mob_name": "sheep", "drop_name": "white_wool", "count": 3},
+                      "collect white wool from a sheep for a bed")
+    if label == "hunt_string":
+        if inv.get("string", 0) >= 12 or not _safe_spider_hunt(gs):
+            return None
+        return Action(label, "collect_mob_drop",
+                      {"mob_name": "spider", "drop_name": "string", "count": 12,
+                       "allow_without_shield": True},
+                      "collect string from a lone spider to craft wool")
     if label == "eat_food":
         food = _first_edible(inv)
         if not food:

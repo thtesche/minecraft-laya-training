@@ -24,13 +24,15 @@ def diff(before: GameState, after: GameState) -> dict:
         "inventory_delta": inv_delta,
         "on_ground": after.on_ground,
         "in_water": after.in_water,
+        "phase": after.phase,
+        "sleeping": after.sleeping,
     }
 
 
 # Labels whose progress shows up as a net inventory gain (a drop collected or a craft produced).
 INVENTORY_LABELS = {
     "get_wood", "mine_stone", "mine_iron", "mine_coal", "craft_pickaxe", "craft_table",
-    "craft_stone_pickaxe", "craft_furnace", "smelt_iron", "craft_iron_pickaxe",
+    "craft_stone_pickaxe", "craft_furnace", "smelt_iron", "craft_iron_pickaxe", "craft_bed",
 }
 
 
@@ -38,8 +40,14 @@ def progressed(label: str, d: dict) -> bool:
     inv_up = any(v > 0 for v in d["inventory_delta"].values())
     if label in INVENTORY_LABELS:
         return inv_up
+    if label == "hunt_string":
+        return d["inventory_delta"].get("string", 0) > 0
+    if label == "hunt_wool":
+        return any(k.endswith("_wool") and v > 0 for k, v in d["inventory_delta"].items())
     if label == "eat_food":
         return (d["food_delta"] or 0) > 0
+    if label == "sleep":
+        return d.get("phase") != "night" or bool(d.get("sleeping"))
     if label == "explore":
         return (d["pos_delta"] or 0) > 2
     return False

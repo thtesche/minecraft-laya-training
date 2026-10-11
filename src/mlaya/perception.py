@@ -82,6 +82,12 @@ class GameState:
     survivors: list[str] = field(default_factory=list)
     # name -> [(x, y, z, distance)] nearest first, already radius-filtered
     resources: dict[str, list[tuple[int, int, int, float]]] = field(default_factory=dict)
+    sleeping: bool | None = None
+    minutes_to_change: float | None = None
+    # (name, kind, count, nearest distance) for every nearby mob species
+    mobs: list[tuple[str, str, int, float | None]] = field(default_factory=list)
+    # latest unread-notification previews (from the server's `notifications` block)
+    notifications: list[str] = field(default_factory=list)
 
     def resource_nearest(self, name: str) -> tuple[int, int, int, float] | None:
         hits = self.resources.get(name)
@@ -90,6 +96,10 @@ class GameState:
     def resource_distance(self, name: str) -> float | None:
         hit = self.resource_nearest(name)
         return hit[3] if hit else None
+
+    def mob_nearest(self, name: str) -> float | None:
+        ds = [d for n, _, _, d in self.mobs if n == name and d is not None]
+        return min(ds) if ds else None
 
     def as_state(self) -> dict:
         """Structured view for logging and System-2 prompts (never sent raw to Laya)."""
@@ -108,7 +118,11 @@ class GameState:
             "players": self.players,
             "last_death": self.last_death_cause,
             "events": self.events,
+            "unread": self.unread,
+            "notifications": self.notifications,
+            "sleeping": self.sleeping,
             "resources": {n: hits[:2] for n, hits in self.resources.items() if hits},
+            "mobs": self.mobs,
         }
 
     def narrative(self) -> str:
@@ -123,7 +137,8 @@ class GameState:
         if self.phase:
             weather = " and raining" if self.raining else ""
             label = "daytime" if self.phase == "day" else self.phase
-            parts.append(f"it is {label}{weather}")
+            asleep = " and the bot is asleep" if self.sleeping else ""
+            parts.append(f"it is {label}{weather}{asleep}")
         if self.pos:
             x, y, z = self.pos
             where = "on the ground" if self.on_ground else "in the air"
@@ -154,11 +169,15 @@ class GameState:
             present.sort(key=lambda t: t[1])
             parts.append("nearby resources: " + ", ".join(
                 f"{n} at {d:.0f}m" for n, d in present[:4]))
+        if self.unread:
+            head = "; ".join(self.notifications[:2])
+            parts.append(f"unread notifications ({self.unread}): {head}" if head
+                         else f"unread notifications: {self.unread}")
         parts[0] = parts[0][:1].upper() + parts[0][1:]
         return "You are a Minecraft bot. " + ". ".join(parts) + "."
 
 
-def _summarize_events(data: dict, limit: int = 3) -> tuple[list[str], int]:
+def _summarize_events(data: dict, limit: int = 3) -> tuple[list[str], int, list[str]]:
     result = get(data, "response", "data", "result", default={}) or {}
     raw = result.get("events") if isinstance(result, dict) else None
     out: list[str] = []
@@ -167,7 +186,9 @@ def _summarize_events(data: dict, limit: int = 3) -> tuple[list[str], int]:
             summary = " ".join(str(e.get("summary") or e.get("type") or "").split())
             out.append(summary[:80])
     unread = get(data, "notifications", "unreadCount", default=0)
-    return out, int(unread) if isinstance(unread, int) else 0
+    preview = get(data, "notifications", "recentPreview", default=[]) or []
+    preview = [" ".join(str(p).split())[:80] for p in preview][:3]
+    return out, (int(unread) if isinstance(unread, int) else 0), preview
 
 
 def parse_status(data: dict) -> GameState:
@@ -185,6 +206,9 @@ def parse_status(data: dict) -> GameState:
     gs.phase = clock.get("phase")
     raining = clock.get("raining")
     gs.raining = bool(raining) if isinstance(raining, bool) else None
+    sleeping = clock.get("sleeping")
+    gs.sleeping = bool(sleeping) if isinstance(sleeping, bool) else None
+    gs.minutes_to_change = _num(clock.get("minutesUntilChange"))
 
     pos = sit.get("position") or {}
     if all(k in pos for k in ("x", "y", "z")):
@@ -221,6 +245,14 @@ def parse_status(data: dict) -> GameState:
     for p in nearby.get("players") or []:
         if isinstance(p, dict) and p.get("username"):
             gs.players.append(str(p["username"]))
+
+    for m in nearby.get("mobs") or []:
+        if not isinstance(m, dict) or not m.get("name"):
+            continue
+        nearest = m.get("nearest") or {}
+        dist = _num(nearest.get("distance")) if isinstance(nearest, dict) else None
+        gs.mobs.append((str(m["name"]), str(m.get("kind") or "?"),
+                        int(m.get("count") or 1), dist))
 
     death = sit.get("lastDeath") or {}
     if isinstance(death, dict) and death.get("cause"):
@@ -281,10 +313,12 @@ async def build(executor) -> GameState:
     """Perceive through the MCP read tools (ungated, cheap)."""
     status = await executor.read("view_status", {}, "read live bot vitals and position")
     events = await executor.read(
-        "read_recent_events", {"limit": 5}, "read the newest world events for context"
+        # Drain a large page each tick: the unread count is the server's event/publication
+        # backlog and reading is free; we keep only the newest few for the state.
+        "read_recent_events", {"limit": 50}, "read and drain unread world events for context"
     )
     gs = parse_status(coerce(status.data, status.text))
-    gs.events, gs.unread = _summarize_events(coerce(events.data, events.text))
+    gs.events, gs.unread, gs.notifications = _summarize_events(coerce(events.data, events.text))
     try:
         blocks = await executor.read(
             "view_blocks",

@@ -49,7 +49,8 @@ später das Kopf-Fine-Tuning (M3) verbessert.
 [2] Perception    (src/mlaya/perception.py)
     view_status + read_recent_events + view_blocks (alle frei) -> GameState
     -> kompakter NL-State (`narrative()`); Ressourcen (logs/stone/iron_ore/coal_ore)
-    mit Distanz im Umkreis von 64 Blöcken.
+    mit Distanz im Umkreis von 64 Blöcken; Tageszeit/Schlafzustand, Mob-Arten
+    (inkl. passiver) und ungelesene Notifications (Drain) fließen in den State.
 [3] Brain (S1)    (src/mlaya/brain.py)
     Laya-Router, EIN predict()-Pass:
       in_danger  (binäres Gate)      -> defer an die Survival-Policy
@@ -60,10 +61,12 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     resolve(label, gs): Label -> echtes MCP-Tool + Argumente
     Kaskade: get_wood -> craft_pickaxe -> craft_table -> mine_stone ->
     craft_stone_pickaxe -> craft_furnace -> mine_iron -> mine_coal ->
-    smelt_iron -> craft_iron_pickaxe; eat_food bei Hunger, explore nur als
+    smelt_iron -> craft_iron_pickaxe; Bett-Kette (hunt_wool/hunt_string ->
+    craft_bed -> sleep in der Nacht) und eat_food bei Hunger; explore nur als
     letzter Fallback (wenn nichts Produktives möglich ist).
 [5] Verify        (src/mlaya/verify.py)
-    view_status erneut lesen; Soll/Ist-Delta; Fortschritt je Aktion
+    view_status erneut lesen; Soll/Ist-Delta (Inventar, Position, Health, Hunger,
+    Phase/Schlaf); Fortschritt je Aktion
 [6] Memory        (src/mlaya/memory.py)
     runs/decisions.jsonl (jede Entscheidung + Outcome)
 [7] System 2      (brain.escalate_to_system2)
@@ -132,8 +135,30 @@ Wichtige Umsetzungsdetails:
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
   produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
 
+## M2b — erreicht: Bett/Respawn, Nachtschlaf, Notifications
+
+**Kriterium:** Ein Bett bauen, nachts darin schlafen (überspringt die Nacht **und** setzt den
+Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den State heben.
+
+- **Bett-Kette** in `actions.py`: `hunt_wool` (Schaf) oder `hunt_string` (Spinne) →
+  `craft_bed` (`white_bed`, 3×3 → `temporary_workstation: true`) → `sleep`.
+  `sleep` wird nur nachts und mit getragenem Bett angeboten; `sleep` findet/platziert das Bett
+  selbst (`view_crafting_requirements` bestätigt: `white_bed` = 3 `white_wool` + 3 Planks,
+  `white_wool` = 4 `string`).
+- **`white_wool` ist aus `string` craftbar** — der Server rechnet die Kette rekursiv
+  (`craft_item white_bed` macht aus `string` erst Wolle, dann das Bett).
+- **Sicherheits-Gate für Hostile-Jagd:** Ein Spinnen-Lauf hat den Bot in ein
+  Zombie/Skelett/Creeper-Feld geführt und eine Eisen-Spitzhacke gekostet. `hunt_string` ist
+  daher nur erlaubt, wenn **genau eine** Spinne ≤10 m, **kein weiterer Hostile ≤16 m** und
+  Health ≥16 ist (`_safe_spider_hunt`); sonst bleibt es außen vor.
+- **Notifications:** `read_recent_events` wird jetzt mit `limit: 50` gelesen (Drain des
+  Event-/Notification-Backlogs) statt 5; die neuesten `events`-Summaries **und** die
+  `notifications.recentPreview` stehen im State (`narrative()`: „unread notifications (N): …").
+
 ## Nächste Meilensteine
 
+- **M2c**: Auf Notification-/Event-**Typen reagieren** (z. B. „durability low" →
+  Ersatzwerkzeug craften, „target died" → Ressourcen ernten) statt sie nur in den State zu heben.
 - **M3**: Logs -> Datensatz -> RLCD-Kopf-Fine-Tuning; Checkpoint via `LAYA_EXTRA_MODELS` registrieren.
 - **M4**: Parameter-Layer ausbauen (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`).
 - **Offen aus M2**: Nether-Gate (Obsidian/Feuerstein) und Diamant-Kette.
