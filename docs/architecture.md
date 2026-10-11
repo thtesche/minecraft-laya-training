@@ -230,16 +230,25 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   `drops`; `narrative()` hängt „low durability: …", „… mob(s) the reflex killed dropped items
   nearby" und „gear … can still be recovered" an. `verify.progressed` prüft `replace_tool` (neue
   `*_pickaxe`) und `collect_drops`/`recover_drops` (Netto-Inventar).
-- **Validierung:** Unit-Ladder bestätigt alle drei Reaktionen inkl. Priorität und Fallback (22 Tests
-  in `tests/test_actions.py` pinnen zusätzlich die Bett- und Essenskette deterministisch). **Live:**
-  `replace_tool` **end-to-end** — die Steinspitzhacke kontrolliert auf 15/131 (`≤ LOW_DURABILITY`)
-  abgenutzt → `candidates == ["replace_tool"]` → Laya wählt es → `_guard` bindet
-  `craft_item {items:[{item_name:"stone_pickaxe"}], temporary_workstation:true}` → `succeeded`,
-  danach 131/131. Perception parst `tool_meta` (15/131) und `death_pos` weiterhin korrekt,
-  `pick_up_items {radius: 16}` ist schema-gültig und ohne Drops ein sauberer No-op
-  (`[NO_MATCHING_ITEMS]`). **`collect_drops`/`recover_drops`** sind noch **nicht** live erreicht:
-  es gab kein frisches „target died"-Event (der Reflex kam nie zum Kill) und keinen Tod in
-  90 s/120 m (der letzte lag bei 103 s und ~120 m außerhalb des Fensters).
+- **Validierung (live, alle drei Reaktionen):**
+  - `replace_tool` **end-to-end** — die Steinspitzhacke kontrolliert auf 15/131 (`≤ LOW_DURABILITY`)
+    abgenutzt → `candidates == ["replace_tool"]` → Laya wählt es → `_guard` bindet
+    `craft_item {items:[{item_name:"stone_pickaxe"}], temporary_workstation:true}` → `succeeded`,
+    danach 131/131.
+  - `collect_drops` — mit der aggressiven `hunt`-Policy killte der Server-Reflex einen Mob (Event
+    `hostile: target died`) → `drops = 1` → `candidates == ["collect_drops"]` → Laya wählt es →
+    `_guard` bindet `pick_up_items {radius: 16}`. Die Ausführung antwortete `[NO_MATCHING_ITEMS]`
+    (die Drops waren zu diesem Tick bereits entladen/weg), also ist die **Entscheidung + Bindung**
+    belegt, nicht das tatsächliche Einsammeln.
+  - `recover_drops` **end-to-end** — provozierter Tod in Place bei (−90.6, 71, −14.9), Respawn
+    (−52.5, 68, 8.5) ≈ 45 m entfernt, 8 s her → `candidates == ["recover_drops"]` → Laya wählt es →
+    `_guard` bindet `pick_up_items {recover_death_items: true}` → `succeeded`; das Inventar
+    (Dirt/Cobble/Logs/Planks/Sticks + String) kam zurück. Die `hunt`-Policy wird dabei nach dem Tod
+    automatisch wieder auf `base` gestellt (`_reapply_after_death`).
+  - **Observed Event-Wortlaut:** `hostile: target died`, `hostile: contact ended`,
+    `MineAI died at <pos> …`, `<tool> broke.` — `_count_drops` greift auf `"target died"`.
+  - 22 Unit-Tests (`tests/test_actions.py`) pinnen zusätzlich alle Bindungen/Guards sowie die
+    Bett- und Essenskette deterministisch.
 
 ## M3 — erreicht: Logs → Datensatz → RLCD-Kopf-Fine-Tuning
 
@@ -337,10 +346,9 @@ nur eine Ebene tiefer.
 
 - **M3+ (offen):** Datensatz aus deutlich mehr Läufen bauen und gegen den Zero-Shot-Stand
   evaluieren (Accuracy/Loss auf einem größeren Held-out-Split), um einen echten Gewinn zu zeigen.
-- **Offen aus M2/M2b/M2c/M2d (Live):** `replace_tool` und `hunt_food` sind **live validiert** (s. M2d/
-  M2c). Weiterhin offen: **`sleep`/`craft_bed`** (diese Welt hat kein Schaf und keine Wolle/String in
-  Reichweite; `hunt_string` scheitert gefährlich) — braucht ein Schaf oder einen sicheren Spider;
-  **`collect_drops`** braucht ein frisches „target died"-Event aus einem **Server-Reflex-Kill** (nicht
-  aus der expliziten Jagd) und **`recover_drops`** einen **Tod ≤ 90 s und ≤ 120 m**, d. h. einen
-  absichtlich provozierten Tod in Place. Beide kosten bewusst Nachtkampf bzw. einen Tod.
+- **Offen aus M2/M2b/M2c/M2d (Live):** `replace_tool`, `hunt_food`, `collect_drops`
+  (Entscheidung/Binding) und `recover_drops` sind **live validiert** (s. M2c/M2d). Weiterhin offen:
+  **`sleep`/`craft_bed`** — diese Welt hatte zunächst kein Schaf in Reichweite; inzwischen steht **ein
+  Schaf bei ~128 m**, sodass die Kette (`hunt_wool` → `craft_bed` → nachts `sleep`) erreichbar ist und
+  nur noch einen Lauf braucht.
 - **Offen aus M2**: Nether-Gate (Obsidian/Feuerstein) und Diamant-Kette.
