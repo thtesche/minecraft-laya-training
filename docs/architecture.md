@@ -265,9 +265,14 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   −0.065, ECE +0.047 (Temperatur nicht gefittet, nur 1 Kalibrierungsitem). Der `Router` lädt den
   Checkpoint unter `english` und entscheidet korrekt (Gate `no` → nicht deferiert, Intent
   `mine_stone`). 16 Unit-Tests (`tests/test_dataset.py`, stdlib `unittest`).
-- **Vorbehalt:** 22 Ticks sind **statistisch bedeutungslos** — der Gewinn ist der **Pipeline-Beweis**,
-  nicht ein messbarer Modellgewinn. Neu bauen (`mlaya dataset`) und nachtrainieren, sobald der Log
-  wächst.
+- **Vorbehalt 1 (Datenmenge):** 22 Ticks sind **statistisch bedeutungslos** — der Gewinn ist der
+  **Pipeline-Beweis**, nicht ein messbarer Modellgewinn. Neu bauen (`mlaya dataset`) und
+  nachtrainieren, sobald der Log wächst.
+- **Vorbehalt 2 (Gate-Balance):** In diesen Läufen war der Bot **nie** in Gefahr, also tragen
+  **alle** `in_danger`-Zeilen das Label `no`. Ein Retrain darauf zieht den geteilten `choice`-Kopf
+  in Richtung „immer no", ohne dass ein `yes`-Fall gegengewichtet. Abhilfe: genug Läufe mit echten
+  Gefahren-Ticks sammeln (dann liefert `graph._verify` die echten Gate-Labels) oder vorerst
+  `--no-danger` und das Gate zero-shot belassen, bis beide Klassen vertreten sind.
 
 ## Nächste Meilensteine
 
