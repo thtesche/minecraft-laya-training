@@ -5,11 +5,10 @@ import asyncio
 import json
 
 import httpx
-from dotenv import load_dotenv
 
 from . import perception
 from .actions import candidates, resolve
-from .config import ROOT, load_settings
+from .config import ROOT, load_env, load_settings
 from .graph import Agent
 from .mcp import MCPExecutor
 
@@ -23,6 +22,10 @@ async def _health(settings) -> dict:
 
 async def cmd_probe(args) -> int:
     settings = load_settings()
+    key = settings.api_key()
+    env_file = "yes" if (ROOT / ".env").exists() else "no"
+    print(f"env  .env={env_file}  {settings.llm.api_key_env}="
+          f"{'set' if key else 'MISSING (System-2 escalation disabled)'}")
     health = await _health(settings)
     mc = health.get("minecraft", {})
     print(f"health ok  transport={health.get('transport')}  bot={mc.get('username')} "
@@ -78,7 +81,7 @@ async def cmd_run(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv(ROOT / ".env")
+    load_env()
     parser = argparse.ArgumentParser("mlaya")
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("probe", help="health check + tools/list")

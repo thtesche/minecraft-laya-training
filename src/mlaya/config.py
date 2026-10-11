@@ -8,6 +8,22 @@ from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / "config" / "settings.toml"
+ENV_PATH = ROOT / ".env"
+
+
+def load_env(path: Path | None = None, override: bool = False) -> bool:
+    """Load ROOT/.env into os.environ. Returns True if a file was loaded.
+
+    Real environment variables win (override=False); the .env is a convenience
+    for local runs. Safe to call repeatedly.
+    """
+    from dotenv import load_dotenv
+
+    p = path or ENV_PATH
+    if not p.exists():
+        return False
+    load_dotenv(p, override=override)
+    return True
 
 
 class LLMConfig(BaseModel):
@@ -67,6 +83,7 @@ class Settings(BaseModel):
 
 
 def load_settings(path: Path | None = None) -> Settings:
+    load_env()
     path = path or CONFIG_PATH
     data: dict = {}
     if path.exists():

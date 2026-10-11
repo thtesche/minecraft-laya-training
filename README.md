@@ -21,6 +21,9 @@ uv pip install --python .venv/bin/python -e .
 cp .env.example .env        # OPENROUTER_API_KEY eintragen (nur für System-2-Eskalation)
 ```
 
+`.env` wird bei jedem CLI-Lauf automatisch geladen (echte Umgebungsvariablen haben Vorrang)
+und ist gitignoriert. Der Status lässt sich mit `probe` prüfen.
+
 Voraussetzung: Der mine-ai MCP-Server läuft unter `http://localhost:25575/mcp`.
 
 ## Nutzung
