@@ -11,11 +11,13 @@ Laya erzeugt keinen Text und keine Tool-Argumente. Deshalb filtert der Code die 
 über ein binäres Gefahr-Gate plus die Wahl unter diesen Optionen; ein separater Python-**Executor**
 ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
-Aktueller Stand (**M2/M2b**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
+Aktueller Stand (**M2/M2b/M2c**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
 bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen). `view_blocks` liefert die Ressourcen in der Nähe
 (Holz/Stein/Eisen/Kohle mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
 Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
-Respawn-Punkt) und liest die anstehenden **Notifications** mit.
+Respawn-Punkt), liest die anstehenden **Notifications** mit und setzt beim Start die
+**Server-Survival-Policy** (Scaffold-Blöcke, vorsichtiges Kampf-Fenster, `food.raw.allow: always`);
+gegessen wird über den Server-Reflex, Essen wird über `hunt_food`/`cook_food` beschafft.
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
@@ -37,6 +39,8 @@ Voraussetzung: Der mine-ai MCP-Server läuft unter `http://localhost:25575/mcp`.
 ```bash
 .venv/bin/python -m mlaya.cli probe      # health + tools/list
 .venv/bin/python -m mlaya.cli decide     # Zustand lesen + einmal entscheiden (dry run)
+.venv/bin/python -m mlaya.cli policy     # Server-Survival-Policy anzeigen
+.venv/bin/python -m mlaya.cli policy --apply  # funktionierende Policy setzen
 .venv/bin/python -m mlaya.cli run -n 10  # Entscheidungs-Loop (führt echte Aktionen aus)
 ```
 

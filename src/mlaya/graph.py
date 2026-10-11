@@ -7,6 +7,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from . import perception
+from . import survival
 from . import verify as vmod
 from .actions import candidates, resolve
 from .brain import Brain, escalate_to_system2
@@ -36,6 +37,8 @@ class Agent:
         self.brain = Brain(settings.laya)
         self.log = MemoryLog(settings.log_path())
         self.history: list[dict] = []
+        # The server restores default policy on death; re-apply once per death.
+        self._policy_for_death_done = False
         self.graph = self._build()
 
     async def _perceive(self, state: AgentState) -> dict:
@@ -99,6 +102,7 @@ class Agent:
         action = state["action"]
         res = state["result"]
         after = await perception.build(self.mcp)
+        await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
         progressed = vmod.progressed(action.label, delta)
         record = {
@@ -121,6 +125,17 @@ class Agent:
         iteration = state.get("iteration", 0) + 1
         return {"before": after, "iteration": iteration,
                 "done": iteration >= self.settings.loop.max_iterations}
+
+    async def _reapply_after_death(self, gs) -> None:
+        """The server restores default policy on death; re-apply once per death."""
+        age = getattr(gs, "last_death_age_s", None)
+        if age is None or age > 120:
+            self._policy_for_death_done = False
+            return
+        if age < 90 and not self._policy_for_death_done:
+            self._policy_for_death_done = True
+            summary = await survival.apply_policy(self.mcp, "re-apply after death")
+            self.log.append({"stage": "policy", "reason": "death", "summary": summary})
 
     def _after_guard(self, state: AgentState) -> str:
         return "execute" if state.get("action") is not None else "defer"

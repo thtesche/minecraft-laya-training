@@ -21,6 +21,8 @@ CRITERIA: dict[str, str] = {
     "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
+    "hunt_food": "hunt a nearby passive animal for raw meat the hunger reflex will eat",
+    "cook_food": "cook carried raw meat in the furnace so it feeds more hunger",
     "explore": "walk to new terrain to find missing resources; the last fallback",
 }
 
@@ -36,6 +38,16 @@ EDIBLE = {
 TIER = {"none": 0, "wooden": 1, "golden": 1, "stone": 2, "iron": 3, "diamond": 4, "netherite": 5}
 STONE_PICK_TIER = 2
 IRON_PICK_TIER = 3
+
+# Passive food animals and the raw drop `collect_mob_drop` should ask for.
+FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
+             "sheep": "mutton", "rabbit": "rabbit"}
+# Raw -> cooked; cooking needs a carried furnace and fuel.
+COOKED = {"beef": "cooked_beef", "porkchop": "cooked_porkchop",
+          "chicken": "cooked_chicken", "mutton": "cooked_mutton",
+          "rabbit": "cooked_rabbit", "cod": "cooked_cod", "salmon": "cooked_salmon"}
+# Hunt for food once hunger drops below this and nothing edible is carried.
+FOOD_LOW = 16
 
 
 @dataclass
@@ -77,6 +89,20 @@ def _has(inv: dict[str, int], name: str) -> bool:
 
 def _can_sticks(inv: dict[str, int], logs: int, planks: int) -> bool:
     return inv.get("stick", 0) >= 2 or planks >= 2 or logs >= 1
+
+
+def _nearest_food_mob(gs: GameState) -> str | None:
+    best: str | None = None
+    best_d: float | None = None
+    for mob in FOOD_MOBS:
+        d = gs.mob_nearest(mob)
+        if d is not None and (best_d is None or d < best_d):
+            best, best_d = mob, d
+    return best
+
+
+def _first_cookable(inv: dict[str, int]) -> str | None:
+    return next((n for n in inv if n in COOKED and inv[n] > 0), None)
 
 
 def _wool(inv: dict[str, int]) -> int:
@@ -122,6 +148,11 @@ def candidates(gs: GameState) -> list[str]:
 
     if gs.food is not None and gs.food < 14 and _first_edible(inv):
         out.append("eat_food")
+    elif (gs.food is not None and gs.food < FOOD_LOW and not _first_edible(inv)
+          and _nearest_food_mob(gs) is not None):
+        out.append("hunt_food")
+    if _has(inv, "furnace") and inv.get("coal", 0) >= 1 and _first_cookable(inv):
+        out.append("cook_food")
 
     wool = _wool(inv)
     string = inv.get("string", 0)
@@ -257,6 +288,22 @@ def resolve(label: str | None, gs: GameState) -> Action | None:
                       {"mob_name": "spider", "drop_name": "string", "count": 12,
                        "allow_without_shield": True},
                       "collect string from a lone spider to craft wool")
+    if label == "hunt_food":
+        mob = _nearest_food_mob(gs)
+        if not mob:
+            return None
+        return Action(label, "collect_mob_drop",
+                      {"mob_name": mob, "drop_name": FOOD_MOBS[mob], "count": 6,
+                       "allow_without_shield": True},
+                      f"hunt a {mob} for food")
+    if label == "cook_food":
+        raw = _first_cookable(inv)
+        if not raw or not _has(inv, "furnace") or inv.get("coal", 0) < 1:
+            return None
+        return Action(label, "smelt_item",
+                      {"item_name": raw, "count": min(inv.get(raw, 0), 3),
+                       "fuel_item_name": "coal", "temporary_workstation": True},
+                      f"cook {raw} into {COOKED[raw]}")
     if label == "eat_food":
         food = _first_edible(inv)
         if not food:

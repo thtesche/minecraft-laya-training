@@ -7,6 +7,7 @@ import json
 import httpx
 
 from . import perception
+from . import survival
 from .actions import candidates, resolve
 from .config import ROOT, load_env, load_settings
 from .graph import Agent
@@ -70,13 +71,34 @@ async def cmd_run(args) -> int:
     settings.loop.max_iterations = iterations
     await _health(settings)
     async with MCPExecutor(settings.mcp) as executor:
+        policy = await survival.apply_policy(executor, "apply policy at run start")
         agent = Agent(settings, executor)
         final = await agent.run()
     print(json.dumps({
         "iterations": final.get("iteration"),
         "note": final.get("note"),
+        "policy": policy,
         "log": str(settings.log_path()),
     }, default=str))
+    return 0
+
+
+async def cmd_policy(args) -> int:
+    """Show the server survival policy, optionally applying the working set."""
+    settings = load_settings()
+    await _health(settings)
+    async with MCPExecutor(settings.mcp) as executor:
+        applied = None
+        if getattr(args, "apply", False):
+            applied = await survival.apply_policy(executor, "manual survival policy apply")
+        policy = await survival.read_policy(executor)
+    print(json.dumps({
+        "applied": applied,
+        "revision": policy.get("revision"),
+        "lastChange": policy.get("lastChange"),
+        "effective": policy.get("effective"),
+        "overrides": policy.get("overrides"),
+    }, indent=2, ensure_ascii=False, default=str))
     return 0
 
 
@@ -88,12 +110,16 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("decide", help="perceive + decide once (dry run, no action)")
     run = sub.add_parser("run", help="run the decision loop")
     run.add_argument("-n", "--iterations", type=int, default=0)
+    pol = sub.add_parser("policy", help="show/apply the server survival policy")
+    pol.add_argument("--apply", action="store_true", help="apply the working policy set")
     args = parser.parse_args(argv)
     cmd = args.cmd or "run"
     if cmd == "probe":
         return asyncio.run(cmd_probe(args))
     if cmd == "decide":
         return asyncio.run(cmd_decide(args))
+    if cmd == "policy":
+        return asyncio.run(cmd_policy(args))
     return asyncio.run(cmd_run(args))
 
 

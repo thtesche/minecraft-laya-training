@@ -71,6 +71,9 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     runs/decisions.jsonl (jede Entscheidung + Outcome)
 [7] System 2      (brain.escalate_to_system2)
     struktureller Trigger (Label nicht auflösbar) -> OpenRouter wählt eine gültige Alternative
+[8] Survival      (src/mlaya/survival.py)
+    setzt die Server-Survival-Policy (Scaffold-Blöcke, Combat-Floor, Roh-Essen) beim
+    Start und erneut nach jedem Tod; `read_policy` liest Revision/`effective`/`overrides`
 ```
 
 ## LangGraph
@@ -155,10 +158,33 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   Event-/Notification-Backlogs) statt 5; die neuesten `events`-Summaries **und** die
   `notifications.recentPreview` stehen im State (`narrative()`: „unread notifications (N): …").
 
+## M2c — erreicht: Survival-Policy & Essen
+
+**Kriterium:** Die Server-Survival-Policy explizit setzen (statt auf Defaults zu fahren) und eine
+**Essensbeschaffung** ergänzen, die zu „tatsächlich überleben" passt.
+
+- **Befund:** `eat_food` existierte, aber es gab **keine** Beschaffung — in einem frischen Lauf
+  konnte es praktisch nie feuern. Schlimmer: die Survival-Policy wurde **nie** gesetzt. Der Server
+  lief auf Default: `food.raw.allow: "emergency_only"`, `hunger_at_most: 6`, `health_below: 10` —
+  der eigene Hunger-Reflex aß roh erst bei Hunger ≤ 6 **und** Health < 10.
+- **`survival.py`** setzt den vollen funktionierenden Block aus dem Skill
+  („Survival policy that works"): `navigation.scaffold_blocks` inkl. Deepslate/Tuff,
+  `hostile_avoidance_multiplier: 3`, das vorsichtige Combat-Fenster (`engage_min_health 17`,
+  `critical_health 14`, `enderman_wait_ticks 40`, Timeouts) und **`food.raw.allow: "always"`** mit
+  `hunger_at_most: 20`. `expected_revision` wird vorher aus `view_status` gelesen.
+- Verdrahtung: `_policy`/`apply_policy` beim **Start** von `run`; der Graph liest `last_death_age_s`
+  und **wiederholt** die Policy nach jedem Tod (der Server stellt bei Tod/Dimensionswechsel auf
+  Defaults zurück). `mlaya.cli policy [--apply]` zeigt/setzt sie.
+- **Essen** in `actions.py`: `hunt_food` (nächstes passives Tier aus
+  `FOOD_MOBS = cow/pig/chicken/sheep/rabbit` via `collect_mob_drop`) und `cook_food`
+  (`smelt_item` roh → gebraten im getragenen Ofen mit Kohle). `hunt_food` wird nur angeboten, wenn
+  `food < 16` **und** nichts Essbares getragen wird; die Aktion ist mit `allow_without_shield: true`
+  markiert. Der Server-Reflex übernimmt das eigentliche Essen (roh erlaubt).
+
 ## Nächste Meilensteine
 
-- **M2c**: Auf Notification-/Event-**Typen reagieren** (z. B. „durability low" →
-  Ersatzwerkzeug craften, „target died" → Ressourcen ernten) statt sie nur in den State zu heben.
+- **M2d**: Auf Notification-/Event-**Typen reagieren** (z. B. „durability low" → Ersatzwerkzeug
+  craften, „target died" → Ressourcen ernten) statt sie nur in den State zu heben.
 - **M3**: Logs -> Datensatz -> RLCD-Kopf-Fine-Tuning; Checkpoint via `LAYA_EXTRA_MODELS` registrieren.
 - **M4**: Parameter-Layer ausbauen (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`).
 - **Offen aus M2**: Nether-Gate (Obsidian/Feuerstein) und Diamant-Kette.
