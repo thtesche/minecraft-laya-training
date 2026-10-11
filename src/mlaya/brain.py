@@ -126,11 +126,17 @@ def escalate_to_system2(
         )
         r = client.chat.completions.create(
             model=cfg.model,
-            max_tokens=min(cfg.max_tokens, 1024),
+            # Generous budget: nemotron is a reasoning model, so reasoning tokens
+            # are spent before the JSON is emitted (a small cap yields empty content).
+            max_tokens=min(cfg.max_tokens, 4096),
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
             response_format={"type": "json_object"},
         )
-        return json.loads(r.choices[0].message.content or "{}")
+        choice = r.choices[0]
+        content = choice.message.content
+        if not content:
+            return {"error": "empty model response", "finish_reason": choice.finish_reason}
+        return json.loads(content)
     except Exception as e:  # escalation must never crash the loop
         return {"error": str(e)}
