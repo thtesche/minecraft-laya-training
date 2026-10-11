@@ -193,6 +193,15 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   `hunt_food` wird angeboten, solange der Vorrat < 16 ist **und** nicht gerade gegessen wird
   („feed to 20 first, then bank"); die Aktion ist mit `allow_without_shield: true` markiert.
   Gegessen wird über den Server-Reflex (roh erlaubt), `eat_food` bleibt der manuelle Nachschlag.
+- **Vorbehalt (Gefahr, live):** `hunt_food` wählt das **nächstgelegene** Tier unabhängig von der
+  Distanz, und `collect_mob_drop` roamt dorthin. Ein nächtlicher `run` wanderte so **159–190 m** und
+  wurde dabei **zweimal getötet** (u. a. „slain by Enderman", 103 s alt), was **das komplette
+  Inventar** kostete — inklusive der gerade gecrafteten Eisenhacke. Auch `hunt_string` scheiterte
+  dreimal, einmal tödlich. Der `in_danger`-Gate sagte in diesen Ticks **`no`** (Health 10.5, Skelett
+  9.6 m) — das Zero-Shot-Gate ist auf Gefahr schlecht kalibriert (bekannter Befund, s. o.). Die
+  Server-Policy kämpft erst ab Health ≥ 17 (`respond_to_threats`), greift unterhalb also nicht ein.
+  Konsequenz für später: `hunt_food` an eine Distanz-/Gefahrenschranke binden (z. B. nur tagsüber oder
+  ≤ ~24 m), statt blind zu roamen.
 
 ## M2d — erreicht: auf Event-/Notification-Typen reagieren
 
@@ -221,10 +230,16 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   `drops`; `narrative()` hängt „low durability: …", „… mob(s) the reflex killed dropped items
   nearby" und „gear … can still be recovered" an. `verify.progressed` prüft `replace_tool` (neue
   `*_pickaxe`) und `collect_drops`/`recover_drops` (Netto-Inventar).
-- **Validierung:** Unit-Ladder bestätigt alle drei Reaktionen inkl. Priorität und Fallback;
-  live parst Perception `tool_meta` (93/131) und `death_pos` (−79/47/−44, aber 7417 s alt → keine
-  Recovery), `pick_up_items {radius: 16}` ist schema-gültig und ohne Drops ein sauberer No-op
-  (`[NO_MATCHING_ITEMS]`), `run -n 1` lief sauber.
+- **Validierung:** Unit-Ladder bestätigt alle drei Reaktionen inkl. Priorität und Fallback (22 Tests
+  in `tests/test_actions.py` pinnen zusätzlich die Bett- und Essenskette deterministisch). **Live:**
+  `replace_tool` **end-to-end** — die Steinspitzhacke kontrolliert auf 15/131 (`≤ LOW_DURABILITY`)
+  abgenutzt → `candidates == ["replace_tool"]` → Laya wählt es → `_guard` bindet
+  `craft_item {items:[{item_name:"stone_pickaxe"}], temporary_workstation:true}` → `succeeded`,
+  danach 131/131. Perception parst `tool_meta` (15/131) und `death_pos` weiterhin korrekt,
+  `pick_up_items {radius: 16}` ist schema-gültig und ohne Drops ein sauberer No-op
+  (`[NO_MATCHING_ITEMS]`). **`collect_drops`/`recover_drops`** sind noch **nicht** live erreicht:
+  es gab kein frisches „target died"-Event (der Reflex kam nie zum Kill) und keinen Tod in
+  90 s/120 m (der letzte lag bei 103 s und ~120 m außerhalb des Fensters).
 
 ## M3 — erreicht: Logs → Datensatz → RLCD-Kopf-Fine-Tuning
 
@@ -322,7 +337,10 @@ nur eine Ebene tiefer.
 
 - **M3+ (offen):** Datensatz aus deutlich mehr Läufen bauen und gegen den Zero-Shot-Stand
   evaluieren (Accuracy/Loss auf einem größeren Held-out-Split), um einen echten Gewinn zu zeigen.
-- **Offen aus M2/M2b/M2c/M2d (Live):** Ende-zu-Ende-Validierung von `sleep`/`craft_bed` (kein Schaf,
-  keine Wolle/String in Reichweite), des Essensvorrats (`hunt_food` ohne passives Tier/Zombie in
-  Reichweite) und von `replace_tool` bei tatsächlich abgenutztem Werkzeug.
+- **Offen aus M2/M2b/M2c/M2d (Live):** `replace_tool` und `hunt_food` sind **live validiert** (s. M2d/
+  M2c). Weiterhin offen: **`sleep`/`craft_bed`** (diese Welt hat kein Schaf und keine Wolle/String in
+  Reichweite; `hunt_string` scheitert gefährlich) — braucht ein Schaf oder einen sicheren Spider;
+  **`collect_drops`** braucht ein frisches „target died"-Event aus einem **Server-Reflex-Kill** (nicht
+  aus der expliziten Jagd) und **`recover_drops`** einen **Tod ≤ 90 s und ≤ 120 m**, d. h. einen
+  absichtlich provozierten Tod in Place. Beide kosten bewusst Nachtkampf bzw. einen Tod.
 - **Offen aus M2**: Nether-Gate (Obsidian/Feuerstein) und Diamant-Kette.

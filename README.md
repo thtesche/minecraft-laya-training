@@ -29,6 +29,13 @@ registriert — ohne Codeänderung. **M4** ergänzt einen **Parameter-Layer**: w
 mit `above: air` — und bindet sie an ein `navigate`-Ziel; bei vielen Kandidaten engt
 `predict_shortlist` sie vorher ein.
 
+Die M2c/M2d-Pfade wurden live getestet: `replace_tool` (abgenutzte Hacke → Ersatz gecraftet) und
+`hunt_food` (Tier gejagt, Vorrat aufgefüllt) laufen end-to-end. **Vorbehalt:** `hunt_food` roamt
+ungeschützt zur nächsten Kreatur; ein Nachtlauf wanderte 159–190 m und wurde zweimal getötet (Totalverlust
+des Inventars). `collect_drops`/`recover_drops` sind noch nicht live erreicht (brauchen einen
+Reflex-Kill bzw. einen frischen Tod), `craft_bed`/`sleep` sind in dieser Welt mangels Wolle blockiert.
+Details + 22 Determinismus-Tests: [`docs/architecture.md`](docs/architecture.md#m2d--erreicht-auf-event-notification-typen-reagieren).
+
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
 ## Setup
