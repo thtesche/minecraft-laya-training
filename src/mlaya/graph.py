@@ -18,6 +18,23 @@ from .config import Settings
 FALLBACK_LABEL = "get_wood"
 
 
+def _chosen(answers: dict) -> dict:
+    """Compact record of Laya's own answers for the log: {qid: choice or score}.
+
+    Kept small on purpose (probabilities are dropped): the M3 dataset needs the `in_danger`
+    gate label and the `intent` pick, both of which are here.
+    """
+    out: dict = {}
+    for qid, ans in (answers or {}).items():
+        if not isinstance(ans, dict):
+            continue
+        if "choice" in ans:
+            out[qid] = ans["choice"]
+        elif "score" in ans:
+            out[qid] = ans["score"]
+    return out
+
+
 class AgentState(TypedDict, total=False):
     iteration: int
     before: Any
@@ -133,6 +150,7 @@ class Agent:
             "text": (getattr(res, "text", "") or "")[:400],
             "delta": delta,
             "progressed": progressed,
+            "answers": _chosen(getattr(state["decision"], "answers", {})),
         }
         self.log.append(record)
         self.history.append(record)

@@ -226,10 +226,54 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   Recovery), `pick_up_items {radius: 16}` ist schema-gültig und ohne Drops ein sauberer No-op
   (`[NO_MATCHING_ITEMS]`), `run -n 1` lief sauber.
 
+## M3 — erreicht: Logs → Datensatz → RLCD-Kopf-Fine-Tuning
+
+**Kriterium:** Aus dem Run-Log einen Trainingsdatensatz bauen, Laya auf den eigenen Entscheidungen
+nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` registrieren.
+
+- **Datensatz** (`src/mlaya/dataset.py`, CLI `mlaya dataset`): `runs/decisions.jsonl` →
+  Zeilen `{state, questions, expected}`. `state` ist die `narrative()`-Zeichenkette, die Laya im
+  Betrieb sah; `questions` nutzt **exakt dieselben** Builder wie die Inferenz
+  (`brain.intent_question`, `brain.DANGER_Q`), damit der Kopf auf demselben Rendering trainiert
+  wird, das er später sieht.
+- **Reward = Verifier.** Ein Tick, dessen Aktion `progressed` ist, ist ein Positivbeispiel für
+  genau diese Aktion in diesem Zustand; ein Tick ohne Fortschritt hat keinen bekannten guten
+  Alternativkandidaten und wird verworfen (`--include-failed` behält ihn als reine Imitation).
+  Nur Ticks mit **mehr als einem** Kandidaten tragen eine `intent`-Wahl — ein Ein-Kandidaten-Tick
+  ist deterministisch (der Filter hat ihn schon gewählt) und lehrt nichts. Dedup über
+  `(state, candidates)`.
+- **Warum Danger-Zeilen:** Laya wählt den Kopf über den **Fragetyp** (das Checkpoint trägt ein
+  `type_emb.`), also teilen sich `in_danger` und `intent` **einen** `choice`-Kopf. Ein reiner
+  Intent-Datensatz würde das Gate stillschweigend verlernen. Daher eine `in_danger`-Zeile pro
+  Zustand: eine geloggte Laya-Antwort hat Vorrang, sonst greift eine dokumentierte Heuristik
+  („ein Mob greift an oder Gesundheit sehr niedrig", `DANGER_CLOSE_M = 4`, `DANGER_LOW_HEALTH = 8`).
+  `--no-danger` lässt die Zeilen weg. `graph._verify` loggt dazu jetzt kompakt `answers`
+  (`{qid: choice|score}`), damit künftige Läufe das echte Gate-Label liefern.
+- **Split:** stabiler Hash über den State (`--eval-frac`, `--seed`), reproduzierbar; < 4 Zeilen
+  ⇒ kein Eval-Slice.
+- **Trainieren** (`mlaya train`, Wrap um `laya.train.finetune`): `--loss rlcd` (GRPO-artig + Soft-CE)
+  oder `soft-ce`, `--train-encoder` (Default: nur Köpfe, `--freeze-encoder`), Option-Order-Augmentation
+  für `choice` (`shuffle_options=("choice",)` gegen Positions-Bias), `--dry-run` prüft Datensatz
+  ohne Gewichte.
+- **Registrieren:** `LAYA_EXTRA_MODELS` ist ein JSON-Objekt `{name: quelle}`; ein Name, der ein
+  eingebautes Checkpoint trifft, **zeigt es um**. `config.load_settings` parst die Variable nach
+  `laya.extra_models` und `Brain` reicht sie als `models=` an den `Router` weiter. Damit lädt der
+  Loop das Fine-Tune unter `english` **ohne Codeänderung**.
+- **Validierung:** 22 Ticks → 12 Datensatzzeilen (13 Multi-Kandidat, Dedup); `--dry-run` 9 Zeilen
+  → 18 Items; echtes Kopf-Fine-Tuning (4 Epochen, `rlcd`, Encoder eingefroren) liefert ein
+  842 MB Checkpoint. Held-out (6 Items): `choice`-Accuracy 0.833 → 0.833, Loss −0.149, Brier
+  −0.065, ECE +0.047 (Temperatur nicht gefittet, nur 1 Kalibrierungsitem). Der `Router` lädt den
+  Checkpoint unter `english` und entscheidet korrekt (Gate `no` → nicht deferiert, Intent
+  `mine_stone`). 16 Unit-Tests (`tests/test_dataset.py`, stdlib `unittest`).
+- **Vorbehalt:** 22 Ticks sind **statistisch bedeutungslos** — der Gewinn ist der **Pipeline-Beweis**,
+  nicht ein messbarer Modellgewinn. Neu bauen (`mlaya dataset`) und nachtrainieren, sobald der Log
+  wächst.
+
 ## Nächste Meilensteine
 
-- **M3**: Logs -> Datensatz -> RLCD-Kopf-Fine-Tuning; Checkpoint via `LAYA_EXTRA_MODELS` registrieren.
 - **M4**: Parameter-Layer ausbauen (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`).
+- **M3+ (offen):** Datensatz aus deutlich mehr Läufen bauen und gegen den Zero-Shot-Stand
+  evaluieren (Accuracy/Loss auf einem größeren Held-out-Split), um einen echten Gewinn zu zeigen.
 - **Offen aus M2/M2b/M2c/M2d (Live):** Ende-zu-Ende-Validierung von `sleep`/`craft_bed` (kein Schaf,
   keine Wolle/String in Reichweite), des Essensvorrats (`hunt_food` ohne passives Tier/Zombie in
   Reichweite) und von `replace_tool` bei tatsächlich abgenutztem Werkzeug.

@@ -11,7 +11,7 @@ Laya erzeugt keinen Text und keine Tool-Argumente. Deshalb filtert der Code die 
 über ein binäres Gefahr-Gate plus die Wahl unter diesen Optionen; ein separater Python-**Executor**
 ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
-Aktueller Stand (**M2/M2b/M2c/M2d**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
+Aktueller Stand (**M2/M2b/M2c/M2d/M3**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
 bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen). `view_blocks` liefert die Ressourcen in der Nähe
 (Holz/Stein/Eisen/Kohle mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
 Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
@@ -22,7 +22,9 @@ gegessen wird über den Server-Reflex, Essen wird über `hunt_food`/`cook_food` 
 Progression, `hunt` für eine feindliche Jagd). Der Agent **reagiert auf Event-Typen**: eine fast
 abgenutzte Spitzhacke wird ersetzt (`replace_tool`), Drops von einem vom Reflex getöteten Mob werden
 eingesammelt (`collect_drops`), und frisch verlorene Ausrüstung wird an der Todesstelle geborgen
-(`recover_drops`).
+(`recover_drops`). Seit **M3** lässt sich aus dem Run-Log ein Laya-Trainingsdatensatz bauen und der
+`choice`-Kopf nachtrainieren (RLCD); der Checkpoint wird über `LAYA_EXTRA_MODELS` unter `english`
+registriert — ohne Codeänderung.
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
@@ -52,3 +54,25 @@ Voraussetzung: Der mine-ai MCP-Server läuft unter `http://localhost:25575/mcp`.
 
 Konfiguration: [`config/settings.toml`](config/settings.toml).
 Jede Entscheidung wird nach `runs/decisions.jsonl` geloggt.
+
+## M3: Logs → Datensatz → Fine-Tuning
+
+```bash
+# 1) Aus dem Run-Log einen Laya-Trainingsdatensatz bauen (train + held-out Eval)
+.venv/bin/python -m mlaya.cli dataset            # -> data/train.jsonl + data/eval.jsonl
+.venv/bin/python -m mlaya.cli dataset --include-failed   # auch Ticks ohne Fortschritt behalten
+
+# 2) Datensatz-Format prüfen (lädt keine Gewichte), dann Kopf nachtrainieren (RLCD)
+.venv/bin/python -m mlaya.cli train --dry-run
+.venv/bin/python -m mlaya.cli train              # -> runs/checkpoints/minecraft-<zeit>
+
+# 3) Checkpoint unter `english` registrieren und den Loop damit fahren
+export LAYA_EXTRA_MODELS='{"english": "'"$PWD"'/runs/checkpoints/minecraft-<zeit>"}'
+.venv/bin/python -m mlaya.cli run -n 10
+```
+
+`LAYA_EXTRA_MODELS` ist ein JSON-Objekt `{name: quelle}`; ein Name, der ein eingebautes Checkpoint
+trifft (`english`), **zeigt es um** — genau so wird das Fine-Tune ohne Codeänderung serviert.
+Der Reward ist der Verifier: nur Ticks, deren Aktion nachweislich Fortschritt brachte, werden zu
+Positivbeispielen (`--include-failed` für reine Imitation). Tests:
+`PYTHONPATH=src .venv/bin/python -m unittest discover -s tests`.

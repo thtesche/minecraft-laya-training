@@ -11,6 +11,8 @@ from .config import LLMConfig, LayaConfig
 #   in_danger  - binary gate; a reliable zero-shot signal. Yes -> defer to the survival policy.
 #   intent     - choose among the actions whose preconditions already hold (built at runtime).
 # A `danger` score is added purely for logging / later head training.
+DANGER_QID = "in_danger"
+INTENT_QID = "intent"
 DANGER_Q = {
     "type": "choice",
     "instructions": "Is the bot in immediate danger right now?",
@@ -24,6 +26,20 @@ DANGER_SCORE = {
     "instructions": "How dangerous is the situation?",
     "criteria": ["none", "low", "high", "critical"],
 }
+INTENT_INSTRUCTIONS = "The bot is safe enough to work. What should it do next?"
+
+
+def intent_question(candidates: list[str]) -> dict:
+    """The `intent` choice question for a set of eligible labels.
+
+    Shared by inference (`Brain._questions`) and the M3 dataset builder, so a fine-tuned
+    head is trained on exactly the rendering it meets at inference.
+    """
+    return {
+        "type": "choice",
+        "instructions": INTENT_INSTRUCTIONS,
+        "criteria": {label: CRITERIA[label] for label in candidates},
+    }
 
 
 @dataclass
@@ -45,17 +61,16 @@ class Brain:
         kwargs: dict[str, Any] = {"preload": cfg.preload, "default": cfg.model or "multilingual"}
         if cfg.device:
             kwargs["device"] = cfg.device
+        if cfg.extra_models:
+            # Register (or re-point) checkpoints, e.g. a fine-tune served under `english`.
+            kwargs["models"] = dict(cfg.extra_models)
         self._cfg = cfg
         self.router = Router(**kwargs)
 
     def _questions(self, candidates: list[str]) -> dict[str, dict]:
-        questions: dict[str, dict] = {"in_danger": DANGER_Q, "danger": DANGER_SCORE}
+        questions: dict[str, dict] = {DANGER_QID: DANGER_Q, "danger": DANGER_SCORE}
         if len(candidates) > 1:
-            questions["intent"] = {
-                "type": "choice",
-                "instructions": "The bot is safe enough to work. What should it do next?",
-                "criteria": {label: CRITERIA[label] for label in candidates},
-            }
+            questions[INTENT_QID] = intent_question(candidates)
         return questions
 
     def decide(self, state: str, candidates: list[str]) -> Decision:
@@ -76,7 +91,7 @@ class Brain:
             if isinstance(ans, dict) and ans.get("probabilities")
         }
 
-        in_danger = answers.get("in_danger", {}).get("choice") == "yes"
+        in_danger = answers.get(DANGER_QID, {}).get("choice") == "yes"
         if in_danger:
             return Decision(None, deferred=True, candidates=candidates,
                             answers=answers, probabilities=probabilities,
@@ -87,7 +102,7 @@ class Brain:
         if len(candidates) == 1:
             return Decision(candidates[0], candidates=candidates,
                             answers=answers, probabilities=probabilities)
-        label = answers.get("intent", {}).get("choice")
+        label = answers.get(INTENT_QID, {}).get("choice")
         if label not in candidates:
             label = candidates[0]
         return Decision(label, candidates=candidates,

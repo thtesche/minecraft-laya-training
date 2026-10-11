@@ -88,6 +88,7 @@ temp/
 
 # --- Runtime state (mlaya) ---
 runs/
+data/
 *.jsonl
 MEMORY.md
 

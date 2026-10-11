@@ -1,0 +1,153 @@
+"""Build a Laya training set from the run log (M3).
+
+The run log (`runs/decisions.jsonl`) records, per executed tick, the compact state we
+handed Laya (`narrative`), the eligible labels (`candidates`), the label Laya chose
+(`label`), and whether that action made verifiable progress (`progressed`).
+
+The verifier is the reward signal. A tick whose action *progressed* is a positive example
+for that action in that state; a tick whose action did not progress carries no known-good
+alternative, so it is dropped by default (`--include-failed` keeps it as a plain imitation
+row). Training rows are emitted in Laya's own schema -- `{state, questions, expected}` --
+using the *same* question builders inference uses (`brain.intent_question`, `brain.DANGER_Q`)
+so the head is trained on exactly the rendering it meets at run time.
+
+Why danger rows: Laya's head is selected by question *type* (the checkpoint carries a
+`type_emb.`), so `in_danger` and `intent` share one `choice` head. An intent-only dataset
+would silently un-train the gate. We therefore add an `in_danger` row per state, labelled
+from the logged Laya answer when present, else from a documented state heuristic that
+mirrors the criteria text ("a mob is attacking now or health is very low").
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Iterable
+
+from .actions import CRITERIA
+from .brain import DANGER_Q, INTENT_QID, DANGER_QID, intent_question
+
+# Heuristic `in_danger` label, used only when a state carries no logged Laya answer.
+# Mirrors the criteria text: a hostile close enough to be hitting the bot, or health low
+# enough that the next hit is fatal.
+DANGER_CLOSE_M = 4.0
+DANGER_LOW_HEALTH = 8.0
+
+
+def _read_records(log_path: Path) -> list[dict]:
+    if not log_path.exists():
+        return []
+    out: list[dict] = []
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def _min_hostile_distance(state: dict) -> float | None:
+    dists: list[float] = []
+    for row in state.get("hostiles") or []:
+        if isinstance(row, (list, tuple)) and len(row) >= 3:
+            d = row[2]
+            if isinstance(d, (int, float)):
+                dists.append(float(d))
+    return min(dists) if dists else None
+
+
+def danger_label(state: dict, answers: dict | None) -> str | None:
+    """Label for the `in_danger` question: a logged Laya answer wins, else the heuristic."""
+    if isinstance(answers, dict):
+        ans = answers.get(DANGER_QID)
+        if isinstance(ans, dict) and ans.get("choice") in ("yes", "no"):
+            return ans["choice"]
+        if ans in ("yes", "no"):
+            return ans
+    health = state.get("health")
+    if isinstance(health, (int, float)) and health < DANGER_LOW_HEALTH:
+        return "yes"
+    d = _min_hostile_distance(state)
+    if d is not None and d <= DANGER_CLOSE_M:
+        return "yes"
+    return "no"
+
+
+def build_rows(
+    log_path: Path,
+    *,
+    include_failed: bool = False,
+    with_danger: bool = True,
+    limit: int | None = None,
+) -> list[dict]:
+    """Turn action records into `{state, questions, expected}` training rows.
+
+    Only ticks with more than one eligible label carry an `intent` choice; a single-candidate
+    tick is deterministic at run time (the filter already picked it), so it teaches nothing.
+    Ticks are de-duplicated on (state, candidates) so the same situation is not repeated.
+    """
+    rows: list[dict] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for rec in _read_records(log_path):
+        if rec.get("stage") != "action":
+            continue
+        narrative = rec.get("narrative")
+        candidates = tuple(c for c in (rec.get("candidates") or []) if c in CRITERIA)
+        label = rec.get("label")
+        if not isinstance(narrative, str) or not narrative:
+            continue
+        if len(candidates) < 2 or label not in candidates:
+            continue
+        if not rec.get("progressed") and not include_failed:
+            continue
+        key = (narrative, candidates)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        questions: dict[str, Any] = {INTENT_QID: intent_question(list(candidates))}
+        expected: dict[str, Any] = {INTENT_QID: label}
+        if with_danger:
+            state = rec.get("state") if isinstance(rec.get("state"), dict) else {}
+            dlabel = danger_label(state, rec.get("answers"))
+            if dlabel:
+                questions[DANGER_QID] = DANGER_Q
+                expected[DANGER_QID] = dlabel
+
+        rows.append({"state": narrative, "questions": questions, "expected": expected})
+        if limit and len(rows) >= limit:
+            break
+    return rows
+
+
+def _bucket(row: dict, seed: int) -> int:
+    h = hashlib.sha256(f"{seed}:{row['state']}".encode("utf-8")).hexdigest()
+    return int(h[:8], 16)
+
+
+def split(rows: list[dict], eval_frac: float = 0.25, seed: int = 1234) -> tuple[list[dict], list[dict]]:
+    """Split into (train, eval) by a stable hash of the state, so it is reproducible.
+
+    With very few rows the eval slice is skipped (< 4 rows needs no held-out copy; spending
+    a quarter of a 5-row set on one example helps nobody).
+    """
+    if eval_frac <= 0 or len(rows) < 4:
+        return list(rows), []
+    ordered = sorted(rows, key=lambda r: _bucket(r, seed))
+    n_eval = max(1, round(len(ordered) * eval_frac))
+    return ordered[n_eval:], ordered[:n_eval]
+
+
+def write_jsonl(path: Path, rows: Iterable[dict]) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    n = 0
+    with path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            n += 1
+    return n

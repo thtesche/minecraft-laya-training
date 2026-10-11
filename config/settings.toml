@@ -27,3 +27,13 @@ max_escalations = 3
 hitl = false
 log_path = "runs/decisions.jsonl"
 memory_path = "MEMORY.md"
+
+[train]
+base_model = "english"       # which Laya checkpoint the fine-tune starts from
+out_dir = "runs/checkpoints" # where `mlaya train` writes the checkpoint
+data_dir = "data"            # where `mlaya dataset` writes train/eval JSONL
+epochs = 4
+micro_batch = 8
+grad_accum = 1               # small log: one accumulation step
+loss = "rlcd"                # rlcd (GRPO-style + soft-CE) or soft-ce
+freeze_encoder = true        # RLCD head fine-tuning only
