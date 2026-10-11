@@ -23,6 +23,9 @@ CRITERIA: dict[str, str] = {
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
     "hunt_food": "hunt a nearby animal, or a lone zombie, to bank at least 16 edible items",
     "cook_food": "cook carried raw meat in the furnace so it feeds more hunger",
+    "replace_tool": "craft a fresh pickaxe to replace the one that is nearly worn out",
+    "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
+    "recover_drops": "walk back to the last death site and recover the gear dropped there",
     "explore": "walk to new terrain to find missing resources; the last fallback",
 }
 
@@ -52,6 +55,12 @@ FOOD_RESERVE = 16
 # Quarries that fight back, so `collect_mob_drop` must run in the hunt stage.
 HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
                  "witch", "blaze", "piglin", "zombified_piglin"}
+
+# M2d reactions. An active tool at or below this fraction of its maximum is replaced
+# before it breaks; a death this recent, this close, is worth walking back to.
+LOW_DURABILITY = 0.15
+RECOVER_WINDOW_S = 90.0
+RECOVER_RANGE = 120.0
 
 
 @dataclass
@@ -167,6 +176,54 @@ def _food_target(gs: GameState) -> tuple[str, str] | None:
     return None
 
 
+def _tool_durability(gs: GameState, cls: str) -> tuple[float, str] | None:
+    """(fraction remaining, item name) for the active tool of a class, if known."""
+    meta = gs.tool_meta.get(cls) or {}
+    left, mx, item = meta.get("left"), meta.get("max"), meta.get("item")
+    if item and isinstance(left, (int, float)) and isinstance(mx, (int, float)) and mx > 0:
+        return (left / mx, str(item))
+    return None
+
+
+def _worn_pickaxe(gs: GameState) -> bool:
+    d = _tool_durability(gs, "pickaxe")
+    return d is not None and d[0] <= LOW_DURABILITY
+
+
+def _replacement_pickaxe(gs: GameState, inv: dict[str, int]) -> str | None:
+    """The best pickaxe still craftable when the active one is nearly worn out.
+
+    Never a downgrade below what the bot already wields: iron if iron is banked,
+    otherwise stone (which still mines iron ore). A wooden one is pointless here
+    because `craft_pickaxe` only fires when the bot has no pickaxe at all.
+    """
+    tier = _pick_tier(inv, gs.tools)
+    if tier < STONE_PICK_TIER:
+        return None
+    sticks = _can_sticks(inv, _logs(inv), _planks(inv))
+    table = _has(inv, "crafting_table")
+    if tier >= IRON_PICK_TIER and table and inv.get("iron_ingot", 0) >= 3 and sticks:
+        return "iron_pickaxe"
+    if table and inv.get("cobblestone", 0) >= 3 and sticks:
+        return "stone_pickaxe"
+    return None
+
+
+def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
+
+
+def _can_recover(gs: GameState) -> bool:
+    """A fresh death close by: the dropped gear is still loaded and worth a walk back."""
+    if gs.death_pos is None or gs.last_death_age_s is None or gs.pos is None:
+        return False
+    if gs.last_death_age_s > RECOVER_WINDOW_S:
+        return False
+    if gs.death_dim and gs.dimension and gs.death_dim != gs.dimension:
+        return False
+    return _dist(gs.pos, gs.death_pos) <= RECOVER_RANGE
+
+
 def candidates(gs: GameState) -> list[str]:
     """The actions whose preconditions currently hold, in tech-tree priority order.
 
@@ -185,6 +242,21 @@ def candidates(gs: GameState) -> list[str]:
     iron = inv.get("iron_ingot", 0)
 
     eating = gs.food is not None and gs.food < 14 and bool(_first_edible(inv))
+
+    # --- event-driven reactions (M2d) ---
+    # A tool about to break, a mob the reflex just killed (its drops despawn in minutes),
+    # or gear lying at a fresh death site are all time-sensitive, so the top reaction
+    # owns the tick. Eating still rides along: survival outranks everything.
+    reactions: list[str] = []
+    if _can_recover(gs):
+        reactions.append("recover_drops")
+    if _worn_pickaxe(gs) and _replacement_pickaxe(gs, inv):
+        reactions.append("replace_tool")
+    if gs.drops > 0:
+        reactions.append("collect_drops")
+    if reactions:
+        return (["eat_food"] if eating else []) + reactions[:1]
+
     if eating:
         out.append("eat_food")
     if _has(inv, "furnace") and inv.get("coal", 0) >= 1 and _first_cookable(inv):
@@ -205,7 +277,8 @@ def candidates(gs: GameState) -> list[str]:
 
     # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
     need_wood = (tier == 0 or not table
-                 or (not bed and (wool >= 3 or string >= 12)))
+                 or (not bed and (wool >= 3 or string >= 12))
+                 or (_worn_pickaxe(gs) and not _can_sticks(inv, logs, planks)))
     if logs == 0 and planks == 0 and need_wood:
         out.append("get_wood")
     if (logs >= 1 or planks >= 5) and tier == 0:
@@ -354,6 +427,23 @@ def resolve(label: str | None, gs: GameState) -> Action | None:
             return None
         return Action(label, "eat_food", {"food_name": food},
                       f"eat {food} to restore hunger")
+    if label == "replace_tool":
+        item = _replacement_pickaxe(gs, inv)
+        if not item or not _worn_pickaxe(gs):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": item}], "temporary_workstation": True},
+                      f"craft a fresh {item} before the worn one breaks")
+    if label == "collect_drops":
+        if gs.drops <= 0:
+            return None
+        return Action(label, "pick_up_items", {"radius": 16},
+                      "collect items a mob dropped when the reflex killed it")
+    if label == "recover_drops":
+        if not _can_recover(gs):
+            return None
+        return Action(label, "pick_up_items", {"recover_death_items": True},
+                      "walk back to the death site and recover the dropped gear")
     if label == "explore":
         if x is None or z is None:
             return None

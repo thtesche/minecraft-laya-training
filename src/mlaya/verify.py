@@ -53,6 +53,10 @@ def progressed(label: str, d: dict) -> bool:
         return any(d["inventory_delta"].get(x, 0) > 0 for x in cooked)
     if label == "eat_food":
         return (d["food_delta"] or 0) > 0
+    if label == "replace_tool":
+        return any(k.endswith("_pickaxe") and v > 0 for k, v in d["inventory_delta"].items())
+    if label in ("collect_drops", "recover_drops"):
+        return inv_up
     if label == "sleep":
         return d.get("phase") != "night" or bool(d.get("sleeping"))
     if label == "explore":

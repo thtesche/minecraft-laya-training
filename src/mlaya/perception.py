@@ -14,6 +14,13 @@ RESOURCE_NAMES = ("logs", "stone", "iron_ore", "coal_ore")
 RESOURCE_RADIUS = 64.0
 RESOURCE_LIMIT = 4
 
+# Event backlog drain. `read_recent_events` returns the OLDEST unread page (max 100),
+# so a deep backlog must be walked to the present before fresh events arrive.
+EVENT_PAGE = 100
+EVENT_DRAIN_PAGES = 12
+# Only events this recent drive a reaction; older backlog events are drained, not acted on.
+EVENT_REACT_WINDOW_S = 120.0
+
 
 def get(obj: Any, *path: str, default: Any = None) -> Any:
     cur = obj
@@ -75,6 +82,8 @@ class GameState:
     players: list[str] = field(default_factory=list)
     last_death_cause: str | None = None
     last_death_age_s: float | None = None
+    death_pos: tuple[float, float, float] | None = None
+    death_dim: str | None = None
     activity_owner: str | None = None
     active_action: str | None = None
     events: list[str] = field(default_factory=list)
@@ -88,6 +97,10 @@ class GameState:
     mobs: list[tuple[str, str, int, float | None]] = field(default_factory=list)
     # latest unread-notification previews (from the server's `notifications` block)
     notifications: list[str] = field(default_factory=list)
+    # active tool per class -> {tier, item, left, max}; `left`/`max` are durability
+    tool_meta: dict[str, dict] = field(default_factory=dict)
+    # fresh "target died" reflex outcomes: the mob's drops are lying nearby
+    drops: int = 0
 
     def resource_nearest(self, name: str) -> tuple[int, int, int, float] | None:
         hits = self.resources.get(name)
@@ -114,9 +127,12 @@ class GameState:
             "dimension": self.dimension,
             "inventory": self.inventory,
             "tools": self.tools,
+            "tool_meta": self.tool_meta,
             "hostiles": self.hostiles,
             "players": self.players,
             "last_death": self.last_death_cause,
+            "death_pos": self.death_pos,
+            "drops": self.drops,
             "events": self.events,
             "unread": self.unread,
             "notifications": self.notifications,
@@ -150,6 +166,15 @@ class GameState:
         tools = ", ".join(f"{cls} {tier}".strip() for cls, tier in self.tools.items()
                           if tier and tier != "none") or "no tools"
         parts.append(f"tools: {tools}")
+        worn = []
+        for cls, meta in self.tool_meta.items():
+            left, mx = meta.get("left"), meta.get("max")
+            if isinstance(left, (int, float)) and isinstance(mx, (int, float)) and mx > 0:
+                pct = left / mx
+                if pct <= 0.25:
+                    worn.append(f"{meta.get('item') or cls} at {pct * 100:.0f}% durability")
+        if worn:
+            parts.append("low durability: " + ", ".join(worn))
         close = [(n, c, d) for n, c, d in self.hostiles if d is None or d <= 16]
         if close:
             desc = ", ".join(
@@ -164,6 +189,10 @@ class GameState:
         if self.last_death_cause:
             age = f" {self.last_death_age_s:.0f}s ago" if self.last_death_age_s is not None else ""
             parts.append(f"last death:{age} {self.last_death_cause}")
+        if self.drops:
+            parts.append(f"{self.drops} mob(s) the reflex killed dropped items nearby")
+        if self.death_pos and self.last_death_age_s is not None and self.last_death_age_s <= 90:
+            parts.append("gear dropped at the last death site can still be recovered")
         present = [(n, hits[0][3]) for n, hits in self.resources.items() if hits]
         if present:
             present.sort(key=lambda t: t[1])
@@ -177,18 +206,58 @@ class GameState:
         return "You are a Minecraft bot. " + ". ".join(parts) + "."
 
 
-def _summarize_events(data: dict, limit: int = 3) -> tuple[list[str], int, list[str]]:
-    result = get(data, "response", "data", "result", default={}) or {}
-    raw = result.get("events") if isinstance(result, dict) else None
-    out: list[str] = []
-    for e in (raw or [])[-limit:]:
-        if isinstance(e, dict):
-            summary = " ".join(str(e.get("summary") or e.get("type") or "").split())
-            out.append(summary[:80])
-    unread = get(data, "notifications", "unreadCount", default=0)
-    preview = get(data, "notifications", "recentPreview", default=[]) or []
-    preview = [" ".join(str(p).split())[:80] for p in preview][:3]
-    return out, (int(unread) if isinstance(unread, int) else 0), preview
+def _norm(text: Any, limit: int = 80) -> str:
+    return " ".join(str(text or "").split())[:limit]
+
+
+def _summaries(events: list[dict], limit: int = 3) -> list[str]:
+    return [_norm(e.get("summary") or e.get("type")) for e in events[-limit:] if isinstance(e, dict)]
+
+
+def _previews(preview: Any) -> list[str]:
+    return [_norm(p) for p in (preview or [])][:3]
+
+
+def _count_drops(events: list[dict], now_iso: Any) -> int:
+    """Mobs the survival reflex killed recently: their drops are lying nearby."""
+    count = 0
+    for e in events:
+        if not isinstance(e, dict) or "target died" not in str(e.get("summary") or ""):
+            continue
+        age = _age_seconds(now_iso, e.get("observedAt"))
+        if age is not None and age <= EVENT_REACT_WINDOW_S:
+            count += 1
+    return count
+
+
+async def _drain_events(executor) -> tuple[list[dict], int, list[str]]:
+    """Walk the unread event backlog to the present.
+
+    `read_recent_events` returns the *oldest* unread page (max 100), so a deep backlog
+    has to be walked page by page before this tick's fresh events appear. Bounded per
+    tick so a runaway backlog cannot spin; the unread count also drains as we go.
+    """
+    events: list[dict] = []
+    unread, preview = 0, []
+    for _ in range(EVENT_DRAIN_PAGES):
+        res = await executor.read(
+            "read_recent_events", {"limit": EVENT_PAGE},
+            "drain unread world events so reactions act on fresh ones",
+        )
+        data = coerce(res.data, res.text)
+        result = get(data, "response", "data", "result", default={}) or {}
+        page = [e for e in (result.get("events") or []) if isinstance(e, dict)]
+        events.extend(page)
+        got = get(data, "notifications", "unreadCount")
+        if isinstance(got, int):
+            unread = got
+        prev = get(data, "notifications", "recentPreview")
+        if prev:
+            preview = prev
+        remaining = result.get("remainingEventCount")
+        if not page or not isinstance(remaining, int) or remaining <= 0:
+            break
+    return events, unread, preview
 
 
 def parse_status(data: dict) -> GameState:
@@ -226,7 +295,14 @@ def parse_status(data: dict) -> GameState:
     tools = (sit.get("tools") or {}).get("tools") or []
     for t in tools:
         if isinstance(t, dict) and t.get("class"):
-            gs.tools[str(t["class"])] = str(t.get("tier") or "none")
+            cls = str(t["class"])
+            gs.tools[cls] = str(t.get("tier") or "none")
+            gs.tool_meta[cls] = {
+                "tier": t.get("tier"),
+                "item": t.get("item"),
+                "left": _num(t.get("durabilityLeft")),
+                "max": _num(t.get("maximumDurability")),
+            }
 
     nearby = sit.get("nearby") or {}
     hostile_rows = nearby.get("hostiles")
@@ -258,6 +334,10 @@ def parse_status(data: dict) -> GameState:
     if isinstance(death, dict) and death.get("cause"):
         gs.last_death_cause = str(death["cause"])
         gs.last_death_age_s = _age_seconds(sit.get("observedAt"), death.get("observedAt"))
+        dpos = death.get("position") or {}
+        if all(k in dpos for k in ("x", "y", "z")):
+            gs.death_pos = (float(dpos["x"]), float(dpos["y"]), float(dpos["z"]))
+        gs.death_dim = death.get("dimension") if isinstance(death.get("dimension"), str) else None
 
     activity = sit.get("activity") or {}
     gs.activity_owner = activity.get("owner")
@@ -312,13 +392,15 @@ def _age_seconds(now_iso: Any, then_iso: Any) -> float | None:
 async def build(executor) -> GameState:
     """Perceive through the MCP read tools (ungated, cheap)."""
     status = await executor.read("view_status", {}, "read live bot vitals and position")
-    events = await executor.read(
-        # Drain a large page each tick: the unread count is the server's event/publication
-        # backlog and reading is free; we keep only the newest few for the state.
-        "read_recent_events", {"limit": 50}, "read and drain unread world events for context"
-    )
-    gs = parse_status(coerce(status.data, status.text))
-    gs.events, gs.unread, gs.notifications = _summarize_events(coerce(events.data, events.text))
+    status_data = coerce(status.data, status.text)
+    # Walk the event backlog to the newest events; reactions only use fresh ones.
+    events, unread, preview = await _drain_events(executor)
+    gs = parse_status(status_data)
+    gs.events = _summaries(events)
+    gs.unread = unread
+    gs.notifications = _previews(preview)
+    now_iso = get(status_data, "response", "data", "result", "situation", "observedAt")
+    gs.drops = _count_drops(events, now_iso)
     try:
         blocks = await executor.read(
             "view_blocks",

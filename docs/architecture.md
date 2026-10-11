@@ -157,6 +157,7 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
 - **Notifications:** `read_recent_events` wird jetzt mit `limit: 50` gelesen (Drain des
   Event-/Notification-Backlogs) statt 5; die neuesten `events`-Summaries **und** die
   `notifications.recentPreview` stehen im State (`narrative()`: „unread notifications (N): …").
+  (In M2d ersetzt durch einen vollen Backlog-Drain, siehe unten.)
 
 ## M2c — erreicht: Survival-Policy & Essen
 
@@ -193,10 +194,43 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   („feed to 20 first, then bank"); die Aktion ist mit `allow_without_shield: true` markiert.
   Gegessen wird über den Server-Reflex (roh erlaubt), `eat_food` bleibt der manuelle Nachschlag.
 
+## M2d — erreicht: auf Event-/Notification-Typen reagieren
+
+**Kriterium:** Events nicht nur in den State heben, sondern auf ihre **Typen reagieren**
+(„durability low" → Ersatzwerkzeug craften, „target died" → Drops ernten, Tod → Recovery).
+
+- **Befund:** `view_status` liefert bereits die **Haltbarkeit des aktiven Werkzeugs**
+  (`tools.tools[].durabilityLeft/maximumDurability/item`) und die **Todesposition**
+  (`lastDeath.position`/`dimension`). Für Durability und Tod ist also **kein** Event nötig —
+  nur für „target died", dessen Drops in der Welt liegen.
+- **Event-Drain:** `read_recent_events` liefert die **ältesten** ungelesenen Events (max. 100),
+  nicht die neuesten — bei einem 841 tiefen Backlog sah der State daher nur alte Events. `build()`
+  walkt jetzt bis `remainingEventCount == 0` (Cap `EVENT_DRAIN_PAGES = 12` pro Tick), sodass jeder
+  Tick die **frischen** Events sieht; `notifications.unreadCount` steht danach auf 0.
+- **Reaktionen** (`actions.py`): drei neue Labels, jeweils **exklusiv** für den Tick (zeitkritisch),
+  `eat_food` läuft weiter mit. Priorität: recover > replace > drops.
+  - **`replace_tool`** — aktive Spitzhacke ≤ `LOW_DURABILITY = 0.15` und ein Ersatz ist craftbar
+    (`_replacement_pickaxe`: Eisen bei ≥3 Ingots, sonst Stein; nie ein Downgrade) →
+    `craft_item` mit `temporary_workstation`.
+  - **`collect_drops`** — frisches „target died"-Event (`gs.drops > 0`, Alter ≤
+    `EVENT_REACT_WINDOW_S = 120` s) → `pick_up_items {radius: 16}`.
+  - **`recover_drops`** — Tod ≤ `RECOVER_WINDOW_S = 90` s, gleiche Dimension, ≤ `RECOVER_RANGE =
+    120` m → `pick_up_items {recover_death_items: true}` (der Server läuft selbst zur
+    Todesposition zurück). Nach jedem Tod setzt der Graph die Policy neu (`_reapply_after_death`).
+- **State:** `GameState.tool_meta` (Klasse → `{tier,item,left,max}`), `death_pos`, `death_dim`,
+  `drops`; `narrative()` hängt „low durability: …", „… mob(s) the reflex killed dropped items
+  nearby" und „gear … can still be recovered" an. `verify.progressed` prüft `replace_tool` (neue
+  `*_pickaxe`) und `collect_drops`/`recover_drops` (Netto-Inventar).
+- **Validierung:** Unit-Ladder bestätigt alle drei Reaktionen inkl. Priorität und Fallback;
+  live parst Perception `tool_meta` (93/131) und `death_pos` (−79/47/−44, aber 7417 s alt → keine
+  Recovery), `pick_up_items {radius: 16}` ist schema-gültig und ohne Drops ein sauberer No-op
+  (`[NO_MATCHING_ITEMS]`), `run -n 1` lief sauber.
+
 ## Nächste Meilensteine
 
-- **M2d**: Auf Notification-/Event-**Typen reagieren** (z. B. „durability low" → Ersatzwerkzeug
-  craften, „target died" → Ressourcen ernten) statt sie nur in den State zu heben.
 - **M3**: Logs -> Datensatz -> RLCD-Kopf-Fine-Tuning; Checkpoint via `LAYA_EXTRA_MODELS` registrieren.
 - **M4**: Parameter-Layer ausbauen (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`).
+- **Offen aus M2/M2b/M2c/M2d (Live):** Ende-zu-Ende-Validierung von `sleep`/`craft_bed` (kein Schaf,
+  keine Wolle/String in Reichweite), des Essensvorrats (`hunt_food` ohne passives Tier/Zombie in
+  Reichweite) und von `replace_tool` bei tatsächlich abgenutztem Werkzeug.
 - **Offen aus M2**: Nether-Gate (Obsidian/Feuerstein) und Diamant-Kette.

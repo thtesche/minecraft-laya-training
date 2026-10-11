@@ -11,7 +11,7 @@ Laya erzeugt keinen Text und keine Tool-Argumente. Deshalb filtert der Code die 
 über ein binäres Gefahr-Gate plus die Wahl unter diesen Optionen; ein separater Python-**Executor**
 ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
-Aktueller Stand (**M2/M2b/M2c**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
+Aktueller Stand (**M2/M2b/M2c/M2d**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
 bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen). `view_blocks` liefert die Ressourcen in der Nähe
 (Holz/Stein/Eisen/Kohle mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
 Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
@@ -19,7 +19,10 @@ Respawn-Punkt), liest die anstehenden **Notifications** mit und setzt beim Start
 **Server-Survival-Policy** (Scaffold-Blöcke, vorsichtiges Kampf-Fenster, `food.raw.allow: always`);
 gegessen wird über den Server-Reflex, Essen wird über `hunt_food`/`cook_food` beschafft, das einen
 **Mindestvorrat von 16** essbaren Items hält. Die Policy läuft in zwei **Stufen** (`base` für Reisen/
-Progression, `hunt` für eine feindliche Jagd).
+Progression, `hunt` für eine feindliche Jagd). Der Agent **reagiert auf Event-Typen**: eine fast
+abgenutzte Spitzhacke wird ersetzt (`replace_tool`), Drops von einem vom Reflex getöteten Mob werden
+eingesammelt (`collect_drops`), und frisch verlorene Ausrüstung wird an der Todesstelle geborgen
+(`recover_drops`).
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
