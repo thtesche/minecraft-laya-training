@@ -40,8 +40,10 @@ Die **Eisen-Kette** ist ebenfalls live durchgelaufen (Tier 0 → 3): `craft_pick
 Dabei einen Blocker gefunden und behoben: in einem 1×1-Schacht nach dem Erz-Abbau scheiterte
 `craft_item` mit `[WORKSTATION_PLACEMENT_FAILED] … no_cell` (kein Platz für die getragene Werkbank) —
 in der Schleife ein **Endlos-Retry**. Der `graph.Agent` merkt sich das blockierte Label und schiebt
-**eine** `explore`-Navigation auf offenes Gelände ein (M4-Zielpool), danach greift der Craft.
-Gepinnt in `tests/test_graph.py`.
+einen **Unblock** ein: zuerst `make_room` (gräbt mit `build_structure` vier Zellen frei, direkt vor
+Ort), dann erst `explore` auf offenes Gelände. Live in einem tiefen Schacht reproduziert und behoben
+(`no_cell` → `make_room` → derselbe Craft geht durch). Gepinnt in `tests/test_graph.py`.
+
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine
 **Tageslicht-Schranke** gebunden (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`): nachts

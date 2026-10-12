@@ -1,10 +1,11 @@
-"""Failure recovery: an action blocked by the bot's surroundings is unblocked by one step
-to open ground instead of being retried in place.
+"""Failure recovery: an action blocked by the bot's surroundings is unblocked instead of
+being retried in place.
 
 Live-validated in the iron chain: after mining ore the bot sat in a 1x1 shaft and
 `craft_furnace` answered `[WORKSTATION_PLACEMENT_FAILED] crafting_table: no_cell` on every
 tick, so the run never reached the furnace. The fix is a code-level unlock: when the same
-label that just failed this way comes up again, walk to real standing ground first.
+label that just failed this way comes up again, dig a small pocket where the bot stands so
+the workstation fits (`make_room`), and only on a second try walk to open ground.
 """
 from __future__ import annotations
 
@@ -42,14 +43,25 @@ class BlockedBySurroundingsTest(unittest.TestCase):
 
 
 class UnblockActionTest(unittest.TestCase):
-    def test_navigates_to_open_ground(self) -> None:
-        a = unblock_action(gs(pos=(-277.5, 87.0, -51.6), resources=_ground()))
+    def test_first_attempt_digs_a_pocket_in_place(self) -> None:
+        a = unblock_action(gs(pos=(-277.5, 87.0, -51.6)))
+        self.assertEqual(a.tool, "build_structure")
+        cells = a.args["blocks"]
+        self.assertEqual(len(cells), 4)
+        self.assertTrue(all(c["block_name"] == "air" for c in cells))
+        self.assertEqual({(c["x"], c["y"], c["z"]) for c in cells},
+                         {(-277, 87, -52), (-279, 87, -52),
+                          (-278, 87, -51), (-278, 87, -53)})
+
+    def test_second_attempt_falls_back_to_open_ground(self) -> None:
+        a = unblock_action(gs(pos=(-277.5, 87.0, -51.6), resources=_ground()), attempt=1)
         self.assertEqual(a.tool, "navigate")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-268, 95, -56))
         self.assertTrue(a.args["dig"] and a.args["scaffold"])
 
-    def test_none_when_no_ground_known(self) -> None:
-        self.assertIsNone(unblock_action(gs(pos=(0.0, 60.0, 0.0))))
+    def test_none_without_pos_or_ground(self) -> None:
+        self.assertIsNone(unblock_action(gs()))                       # no pos: no pocket
+        self.assertIsNone(unblock_action(gs(pos=(0.0, 60.0, 0.0)), attempt=1))
 
 
 class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
@@ -64,17 +76,30 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.log = self._Log()
         agent._blocked_label = None
+        agent._unblock_attempts = 0
         return agent
 
-    async def test_swaps_blocked_label_for_open_ground(self) -> None:
+    async def test_first_block_digs_a_pocket(self) -> None:
         agent = self._agent()
         agent._blocked_label = "craft_furnace"
+        state = {"before": gs(pos=(-277.5, 87.0, -51.6)),
+                 "decision": Decision("craft_furnace")}
+        out = await agent._guard(state)
+        self.assertEqual(out["action"].tool, "build_structure")
+        self.assertEqual(agent._unblock_attempts, 1)
+        self.assertIsNone(agent._blocked_label)
+        self.assertEqual(agent.log.records[-1]["reason"], "unblock_surroundings")
+        self.assertEqual(agent.log.records[-1]["via"], "make_room")
+
+    async def test_second_block_falls_back_to_navigate(self) -> None:
+        agent = self._agent()
+        agent._blocked_label = "craft_furnace"
+        agent._unblock_attempts = 1
         state = {"before": gs(pos=(-277.5, 87.0, -51.6), resources=_ground()),
                  "decision": Decision("craft_furnace")}
         out = await agent._guard(state)
         self.assertEqual(out["action"].tool, "navigate")
-        self.assertIsNone(agent._blocked_label)
-        self.assertEqual(agent.log.records[-1]["reason"], "unblock_open_ground")
+        self.assertEqual(agent.log.records[-1]["via"], "explore")
 
     async def test_keeps_label_when_not_blocked(self) -> None:
         agent = self._agent()

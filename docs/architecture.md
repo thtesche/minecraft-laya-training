@@ -146,10 +146,13 @@ Wichtige Umsetzungsdetails:
 - **Umgebungs-Blocker (live gefunden & behoben):** In einem 1×1-Schacht nach dem Erz-Abbau
   antwortet `craft_item`/`smelt_item` mit `[WORKSTATION_PLACEMENT_FAILED] … no_cell` (keine
   Zelle für die getragene Werkbank). In der Schleife wäre das ein **Endlos-Retry**. Der
-  `graph.Agent` merkt sich das blockierte Label (`blocked_by_surroundings`) und schiebt **eine**
-  `explore`-Navigation auf offenes Gelände ein (derselbe M4-Zielpool); danach greift der Craft.
-  Live: so kam der Ofen doch zustande (`craft_furnace` → `smelt_iron` → `craft_iron_pickaxe`,
-  Tier 3). Gepinnt in `tests/test_graph.py`.
+  `graph.Agent` merkt sich das blockierte Label (`blocked_by_surroundings`) und schiebt einen
+  **Unblock** ein: zuerst `make_room` (`build_structure` mit `block_name: "air"` gräbt vier
+  Zellen auf Bot-Höhe frei — billig, direkt am Erz), und erst in zweiter Instanz eine
+  `explore`-Navigation auf offenes Gelände (derselbe M4-Zielpool). Danach greift der Craft.
+  Live: tief genug gegraben, reproduzierte `craft_furnace` `no_cell`; `make_room` (4 Zellen)
+  → dasselbe `craft_furnace` ging durch (`furnace` 3 → 4). Gepinnt in `tests/test_graph.py`
+  und `tests/test_actions.py::MakeRoomTest`.
 - **Beobachtung:** Ein 2×2-Craft (`craft_pickaxe`) hat die getragene Werkbank einmal in die Welt
   gesetzt statt sie zu behalten. Die Kette heilt sich selbst, weil `craft_table` erneut angeboten
   wird, solange keine Werkbank getragen wird.
@@ -384,7 +387,8 @@ nur eine Ebene tiefer.
 - **Eisen-Kette live (re-)validiert (Tier 0 → 3):** `craft_pickaxe` → `mine_stone` →
   `craft_stone_pickaxe` → `mine_iron` → `mine_coal` → `craft_furnace` → `smelt_iron` →
   `craft_iron_pickaxe` ist **live durchgelaufen**, inklusive der neuen Unblock-Recovery
-  (`[WORKSTATION_PLACEMENT_FAILED]` → eine `explore`-Navigation → Craft greift).
+  (`[WORKSTATION_PLACEMENT_FAILED]` → `make_room` gräbt ein Pocket → Craft greift; `explore`
+  als zweite Instanz).
 - **M2/M2b/M2c/M2d live validiert:** `replace_tool`, `hunt_food`, `collect_drops`
   (Entscheidung/Binding), `recover_drops` (s. M2c/M2d) sowie `craft_table`, `hunt_wool`, `craft_bed`,
   `sleep` (s. M2b) sind **live durchgelaufen**. Damit bleibt in M2/M2b/M2c/M2d kein Pfad ohne

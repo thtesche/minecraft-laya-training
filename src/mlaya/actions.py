@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .perception import GameState
@@ -30,6 +31,7 @@ CRITERIA: dict[str, str] = {
     "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
     "explore": "walk to new terrain to find missing resources; the last fallback",
+    "make_room": "dig a small pocket out of the surrounding blocks so a carried workstation fits",
 }
 
 EDIBLE = {
@@ -498,6 +500,18 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         return Action(label, "pick_up_items", {"recover_death_items": True},
                       "walk back to the death site and recover the dropped gear")
+    if label == "make_room":
+        if gs.pos is None:
+            return None
+        # `build_structure` with `block_name: "air"` digs cells clear. One small pocket at
+        # the bot's own level is enough: each cleared side cell has the tunnel floor under
+        # it, so the placement search finds a supported, replaceable cell within reach.
+        # Kept to four cells on purpose -- the tool cost grows with the cell list.
+        mx, my, mz = (math.floor(v) for v in gs.pos)
+        cells = [{"x": mx + dx, "y": my, "z": mz + dz, "block_name": "air"}
+                 for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+        return Action(label, "build_structure", {"blocks": cells},
+                      "dig a small pocket around the bot for the carried workstation")
     if label == "explore":
         if target is not None:
             tx, ty, tz = target.pos

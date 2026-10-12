@@ -172,6 +172,23 @@ class FoodChainTest(unittest.TestCase):
         self.assertEqual(a.args["fuel_item_name"], "coal")
 
 
+class MakeRoomTest(unittest.TestCase):
+    """The in-place unblock for a workstation that cannot be placed (a tight shaft)."""
+
+    def test_digs_a_pocket_around_the_bot(self) -> None:
+        a = resolve("make_room", gs(pos=(-277.5, 87.0, -51.6)))
+        self.assertEqual(a.tool, "build_structure")
+        cells = a.args["blocks"]
+        self.assertEqual(len(cells), 4)
+        self.assertTrue(all(c["block_name"] == "air" for c in cells))
+        self.assertEqual({(c["x"], c["y"], c["z"]) for c in cells},
+                         {(-277, 87, -52), (-279, 87, -52),
+                          (-278, 87, -51), (-278, 87, -53)})
+
+    def test_none_without_position(self) -> None:
+        self.assertIsNone(resolve("make_room", gs()))
+
+
 class ReactionPriorityTest(unittest.TestCase):
     def _recoverable(self) -> GameState:
         return gs(pos=(0.0, 64.0, 0.0), death_pos=(1.0, 64.0, 0.0),

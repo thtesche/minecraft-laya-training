@@ -24,8 +24,7 @@ TARGET_LABELS = frozenset({"explore"})
 # Tool-result codes that mean "the bot's surroundings block the action". `craft_item` and
 # `smelt_item` place a carried workstation beside the bot; in a 1x1 excavation shaft there
 # is no replaceable cell, so the tool answers `[WORKSTATION_PLACEMENT_FAILED] ... no_cell`.
-# Retrying in place loops forever, so the fix is to walk to real standing ground (the same
-# M4 target pool `explore` uses) and try the label again there.
+# Retrying in place loops forever, so the fix is to change the surroundings and try again.
 BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED",)
 
 
@@ -34,8 +33,17 @@ def blocked_by_surroundings(text: str | None) -> bool:
     return any(code in (text or "") for code in BLOCKED_CODES)
 
 
-def unblock_action(gs):
-    """The `explore` step toward open ground, or None when no ground is known."""
+def unblock_action(gs, attempt: int = 0):
+    """The step that clears a surroundings block, or None when nothing can.
+
+    First choice is to dig a small pocket where the bot stands (`make_room`): it is cheap
+    and keeps the bot next to what it was working on. Only if that pocket did not help
+    does the second attempt fall back to walking to open ground (`explore`, M4 target pool).
+    """
+    if attempt < 1:
+        action = resolve("make_room", gs)
+        if action is not None:
+            return action
     targets = ground_targets(gs)
     return resolve("explore", gs, targets[0]) if targets else None
 
@@ -79,8 +87,10 @@ class Agent:
         # The server restores default policy on death; re-apply once per death.
         self._policy_for_death_done = False
         # Label whose last attempt failed because the surroundings blocked it; the next
-        # tick steps out to open ground before retrying it (see `blocked_by_surroundings`).
+        # tick changes the surroundings before retrying it (`blocked_by_surroundings`).
         self._blocked_label: str | None = None
+        # How many unblock steps have been spent on that label: pocket first, then explore.
+        self._unblock_attempts = 0
         self.graph = self._build()
 
     async def _perceive(self, state: AgentState) -> dict:
@@ -104,13 +114,15 @@ class Agent:
         gs = state["before"]
         decision = state["decision"]
         if self._blocked_label == decision.action_label:
-            # The same label failed because the surroundings blocked it. Step out to open
-            # ground first; it stays in `candidates`, so the next tick retries it there.
-            action = unblock_action(gs)
+            # The same label failed because the surroundings blocked it. Clear a pocket
+            # (or, on a second try, move to open ground) first; the label stays in
+            # `candidates`, so the next tick retries it there.
+            action = unblock_action(gs, self._unblock_attempts)
             if action is not None:
+                self._unblock_attempts += 1
                 self._blocked_label = None
-                self.log.append({"stage": "policy", "reason": "unblock_open_ground",
-                                 "blocked": decision.action_label})
+                self.log.append({"stage": "policy", "reason": "unblock_surroundings",
+                                 "blocked": decision.action_label, "via": action.label})
                 return {"action": action, "note": f"unblock -> {action.label}"}
         action = resolve(decision.action_label, gs, decision.target)
         if action is not None:
@@ -173,14 +185,16 @@ class Agent:
         before = state["before"]
         action = state["action"]
         res = state["result"]
-        # Remember a surroundings block so the next tick steps out before retrying; any
-        # successful action clears it.
+        # Remember a surroundings block so the next tick changes the surroundings before
+        # retrying; any successful action clears it and the attempt count.
         self._blocked_label = (
             action.label
             if not getattr(res, "ok", False)
             and blocked_by_surroundings(getattr(res, "text", ""))
             else None
         )
+        if self._blocked_label is None:
+            self._unblock_attempts = 0
         after = await perception.build(self.mcp)
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
