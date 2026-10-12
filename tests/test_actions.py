@@ -679,16 +679,18 @@ class NetherGateTest(unittest.TestCase):
                                   "x": -270, "y": 64, "z": -56})
 
     def test_mine_obsidian_walks_to_far_lava_first(self) -> None:
-        # Out of pouring reach the step walks to a cell *beside* the lava, never into it: the
-        # bucket clicks a solid block next to the target cell, so the stance is a lateral
-        # neighbour at the target's own height. The walk may dig (the lava lake sits far below
-        # the surface) but never scaffolds, so the pathfinder cannot bridge over its target.
+        # Out of pouring reach the step walks to the cell *on top of* the block beside the lava,
+        # never into the lava and never to the neighbour's own height: that neighbour is solid
+        # rock at a real lava lake, the server refuses to dig it (it would open a route into the
+        # liquid), and the pathfinder then stops a cell short and diagonally -- the stance every
+        # live `[BUCKET_NO_FACE]` came from. The walk may dig (the lava lake sits far below the
+        # surface) but never scaffolds, so the pathfinder cannot bridge over its target.
         g = self._geared(water_bucket=1)
         g.pos = (0.0, 64.0, 0.0)
         g.resources = self._lava()
         a = resolve("mine_obsidian", g)
         self.assertEqual(a.tool, "navigate")
-        self.assertEqual(a.args["y"], 64)
+        self.assertEqual(a.args["y"], 65)
         self.assertIn((a.args["x"], a.args["z"]),
                       [(-269, -56), (-271, -56), (-270, -55)])
         self.assertEqual(a.args["range"], 1)
@@ -743,7 +745,7 @@ class NetherGateTest(unittest.TestCase):
         ]}
         a = resolve("mine_obsidian", g)
         self.assertEqual(a.tool, "navigate")
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-261, 64, -56))
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-261, 65, -56))
 
     def test_mine_obsidian_mines_what_the_pour_formed(self) -> None:
         # Obsidian the last pour formed lies at the bot's feet: mine it, even with no water left.

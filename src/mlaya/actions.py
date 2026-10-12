@@ -488,14 +488,18 @@ def _lava_pour_target(gs: GameState) -> BlockHit | None:
 
 
 def _pour_stance(gs: GameState, target: BlockHit) -> tuple[int, int, int] | None:
-    """The cell to stand in to pour into `target`: its lateral neighbour nearest the bot.
+    """The cell to stand in to pour into `target`: *on top of* a lateral neighbour.
 
-    Standing *diagonally* to the target is what made the live pond pours fail -- the reference
-    block's face then points past the bot, so nothing is clickable. The walk goes to a cell at
-    the target's own height instead. Lava neighbours are skipped: the bot may not stand there.
+    Standing at the target's own height is what the live lake pour failed on. The lateral cell
+    beside a lava pool is solid rock, and the server refuses to dig that last block next to the
+    liquid ("breaking this block would open the route into liquid"), so the pathfinder stopped a
+    cell short and diagonally -- where the reference block's face points past the bot and every
+    pour answers `[BUCKET_NO_FACE]`. Standing on top of the neighbour is reachable, and that is
+    the stance the live lake pour formed obsidian from. Lava neighbours are skipped: the bot may
+    not stand there, and there is nothing to stand on either.
     """
     lava = {h.pos for h in (gs.resources.get("lava") or [])}
-    options = [(target.x + dx, target.y, target.z + dz)
+    options = [(target.x + dx, target.y + 1, target.z + dz)
                for dx, _, dz in _LATERAL
                if (target.x + dx, target.y, target.z + dz) not in lava]
     if not options:
@@ -1041,7 +1045,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "navigate",
                       {"x": sx, "y": sy, "z": sz, "range": 1,
                        "dig": True, "scaffold": False},
-                      "walk to the lava source and stand beside it to pour the water")
+                      "walk to the lava source, stand on the block beside it and pour")
     if label == "get_flint":
         if _has(inv, FLINT_ITEM) or _has(inv, FLINT_STEEL_ITEM):
             return None
