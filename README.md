@@ -44,6 +44,10 @@ in der Schleife ein **Endlos-Retry**. Der `graph.Agent` merkt sich das blockiert
 einen **Unblock** ein: zuerst `make_room` (gräbt mit `build_structure` vier Zellen frei, direkt vor
 Ort), dann erst `explore` auf offenes Gelände. Live in einem tiefen Schacht reproduziert und behoben
 (`no_cell` → `make_room` → derselbe Craft geht durch). Gepinnt in `tests/test_graph.py`.
+Derselbe Mechanismus deckt jetzt auch den **Bett-Platz** ab: im Rüstungslauf antwortete `sleep`
+im 1×1-Schacht dreimal mit `[BED_PLACEMENT_FAILED] … no … flat ground` (drei verschwendete Ticks).
+`BLOCKED_CODES` enthält daher auch `BED_PLACEMENT_FAILED` → der Unblock gräbt zuerst ein Pocket
+(`make_room`), in dem das Bett zwei gestützte Zellen findet.
 
 Die **Diamant-Kette** ist jetzt ebenfalls live gelaufen: `mine_iron`/`mine_coal`/`smelt_iron` →
 `craft_iron_pickaxe` (Ersatz, nachdem die Eisen-Hacke im Tunnel zerbrochen war) → `mine_diamond` →
@@ -64,15 +68,18 @@ blockiert der Bootstrap (Holzhacke müsste den Bruchstein für den Stein-Ersatz 
 frühere Obergrenze `tier < IRON_PICK_TIER` für `mine_iron` ist weg: eine abgenutzte Eisenhacke kann
 jetzt das Eisen für ihren eigenen Ersatz nachschürfen (eine frische schürft weiterhin kein Eisen).
 
-**Diamant-Rüstung (neu, noch nicht live validiert):** `_next_diamond_item` erweitert die
+**Diamant-Rüstung (live validiert):** `_next_diamond_item` erweitert die
 Diamant-Ziele über Werkzeugkette + Schwert hinaus um das komplette Rüstungsset
 (`DIAMOND_ARMOR`): Brustplatte (8), Hose (7), Schuhe (4), Helm (5) = **24 Diamanten**,
 geordnet nach **Schutz pro Diamant** (Brustplatte zuerst), damit ein Teil-Set schon so nützlich
 wie möglich ist. Es wird immer nur **das nächste fehlende Teil** angeboten (`mine_diamond` mit
-`count = Kosten − getragene Diamanten`, sonst `craft_diamond_<slot>`); fertige Teile wandern per
-`equip_armor` (ein `equip`-Batch, ohne Ziel — Rüstung findet ihren Slot selbst) an den Körper.
-Rüstung braucht **keine Stöcke**, nur den Werktisch, und zählt als „vorhanden", ob getragen
-(`situation.tools.armour`) oder noch im Inventar — so wird kein Teil doppelt gecraftet.
+`count = Kosten − getragene Diamanten`, sonst `craft_diamond_<slot>`); ein `equip_armor`
+(ein `equip`-Batch, ohne Ziel) rüstet gecraftete Teile an. Rüstung braucht **keine Stöcke**,
+nur den Werktisch, und zählt als „vorhanden", ob getragen (`situation.tools.armour`) oder noch
+im Inventar — so wird kein Teil doppelt gecraftet. **Live durchgelaufen** (25 Ticks): `mine_diamond`
+(8/7/4/5 = exakt 24) → `craft_diamond_chestplate` → `leggings` → `boots` → `helmet`, Endstand
+`armor = {helmet, chestplate, leggings, boots: diamond}`. Befund: der Server **rüstet gecraftete
+Rüstung selbst an** (kein `equip_armor`-Tick nötig — das Label bleibt als Sicherheitsnetz).
 
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine

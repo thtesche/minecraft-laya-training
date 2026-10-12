@@ -36,7 +36,7 @@ CRITERIA: dict[str, str] = {
     "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
     "explore": "walk to new terrain to find missing resources; the last fallback",
-    "make_room": "dig a small pocket out of the surrounding blocks so a carried workstation fits",
+    "make_room": "dig a small pocket out of the surrounding blocks so a carried workstation or bed fits",
 }
 
 EDIBLE = {
@@ -670,7 +670,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         cells = [{"x": mx + dx, "y": my, "z": mz + dz, "block_name": "air"}
                  for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
         return Action(label, "build_structure", {"blocks": cells},
-                      "dig a small pocket around the bot for the carried workstation")
+                      "dig a small pocket around the bot for the carried workstation or bed")
     if label == "explore":
         if target is not None:
             tx, ty, tz = target.pos

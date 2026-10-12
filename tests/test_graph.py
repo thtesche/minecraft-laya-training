@@ -6,6 +6,8 @@ Live-validated in the iron chain: after mining ore the bot sat in a 1x1 shaft an
 tick, so the run never reached the furnace. The fix is a code-level unlock: when the same
 label that just failed this way comes up again, dig a small pocket where the bot stands so
 the workstation fits (`make_room`), and only on a second try walk to open ground.
+The armour run found the same class of block for `sleep`: `[BED_PLACEMENT_FAILED] ... no ...
+flat ground` in that shaft, so the stub list now covers both codes.
 """
 from __future__ import annotations
 
@@ -35,6 +37,12 @@ class BlockedBySurroundingsTest(unittest.TestCase):
     def test_detects_workstation_placement_failure(self) -> None:
         self.assertTrue(blocked_by_surroundings(
             "[WORKSTATION_PLACEMENT_FAILED] crafting_table: no_cell."))
+
+    def test_detects_bed_placement_failure(self) -> None:
+        # Live, armour run: in the same 1x1 shaft `sleep` answered
+        # "[BED_PLACEMENT_FAILED] No nearby supported 2-block flat ground found to place a bed."
+        self.assertTrue(blocked_by_surroundings(
+            "[BED_PLACEMENT_FAILED] No nearby supported 2-block flat ground found to place a bed."))
 
     def test_ignores_other_failures_and_empty(self) -> None:
         self.assertFalse(blocked_by_surroundings("[HUNT_TARGET_NOT_LOADED] sheep"))

@@ -24,8 +24,11 @@ TARGET_LABELS = frozenset({"explore"})
 # Tool-result codes that mean "the bot's surroundings block the action". `craft_item` and
 # `smelt_item` place a carried workstation beside the bot; in a 1x1 excavation shaft there
 # is no replaceable cell, so the tool answers `[WORKSTATION_PLACEMENT_FAILED] ... no_cell`.
-# Retrying in place loops forever, so the fix is to change the surroundings and try again.
-BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED",)
+# `sleep` places the carried bed the same way and needs two supported cells, so the same
+# shaft answers `[BED_PLACEMENT_FAILED] ... no ... flat ground` (live, armour run: three
+# wasted ticks). Retrying in place loops forever, so the fix is to change the surroundings
+# and try again.
+BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED", "BED_PLACEMENT_FAILED")
 
 
 def blocked_by_surroundings(text: str | None) -> bool:

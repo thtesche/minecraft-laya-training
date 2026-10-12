@@ -165,6 +165,10 @@ Wichtige Umsetzungsdetails:
   Live: tief genug gegraben, reproduzierte `craft_furnace` `no_cell`; `make_room` (4 Zellen)
   → dasselbe `craft_furnace` ging durch (`furnace` 3 → 4). Gepinnt in `tests/test_graph.py`
   und `tests/test_actions.py::MakeRoomTest`.
+  **Erweitert (Rüstungslauf):** `sleep` scheiterte im selben 1×1-Schacht dreimal mit
+  `[BED_PLACEMENT_FAILED] … no … flat ground` (drei verschwendete Ticks, das Bett braucht zwei
+  gestützte Zellen). `BLOCKED_CODES` enthält jetzt auch `BED_PLACEMENT_FAILED`, der Unblock
+  gräbt zuerst ein Pocket (`make_room`), in dem das Bett passt.
 - **Beobachtung:** Ein 2×2-Craft (`craft_pickaxe`) hat die getragene Werkbank einmal in die Welt
   gesetzt statt sie zu behalten. Die Kette heilt sich selbst, weil `craft_table` erneut angeboten
   wird, solange keine Werkbank getragen wird.
@@ -446,12 +450,20 @@ nur eine Ebene tiefer.
   Tier-Deckel auf `mine_diamond` hatte das Schwert **unerreichbar** gemacht (Deadlock) — der Deckel
   ist entfernt, `mine_diamond` kennt jetzt die Zielmengen aus `_next_diamond_item`
   (3 Spitzhacke, 2 Schwert, dann das Rüstungsset).
-- **Diamant-Rüstung (Code fertig, live noch offen):** `DIAMOND_ARMOR` (Brustplatte 8, Hose 7,
-  Schuhe 4, Helm 5 = 24 Diamanten) hängt sich über `_next_diamond_item` an dieselbe Kette; ein
-  fehlendes Teil pro Tick, `craft_diamond_<slot>`, danach `equip_armor` (ein `equip`-Batch, ohne
+- **Diamant-Rüstung (live validiert):** `DIAMOND_ARMOR` (Brustplatte 8, Hose 7, Schuhe 4,
+  Helm 5 = 24 Diamanten) hängt sich über `_next_diamond_item` an dieselbe Kette; ein fehlendes
+  Teil pro Tick, `craft_diamond_<slot>`, danach `equip_armor` (ein `equip`-Batch, ohne
   `destination`). Perception liest den getragenen Satz aus `situation.tools.armour`; `verify`
   zählt ein getragenes Teil über `armor_delta` als Fortschritt. Unit-getestet in
-  `tests/test_actions.py::DiamondArmorTest` (9 Tests). **Live-Validierung steht noch aus.**
+  `tests/test_actions.py::DiamondArmorTest` (9 Tests). **Live durchgelaufen** (25 Ticks):
+  `mine_diamond` (count 8 → 7 → 4 → 5, zusammen exakt die 24 Diamanten) →
+  `craft_diamond_chestplate` → `craft_diamond_leggings` → `craft_diamond_boots` →
+  `craft_diamond_helmet`; Endstand `tools = {pickaxe, sword: diamond}`, `armor = {helmet,
+  chestplate, leggings, boots: diamond}`, hp 20. **Befund:** der Server **rüstet gecraftete
+  Rüstung selbst an** (`armor_delta` zeigt das Teil direkt nach dem Craft im Slot, kein
+  `equip_armor`-Tick) — das Label bleibt als Sicherheitsnetz für Server, die das nicht tun.
+  **Zweiter Befund:** `sleep` scheiterte im 1×1-Schacht 3× mit `[BED_PLACEMENT_FAILED]`; der
+  Unblock-Mechanismus deckt diesen Code jetzt mit ab (s. M2).
 - **Nether-Kette (offen):** Eimer/Obsidian/Flint&Steel und Rahmen bauen/anzünden/betreten
   (`activate_portal` zündet nur einen bestehenden Rahmen, baut nichts). Per Entscheidung zunächst
   zurückgestellt.
