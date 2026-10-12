@@ -391,20 +391,26 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   eingebautes Checkpoint trifft, **zeigt es um**. `config.load_settings` parst die Variable nach
   `laya.extra_models` und `Brain` reicht sie als `models=` an den `Router` weiter. Damit lädt der
   Loop das Fine-Tune unter `english` **ohne Codeänderung**.
-- **Validierung:** 22 Ticks → 12 Datensatzzeilen (13 Multi-Kandidat, Dedup); `--dry-run` 9 Zeilen
-  → 18 Items; echtes Kopf-Fine-Tuning (4 Epochen, `rlcd`, Encoder eingefroren) liefert ein
-  842 MB Checkpoint. Held-out (6 Items): `choice`-Accuracy 0.833 → 0.833, Loss −0.149, Brier
-  −0.065, ECE +0.047 (Temperatur nicht gefittet, nur 1 Kalibrierungsitem). Der `Router` lädt den
-  Checkpoint unter `english` und entscheidet korrekt (Gate `no` → nicht deferiert, Intent
-  `mine_stone`). 16 Unit-Tests (`tests/test_dataset.py`, stdlib `unittest`).
-- **Vorbehalt 1 (Datenmenge):** 22 Ticks sind **statistisch bedeutungslos** — der Gewinn ist der
-  **Pipeline-Beweis**, nicht ein messbarer Modellgewinn. Neu bauen (`mlaya dataset`) und
-  nachtrainieren, sobald der Log wächst.
-- **Vorbehalt 2 (Gate-Balance):** In diesen Läufen war der Bot **nie** in Gefahr, also tragen
-  **alle** `in_danger`-Zeilen das Label `no`. Ein Retrain darauf zieht den geteilten `choice`-Kopf
-  in Richtung „immer no", ohne dass ein `yes`-Fall gegengewichtet. Abhilfe: genug Läufe mit echten
-  Gefahren-Ticks sammeln (dann liefert `graph._verify` die echten Gate-Labels) oder vorerst
-  `--no-danger` und das Gate zero-shot belassen, bis beide Klassen vertreten sind.
+- **Validierung (frischer Welt-Lauf, 48 Ticks → Ziel):** kompletter Tech-Tree aus dem Nichts,
+  `stop: "goal"`. Datensatz: **35 Zeilen** (26 Train / 9 Held-out), 17 Intent-Labels über die
+  ganze Kette (`get_wood` … `equip_armor`). Kopf-Fine-Tuning (4 Epochen, `rlcd`, Encoder
+  eingefroren) → 842 MB Checkpoint. Held-out (9 Items): `choice`-Accuracy **1.000 → 1.000**,
+  Loss **0.734 → 0.532 (−0.20)**, ECE **0.501 → 0.392**, Brier **0.412 → 0.284**, `mean_confidence`
+  0.499 → 0.608. Der `Router` lädt den Checkpoint unter `english` ohne Codeänderung. 16 Unit-Tests
+  (`tests/test_dataset.py`, stdlib `unittest`).
+- **Befund (Accuracy-Deckel):** Die Held-out-Accuracy ist **schon zero-shot 1.0** — der Split ist
+  in-distribution (jede Zeile ist ein Zustand, den Laya im Lauf selbst gelöst hat). Ein
+  Accuracy-Gewinn ist hier nicht messbar; der Fine-Tune zeigt sich in Loss, Brier und ECE. Für
+  einen echten Accuracy-Vergleich braucht es einen **out-of-distribution**-Split (Zustände aus
+  einem anderen Lauf), nicht mehr In-Distribution-Zeilen.
+- **Gefahr-Ticks landen jetzt im Datensatz:** Ein `in_danger=yes`-Tick führt zur **Defer** (kein
+  `action`-Record), der Builder sah aber nur `action` → `danger_yes: 0`, das Gate hätte nur `no`
+  gelernt. `graph._defer` loggt jetzt `narrative` + `answers`, und der Builder macht aus einem
+  Defer mit Gate-`yes` (oder der Danger-Notiz) eine **reine Danger-Zeile**. Ein Defer aus anderem
+  Grund („no valid action") bleibt ignoriert; die State-Heuristik wird dort bewusst **nicht**
+  verwendet. Getestet in `tests/test_dataset.py` (Defer-Fälle). Für den frischen Lauf kam der Fix
+  zu spät — seine 10 Gefahr-Ticks sind alte `defer`-Records ohne `narrative`; der Datensatz wurde
+  daher mit `--no-danger` gebaut und das Gate bleibt zero-shot.
 
 ## M4 — erreicht: Parameter-Layer (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`)
 
@@ -452,8 +458,11 @@ nur eine Ebene tiefer.
 
 ## Nächste Meilensteine
 
-- **M3+ (offen):** Datensatz aus deutlich mehr Läufen bauen und gegen den Zero-Shot-Stand
-  evaluieren (Accuracy/Loss auf einem größeren Held-out-Split), um einen echten Gewinn zu zeigen.
+- **M3+ (offen):** Für einen echten Accuracy-Gewinn braucht es einen **out-of-distribution**
+  Held-out-Split (Zustände aus einem anderen Lauf) — auf dem frischen In-Distribution-Split ist
+  die Zero-Shot-Accuracy schon 1.0, der Fine-Tune zeigt sich nur in Loss/Brier/ECE. Außerdem mehr
+  Läufe sammeln, damit die `in_danger`-Klassen (`yes` **und** `no`) beide vertreten sind; die
+  `yes`-Fälle liefert der Defer-Fix jetzt automatisch.
 - **Eisen-Kette live (re-)validiert (Tier 0 → 3):** `craft_pickaxe` → `mine_stone` →
   `craft_stone_pickaxe` → `mine_iron` → `mine_coal` → `craft_furnace` → `smelt_iron` →
   `craft_iron_pickaxe` ist **live durchgelaufen**, inklusive der neuen Unblock-Recovery

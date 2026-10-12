@@ -145,6 +145,7 @@ Ziel hinaus) geht über `[loop] stop_when_complete = false` oder `run --ignore-g
 # 1) Aus dem Run-Log einen Laya-Trainingsdatensatz bauen (train + held-out Eval)
 .venv/bin/python -m mlaya.cli dataset            # -> data/train.jsonl + data/eval.jsonl
 .venv/bin/python -m mlaya.cli dataset --include-failed   # auch Ticks ohne Fortschritt behalten
+.venv/bin/python -m mlaya.cli dataset --no-danger        # ohne `in_danger`-Zeilen (s. u.)
 
 # 2) Datensatz-Format prüfen (lädt keine Gewichte), dann Kopf nachtrainieren (RLCD)
 .venv/bin/python -m mlaya.cli train --dry-run
@@ -160,6 +161,18 @@ trifft (`english`), **zeigt es um** — genau so wird das Fine-Tune ohne Codeän
 Der Reward ist der Verifier: nur Ticks, deren Aktion nachweislich Fortschritt brachte, werden zu
 Positivbeispielen (`--include-failed` für reine Imitation). Tests:
 `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests`.
+
+**Ergebnis des frischen Welt-Laufs** (48 Ticks, Tech-Tree aus dem Nichts → `stop: "goal"`):
+35 Datensatzzeilen (26 Train / 9 Held-out). Der Held-out-Vergleich zeigt **keinen** Accuracy-Gewinn
+(1.000 → 1.000) — der Split ist in-distribution, jede Zeile ist ein Zustand, den Laya im Lauf selbst
+gelöst hat; der Fine-Tune zeigt sich in **Loss 0.734 → 0.532**, **ECE 0.501 → 0.392** und
+**Brier 0.412 → 0.284** (besser kalibrierte Konfidenz). Ein echter Accuracy-Vergleich braucht einen
+**out-of-distribution**-Split.
+
+**Gefahr-Zeilen:** Ein `in_danger = yes`-Tick endet als **`defer`** (keine Aktion) — genau dort
+steckt der echte `yes`-Fall. Der Builder nimmt solche Defer-Ticks jetzt als reine `in_danger`-Zeile
+mit. Solange noch kein `yes`-Fall im Log liegt, mit `--no-danger` bauen, sonst zieht das Training
+den geteilten `choice`-Kopf auf „immer no".
 
 ## M4: Parameter-Layer (Zielwahl)
 
