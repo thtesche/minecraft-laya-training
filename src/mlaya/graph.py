@@ -122,6 +122,11 @@ class Agent:
         # placed chest there. Both are per-run only and injected into each GameState.
         self.base: tuple[int, int, int] | None = None
         self.chest_pos: tuple[int, int, int] | None = None
+        # Lava cells a pour already failed on with `[BUCKET_NO_FACE]`. That answer is
+        # structural -- no solid block beside that cell faces the bot -- so retrying it can
+        # only fail again; remembering it lets the next tick pour elsewhere (live: the
+        # surface pond holds one usable cell and the obsidian would never be made there).
+        self._pour_skip: set[tuple[int, int, int]] = set()
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -129,6 +134,7 @@ class Agent:
         self._adopt_homebase(gs)
         gs.base = self.base
         gs.chest_pos = self.chest_pos
+        gs.pour_skip = frozenset(self._pour_skip)
         return gs
 
     def _adopt_homebase(self, gs) -> None:
@@ -286,6 +292,23 @@ class Agent:
             self._blocked_kind = "surroundings"
             self._unblock_attempts = 0
 
+    def _note_pour(self, action, ok: bool, text: str | None) -> None:
+        """Remember a lava cell a pour was refused at, so it is never poured at again.
+
+        `[BUCKET_NO_FACE]` says no solid block beside that cell faces the bot: a property of
+        the cell and the terrain around it, not of the attempt. The obsidian step reads the set
+        back out of the GameState (`pour_skip`) and looks for the next lava source, which is
+        what carries the run from a stopped-up surface pond to the lava lake further off.
+        """
+        args = action.args or {}
+        if ok or action.tool != "use_bucket" or args.get("action") != "pour":
+            return
+        if "BUCKET_NO_FACE" not in (text or ""):
+            return
+        pos = (args.get("x"), args.get("y"), args.get("z"))
+        if all(isinstance(v, int) for v in pos):
+            self._pour_skip.add(pos)
+
     async def _verify(self, state: AgentState) -> dict:
         before = state["before"]
         action = state["action"]
@@ -293,7 +316,9 @@ class Agent:
         # Remember a surroundings block so the next tick changes the surroundings before
         # retrying it (see `_note_block` for the clearing rule).
         _ok = getattr(res, "ok", False)
-        self._note_block(action.label, _ok, getattr(res, "text", ""))
+        _text = getattr(res, "text", "")
+        self._note_block(action.label, _ok, _text)
+        self._note_pour(action, _ok, _text)
         if action.label == "stow_surplus":
             # A failed deposit means the chest is full; stop offering it as the relief.
             self._stow_blocked = not _ok

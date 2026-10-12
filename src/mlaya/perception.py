@@ -110,6 +110,11 @@ class BlockHit:
     `above`/`below` are the annotation the server adds to every hit; `above == "air"`
     means the block has open space over it -- standable footing for `navigate`, or an
     exposed ore that is easier to reach.
+
+    `level` is the server's fluid level, reported for lava (and absent elsewhere): `0` is a
+    *source* block of standing lava, anything above is a flow that spilled from one. The
+    distinction decides the obsidian step -- water meeting a source forms obsidian, water
+    meeting a flow forms only cobblestone -- so the pour target has to look at the level.
     """
 
     query: str  # the group the hit came from ("logs", "stone", ...)
@@ -120,6 +125,7 @@ class BlockHit:
     distance: float
     above: str | None = None
     below: str | None = None
+    level: int | None = None
 
     @property
     def pos(self) -> tuple[int, int, int]:
@@ -131,7 +137,8 @@ class BlockHit:
 
     def as_dict(self) -> dict:
         return {"name": self.name, "x": self.x, "y": self.y, "z": self.z,
-                "distance": self.distance, "above": self.above, "below": self.below}
+                "distance": self.distance, "above": self.above, "below": self.below,
+                "level": self.level}
 
 
 @dataclass
@@ -187,6 +194,11 @@ class GameState:
     # The placed chest at the base, remembered from `place_chest` so `use_container` can name
     # its exact coordinates without a second block scan.
     chest_pos: tuple[int, int, int] | None = None
+    # Lava cells whose pour the server already refused (`[BUCKET_NO_FACE]`): no solid block
+    # beside them faces the bot, so retrying there can only fail again. The loop records them
+    # and the obsidian step passes them over, which is what moves the search from a stopped-up
+    # surface pond to the next lava pool instead of looping on the nearest cell forever.
+    pour_skip: frozenset = frozenset()
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
@@ -509,6 +521,7 @@ def parse_resources(data: dict) -> dict[str, list[BlockHit]]:
                 name=str(e.get("name") or query),
                 x=int(e["x"]), y=int(e["y"]), z=int(e["z"]), distance=d,
                 above=e.get("above"), below=e.get("below"),
+                level=int(e["level"]) if isinstance(e.get("level"), (int, float)) else None,
             ))
         hits.sort(key=lambda h: h.distance)
         if hits:

@@ -454,6 +454,57 @@ def _within_reach(gs: GameState, hit, reach: float) -> bool:
     return gs.pos is not None and _dist(gs.pos, hit.pos) <= reach
 
 
+# The four horizontal steps around a lava cell: the bucket clicks a solid block *beside* the
+# pour target, so only a lateral neighbour can be the stance the bot pours from.
+_LATERAL = ((1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1))
+
+
+def _lava_pour_target(gs: GameState) -> BlockHit | None:
+    """The nearest lava cell the carried water can actually turn into obsidian, or None.
+
+    Three rules, each paid for live on the surface pond:
+      * The water must meet a lava *source* (`level == 0`); flowing lava yields cobblestone.
+        Pouring straight *into* a source deletes it, so the target is a lava cell *beside* a
+        source -- the poured water then flows onto the source and makes obsidian.
+      * The bucket clicks a solid block beside the target cell, so a target over lava or air
+        answers `[BUCKET_NO_FACE]`; its `below` must be solid.
+      * The cell must be open above (`above == "air"`), or the water cannot be placed at all.
+    Cells the server already refused (`gs.pour_skip`) are passed over, so a stopped-up pond
+    does not starve the run of the lava lake further off.
+    """
+    hits = gs.resources.get("lava") or []
+    if not hits:
+        return None
+    sources = {h.pos for h in hits if h.level == 0}
+    if not sources:
+        return None
+    for h in hits:  # already nearest first
+        if (h.pos in gs.pour_skip or h.above != "air"
+                or h.below in (None, "lava", "air")):
+            continue
+        if any((h.x + dx, h.y, h.z + dz) in sources for dx, _, dz in _LATERAL):
+            return h
+    return None
+
+
+def _pour_stance(gs: GameState, target: BlockHit) -> tuple[int, int, int] | None:
+    """The cell to stand in to pour into `target`: its lateral neighbour nearest the bot.
+
+    Standing *diagonally* to the target is what made the live pond pours fail -- the reference
+    block's face then points past the bot, so nothing is clickable. The walk goes to a cell at
+    the target's own height instead. Lava neighbours are skipped: the bot may not stand there.
+    """
+    lava = {h.pos for h in (gs.resources.get("lava") or [])}
+    options = [(target.x + dx, target.y, target.z + dz)
+               for dx, _, dz in _LATERAL
+               if (target.x + dx, target.y, target.z + dz) not in lava]
+    if not options:
+        return None
+    if gs.pos is None:
+        return options[0]
+    return min(options, key=lambda p: _dist(gs.pos, p))
+
+
 def _bed_available(gs: GameState) -> bool:
     """A bed is at hand for `sleep`: carried, or already standing beside the base.
 
@@ -757,13 +808,13 @@ def candidates(gs: GameState) -> list[str]:
             out.append("fill_bucket")
         if not has_flint and not has_fs and gs.resource_distance("gravel") is not None:
             out.append("get_flint")
-        # Obsidian is *made*, not dug: the step is offered while the bucket is full and lava is
-        # in range (to pour the water), or while freshly formed obsidian lies within reach (to
-        # mine it). The reach test on the mine side keeps the dig shallow - the natural deposit
-        # under the same lava caves is tens of blocks down and never comes that close.
-        has_lava = gs.resource_nearest("lava") is not None
+        # Obsidian is *made*, not dug: the step is offered while the bucket is full and a lava
+        # source can actually be poured on, or while freshly formed obsidian lies within reach
+        # (to mine it). The reach test on the mine side keeps the dig shallow - the natural
+        # deposit under the same lava caves is tens of blocks down and never comes that close.
         if (obsidian < PORTAL_OBSIDIAN and not has_fs and _can_mine(gs, "obsidian")
-                and ((has_water and has_lava) or _obsidian_within_reach(gs))):
+                and ((has_water and _lava_pour_target(gs) is not None)
+                     or _obsidian_within_reach(gs))):
             out.append("mine_obsidian")
         if (not has_fs and has_flint and iron >= FLINT_STEEL_IRON and table
                 and obsidian >= PORTAL_OBSIDIAN):
@@ -969,23 +1020,28 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             count = max(1, PORTAL_OBSIDIAN - inv.get("obsidian", 0))
             return Action(label, "collect_block", {"block_name": "obsidian", "count": count},
                           "mine the obsidian the poured water just formed at the bot's feet")
-        # Phase 2: no obsidian in reach, so make some - pour the carried water onto the nearest
-        # lava. Natural obsidian deep under that lava is deliberately *not* a target: tunnelling
-        # to it is what left the bot treading water in a flooded shaft.
+        # Phase 2: no obsidian in reach, so make some - pour the carried water into a lava
+        # cell that lies beside a real lava source (see `_lava_pour_target`). Natural obsidian
+        # deep under that lava is deliberately *not* a target: tunnelling to it is what left
+        # the bot treading water in a flooded shaft.
         if not _has(inv, WATER_BUCKET):
             return None
-        lava = gs.resource_nearest("lava")
+        lava = _lava_pour_target(gs)
         if lava is None:
             return None
         if _within_reach(gs, lava, POUR_REACH):
             return Action(label, "use_bucket",
                           {"action": "pour", "liquid": "water",
                            "x": lava.x, "y": lava.y, "z": lava.z},
-                          "pour the carried water onto the lava to form obsidian")
+                          "pour the carried water onto the lava source to form obsidian")
+        stance = _pour_stance(gs, lava)
+        if stance is None:
+            return None
+        sx, sy, sz = stance
         return Action(label, "navigate",
-                      {"x": lava.x, "y": lava.y, "z": lava.z, "range": 3,
-                       "dig": False, "scaffold": False},
-                      "walk to the lava pool to pour the water and make obsidian")
+                      {"x": sx, "y": sy, "z": sz, "range": 1,
+                       "dig": True, "scaffold": False},
+                      "walk to the lava source and stand beside it to pour the water")
     if label == "get_flint":
         if _has(inv, FLINT_ITEM) or _has(inv, FLINT_STEEL_ITEM):
             return None

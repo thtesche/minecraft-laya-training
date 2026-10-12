@@ -605,6 +605,23 @@ class NetherGateTest(unittest.TestCase):
         return {n: [BlockHit(n, n, -270, 64, -56, 3.0)] for n in names}
 
     @staticmethod
+    def _lava(source=(-270, 64, -57), target=(-270, 64, -56), distance=3.0) -> dict:
+        """A pour-able pond: a level-0 lava *source* with a flow cell beside it.
+
+        `target` is the cell the water goes into. It stands beside the source at the same
+        level, open above and floored with stone -- the shape the server actually accepts a
+        pour on, and the only shape that turns the source into obsidian.
+        """
+        sx, sy, sz = source
+        tx, ty, tz = target
+        return {"lava": [
+            BlockHit("lava", "lava", tx, ty, tz, distance,
+                     above="air", below="stone", level=2),
+            BlockHit("lava", "lava", sx, sy, sz, distance + 1,
+                     above="stone", below="stone", level=0),
+        ]}
+
+    @staticmethod
     def _at_home(g: GameState, base: tuple = (-197, -47, -98)) -> GameState:
         """Stand the bot on the home base, so the base-only steps (portal, bed) are eligible."""
         g.base = base
@@ -650,11 +667,11 @@ class NetherGateTest(unittest.TestCase):
         self.assertIsNone(resolve("fill_bucket", self._geared(water_bucket=1)))
 
     def test_mine_obsidian_pours_water_onto_lava(self) -> None:
-        # Obsidian is *made*, not dug: with the bucket full and lava within pouring reach, the
-        # step empties the bucket into the lava cell.
+        # Obsidian is *made*, not dug: with the bucket full and a usable lava cell within
+        # pouring reach, the step empties the bucket into that cell.
         g = self._geared(water_bucket=1)
         g.pos = (-270.0, 64.0, -56.0)
-        g.resources = self._blocks("lava")
+        g.resources = self._lava()
         self.assertIn("mine_obsidian", candidates(g))
         a = resolve("mine_obsidian", g)
         self.assertEqual(a.tool, "use_bucket")
@@ -662,16 +679,71 @@ class NetherGateTest(unittest.TestCase):
                                   "x": -270, "y": 64, "z": -56})
 
     def test_mine_obsidian_walks_to_far_lava_first(self) -> None:
-        # Out of pouring reach the same step walks to the lava pool; the walk neither digs nor
-        # scaffolds, so the pathfinder cannot tunnel into the lava it is aiming at.
+        # Out of pouring reach the step walks to a cell *beside* the lava, never into it: the
+        # bucket clicks a solid block next to the target cell, so the stance is a lateral
+        # neighbour at the target's own height. The walk may dig (the lava lake sits far below
+        # the surface) but never scaffolds, so the pathfinder cannot bridge over its target.
         g = self._geared(water_bucket=1)
         g.pos = (0.0, 64.0, 0.0)
-        g.resources = self._blocks("lava")
+        g.resources = self._lava()
         a = resolve("mine_obsidian", g)
         self.assertEqual(a.tool, "navigate")
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-270, 64, -56))
-        self.assertFalse(a.args["dig"])
+        self.assertEqual(a.args["y"], 64)
+        self.assertIn((a.args["x"], a.args["z"]),
+                      [(-269, -56), (-271, -56), (-270, -55)])
+        self.assertEqual(a.args["range"], 1)
+        self.assertTrue(a.args["dig"])
         self.assertFalse(a.args["scaffold"])
+
+    def test_mine_obsidian_needs_a_source_not_a_flow(self) -> None:
+        # Water on flowing lava makes only cobblestone, so with no level-0 source in the
+        # listing the pour cannot produce obsidian at all and the step stays out.
+        g = self._geared(water_bucket=1)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.resources = {"lava": [BlockHit("lava", "lava", -270, 64, -56, 3.0,
+                                         above="air", below="stone", level=2)]}
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
+
+    def test_mine_obsidian_needs_an_open_pour_cell(self) -> None:
+        # The surface pond's only usable cell is capped by stone, so no water can be placed
+        # there: the step refuses instead of pouring into a wall.
+        g = self._geared(water_bucket=1)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -270, 64, -56, 3.0, above="stone", below="stone", level=2),
+            BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
+        ]}
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
+
+    def test_mine_obsidian_needs_a_floor_under_the_target(self) -> None:
+        # A target cell over lava or air has no solid block to click beside it: that is the
+        # live `[BUCKET_NO_FACE]` that repeated for a whole run on the pond.
+        g = self._geared(water_bucket=1)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -270, 64, -56, 3.0, above="air", below="lava", level=2),
+            BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
+        ]}
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
+
+    def test_mine_obsidian_skips_a_refused_pour_cell(self) -> None:
+        # The loop remembers a cell a pour was refused at; the next tick goes to the next
+        # source instead of retrying the stopped-up one forever.
+        g = self._geared(water_bucket=1)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.pour_skip = frozenset({(-270, 64, -56)})
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -270, 64, -56, 3.0, above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
+            BlockHit("lava", "lava", -260, 64, -56, 10.0, above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -260, 64, -57, 10.5, above="stone", below="stone", level=0),
+        ]}
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-261, 64, -56))
 
     def test_mine_obsidian_mines_what_the_pour_formed(self) -> None:
         # Obsidian the last pour formed lies at the bot's feet: mine it, even with no water left.
