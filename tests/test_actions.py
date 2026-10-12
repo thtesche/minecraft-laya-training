@@ -241,6 +241,60 @@ def _ore(name: str, dist: float = 12.0) -> dict:
     return {name: [BlockHit(name, name, 0, -58, 0, dist)]}
 
 
+class IronOreRuleTest(unittest.TestCase):
+    """Iron ore needs a stone pickaxe or better; a wooden one destroys it with no drop (there is
+    no silk touch, so the drop is raw iron, which is what the smelt step wants). A break inside
+    one dig drops the bot onto the swapped-in lower tier and destroys the remaining ore, so the
+    dig is also refused when the pickaxe is nearly spent and no sufficient backup is carried."""
+
+    def _meta(self, left: float, item: str, tier: str, maximum: float = 131.0) -> dict:
+        return {"pickaxe": {"tier": tier, "item": item, "left": left, "max": maximum}}
+
+    def test_mine_iron_needs_a_stone_pickaxe(self) -> None:
+        near = _ore("iron_ore")
+        for tier in ("none", "wooden", "golden"):
+            self.assertIsNone(resolve("mine_iron", gs(tools={"pickaxe": tier}, resources=near)))
+            self.assertNotIn("mine_iron",
+                             candidates(gs(tools={"pickaxe": tier}, resources=near)))
+        a = resolve("mine_iron", gs(tools={"pickaxe": "stone"}, resources=near))
+        self.assertEqual(a.args, {"block_name": "iron_ore", "count": 3})
+
+    def test_spent_pickaxe_without_a_backup_does_not_start(self) -> None:
+        worn = gs(tools={"pickaxe": "stone"},
+                  tool_meta=self._meta(50.0, "stone_pickaxe", "stone"),
+                  resources=_ore("iron_ore"))
+        self.assertNotIn("mine_iron", candidates(worn))
+        self.assertIsNone(resolve("mine_iron", worn))
+
+    def test_a_carried_backup_allows_the_dig(self) -> None:
+        g = gs(tools={"pickaxe": "stone"}, inventory={"stone_pickaxe": 2},
+               tool_meta=self._meta(50.0, "stone_pickaxe", "stone"),
+               resources=_ore("iron_ore"))
+        self.assertIn("mine_iron", candidates(g))
+        self.assertIsNotNone(resolve("mine_iron", g))
+
+    def test_a_spent_iron_pickaxe_can_remine_its_own_replacement(self) -> None:
+        # Regression: the old `tier < IRON_PICK_TIER` bound left a spent iron pickaxe with no
+        # way to gather the three iron its replacement needs.
+        g = gs(tools={"pickaxe": "iron"}, inventory={"iron_pickaxe": 1, "stone_pickaxe": 1},
+               tool_meta=self._meta(50.0, "iron_pickaxe", "iron", 250.0),
+               resources=_ore("iron_ore"))
+        self.assertIn("mine_iron", candidates(g))
+
+    def test_a_fresh_iron_pickaxe_stops_mining_iron(self) -> None:
+        g = gs(tools={"pickaxe": "iron"},
+               tool_meta=self._meta(200.0, "iron_pickaxe", "iron", 250.0),
+               resources=_ore("iron_ore"))
+        self.assertNotIn("mine_iron", candidates(g))
+
+    def test_stone_is_not_guarded(self) -> None:
+        # A spent wooden pickaxe must still be allowed to gather the cobble a stone replacement
+        # needs - guarding stone would deadlock the bootstrap.
+        g = gs(tools={"pickaxe": "wooden"}, inventory={"wooden_pickaxe": 1},
+               tool_meta=self._meta(10.0, "wooden_pickaxe", "wooden", 59.0))
+        self.assertIn("mine_stone", candidates(g))
+
+
 class DiamondChainTest(unittest.TestCase):
     def test_mine_diamond_needs_iron_pickaxe(self) -> None:
         # Wood, stone and gold all destroy diamond ore without a drop, so neither the

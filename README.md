@@ -54,9 +54,14 @@ fürs Schwert abbauen — das Schwert war so unerreichbar. Die Grenze ist entfer
 langen `collect_block` brechen (die `replace_tool`-Reaktion prüft nur zwischen zwei Ticks). **Härtung:**
 `replace_tool` reserviert jetzt zusätzlich bei ≤ `MINING_HEADROOM = 80` Rest-Nutzungen einen frischen
 Ersatz derselben Stufe; bricht die aktive Hacke, schiebt der Server den Ersatz nach, die Stufe bleibt.
-Ein Guard verhindert Mehrfach-Crafting desselben Ersatzes. Außerdem wird `mine_diamond` nicht
-angeboten, solange die Hacke einen Ersatz braucht und keiner craftbar ist — mit Holz/Stein/Gold
-zerstört man Diamanterz ohne Drop, und Gold zählt dabei als Tier 1 (schlechter als Stein).
+Ein Guard verhindert Mehrfach-Crafting desselben Ersatzes. Dazu eine explizite Erz-Regel
+(`ORE_MIN_TIER`): Bruchstein/Kohle brauchen jede Hacke, Eisen eine Stein-, Diamant eine
+Eisen-Spitzhacke (Gold zählt als Tier 1, zerstört also beides). `_can_mine` startet einen Grabungslauf
+nur, wenn auch ein Bruch *mittendrin* die Mindeststufe nicht unterschreitet — sonst zerstört die
+nachgeschobene niedrigere Stufe das restliche Erz ohne Drop. Stein und Kohle sind ausgenommen, sonst
+blockiert der Bootstrap (Holzhacke müsste den Bruchstein für den Stein-Ersatz sammeln dürfen). Und die
+frühere Obergrenze `tier < IRON_PICK_TIER` für `mine_iron` ist weg: eine abgenutzte Eisenhacke kann
+jetzt das Eisen für ihren eigenen Ersatz nachschürfen (eine frische schürft weiterhin kein Eisen).
 
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine

@@ -48,6 +48,16 @@ STONE_PICK_TIER = 2
 IRON_PICK_TIER = 3
 DIAMOND_PICK_TIER = 4
 
+# The game's rule: a block needs a minimum pickaxe tier or it breaks with no drop. There is no
+# silk touch here, so iron ore drops raw iron - exactly what `smelt_iron` consumes (the mining
+# bindings therefore ask for raw_iron, never for the ore block).
+ORE_MIN_TIER = {
+    "stone": 1,                      # cobblestone: any pickaxe
+    "coal_ore": 1,                   # coal: any pickaxe
+    "iron_ore": STONE_PICK_TIER,     # wood breaks it; stone already yields raw iron
+    "diamond_ore": IRON_PICK_TIER,   # wood/stone/gold destroy it
+}
+
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
              "sheep": "mutton", "rabbit": "rabbit"}
@@ -265,6 +275,34 @@ def _replacement_pickaxe(gs: GameState, inv: dict[str, int]) -> str | None:
     return item
 
 
+def _tier_after_break(gs: GameState) -> int:
+    """Best pickaxe tier still carried once the active one has broken."""
+    active = (gs.tool_meta.get("pickaxe") or {}).get("item")
+    counts = dict(gs.inventory)
+    if active and counts.get(active, 0) > 0:
+        counts[active] -= 1
+    tiers = [TIER.get(name[: -len("_pickaxe")], 0)
+             for name, n in counts.items() if n > 0 and name.endswith("_pickaxe")]
+    return max(tiers, default=0)
+
+
+def _can_mine(gs: GameState, block: str) -> bool:
+    """Whether the active pickaxe may start a dig on `block`.
+
+    Two conditions: the active tool meets the block's minimum tier, and a break *inside* the
+    dig cannot leave the bot below it - the server finishes the block with the swapped-in lower
+    tier, which destroys it without a drop. Stone and coal are exempt from the second check:
+    they are cheap, and guarding them would deadlock the bootstrap, where a worn wooden pickaxe
+    must still be allowed to gather the cobble a stone replacement needs.
+    """
+    need = ORE_MIN_TIER.get(block, 0)
+    if _pick_tier(gs.inventory, gs.tools) < need:
+        return False
+    if need < STONE_PICK_TIER:
+        return True
+    return not _pickaxe_due_for_spare(gs) or _tier_after_break(gs) >= need
+
+
 def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 
@@ -366,9 +404,13 @@ def candidates(gs: GameState) -> list[str]:
                 out.append("hunt_wool")
             elif _safe_spider_hunt(gs):
                 out.append("hunt_string")
-    if tier >= STONE_PICK_TIER and tier < IRON_PICK_TIER and raw_iron + iron < 3 and gs.resource_distance("iron_ore") is not None:
+    # Iron is wanted for the pickaxe, and again to rebuild one that is nearly worn. A stone
+    # pickaxe is already enough to mine it (wood is not - it breaks the ore), so this no longer
+    # stops at the iron tier; the upper bound was what left a worn iron pickaxe with no way back.
+    iron_wanted = raw_iron + iron < 3 and (tier < IRON_PICK_TIER or _pickaxe_due_for_spare(gs))
+    if iron_wanted and _can_mine(gs, "iron_ore") and gs.resource_distance("iron_ore") is not None:
         out.append("mine_iron")
-    if tier >= STONE_PICK_TIER and tier < IRON_PICK_TIER and raw_iron >= 1 and coal < 1 and gs.resource_distance("coal_ore") is not None:
+    if raw_iron >= 1 and coal < 1 and _can_mine(gs, "coal_ore") and gs.resource_distance("coal_ore") is not None:
         out.append("mine_coal")
     # Diamonds are wanted for the pickaxe (three) and then for the sword (two more). There
     # is deliberately no upper tier bound here: bounding it at the diamond tier locked the
@@ -376,14 +418,11 @@ def candidates(gs: GameState) -> list[str]:
     # needed (and `craft_diamond_sword` requires the pickaxe to already exist).
     wants_diamonds = (diamond < 3 if tier < DIAMOND_PICK_TIER
                       else diamond < 2 and not _has(inv, "diamond_sword"))
-    # Never start a diamond dig on a pickaxe that is already due for a backup: if it breaks
-    # mid-action the server keeps going with the swapped-in lower tier and the remaining ore
-    # is destroyed without a drop. (While a spare is craftable the replace_tool reaction
-    # already preempts this anyway; this guard covers the no-materials case.)
-    if (tier >= IRON_PICK_TIER and wants_diamonds and not _pickaxe_due_for_spare(gs)
-            and gs.resource_distance("diamond_ore") is not None):
+    # `_can_mine` refuses a diamond dig on an almost-broken pickaxe: breaking mid-action has the
+    # server finish the ore with the swapped-in lower tier, destroying it without a drop.
+    if wants_diamonds and _can_mine(gs, "diamond_ore") and gs.resource_distance("diamond_ore") is not None:
         out.append("mine_diamond")
-    if tier >= 1 and cobble < 12:
+    if cobble < 12 and _can_mine(gs, "stone"):
         out.append("mine_stone")
 
     # explore is the explicit last fallback: only when nothing productive is available.
@@ -408,21 +447,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "collect_block", {"block_name": "logs", "count": 8},
                       "gather logs to start the tech tree")
     if label == "mine_stone":
+        if not _can_mine(gs, "stone"):
+            return None
         return Action(label, "collect_block", {"block_name": "stone", "count": 8},
                       "mine cobblestone to unlock stone tools")
     if label == "mine_iron":
-        if tier < STONE_PICK_TIER:
+        if not _can_mine(gs, "iron_ore"):
             return None
         count = max(1, 3 - inv.get("raw_iron", 0))
         return Action(label, "collect_block", {"block_name": "iron_ore", "count": count},
                       "mine iron ore for iron tools")
     if label == "mine_coal":
-        if tier < 1:
+        if not _can_mine(gs, "coal_ore"):
             return None
         return Action(label, "collect_block", {"block_name": "coal_ore", "count": 3},
                       "mine coal for furnace fuel")
     if label == "mine_diamond":
-        if tier < IRON_PICK_TIER:
+        if not _can_mine(gs, "diamond_ore"):
             return None
         need = 3 if tier < DIAMOND_PICK_TIER else 2  # the pickaxe first, then the sword
         count = max(1, need - inv.get("diamond", 0))

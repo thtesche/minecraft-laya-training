@@ -167,15 +167,25 @@ Wichtige Umsetzungsdetails:
   Eisen-Nachbau vollständig durchlaufen (`mine_iron → mine_coal → smelt_iron → craft_iron_pickaxe`).
   Das funktioniert (live durchlaufen), ist aber teuer — dieselbe „selbstheilende, aber teure"
   Klasse wie die Werkbank-Beobachtung oben.
-  **Härtung:** `replace_tool` greift jetzt zusätzlich bei absoluter Rest-Haltbarkeit
-  ≤ `MINING_HEADROOM = 80` Nutzungen, sodass der frische Ersatz derselben Stufe schon getragen
-  wird, *bevor* ein langer Grabungslauf ihn aufbrauchen kann; bricht die aktive Hacke dann, schiebt
-  der Server den Ersatz automatisch nach und die Stufe (und `mine_diamond`) bleibt erhalten.
-  Ein `_has_spare_pickaxe`-Guard verhindert, dass die Reserve denselben Ersatz mehrfach craftet.
-  Zusätzlich wird `mine_diamond` **gar nicht erst angeboten**, solange die aktive Hacke einen Ersatz
-  braucht (`_pickaxe_due_for_spare`) und kein Spare craftbar ist — sonst zerstört ein Bruch mitten im
-  Graben das restliche Erz mit der nachgeschobenen niedrigeren Stufe. (Holz/Stein/Gold zerstören
-  Diamanterz ohne Belohnung; `IRON_PICK_TIER` schließt Gold mit ein, weil Gold Tier 1 ist.)
+  **Härtung (drei Teile):**
+  1. `replace_tool` greift jetzt zusätzlich bei absoluter Rest-Haltbarkeit
+     ≤ `MINING_HEADROOM = 80` Nutzungen, sodass der frische Ersatz derselben Stufe schon getragen
+     wird, *bevor* ein langer Grabungslauf ihn aufbrauchen kann; bricht die aktive Hacke dann, schiebt
+     der Server den Ersatz automatisch nach und die Stufe bleibt erhalten. Ein
+     `_has_spare_pickaxe`-Guard verhindert, dass die Reserve denselben Ersatz mehrfach craftet.
+  2. `ORE_MIN_TIER` macht die Spielregel explizit (Bruchstein: jede Hacke, Kohle: jede Hacke, Eisen:
+     `STONE_PICK_TIER`, Diamant: `IRON_PICK_TIER`; Gold zählt als Tier 1 und zerstört daher Eisen-
+     wie Diamanterz). `_can_mine(gs, block)` prüft zusätzlich, dass ein Bruch *innerhalb* des Grabens
+     die Mindeststufe nicht unterschreitet — sonst zieht der Server die nachgeschobene niedrigere
+     Stufe nach und zerstört das restliche Erz ohne Belohnung. Stein und Kohle sind davon
+     ausgenommen: sie sind billig, und ein Verbot würde den Bootstrap blockieren (eine abgenutzte
+     Holzhacke muss noch den Bruchstein für den Stein-Ersatz sammeln dürfen). `candidates` **und**
+     `resolve` nutzen dieselbe Prüfung, `mine_stone`/`mine_iron`/`mine_coal`/`mine_diamond` sind
+     damit deckungsgleich.
+  3. Die alte Obergrenze `tier < IRON_PICK_TIER` für `mine_iron` fiel weg: da eine Steinspitzhacke
+     Eisen bereits abbaut (Holz zerstört es), kann eine abgenutzte Eisenhacke jetzt das Eisen für
+     ihren eigenen Ersatz nachschürfen (`iron_wanted` greift zusätzlich bei
+     `_pickaxe_due_for_spare`). Eine *frische* Eisenhacke schürft weiterhin kein Eisen.
   Die Diamant-Spitzhacke (1561 Haltbarkeit) macht das Risiko danach klein.
 
 ## M2b — erreicht: Bett/Respawn, Nachtschlaf, Notifications
