@@ -33,10 +33,12 @@ Die M2/M2b/M2c/M2d-Pfade wurden live getestet: `replace_tool` (abgenutzte Hacke 
 (Tier gejagt, Vorrat aufgefüllt), `collect_drops` (Reflex-Kill → Drops eingesammelt),
 `recover_drops` (Tod in Place → Ausrüstung zurückgeholt) sowie die **Bett-Kette** `craft_table` →
 `hunt_wool` (Schaf) → `craft_bed` → nachts `sleep` (Nacht wurde auf Tag übersprungen) laufen.
-**Vorbehalte:** `hunt_food` roamt ungeschützt zur nächsten Kreatur; ein Nachtlauf wanderte 159–190 m
-und wurde zweimal getötet (Totalverlust des Inventars). Und nachts hält der Server-`hostile_reflex`
-zeitweise den Körper, sodass Foreground-Aktionen warten müssen („body owner: …"); Mobs in der Liste
-(≤ ~150 m) müssen erst **geladen** sein, um jagbar zu sein (`[HUNT_TARGET_NOT_LOADED]`).
+**Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
+159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine
+**Tageslicht-Schranke** gebunden (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`): nachts
+nur Tiere in Reichweite, tagsüber auch weiter entfernte. Weiterhin gilt: nachts hält der
+Server-`hostile_reflex` zeitweise den Körper („body owner: …"), und Mobs in der Liste (≤ ~150 m)
+müssen erst **geladen** sein, um jagbar zu sein (`[HUNT_TARGET_NOT_LOADED]`).
 Details + 22 Determinismus-Tests: [`docs/architecture.md`](docs/architecture.md#m2d--erreicht-auf-event-notification-typen-reagieren).
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).

@@ -200,21 +200,25 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   zurück). Der `execute`-Knoten schaltet für eine **feindliche** Jagd (`is_hostile_hunt`) auf `hunt`
   und im `finally` zurück auf `base`. `mlaya.cli policy [--apply] [--preset base|hunt]`.
 - **Essen** in `actions.py`: `hunt_food` beschafft den **Mindestvorrat** (`FOOD_RESERVE = 16`;
-  Nether-Ziel 24) — nächstes passives Tier (`FOOD_MOBS = cow/pig/chicken/sheep/rabbit`) oder, als
-  Rückfall, ein **einzelner Zombie** (`rotten_flesh`, gegated: ≤2 Hostiles ≤16 m und alle Zombies,
-  Health ≥18). `cook_food` brät rohes Fleisch (`smelt_item` im getragenen Ofen mit Kohle).
-  `hunt_food` wird angeboten, solange der Vorrat < 16 ist **und** nicht gerade gegessen wird
-  („feed to 20 first, then bank"); die Aktion ist mit `allow_without_shield: true` markiert.
-  Gegessen wird über den Server-Reflex (roh erlaubt), `eat_food` bleibt der manuelle Nachschlag.
-- **Vorbehalt (Gefahr, live):** `hunt_food` wählt das **nächstgelegene** Tier unabhängig von der
-  Distanz, und `collect_mob_drop` roamt dorthin. Ein nächtlicher `run` wanderte so **159–190 m** und
-  wurde dabei **zweimal getötet** (u. a. „slain by Enderman", 103 s alt), was **das komplette
+  Nether-Ziel 24) — nächstes passives Tier (`FOOD_MOBS = cow/pig/chicken/sheep/rabbit`) **innerhalb
+  einer tageslichtabhängigen Reichweite** (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`:
+  nachts nur, was schon nah ist) oder, als Rückfall, ein **einzelner Zombie** (`rotten_flesh`,
+  gegated: ≤2 Hostiles ≤16 m und alle Zombies, Health ≥18). `cook_food` brät rohes Fleisch
+  (`smelt_item` im getragenen Ofen mit Kohle). `hunt_food` wird angeboten, solange der Vorrat < 16 ist
+  **und** nicht gerade gegessen wird („feed to 20 first, then bank"); die Aktion ist mit
+  `allow_without_shield: true` markiert. Gegessen wird über den Server-Reflex (roh erlaubt), `eat_food`
+  bleibt der manuelle Nachschlag.
+- **Gefahr (live, jetzt entschärft):** `hunt_food` wählte früher das **nächstgelegene** Tier
+  unabhängig von der Distanz, und `collect_mob_drop` roamt dorthin. Ein nächtlicher `run` wanderte so
+  **159–190 m** und wurde **zweimal getötet** (u. a. „slain by Enderman"), was **das komplette
   Inventar** kostete — inklusive der gerade gecrafteten Eisenhacke. Auch `hunt_string` scheiterte
   dreimal, einmal tödlich. Der `in_danger`-Gate sagte in diesen Ticks **`no`** (Health 10.5, Skelett
   9.6 m) — das Zero-Shot-Gate ist auf Gefahr schlecht kalibriert (bekannter Befund, s. o.). Die
   Server-Policy kämpft erst ab Health ≥ 17 (`respond_to_threats`), greift unterhalb also nicht ein.
-  Konsequenz für später: `hunt_food` an eine Distanz-/Gefahrenschranke binden (z. B. nur tagsüber oder
-  ≤ ~24 m), statt blind zu roamen.
+  **Fix:** `hunt_food` ist jetzt an eine **Tageslicht-/Distanz-Schranke** gebunden; nachts wird nur
+  gejagt, was schon in Reichweite ist. Live gegengeprüft (Nacht-Tick, nächste Tiere 35/38/75/103 m):
+  `_food_target = None`, `hunt_food` wird gar nicht erst angeboten. Rest-Risiko: tagsüber bleiben
+  längere Wege bis 64 m möglich — bewusst, weil der Tagesweg billig ist.
 
 ## M2d — erreicht: auf Event-/Notification-Typen reagieren
 

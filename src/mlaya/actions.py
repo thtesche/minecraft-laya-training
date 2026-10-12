@@ -21,7 +21,7 @@ CRITERIA: dict[str, str] = {
     "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
-    "hunt_food": "hunt a nearby animal, or a lone zombie, to bank at least 16 edible items",
+    "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank at least 16 edible items",
     "cook_food": "cook carried raw meat in the furnace so it feeds more hunger",
     "replace_tool": "craft a fresh pickaxe to replace the one that is nearly worn out",
     "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
@@ -52,6 +52,12 @@ COOKED = {"beef": "cooked_beef", "porkchop": "cooked_porkchop",
 # Minimum edible items to keep banked. 16 is the Nether floor (24 the real target):
 # hunger drains fast while sprinting and fighting, and death drops everything.
 FOOD_RESERVE = 16
+# Food hunting is the one gather that walks to a moving target, so it is bounded by
+# daylight: a long walk to a distant animal is cheap in daylight, but after dark the bot
+# only tops up from animals already at hand. The old unguarded hunt roamed ~180 m at
+# night and was killed twice, losing a fresh iron pickaxe.
+FOOD_HUNT_RANGE_DAY = 64.0
+FOOD_HUNT_RANGE_NIGHT = 16.0
 # Quarries that fight back, so `collect_mob_drop` must run in the hunt stage.
 HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
                  "witch", "blaze", "piglin", "zombified_piglin"}
@@ -113,14 +119,21 @@ def _can_sticks(inv: dict[str, int], logs: int, planks: int) -> bool:
     return inv.get("stick", 0) >= 2 or planks >= 2 or logs >= 1
 
 
-def _nearest_food_mob(gs: GameState) -> str | None:
+def _nearest_food_mob(gs: GameState, max_range: float | None = None) -> str | None:
     best: str | None = None
     best_d: float | None = None
     for mob in FOOD_MOBS:
         d = gs.mob_nearest(mob)
-        if d is not None and (best_d is None or d < best_d):
+        if d is None or (max_range is not None and d > max_range):
+            continue
+        if best_d is None or d < best_d:
             best, best_d = mob, d
     return best
+
+
+def _food_hunt_range(gs: GameState) -> float:
+    """How far a food hunt may walk: far in daylight, only at hand after dark."""
+    return FOOD_HUNT_RANGE_NIGHT if gs.phase == "night" else FOOD_HUNT_RANGE_DAY
 
 
 def _first_cookable(inv: dict[str, int]) -> str | None:
@@ -167,8 +180,8 @@ def _safe_zombie_hunt(gs: GameState) -> bool:
 
 
 def _food_target(gs: GameState) -> tuple[str, str] | None:
-    """The safest available food source: a passive animal first, else a lone zombie."""
-    mob = _nearest_food_mob(gs)
+    """The safest available food source: a passive animal in walking reach, else a lone zombie."""
+    mob = _nearest_food_mob(gs, _food_hunt_range(gs))
     if mob is not None:
         return mob, FOOD_MOBS[mob]
     if _safe_zombie_hunt(gs):

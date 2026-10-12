@@ -125,6 +125,33 @@ class FoodChainTest(unittest.TestCase):
     def test_no_food_target(self) -> None:
         self.assertIsNone(resolve("hunt_food", gs()))
 
+    def test_night_hunt_ignores_far_animal(self) -> None:
+        """After dark a distant animal is not worth the walk (the old 180 m night roam)."""
+        g = gs(mobs=[("cow", "animal", 5, 40.0)], phase="night")
+        self.assertIsNone(resolve("hunt_food", g))
+
+    def test_night_hunt_takes_close_animal(self) -> None:
+        g = gs(mobs=[("cow", "animal", 5, 12.0)], phase="night")
+        self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
+
+    def test_day_hunt_reaches_far_animal(self) -> None:
+        g = gs(mobs=[("cow", "animal", 5, 40.0)], phase="day")
+        self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
+
+    def test_day_hunt_gives_up_beyond_range(self) -> None:
+        g = gs(mobs=[("cow", "animal", 5, 80.0)], phase="day")
+        self.assertIsNone(resolve("hunt_food", g))
+
+    def test_night_hunt_boundary(self) -> None:
+        self.assertIsNotNone(resolve("hunt_food", gs(mobs=[("pig", "animal", 1, 16.0)], phase="night")))
+        self.assertIsNone(resolve("hunt_food", gs(mobs=[("pig", "animal", 1, 16.1)], phase="night")))
+
+    def test_candidates_gate_hunt_food_by_range(self) -> None:
+        far = gs(mobs=[("cow", "animal", 5, 40.0)], phase="night")
+        self.assertNotIn("hunt_food", candidates(far))
+        near = gs(mobs=[("cow", "animal", 5, 12.0)], phase="night")
+        self.assertIn("hunt_food", candidates(near))
+
     def test_eat_first_edible(self) -> None:
         a = resolve("eat_food", gs(inventory={"cooked_beef": 1}))
         self.assertEqual(a.tool, "eat_food")
