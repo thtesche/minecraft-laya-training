@@ -71,6 +71,13 @@ HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
 # M2d reactions. An active tool at or below this fraction of its maximum is replaced
 # before it breaks; a death this recent, this close, is worth walking back to.
 LOW_DURABILITY = 0.15
+# The reaction only runs between ticks, but one long `collect_block` (a tunnel to a distant
+# vein) can spend far more than 15% inside a single action - live, that broke an iron pickaxe
+# mid-mine and dropped the bot to stone, forcing a full iron rebuild. So the active pickaxe is
+# additionally backed up once its *absolute* headroom falls to this many uses: the fresh
+# same-tier spare is then already carried, and the server swaps it in the instant the active
+# one breaks, so the tier (and with it `mine_diamond`) never goes away.
+MINING_HEADROOM = 80
 RECOVER_WINDOW_S = 90.0
 RECOVER_RANGE = 120.0
 
@@ -204,30 +211,58 @@ def _tool_durability(gs: GameState, cls: str) -> tuple[float, str] | None:
     return None
 
 
-def _worn_pickaxe(gs: GameState) -> bool:
+def _pickaxe_left(gs: GameState) -> float | None:
+    """Absolute uses left on the active pickaxe, when the server reports it."""
+    left = (gs.tool_meta.get("pickaxe") or {}).get("left")
+    return float(left) if isinstance(left, (int, float)) else None
+
+
+def _pickaxe_due_for_spare(gs: GameState) -> bool:
+    """True when the active pickaxe should already have a fresh same-tier backup carried.
+
+    Two triggers: the classic "about to break" fraction, and an absolute headroom reserve so
+    that a single long dig cannot exhaust the tool before the next tick can react.
+    """
     d = _tool_durability(gs, "pickaxe")
-    return d is not None and d[0] <= LOW_DURABILITY
+    if d is None:
+        return False
+    if d[0] <= LOW_DURABILITY:
+        return True
+    left = _pickaxe_left(gs)
+    return left is not None and left <= MINING_HEADROOM
+
+
+def _has_spare_pickaxe(gs: GameState, inv: dict[str, int], item: str) -> bool:
+    """A same-tier backup is already carried (the active tool counts as the first copy)."""
+    active = (gs.tool_meta.get("pickaxe") or {}).get("item")
+    return inv.get(item, 0) >= (2 if item == active else 1)
 
 
 def _replacement_pickaxe(gs: GameState, inv: dict[str, int]) -> str | None:
-    """The best pickaxe still craftable when the active one is nearly worn out.
+    """The best pickaxe still craftable when the active one needs a backup.
 
     Never a downgrade below what the bot already wields: diamond if diamonds are banked,
     else iron, else stone (which still mines iron ore). A wooden one is pointless here
-    because `craft_pickaxe` only fires when the bot has no pickaxe at all.
+    because `craft_pickaxe` only fires when the bot has no pickaxe at all. Returns None once
+    a spare of that kind is already carried, so the reserve cannot craft the same spare twice
+    (the server equips a same-tier fresh tool, but a lower-tier spare leaves the worn active
+    one in hand - without this guard that would loop until the materials ran out).
     """
     tier = _pick_tier(inv, gs.tools)
     if tier < STONE_PICK_TIER:
         return None
     sticks = _can_sticks(inv, _logs(inv), _planks(inv))
     table = _has(inv, "crafting_table")
+    item = None
     if tier >= DIAMOND_PICK_TIER and table and inv.get("diamond", 0) >= 3 and sticks:
-        return "diamond_pickaxe"
-    if tier >= IRON_PICK_TIER and table and inv.get("iron_ingot", 0) >= 3 and sticks:
-        return "iron_pickaxe"
-    if table and inv.get("cobblestone", 0) >= 3 and sticks:
-        return "stone_pickaxe"
-    return None
+        item = "diamond_pickaxe"
+    elif tier >= IRON_PICK_TIER and table and inv.get("iron_ingot", 0) >= 3 and sticks:
+        item = "iron_pickaxe"
+    elif table and inv.get("cobblestone", 0) >= 3 and sticks:
+        item = "stone_pickaxe"
+    if item is None or _has_spare_pickaxe(gs, inv, item):
+        return None
+    return item
 
 
 def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
@@ -272,7 +307,7 @@ def candidates(gs: GameState) -> list[str]:
     reactions: list[str] = []
     if _can_recover(gs):
         reactions.append("recover_drops")
-    if _worn_pickaxe(gs) and _replacement_pickaxe(gs, inv):
+    if _pickaxe_due_for_spare(gs) and _replacement_pickaxe(gs, inv):
         reactions.append("replace_tool")
     if gs.drops > 0:
         reactions.append("collect_drops")
@@ -300,7 +335,7 @@ def candidates(gs: GameState) -> list[str]:
     # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
     need_wood = (tier == 0 or not table
                  or (not bed and (wool >= 3 or string >= 12))
-                 or (_worn_pickaxe(gs) and not _can_sticks(inv, logs, planks)))
+                 or (_pickaxe_due_for_spare(gs) and not _can_sticks(inv, logs, planks)))
     if logs == 0 and planks == 0 and need_wood:
         out.append("get_wood")
     if (logs >= 1 or planks >= 5) and tier == 0:
@@ -492,11 +527,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       f"eat {food} to restore hunger")
     if label == "replace_tool":
         item = _replacement_pickaxe(gs, inv)
-        if not item or not _worn_pickaxe(gs):
+        if not item or not _pickaxe_due_for_spare(gs):
             return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": item}], "temporary_workstation": True},
-                      f"craft a fresh {item} before the worn one breaks")
+                      f"carry a fresh {item} before the active one breaks mid-dig")
     if label == "collect_drops":
         if gs.drops <= 0:
             return None

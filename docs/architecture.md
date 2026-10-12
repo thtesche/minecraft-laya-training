@@ -166,8 +166,13 @@ Wichtige Umsetzungsdetails:
   Danach wird `mine_diamond` nicht mehr angeboten (Tier < Eisen), und die Kette muss den
   Eisen-Nachbau vollständig durchlaufen (`mine_iron → mine_coal → smelt_iron → craft_iron_pickaxe`).
   Das funktioniert (live durchlaufen), ist aber teuer — dieselbe „selbstheilende, aber teure"
-  Klasse wie die Werkbank-Beobachtung oben. Die Diamant-Spitzhacke (1561 Haltbarkeit) macht das
-  Risiko danach klein.
+  Klasse wie die Werkbank-Beobachtung oben.
+  **Härtung:** `replace_tool` greift jetzt zusätzlich bei absoluter Rest-Haltbarkeit
+  ≤ `MINING_HEADROOM = 80` Nutzungen, sodass der frische Ersatz derselben Stufe schon getragen
+  wird, *bevor* ein langer Grabungslauf ihn aufbrauchen kann; bricht die aktive Hacke dann, schiebt
+  der Server den Ersatz automatisch nach und die Stufe (und `mine_diamond`) bleibt erhalten.
+  Ein `_has_spare_pickaxe`-Guard verhindert, dass die Reserve denselben Ersatz mehrfach craftet.
+  Die Diamant-Spitzhacke (1561 Haltbarkeit) macht das Risiko danach klein.
 
 ## M2b — erreicht: Bett/Respawn, Nachtschlaf, Notifications
 
@@ -268,9 +273,13 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   Tick die **frischen** Events sieht; `notifications.unreadCount` steht danach auf 0.
 - **Reaktionen** (`actions.py`): drei neue Labels, jeweils **exklusiv** für den Tick (zeitkritisch),
   `eat_food` läuft weiter mit. Priorität: recover > replace > drops.
-  - **`replace_tool`** — aktive Spitzhacke ≤ `LOW_DURABILITY = 0.15` und ein Ersatz ist craftbar
-    (`_replacement_pickaxe`: Eisen bei ≥3 Ingots, sonst Stein; nie ein Downgrade) →
-    `craft_item` mit `temporary_workstation`.
+  - **`replace_tool`** — die aktive Spitzhacke braucht einen Ersatz bei `LOW_DURABILITY = 0.15`
+    **oder** bei absoluter Rest-Haltbarkeit ≤ `MINING_HEADROOM = 80` Nutzungen (die Reaktion läuft
+    nur *zwischen* Ticks, ein einzelner langer `collect_block` kann mehr verbrauchen, s. o.), und ein
+    Ersatz ist craftbar (`_replacement_pickaxe`: Diamant bei ≥3 Diamanten, sonst Eisen, sonst Stein;
+    nie ein unnötiger Downgrade). `_has_spare_pickaxe` verhindert einen zweiten Ersatz derselben Art
+    (sonst würde die Reserve endlos nachcraften, wenn der Server eine *niedrigere* Stufe liegen
+    lässt). → `craft_item` mit `temporary_workstation`.
   - **`collect_drops`** — frisches „target died"-Event (`gs.drops > 0`, Alter ≤
     `EVENT_REACT_WINDOW_S = 120` s) → `pick_up_items {radius: 16}`.
   - **`recover_drops`** — Tod ≤ `RECOVER_WINDOW_S = 90` s, gleiche Dimension, ≤ `RECOVER_RANGE =

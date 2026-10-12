@@ -86,6 +86,30 @@ class ReplaceToolTest(unittest.TestCase):
                tools={"pickaxe": "stone"}, tool_meta=self._worn(left=100.0))
         self.assertIsNone(resolve("replace_tool", g))
 
+    def test_iron_pickaxe_backed_up_before_a_long_dig(self) -> None:
+        # 70/250 is 28%, above LOW_DURABILITY but below MINING_HEADROOM: a single long dig
+        # could still outlast it inside one action, so reserve a fresh same-tier spare now.
+        g = gs(inventory={"crafting_table": 1, "iron_ingot": 3, "acacia_log": 1,
+                          "cobblestone": 3},
+               tools={"pickaxe": "iron"},
+               tool_meta=self._worn(item="iron_pickaxe", maximum=250.0, left=70.0))
+        self.assertEqual(resolve("replace_tool", g).args["items"],
+                         [{"item_name": "iron_pickaxe"}])
+
+    def test_pickaxe_with_headroom_needs_no_backup(self) -> None:
+        g = gs(inventory={"crafting_table": 1, "iron_ingot": 3, "acacia_log": 1,
+                          "cobblestone": 3},
+               tools={"pickaxe": "iron"},
+               tool_meta=self._worn(item="iron_pickaxe", maximum=250.0, left=200.0))
+        self.assertIsNone(resolve("replace_tool", g))
+
+    def test_no_second_backup_when_a_spare_is_already_carried(self) -> None:
+        g = gs(inventory={"crafting_table": 1, "iron_ingot": 3, "acacia_log": 1,
+                          "cobblestone": 3, "iron_pickaxe": 2},
+               tools={"pickaxe": "iron"},
+               tool_meta=self._worn(item="iron_pickaxe", maximum=250.0, left=5.0))
+        self.assertIsNone(resolve("replace_tool", g))
+
 
 class BedChainTest(unittest.TestCase):
     def test_craft_bed_from_wool(self) -> None:

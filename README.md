@@ -51,8 +51,10 @@ Hacke **und** Schwert aus Diamant). Dabei einen **Deadlock** gefunden und behobe
 auf `tier < Diamant` begrenzt und durfte damit nicht mit der Diamant-Hacke selbst die zwei Diamanten
 fürs Schwert abbauen — das Schwert war so unerreichbar. Die Grenze ist entfernt (Regressions-Tests in
 `tests/test_actions.py::DiamondChainTest`). Zweiter Befund: die Eisen-Hacke kann *innerhalb* eines
-langen `collect_block` brechen (die `replace_tool`-Reaktion prüft nur zwischen zwei Ticks) — die
-Kette heilt dann per Eisen-Nachbau selbst, ist aber teuer.
+langen `collect_block` brechen (die `replace_tool`-Reaktion prüft nur zwischen zwei Ticks). **Härtung:**
+`replace_tool` reserviert jetzt zusätzlich bei ≤ `MINING_HEADROOM = 80` Rest-Nutzungen einen frischen
+Ersatz derselben Stufe; bricht die aktive Hacke, schiebt der Server den Ersatz nach, die Stufe bleibt.
+Ein Guard verhindert Mehrfach-Crafting desselben Ersatzes.
 
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine
