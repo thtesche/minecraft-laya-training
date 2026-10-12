@@ -216,9 +216,11 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   9.6 m) — das Zero-Shot-Gate ist auf Gefahr schlecht kalibriert (bekannter Befund, s. o.). Die
   Server-Policy kämpft erst ab Health ≥ 17 (`respond_to_threats`), greift unterhalb also nicht ein.
   **Fix:** `hunt_food` ist jetzt an eine **Tageslicht-/Distanz-Schranke** gebunden; nachts wird nur
-  gejagt, was schon in Reichweite ist. Live gegengeprüft (Nacht-Tick, nächste Tiere 35/38/75/103 m):
-  `_food_target = None`, `hunt_food` wird gar nicht erst angeboten. Rest-Risiko: tagsüber bleiben
-  längere Wege bis 64 m möglich — bewusst, weil der Tagesweg billig ist.
+  gejagt, was schon in Reichweite ist. Live gegengeprüft mit denselben Tieren (35/38/75/103 m):
+  **nachts** (`range=16`) → `_food_target = None`, `hunt_food` fehlt in `candidates`; **tagsüber**
+  (`range=64`) → `hunt_food` angeboten und ausgeführt (`collect_mob_drop sheep/mutton ×6` → 6 Mutton +
+  4 Wolle). Rest-Risiko: tagsüber bleiben längere Wege bis 64 m möglich — bewusst, weil der Tagesweg
+  billig ist.
 
 ## M2d — erreicht: auf Event-/Notification-Typen reagieren
 
