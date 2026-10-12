@@ -366,16 +366,87 @@ class DiamondChainTest(unittest.TestCase):
         self.assertIn("mine_diamond", candidates(g))
         self.assertEqual(resolve("mine_diamond", g).args["count"], 2)
 
-    def test_candidates_stop_mining_diamonds_once_sword_exists(self) -> None:
+    def test_candidates_mine_diamond_for_armour_after_the_sword(self) -> None:
+        # After the pickaxe and the sword the diamond goal is the armour set, chestplate first
+        # (eight diamonds), so mining continues; it stops once every piece is built.
         g = gs(tools={"pickaxe": "diamond"}, inventory={"diamond_sword": 1},
                resources=_ore("diamond_ore"))
-        self.assertNotIn("mine_diamond", candidates(g))
+        self.assertIn("mine_diamond", candidates(g))
+        self.assertEqual(resolve("mine_diamond", g).args["count"], 8)
+        done = gs(tools={"pickaxe": "diamond"},
+                  inventory={"diamond_sword": 1, "diamond_chestplate": 1,
+                             "diamond_leggings": 1, "diamond_boots": 1, "diamond_helmet": 1},
+                  resources=_ore("diamond_ore"))
+        self.assertNotIn("mine_diamond", candidates(done))
 
     def test_candidates_offer_diamond_sword_after_two_diamonds(self) -> None:
         g = gs(tools={"pickaxe": "diamond"},
                inventory={"crafting_table": 1, "stick": 2, "diamond": 2},
                resources=_ore("diamond_ore"))
         self.assertIn("craft_diamond_sword", candidates(g))
+
+
+class DiamondArmorTest(unittest.TestCase):
+    """The armour tier: 24 diamonds (chestplate 8, leggings 7, boots 4, helmet 5), built one
+    piece at a time in protection-first order, then worn with a single `equip` batch."""
+
+    def _ready(self, resources=None, **inv):
+        base = {"crafting_table": 1, "stick": 2, "diamond_sword": 1}
+        base.update(inv)
+        return gs(tools={"pickaxe": "diamond"}, inventory=base, resources=resources or {})
+
+    def test_chestplate_is_the_first_piece(self) -> None:
+        a = resolve("craft_diamond_chestplate", self._ready(diamond=8))
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_chestplate"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_armour_needs_no_sticks(self) -> None:
+        g = gs(tools={"pickaxe": "diamond"},
+               inventory={"crafting_table": 1, "diamond": 8, "diamond_sword": 1})
+        self.assertIn("craft_diamond_chestplate", candidates(g))
+
+    def test_only_the_next_missing_piece_is_offered(self) -> None:
+        # 24 diamonds would cover the whole set, but the chain still asks for the chestplate.
+        cands = candidates(self._ready(diamond=24))
+        self.assertIn("craft_diamond_chestplate", cands)
+        self.assertNotIn("craft_diamond_leggings", cands)
+
+    def test_next_piece_after_the_chestplate_is_crafted(self) -> None:
+        cands = candidates(self._ready(diamond=7, diamond_chestplate=1))
+        self.assertIn("craft_diamond_leggings", cands)
+        self.assertNotIn("craft_diamond_chestplate", cands)
+
+    def test_mine_count_targets_the_next_piece_only(self) -> None:
+        g = gs(tools={"pickaxe": "diamond"}, inventory={"diamond_sword": 1, "diamond": 3},
+               resources=_ore("diamond_ore"))
+        self.assertEqual(resolve("mine_diamond", g).args["count"], 5)  # chestplate costs 8
+
+    def test_equip_armor_wears_the_crafted_pieces(self) -> None:
+        g = self._ready(diamond_chestplate=1)
+        self.assertIn("equip_armor", candidates(g))
+        a = resolve("equip_armor", g)
+        self.assertEqual(a.tool, "equip")
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_chestplate"}])
+
+    def test_equip_armor_skips_worn_pieces(self) -> None:
+        g = self._ready(diamond_chestplate=1, diamond_leggings=1)
+        g.armor = {"chestplate": {"tier": "diamond", "item": "diamond_chestplate"}}
+        a = resolve("equip_armor", g)
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_leggings"}])
+
+    def test_worn_armour_is_not_rebuilt(self) -> None:
+        g = self._ready(diamond=8)
+        g.armor = {"chestplate": {"tier": "diamond", "item": "diamond_chestplate"}}
+        self.assertNotIn("craft_diamond_chestplate", candidates(g))
+        self.assertIn("craft_diamond_leggings", candidates(g))
+
+    def test_full_set_ends_the_diamond_chain(self) -> None:
+        g = self._ready(diamond=1, resources=_ore("diamond_ore"))
+        g.armor = {slot: {"tier": "diamond", "item": f"diamond_{slot}"}
+                   for slot in ("chestplate", "leggings", "boots", "helmet")}
+        self.assertNotIn("mine_diamond", candidates(g))
+        self.assertIsNone(resolve("mine_diamond", g))
 
 
 if __name__ == "__main__":

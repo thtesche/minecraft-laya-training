@@ -18,9 +18,14 @@ CRITERIA: dict[str, str] = {
     "craft_furnace": "craft a furnace at a crafting table from eight cobblestone",
     "smelt_iron": "smelt raw iron into iron ingots in the furnace the bot carries",
     "craft_iron_pickaxe": "craft an iron pickaxe at a crafting table from three iron ingots and sticks",
-    "mine_diamond": "mine diamond ore with the iron pickaxe to gather diamonds for diamond tools",
+    "mine_diamond": "mine diamond ore with an iron or better pickaxe to gather diamonds for diamond tools and armour",
     "craft_diamond_pickaxe": "craft a diamond pickaxe from three diamonds and sticks; the best pickaxe the bot can make",
     "craft_diamond_sword": "craft a diamond sword from two diamonds and a stick, once the diamond pickaxe exists",
+    "equip_armor": "wear the diamond armour pieces the bot crafted, so their protection is active",
+    "craft_diamond_chestplate": "craft a diamond chestplate from eight diamonds; the most protection per diamond",
+    "craft_diamond_leggings": "craft diamond leggings from seven diamonds",
+    "craft_diamond_boots": "craft diamond boots from four diamonds",
+    "craft_diamond_helmet": "craft a diamond helmet from five diamonds",
     "sleep": "sleep in a carried bed at night to skip to morning and set the respawn point",
     "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
@@ -57,6 +62,13 @@ ORE_MIN_TIER = {
     "iron_ore": STONE_PICK_TIER,     # wood breaks it; stone already yields raw iron
     "diamond_ore": IRON_PICK_TIER,   # wood/stone/gold destroy it
 }
+
+# Diamond armour in the order the bot should build it: most protection per diamond first
+# (chestplate 8 armour / 8 diamonds, leggings 6/7, boots 3/4, helmet 3/5), so a partial set
+# is already as useful as it can be. The number is the recipe's diamond cost; the item is
+# `diamond_<slot>`. Armour needs no sticks, only a crafting table.
+DIAMOND_ARMOR = (("chestplate", 8), ("leggings", 7), ("boots", 4), ("helmet", 5))
+DIAMOND_ARMOR_COST = dict(DIAMOND_ARMOR)
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
@@ -303,6 +315,45 @@ def _can_mine(gs: GameState, block: str) -> bool:
     return not _pickaxe_due_for_spare(gs) or _tier_after_break(gs) >= need
 
 
+def _worn(gs: GameState, item: str) -> bool:
+    """Whether `item` is currently on the armour slots (equipped armour leaves the inventory)."""
+    return any((m or {}).get("item") == item for m in gs.armor.values())
+
+
+def _armor_present(gs: GameState, slot: str) -> bool:
+    """A diamond piece counts as done whether it is worn or still waiting in the inventory."""
+    item = f"diamond_{slot}"
+    return _worn(gs, item) or _has(gs.inventory, item)
+
+
+def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:
+    """The next diamond thing worth building, and what it costs in diamonds.
+
+    The order is the tech tree: pickaxe (3, unlocks obsidian), then sword (2, needs the
+    pickaxe to exist), then the armour set - most protection per diamond first. `None` means
+    the diamond goals are met.
+    """
+    inv = gs.inventory
+    if _pick_tier(inv, gs.tools) < DIAMOND_PICK_TIER:
+        return "diamond_pickaxe", 3
+    if not _has(inv, "diamond_sword"):
+        return "diamond_sword", 2
+    for slot, cost in DIAMOND_ARMOR:
+        if not _armor_present(gs, slot):
+            return f"diamond_{slot}", cost
+    return None
+
+
+def _diamond_craft_ready(gs: GameState, item: str) -> bool:
+    """Carried materials for a diamond craft: always a table, sticks only for tool and sword."""
+    if not _has(gs.inventory, "crafting_table"):
+        return False
+    if item.endswith("_pickaxe") or item.endswith("_sword"):
+        inv = gs.inventory
+        return _can_sticks(inv, _logs(inv), _planks(inv))
+    return True  # armour is diamonds only
+
+
 def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 
@@ -388,13 +439,6 @@ def candidates(gs: GameState) -> list[str]:
         out.append("smelt_iron")
     if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
         out.append("craft_iron_pickaxe")
-    if table and diamond >= 3 and tier < DIAMOND_PICK_TIER and _can_sticks(inv, logs, planks):
-        out.append("craft_diamond_pickaxe")
-    # The sword waits for the pickaxe so the first three diamonds always go to the tool
-    # that unlocks obsidian; it needs only two more.
-    if (table and tier >= DIAMOND_PICK_TIER and diamond >= 2 and not _has(inv, "diamond_sword")
-            and _can_sticks(inv, logs, planks)):
-        out.append("craft_diamond_sword")
     # Bed chain: a bed lets `sleep` skip the night and set the respawn point.
     if not bed:
         if table and (wool >= 3 or string >= 12) and (logs >= 1 or planks >= 3):
@@ -412,16 +456,25 @@ def candidates(gs: GameState) -> list[str]:
         out.append("mine_iron")
     if raw_iron >= 1 and coal < 1 and _can_mine(gs, "coal_ore") and gs.resource_distance("coal_ore") is not None:
         out.append("mine_coal")
-    # Diamonds are wanted for the pickaxe (three) and then for the sword (two more). There
-    # is deliberately no upper tier bound here: bounding it at the diamond tier locked the
-    # sword away, because a diamond pickaxe could never mine the two diamonds it still
-    # needed (and `craft_diamond_sword` requires the pickaxe to already exist).
-    wants_diamonds = (diamond < 3 if tier < DIAMOND_PICK_TIER
-                      else diamond < 2 and not _has(inv, "diamond_sword"))
-    # `_can_mine` refuses a diamond dig on an almost-broken pickaxe: breaking mid-action has the
-    # server finish the ore with the swapped-in lower tier, destroying it without a drop.
-    if wants_diamonds and _can_mine(gs, "diamond_ore") and gs.resource_distance("diamond_ore") is not None:
-        out.append("mine_diamond")
+    # A crafted armour piece sits in the inventory until it is worn; `equip` slots armour even
+    # without a destination, so one batch puts the whole set on. Wear it before crafting more.
+    if any(_has(inv, f"diamond_{slot}") and not _worn(gs, f"diamond_{slot}")
+           for slot, _ in DIAMOND_ARMOR):
+        out.append("equip_armor")
+    # Diamond milestones, one at a time: pickaxe (three diamonds), then the sword (two, and only
+    # once the pickaxe exists - bounding that away deadlocked the sword), then the armour set
+    # (24, most protection per diamond first). `_next_diamond_item` names the next piece and its
+    # cost, so the dig count and the craft gate share one source.
+    # `_can_mine` refuses a dig on an almost-broken pickaxe: breaking mid-action has the server
+    # finish the ore with the swapped-in lower tier, destroying it without a drop.
+    nxt = _next_diamond_item(gs)
+    if nxt is not None:
+        item, cost = nxt
+        if diamond < cost:
+            if _can_mine(gs, "diamond_ore") and gs.resource_distance("diamond_ore") is not None:
+                out.append("mine_diamond")
+        elif _diamond_craft_ready(gs, item):
+            out.append("craft_" + item)
     if cobble < 12 and _can_mine(gs, "stone"):
         out.append("mine_stone")
 
@@ -465,10 +518,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "mine_diamond":
         if not _can_mine(gs, "diamond_ore"):
             return None
-        need = 3 if tier < DIAMOND_PICK_TIER else 2  # the pickaxe first, then the sword
-        count = max(1, need - inv.get("diamond", 0))
+        nxt = _next_diamond_item(gs)
+        if nxt is None:  # pickaxe, sword and the whole armour set are done
+            return None
+        count = max(1, nxt[1] - inv.get("diamond", 0))
         return Action(label, "collect_block", {"block_name": "diamond_ore", "count": count},
-                      "mine diamond ore for diamond tools")
+                      "mine diamond ore for diamond tools and armour")
     if label == "craft_pickaxe":
         if (_logs(inv) < 1 and _planks(inv) < 5) or tier != 0:
             return None
@@ -522,6 +577,22 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": "diamond_sword"}], "temporary_workstation": True},
                       "craft a diamond sword from two diamonds and a stick")
+    if label == "equip_armor":
+        items = [{"item_name": f"diamond_{slot}"} for slot, _ in DIAMOND_ARMOR
+                 if _has(inv, f"diamond_{slot}") and not _worn(gs, f"diamond_{slot}")]
+        if not items:
+            return None
+        return Action(label, "equip", {"items": items},
+                      "wear the crafted diamond armour so its protection is active")
+    armor_slot = label[len("craft_diamond_"):] if label.startswith("craft_diamond_") else None
+    if armor_slot in DIAMOND_ARMOR_COST:
+        cost = DIAMOND_ARMOR_COST[armor_slot]
+        if inv.get("diamond", 0) < cost or not _has(inv, "crafting_table"):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": f"diamond_{armor_slot}"}],
+                       "temporary_workstation": True},
+                      f"craft a diamond {armor_slot} from {cost} diamonds")
     if label == "sleep":
         if gs.phase != "night" or gs.sleeping or not _has_bed(inv):
             return None

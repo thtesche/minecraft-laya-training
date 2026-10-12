@@ -133,6 +133,8 @@ class GameState:
     notifications: list[str] = field(default_factory=list)
     # active tool per class -> {tier, item, left, max}; `left`/`max` are durability
     tool_meta: dict[str, dict] = field(default_factory=dict)
+    # worn armour per slot class ("helmet"/"chestplate"/"leggings"/"boots") -> {tier, item}
+    armor: dict[str, dict] = field(default_factory=dict)
     # fresh "target died" reflex outcomes: the mob's drops are lying nearby
     drops: int = 0
 
@@ -162,6 +164,7 @@ class GameState:
             "inventory": self.inventory,
             "tools": self.tools,
             "tool_meta": self.tool_meta,
+            "armor": self.armor,
             "hostiles": self.hostiles,
             "players": self.players,
             "last_death": self.last_death_cause,
@@ -200,6 +203,11 @@ class GameState:
         tools = ", ".join(f"{cls} {tier}".strip() for cls, tier in self.tools.items()
                           if tier and tier != "none") or "no tools"
         parts.append(f"tools: {tools}")
+        worn_armor = ", ".join(f"{cls} {meta.get('tier')}"
+                               for cls, meta in self.armor.items()
+                               if meta.get("tier") and meta.get("tier") != "none")
+        if worn_armor:
+            parts.append(f"armour: {worn_armor}")
         worn = []
         for cls, meta in self.tool_meta.items():
             left, mx = meta.get("left"), meta.get("max")
@@ -337,6 +345,15 @@ def parse_status(data: dict) -> GameState:
                 "item": t.get("item"),
                 "left": _num(t.get("durabilityLeft")),
                 "max": _num(t.get("maximumDurability")),
+            }
+    # Armour lives in `situation.tools.armour` (British spelling) alongside the tools.
+    for a in (sit.get("tools") or {}).get("armour") or []:
+        if isinstance(a, dict) and a.get("class"):
+            gs.armor[str(a["class"])] = {
+                "tier": a.get("tier"),
+                "item": a.get("item"),
+                "left": _num(a.get("durabilityLeft")),
+                "max": _num(a.get("maximumDurability")),
             }
 
     nearby = sit.get("nearby") or {}

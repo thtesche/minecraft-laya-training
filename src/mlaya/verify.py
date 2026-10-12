@@ -15,6 +15,9 @@ def diff(before: GameState, after: GameState) -> dict:
         if d:
             inv_delta[k] = d
 
+    worn_before = {m.get("item") for m in before.armor.values() if m.get("item")}
+    worn_after = {m.get("item") for m in after.armor.values() if m.get("item")}
+
     return {
         "pos_delta": pos_delta(),
         "health_delta": None if before.health is None or after.health is None
@@ -22,6 +25,7 @@ def diff(before: GameState, after: GameState) -> dict:
         "food_delta": None if before.food is None or after.food is None
         else round(after.food - before.food, 1),
         "inventory_delta": inv_delta,
+        "armor_delta": sorted(worn_after - worn_before),
         "on_ground": after.on_ground,
         "in_water": after.in_water,
         "phase": after.phase,
@@ -33,6 +37,9 @@ def diff(before: GameState, after: GameState) -> dict:
 INVENTORY_LABELS = {
     "get_wood", "mine_stone", "mine_iron", "mine_coal", "craft_pickaxe", "craft_table",
     "craft_stone_pickaxe", "craft_furnace", "smelt_iron", "craft_iron_pickaxe", "craft_bed",
+    "mine_diamond", "craft_diamond_pickaxe", "craft_diamond_sword",
+    "craft_diamond_chestplate", "craft_diamond_leggings", "craft_diamond_boots",
+    "craft_diamond_helmet",
 }
 
 
@@ -40,6 +47,8 @@ def progressed(label: str, d: dict) -> bool:
     inv_up = any(v > 0 for v in d["inventory_delta"].values())
     if label in INVENTORY_LABELS:
         return inv_up
+    if label == "equip_armor":
+        return bool(d.get("armor_delta"))  # armour leaves the inventory for a worn slot
     if label == "hunt_string":
         return d["inventory_delta"].get("string", 0) > 0
     if label == "hunt_wool":

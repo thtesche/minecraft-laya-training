@@ -64,7 +64,8 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     Kaskade: get_wood -> craft_pickaxe -> craft_table -> mine_stone ->
     craft_stone_pickaxe -> craft_furnace -> mine_iron -> mine_coal ->
     smelt_iron -> craft_iron_pickaxe -> mine_diamond -> craft_diamond_pickaxe
-    (-> craft_diamond_sword); Bett-Kette (hunt_wool/hunt_string ->
+    (-> craft_diamond_sword) -> craft_diamond_<slot> (Brustplatte/Hose/Schuhe/Helm)
+    -> equip_armor; Bett-Kette (hunt_wool/hunt_string ->
     craft_bed -> sleep in der Nacht) und eat_food bei Hunger; explore nur als
     letzter Fallback (wenn nichts Produktives möglich ist).
 [5] Verify        (src/mlaya/verify.py)
@@ -134,15 +135,24 @@ Der State zeigt jetzt z. B.:
 
 Wichtige Umsetzungsdetails:
 
-- 3×3-Rezepte (Stein-Spitzhacke, Ofen, Eisen-Spitzhacke, Diamant-Spitzhacke/-Schwert) laufen über
-  `temporary_workstation: true` und brauchen einen **getragenen** `crafting_table`
-  (`craft_table` vorher); Schmelzen braucht einen getragenen `furnace`.
+- 3×3-Rezepte (Stein-Spitzhacke, Ofen, Eisen-Spitzhacke, Diamant-Spitzhacke/-Schwert, die vier
+  Diamant-Rüstungsteile) laufen über `temporary_workstation: true` und brauchen einen **getragenen**
+  `crafting_table` (`craft_table` vorher); Schmelzen braucht einen getragenen `furnace`.
+  Rüstung braucht **keine Stöcke**, nur den Werktisch.
 - `mine_iron`/`mine_coal`/`mine_diamond` werden nur angeboten, wenn im Umkreis tatsächlich Erz
   geladen ist (sonst fällt die Kaskade auf `explore` zurück). `mine_diamond` braucht zusätzlich
-  Tier ≥ Eisen; `craft_diamond_sword` kommt erst **nach** der Diamant-Spitzhacke, damit die ersten
-  3 Diamanten immer in die Werkzeug-Kette gehen. **Keine Obergrenze beim Tier** (live gefundener
-  Deadlock, s. u.): eine Bedingung `tier < Diamant` hätte verboten, dass die Diamant-Spitzhacke
-  selbst die zwei Diamanten für das Schwert abbaut — das Schwert wäre unerreichbar gewesen.
+  Tier ≥ Eisen. Die Diamant-Ziele kommen aus **einer** Quelle, `_next_diamond_item(gs)`
+  (Spitzhacke 3 → Schwert 2, erst wenn die Diamant-Spitzhacke steht → Rüstung in der Reihenfolge
+  `DIAMOND_ARMOR` = Brustplatte 8, Hose 7, Schuhe 4, Helm 5, also **Schutz pro Diamant** zuerst).
+  Es ist immer nur **das nächste fehlende Teil** aktiv: `mine_diamond` mit
+  `count = Kosten − vorhandene Diamanten`, sonst `craft_diamond_<slot>`. **Keine Obergrenze beim
+  Tier** (live gefundener Deadlock, s. u.): eine Bedingung `tier < Diamant` hätte verboten, dass die
+  Diamant-Spitzhacke selbst die zwei Diamanten für das Schwert (und später die 24 für die Rüstung)
+  abbaut — beides wäre unerreichbar gewesen.
+- Ein gecraftetes Rüstungsteil liegt zunächst im Inventar; `equip_armor` schickt es mit **einem**
+  `equip`-Batch (ohne `destination` — Rüstung findet ihren Slot selbst) an den Körper. Ein Teil
+  zählt als „vorhanden", ob **getragen** (`situation.tools.armour`) oder im Inventar, damit nichts
+  doppelt gecraftet wird.
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
   produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
 - **Umgebungs-Blocker (live gefunden & behoben):** In einem 1×1-Schacht nach dem Erz-Abbau
@@ -434,7 +444,14 @@ nur eine Ebene tiefer.
   Zwei live gefundene Punkte: (a) die Eisen-Spitzhacke zerbrach *innerhalb* eines langen
   `collect_block` (s. o.), die Kette heilte per Eisen-Nachbau selbst; (b) ein ursprünglicher
   Tier-Deckel auf `mine_diamond` hatte das Schwert **unerreichbar** gemacht (Deadlock) — der Deckel
-  ist entfernt, `mine_diamond` kennt jetzt die zwei Zielmengen (3 für die Spitzhacke, 2 fürs Schwert).
+  ist entfernt, `mine_diamond` kennt jetzt die Zielmengen aus `_next_diamond_item`
+  (3 Spitzhacke, 2 Schwert, dann das Rüstungsset).
+- **Diamant-Rüstung (Code fertig, live noch offen):** `DIAMOND_ARMOR` (Brustplatte 8, Hose 7,
+  Schuhe 4, Helm 5 = 24 Diamanten) hängt sich über `_next_diamond_item` an dieselbe Kette; ein
+  fehlendes Teil pro Tick, `craft_diamond_<slot>`, danach `equip_armor` (ein `equip`-Batch, ohne
+  `destination`). Perception liest den getragenen Satz aus `situation.tools.armour`; `verify`
+  zählt ein getragenes Teil über `armor_delta` als Fortschritt. Unit-getestet in
+  `tests/test_actions.py::DiamondArmorTest` (9 Tests). **Live-Validierung steht noch aus.**
 - **Nether-Kette (offen):** Eimer/Obsidian/Flint&Steel und Rahmen bauen/anzünden/betreten
   (`activate_portal` zündet nur einen bestehenden Rahmen, baut nichts). Per Entscheidung zunächst
   zurückgestellt.

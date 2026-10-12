@@ -13,7 +13,8 @@ ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
 Aktueller Stand (**M2/M2b/M2c/M2d/M3/M4**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
 bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen) und weiter über `mine_diamond` zur **Diamant-Spitzhacke**
-(+ optional Diamant-Schwert). `view_blocks` liefert die Ressourcen in der Nähe
+(+ Diamant-Schwert und **kompletter Diamant-Rüstung**: Helm/Brustplatte/Hose/Schuhe). `view_blocks`
+liefert die Ressourcen in der Nähe
 (Holz/Stein/Eisen/Kohle/Diamant mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
 Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
 Respawn-Punkt), liest die anstehenden **Notifications** mit und setzt beim Start die
@@ -62,6 +63,16 @@ nachgeschobene niedrigere Stufe das restliche Erz ohne Drop. Stein und Kohle sin
 blockiert der Bootstrap (Holzhacke müsste den Bruchstein für den Stein-Ersatz sammeln dürfen). Und die
 frühere Obergrenze `tier < IRON_PICK_TIER` für `mine_iron` ist weg: eine abgenutzte Eisenhacke kann
 jetzt das Eisen für ihren eigenen Ersatz nachschürfen (eine frische schürft weiterhin kein Eisen).
+
+**Diamant-Rüstung (neu, noch nicht live validiert):** `_next_diamond_item` erweitert die
+Diamant-Ziele über Werkzeugkette + Schwert hinaus um das komplette Rüstungsset
+(`DIAMOND_ARMOR`): Brustplatte (8), Hose (7), Schuhe (4), Helm (5) = **24 Diamanten**,
+geordnet nach **Schutz pro Diamant** (Brustplatte zuerst), damit ein Teil-Set schon so nützlich
+wie möglich ist. Es wird immer nur **das nächste fehlende Teil** angeboten (`mine_diamond` mit
+`count = Kosten − getragene Diamanten`, sonst `craft_diamond_<slot>`); fertige Teile wandern per
+`equip_armor` (ein `equip`-Batch, ohne Ziel — Rüstung findet ihren Slot selbst) an den Körper.
+Rüstung braucht **keine Stöcke**, nur den Werktisch, und zählt als „vorhanden", ob getragen
+(`situation.tools.armour`) oder noch im Inventar — so wird kein Teil doppelt gecraftet.
 
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine
