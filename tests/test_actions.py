@@ -9,7 +9,7 @@ from __future__ import annotations
 import unittest
 
 from mlaya.actions import Action, candidates, resolve
-from mlaya.perception import GameState
+from mlaya.perception import BlockHit, GameState
 
 
 def gs(**kw) -> GameState:
@@ -73,6 +73,13 @@ class ReplaceToolTest(unittest.TestCase):
                tools={"pickaxe": "iron"}, tool_meta=self._worn(item="iron_pickaxe", maximum=250.0))
         a = resolve("replace_tool", g)
         self.assertEqual(a.args["items"], [{"item_name": "iron_pickaxe"}])
+
+    def test_diamond_pickaxe_stays_diamond(self) -> None:
+        g = gs(inventory={"crafting_table": 1, "diamond": 3, "acacia_log": 1, "cobblestone": 3},
+               tools={"pickaxe": "diamond"},
+               tool_meta=self._worn(item="diamond_pickaxe", maximum=1561.0))
+        a = resolve("replace_tool", g)
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_pickaxe"}])
 
     def test_healthy_pickaxe_is_left_alone(self) -> None:
         g = gs(inventory={"crafting_table": 1, "cobblestone": 3, "acacia_log": 1},
@@ -187,6 +194,57 @@ class ReactionPriorityTest(unittest.TestCase):
     def test_sleep_not_offered_without_bed(self) -> None:
         g = gs(phase="night", sleeping=False)
         self.assertNotIn("sleep", candidates(g))
+
+
+def _ore(name: str, dist: float = 12.0) -> dict:
+    return {name: [BlockHit(name, name, 0, -58, 0, dist)]}
+
+
+class DiamondChainTest(unittest.TestCase):
+    def test_mine_diamond_needs_iron_pickaxe(self) -> None:
+        near = _ore("diamond_ore")
+        self.assertIsNone(resolve("mine_diamond", gs(tools={"pickaxe": "stone"}, resources=near)))
+        a = resolve("mine_diamond", gs(tools={"pickaxe": "iron"}, resources=near))
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "diamond_ore", "count": 3})
+
+    def test_mine_diamond_counts_remaining(self) -> None:
+        g = gs(tools={"pickaxe": "iron"}, inventory={"diamond": 1}, resources=_ore("diamond_ore"))
+        self.assertEqual(resolve("mine_diamond", g).args["count"], 2)
+
+    def test_craft_diamond_pickaxe(self) -> None:
+        g = gs(tools={"pickaxe": "iron"},
+               inventory={"crafting_table": 1, "stick": 2, "diamond": 3})
+        a = resolve("craft_diamond_pickaxe", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_pickaxe"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_craft_diamond_pickaxe_needs_three(self) -> None:
+        g = gs(tools={"pickaxe": "iron"},
+               inventory={"crafting_table": 1, "stick": 2, "diamond": 2})
+        self.assertIsNone(resolve("craft_diamond_pickaxe", g))
+
+    def test_craft_diamond_sword_waits_for_pickaxe(self) -> None:
+        base = {"crafting_table": 1, "stick": 2, "diamond": 2}
+        self.assertIsNone(resolve("craft_diamond_sword", gs(tools={"pickaxe": "iron"}, inventory=base)))
+        a = resolve("craft_diamond_sword", gs(tools={"pickaxe": "diamond"}, inventory=base))
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_sword"}])
+
+    def test_candidates_offer_diamond_pickaxe(self) -> None:
+        g = gs(tools={"pickaxe": "iron"},
+               inventory={"crafting_table": 1, "stick": 2, "diamond": 3})
+        self.assertIn("craft_diamond_pickaxe", candidates(g))
+
+    def test_candidates_offer_mine_diamond_only_with_ore(self) -> None:
+        self.assertIn("mine_diamond",
+                      candidates(gs(tools={"pickaxe": "iron"}, resources=_ore("diamond_ore"))))
+        self.assertNotIn("mine_diamond", candidates(gs(tools={"pickaxe": "iron"})))
+
+    def test_candidates_no_diamond_sword_before_pickaxe(self) -> None:
+        g = gs(tools={"pickaxe": "iron"},
+               inventory={"crafting_table": 1, "stick": 2, "diamond": 2})
+        self.assertNotIn("craft_diamond_sword", candidates(g))
 
 
 if __name__ == "__main__":

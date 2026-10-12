@@ -12,8 +12,9 @@ Laya erzeugt keinen Text und keine Tool-Argumente. Deshalb filtert der Code die 
 ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
 Aktueller Stand (**M2/M2b/M2c/M2d/M3/M4**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
-bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen). `view_blocks` liefert die Ressourcen in der Nähe
-(Holz/Stein/Eisen/Kohle mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
+bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen) und weiter über `mine_diamond` zur **Diamant-Spitzhacke**
+(+ optional Diamant-Schwert). `view_blocks` liefert die Ressourcen in der Nähe
+(Holz/Stein/Eisen/Kohle/Diamant mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
 Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
 Respawn-Punkt), liest die anstehenden **Notifications** mit und setzt beim Start die
 **Server-Survival-Policy** (Scaffold-Blöcke, vorsichtiges Kampf-Fenster, `food.raw.allow: always`);

@@ -10,7 +10,7 @@ from typing import Any
 # view_blocks -> response.data.result.blocks.find[] = {name, found, listed:[{x,y,z,name,distance,...}]}
 
 # Resources probed each tick to keep the progression decisions grounded in the world.
-RESOURCE_NAMES = ("logs", "stone", "iron_ore", "coal_ore")
+RESOURCE_NAMES = ("logs", "stone", "iron_ore", "coal_ore", "diamond_ore")
 # Ground blocks probed for the M4 parameter layer: a `view_blocks` hit whose `above` is
 # `air` is real standing ground -- the reliable way to choose a `navigate` target.
 GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
@@ -442,14 +442,19 @@ async def build(executor) -> GameState:
     gs.notifications = _previews(preview)
     now_iso = get(status_data, "response", "data", "result", "situation", "observedAt")
     gs.drops = _count_drops(events, now_iso)
-    try:
-        blocks = await executor.read(
-            "view_blocks",
-            {"find": {"block_names": list(RESOURCE_NAMES) + list(GROUND_NAMES),
-                      "limit": RESOURCE_LIMIT}},
-            "scan nearby resources and standable ground for the next step",
-        )
-        gs.resources = parse_resources(coerce(blocks.data, blocks.text))
-    except Exception:
-        gs.resources = {}
+    # `view_blocks find` takes at most 8 block names, and resources (5) plus ground (4)
+    # exceed that, so scan the two groups separately and merge; a failed group just
+    # leaves its names out of the state.
+    gs.resources = {}
+    for names, why in ((RESOURCE_NAMES, "scan nearby resources for the next step"),
+                       (GROUND_NAMES, "scan standable ground for navigate targets")):
+        try:
+            blocks = await executor.read(
+                "view_blocks",
+                {"find": {"block_names": list(names), "limit": RESOURCE_LIMIT}},
+                why,
+            )
+            gs.resources.update(parse_resources(coerce(blocks.data, blocks.text)))
+        except Exception:
+            pass
     return gs

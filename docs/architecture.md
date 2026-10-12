@@ -48,9 +48,11 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     ACTION_BUSY / RESULT_NOT_RETRIEVED-Recovery. Reads sind ungated.
 [2] Perception    (src/mlaya/perception.py)
     view_status + read_recent_events + view_blocks (alle frei) -> GameState
-    -> kompakter NL-State (`narrative()`); Ressourcen (logs/stone/iron_ore/coal_ore)
-    mit Distanz im Umkreis von 64 Blöcken; Tageszeit/Schlafzustand, Mob-Arten
-    (inkl. passiver) und ungelesene Notifications (Drain) fließen in den State.
+    -> kompakter NL-State (`narrative()`); Ressourcen (logs/stone/iron_ore/coal_ore/
+    diamond_ore) mit Distanz im Umkreis von 64 Blöcken (Ressourcen- und Boden-Scan sind
+    zwei `view_blocks`-Gruppen, weil `find` maximal 8 Blocknamen erlaubt); Tageszeit/
+    Schlafzustand, Mob-Arten (inkl. passiver) und ungelesene Notifications (Drain)
+    fließen in den State.
 [3] Brain (S1)    (src/mlaya/brain.py)
     Laya-Router, EIN predict()-Pass:
       in_danger  (binäres Gate)      -> defer an die Survival-Policy
@@ -61,7 +63,8 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     resolve(label, gs): Label -> echtes MCP-Tool + Argumente
     Kaskade: get_wood -> craft_pickaxe -> craft_table -> mine_stone ->
     craft_stone_pickaxe -> craft_furnace -> mine_iron -> mine_coal ->
-    smelt_iron -> craft_iron_pickaxe; Bett-Kette (hunt_wool/hunt_string ->
+    smelt_iron -> craft_iron_pickaxe -> mine_diamond -> craft_diamond_pickaxe
+    (-> craft_diamond_sword); Bett-Kette (hunt_wool/hunt_string ->
     craft_bed -> sleep in der Nacht) und eat_food bei Hunger; explore nur als
     letzter Fallback (wenn nichts Produktives möglich ist).
 [5] Verify        (src/mlaya/verify.py)
@@ -111,7 +114,8 @@ uv pip install --python .venv/bin/python -e .
 ## M2 — erreicht
 
 **Kriterium:** Ressourcen in der Nähe in den State aufnehmen (`view_blocks`) und die Progression
-über Steinwerkzeuge und Ofen bis zur **Eisen-Spitzhacke** führen.
+über Steinwerkzeuge und Ofen bis zur **Eisen-Spitzhacke** führen (seit dem Diamant-Tier bis zur
+**Diamant-Spitzhacke**).
 
 Verifizierter Lauf gegen die echte Welt:
 
@@ -130,11 +134,13 @@ Der State zeigt jetzt z. B.:
 
 Wichtige Umsetzungsdetails:
 
-- 3×3-Rezepte (Stein-Spitzhacke, Ofen, Eisen-Spitzhacke) laufen über
+- 3×3-Rezepte (Stein-Spitzhacke, Ofen, Eisen-Spitzhacke, Diamant-Spitzhacke/-Schwert) laufen über
   `temporary_workstation: true` und brauchen einen **getragenen** `crafting_table`
   (`craft_table` vorher); Schmelzen braucht einen getragenen `furnace`.
-- `mine_iron`/`mine_coal` werden nur angeboten, wenn im Umkreis tatsächlich Erz geladen ist
-  (sonst fällt die Kaskade auf `explore` zurück).
+- `mine_iron`/`mine_coal`/`mine_diamond` werden nur angeboten, wenn im Umkreis tatsächlich Erz
+  geladen ist (sonst fällt die Kaskade auf `explore` zurück). `mine_diamond` braucht zusätzlich
+  Tier ≥ Eisen; `craft_diamond_sword` kommt erst **nach** der Diamant-Spitzhacke, damit die ersten
+  3 Diamanten immer in die Werkzeug-Kette gehen.
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
   produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
 
@@ -368,6 +374,11 @@ nur eine Ebene tiefer.
 - **M2/M2b/M2c/M2d live validiert:** `replace_tool`, `hunt_food`, `collect_drops`
   (Entscheidung/Binding), `recover_drops` (s. M2c/M2d) sowie `craft_table`, `hunt_wool`, `craft_bed`,
   `sleep` (s. M2b) sind **live durchgelaufen**. Damit bleibt in M2/M2b/M2c/M2d kein Pfad ohne
-  Live-Lauf; die Bett-/Essensketten sind zusätzlich durch die 22 Determinismus-Tests gepinnt.
-  Offen ist die **Nether-/Diamant-Kette** (Obsidian/Feuerstein, Diamant-Werkzeuge) — die ist noch
-  nicht in `actions.py` abgebildet und wäre M2.
+  Live-Lauf; die Bett-/Essensketten sind zusätzlich durch die Determinismus-Tests gepinnt.
+- **Diamant-Tier (implementiert, noch nicht live):** `mine_diamond`, `craft_diamond_pickaxe`
+  sowie `craft_diamond_sword` (erst **nach** der Spitzhacke) sind in `actions.py` mit Vorbedingungen
+  und Bindings abgebildet und getestet (`tests/test_actions.py::DiamondChainTest`). Ein Live-Lauf
+  braucht erst die Eisen-Kette plus **geladenes** `diamond_ore` in der Tiefe.
+- **Nether-Kette (offen):** Eimer/Obsidian/Flint&Steel und Rahmen bauen/anzünden/betreten
+  (`activate_portal` zündet nur einen bestehenden Rahmen, baut nichts). Per Entscheidung zunächst
+  zurückgestellt.

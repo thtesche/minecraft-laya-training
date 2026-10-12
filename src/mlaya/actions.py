@@ -17,6 +17,9 @@ CRITERIA: dict[str, str] = {
     "craft_furnace": "craft a furnace at a crafting table from eight cobblestone",
     "smelt_iron": "smelt raw iron into iron ingots in the furnace the bot carries",
     "craft_iron_pickaxe": "craft an iron pickaxe at a crafting table from three iron ingots and sticks",
+    "mine_diamond": "mine diamond ore with the iron pickaxe to gather diamonds for diamond tools",
+    "craft_diamond_pickaxe": "craft a diamond pickaxe from three diamonds and sticks; the best pickaxe the bot can make",
+    "craft_diamond_sword": "craft a diamond sword from two diamonds and a stick, once the diamond pickaxe exists",
     "sleep": "sleep in a carried bed at night to skip to morning and set the respawn point",
     "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
@@ -41,6 +44,7 @@ EDIBLE = {
 TIER = {"none": 0, "wooden": 1, "golden": 1, "stone": 2, "iron": 3, "diamond": 4, "netherite": 5}
 STONE_PICK_TIER = 2
 IRON_PICK_TIER = 3
+DIAMOND_PICK_TIER = 4
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
@@ -206,8 +210,8 @@ def _worn_pickaxe(gs: GameState) -> bool:
 def _replacement_pickaxe(gs: GameState, inv: dict[str, int]) -> str | None:
     """The best pickaxe still craftable when the active one is nearly worn out.
 
-    Never a downgrade below what the bot already wields: iron if iron is banked,
-    otherwise stone (which still mines iron ore). A wooden one is pointless here
+    Never a downgrade below what the bot already wields: diamond if diamonds are banked,
+    else iron, else stone (which still mines iron ore). A wooden one is pointless here
     because `craft_pickaxe` only fires when the bot has no pickaxe at all.
     """
     tier = _pick_tier(inv, gs.tools)
@@ -215,6 +219,8 @@ def _replacement_pickaxe(gs: GameState, inv: dict[str, int]) -> str | None:
         return None
     sticks = _can_sticks(inv, _logs(inv), _planks(inv))
     table = _has(inv, "crafting_table")
+    if tier >= DIAMOND_PICK_TIER and table and inv.get("diamond", 0) >= 3 and sticks:
+        return "diamond_pickaxe"
     if tier >= IRON_PICK_TIER and table and inv.get("iron_ingot", 0) >= 3 and sticks:
         return "iron_pickaxe"
     if table and inv.get("cobblestone", 0) >= 3 and sticks:
@@ -253,6 +259,7 @@ def candidates(gs: GameState) -> list[str]:
     coal = inv.get("coal", 0)
     raw_iron = inv.get("raw_iron", 0)
     iron = inv.get("iron_ingot", 0)
+    diamond = inv.get("diamond", 0)
 
     eating = gs.food is not None and gs.food < 14 and bool(_first_edible(inv))
 
@@ -306,6 +313,13 @@ def candidates(gs: GameState) -> list[str]:
         out.append("smelt_iron")
     if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
         out.append("craft_iron_pickaxe")
+    if table and diamond >= 3 and tier < DIAMOND_PICK_TIER and _can_sticks(inv, logs, planks):
+        out.append("craft_diamond_pickaxe")
+    # The sword waits for the pickaxe so the first three diamonds always go to the tool
+    # that unlocks obsidian; it needs only two more.
+    if (table and tier >= DIAMOND_PICK_TIER and diamond >= 2 and not _has(inv, "diamond_sword")
+            and _can_sticks(inv, logs, planks)):
+        out.append("craft_diamond_sword")
     # Bed chain: a bed lets `sleep` skip the night and set the respawn point.
     if not bed:
         if table and (wool >= 3 or string >= 12) and (logs >= 1 or planks >= 3):
@@ -319,6 +333,8 @@ def candidates(gs: GameState) -> list[str]:
         out.append("mine_iron")
     if tier >= STONE_PICK_TIER and tier < IRON_PICK_TIER and raw_iron >= 1 and coal < 1 and gs.resource_distance("coal_ore") is not None:
         out.append("mine_coal")
+    if tier >= IRON_PICK_TIER and tier < DIAMOND_PICK_TIER and diamond < 3 and gs.resource_distance("diamond_ore") is not None:
+        out.append("mine_diamond")
     if tier >= 1 and cobble < 12:
         out.append("mine_stone")
 
@@ -357,6 +373,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         return Action(label, "collect_block", {"block_name": "coal_ore", "count": 3},
                       "mine coal for furnace fuel")
+    if label == "mine_diamond":
+        if tier < IRON_PICK_TIER:
+            return None
+        count = max(1, 3 - inv.get("diamond", 0))
+        return Action(label, "collect_block", {"block_name": "diamond_ore", "count": count},
+                      "mine diamond ore for diamond tools")
     if label == "craft_pickaxe":
         if (_logs(inv) < 1 and _planks(inv) < 5) or tier != 0:
             return None
@@ -395,6 +417,21 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": "iron_pickaxe"}], "temporary_workstation": True},
                       "craft an iron pickaxe for mining diamonds")
+    if label == "craft_diamond_pickaxe":
+        if (inv.get("diamond", 0) < 3 or not _has(inv, "crafting_table")
+                or tier >= DIAMOND_PICK_TIER or not _can_sticks(inv, _logs(inv), _planks(inv))):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": "diamond_pickaxe"}], "temporary_workstation": True},
+                      "craft a diamond pickaxe from three diamonds and sticks")
+    if label == "craft_diamond_sword":
+        if (inv.get("diamond", 0) < 2 or not _has(inv, "crafting_table")
+                or tier < DIAMOND_PICK_TIER or _has(inv, "diamond_sword")
+                or not _can_sticks(inv, _logs(inv), _planks(inv))):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": "diamond_sword"}], "temporary_workstation": True},
+                      "craft a diamond sword from two diamonds and a stick")
     if label == "sleep":
         if gs.phase != "night" or gs.sleeping or not _has_bed(inv):
             return None
