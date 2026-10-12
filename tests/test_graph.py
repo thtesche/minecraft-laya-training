@@ -95,7 +95,9 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         out = await agent._guard(state)
         self.assertEqual(out["action"].tool, "build_structure")
         self.assertEqual(agent._unblock_attempts, 1)
-        self.assertIsNone(agent._blocked_label)
+        # The label is kept: it is only cleared once craft_furnace itself succeeds, otherwise
+        # the stage-2 `explore` escape below is never reached.
+        self.assertEqual(agent._blocked_label, "craft_furnace")
         self.assertEqual(agent.log.records[-1]["reason"], "unblock_surroundings")
         self.assertEqual(agent.log.records[-1]["via"], "make_room")
 
@@ -115,6 +117,36 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
                  "decision": Decision("craft_furnace")}
         out = await agent._guard(state)
         self.assertEqual(out["action"].tool, "craft_item")
+
+    def test_a_successful_unblock_keeps_the_label_and_the_count(self) -> None:
+        # Regression: the shield run's sleep/make_room loop. Clearing the label when the
+        # *unblock* succeeds reset the count each time, so the stage-2 explore was unreachable.
+        agent = self._agent()
+        agent._blocked_label = "sleep"
+        agent._unblock_attempts = 1
+        agent._note_block("make_room", True, "")
+        self.assertEqual(agent._blocked_label, "sleep")
+        self.assertEqual(agent._unblock_attempts, 1)
+
+    def test_the_blocked_label_clears_only_when_it_succeeds(self) -> None:
+        agent = self._agent()
+        agent._blocked_label = "sleep"
+        agent._unblock_attempts = 2
+        agent._note_block("sleep", False, "[BED_PLACEMENT_FAILED] no flat ground")
+        self.assertEqual(agent._blocked_label, "sleep")
+        self.assertEqual(agent._unblock_attempts, 2)
+        agent._note_block("sleep", True, "")
+        self.assertIsNone(agent._blocked_label)
+        self.assertEqual(agent._unblock_attempts, 0)
+
+    def test_a_new_block_starts_a_fresh_sequence(self) -> None:
+        agent = self._agent()
+        agent._note_block("craft_furnace", False, "[WORKSTATION_PLACEMENT_FAILED] no_cell")
+        self.assertEqual(agent._blocked_label, "craft_furnace")
+        self.assertEqual(agent._unblock_attempts, 0)
+        # An unrelated failure is not a surroundings block and must not clear a live one.
+        agent._note_block("mine_stone", False, "[HUNT_TARGET_NOT_LOADED] sheep")
+        self.assertEqual(agent._blocked_label, "craft_furnace")
 
 
 if __name__ == "__main__":

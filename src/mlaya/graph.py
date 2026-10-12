@@ -123,7 +123,6 @@ class Agent:
             action = unblock_action(gs, self._unblock_attempts)
             if action is not None:
                 self._unblock_attempts += 1
-                self._blocked_label = None
                 self.log.append({"stage": "policy", "reason": "unblock_surroundings",
                                  "blocked": decision.action_label, "via": action.label})
                 return {"action": action, "note": f"unblock -> {action.label}"}
@@ -184,20 +183,30 @@ class Agent:
         return {"before": gs, "iteration": iteration,
                 "done": iteration >= self.settings.loop.max_iterations}
 
+    def _note_block(self, label: str, ok: bool, text: str | None) -> None:
+        """Update the surroundings-block bookkeeping from one action's result.
+
+        The blocked label is cleared only once *it* finally succeeds. A successful unblock
+        (`make_room`) must not clear it: otherwise the stage-2 `explore` escape is unreachable
+        and `make_room` retries forever (live: `sleep` in a 1x1 shaft alternated
+        sleep/make_room for the rest of the run, and the shield run burned 12 of 16 ticks on it).
+        """
+        if label == self._blocked_label:
+            if ok:
+                self._blocked_label = None
+                self._unblock_attempts = 0
+        elif not ok and blocked_by_surroundings(text):
+            self._blocked_label = label
+            self._unblock_attempts = 0
+
     async def _verify(self, state: AgentState) -> dict:
         before = state["before"]
         action = state["action"]
         res = state["result"]
         # Remember a surroundings block so the next tick changes the surroundings before
-        # retrying; any successful action clears it and the attempt count.
-        self._blocked_label = (
-            action.label
-            if not getattr(res, "ok", False)
-            and blocked_by_surroundings(getattr(res, "text", ""))
-            else None
-        )
-        if self._blocked_label is None:
-            self._unblock_attempts = 0
+        # retrying it (see `_note_block` for the clearing rule).
+        _ok = getattr(res, "ok", False)
+        self._note_block(action.label, _ok, getattr(res, "text", ""))
         after = await perception.build(self.mcp)
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)

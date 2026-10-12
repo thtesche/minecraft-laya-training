@@ -157,6 +157,16 @@ Wichtige Umsetzungsdetails:
   der Inventar-`location` gelesen (`head`/`torso`/`legs`/`feet`; ein angelegtes Teil verlässt
   `main`/`hotbar`). Vorher deutete der Parser `tools.armour` fälschlich als „getragen", wodurch
   `equip_armor` unterdrückt wurde.
+- **Schild** (`craft_shield` → `equip_shield`): 6 Planken + 1 Eisenbarren (3×3, braucht den
+  Werktisch). Er blockt nur in der **Off-Hand**, ein Craft landet aber nur im Rucksack — erst ein
+  `equip` mit `destination: "off-hand"` legt ihn dorthin. Der Server meldet den Off-Hand-Stack mit
+  `location: "off-hand"`; `GameState.offhand` liest das (die Rüstungs-Slots tun dasselbe), und
+  `verify.diff`/`progressed` verbuchen `offhand_delta`. **Eisen-Verbrauch:** Weil sonst nichts mehr
+  Eisen brauchte (Diamant-Spitze steht), hätte die Schleife nie wieder Eisen geschürft und das
+  Schild nie erreicht (live: `candidates` war nur `['explore']` neben `iron_ore at 4m`).
+  `_iron_goal` ist jetzt die einzige Quelle: 3 Barren für die (Ersatz-)Eisenhacke, danach **1** für
+  den Schild, **0** sobald beides steht. `candidates` **und** `resolve` teilen sie; der Craft ist
+  zudem hinter die Eisen-Spitzhacke gated, damit er die ersten drei Barren nicht stiehlt.
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
   produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
 - **Umgebungs-Blocker (live gefunden & behoben):** In einem 1×1-Schacht nach dem Erz-Abbau
@@ -173,6 +183,13 @@ Wichtige Umsetzungsdetails:
   `[BED_PLACEMENT_FAILED] … no … flat ground` (drei verschwendete Ticks, das Bett braucht zwei
   gestützte Zellen). `BLOCKED_CODES` enthält jetzt auch `BED_PLACEMENT_FAILED`, der Unblock
   gräbt zuerst ein Pocket (`make_room`), in dem das Bett passt.
+  **Fix (Schild-Lauf):** Die geplante Eskalation „erst `make_room`, dann `explore`" war
+  **unerreichbar**: `_verify` löschte das Blocked-Label und nullte `_unblock_attempts` schon,
+  wenn der *Unblock* gelang — also blieb es bei `sleep` → `make_room` → `sleep` → … (der Lauf
+  verbrannte 12 von 16 Iterationen). Jetzt wird das Label nur gelöscht, wenn **das blockierte
+  Label selbst** gelingt (`_note_block`); ein erfolgreicher Unblock lässt Zähler und Label
+  stehen, sodass der zweite Versuch wirklich `explore` nimmt. Gepinnt in
+  `tests/test_graph.py::GuardUnblockTest`.
 - **Beobachtung:** Ein 2×2-Craft (`craft_pickaxe`) hat die getragene Werkbank einmal in die Welt
   gesetzt statt sie zu behalten. Die Kette heilt sich selbst, weil `craft_table` erneut angeboten
   wird, solange keine Werkbank getragen wird.
@@ -471,6 +488,13 @@ nur eine Ebene tiefer.
   und `tools.armour` erst dann den getragenen Satz.
   **Zweiter Befund:** `sleep` scheiterte im 1×1-Schacht 3× mit `[BED_PLACEMENT_FAILED]`; der
   Unblock-Mechanismus deckt diesen Code jetzt mit ab (s. M2).
+- **Schild (live validiert):** `craft_shield` (6 Planken + 1 Eisenbarren, `temporary_workstation`)
+  → `equip_shield` (`equip` mit `destination: "off-hand"`). Perception liest den Off-Hand-Stack
+  über `location: "off-hand"` in `GameState.offhand`; `verify` verbucht `offhand_delta`. Der Fund,
+  der die Tier erst erreichbar machte: mit stehender Diamant-Spitzhacke war `iron_wanted` falsch,
+  also bot der Loop live nur `['explore']` an, obwohl `iron_ore at 4m` in Reichweite lag —
+  `_iron_goal` (3 für die Hacke/Ersatz, sonst 1 für den Schild, sonst 0) zieht das Eisen. Getestet
+  in `tests/test_actions.py::ShieldTest` und `tests/test_perception.py::OffhandParseTest`.
 - **Nether-Kette (offen):** Eimer/Obsidian/Flint&Steel und Rahmen bauen/anzünden/betreten
   (`activate_portal` zündet nur einen bestehenden Rahmen, baut nichts). Per Entscheidung zunächst
   zurückgestellt.
