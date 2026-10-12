@@ -140,7 +140,9 @@ Wichtige Umsetzungsdetails:
 - `mine_iron`/`mine_coal`/`mine_diamond` werden nur angeboten, wenn im Umkreis tatsächlich Erz
   geladen ist (sonst fällt die Kaskade auf `explore` zurück). `mine_diamond` braucht zusätzlich
   Tier ≥ Eisen; `craft_diamond_sword` kommt erst **nach** der Diamant-Spitzhacke, damit die ersten
-  3 Diamanten immer in die Werkzeug-Kette gehen.
+  3 Diamanten immer in die Werkzeug-Kette gehen. **Keine Obergrenze beim Tier** (live gefundener
+  Deadlock, s. u.): eine Bedingung `tier < Diamant` hätte verboten, dass die Diamant-Spitzhacke
+  selbst die zwei Diamanten für das Schwert abbaut — das Schwert wäre unerreichbar gewesen.
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
   produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
 - **Umgebungs-Blocker (live gefunden & behoben):** In einem 1×1-Schacht nach dem Erz-Abbau
@@ -156,6 +158,16 @@ Wichtige Umsetzungsdetails:
 - **Beobachtung:** Ein 2×2-Craft (`craft_pickaxe`) hat die getragene Werkbank einmal in die Welt
   gesetzt statt sie zu behalten. Die Kette heilt sich selbst, weil `craft_table` erneut angeboten
   wird, solange keine Werkbank getragen wird.
+- **Gefahr: Werkzeug bricht *innerhalb* eines langen Abbaus (live gefunden).** Die
+  `replace_tool`-Reaktion feuert erst bei `LOW_DURABILITY = 0.15`, und nur *zwischen* zwei Ticks.
+  Ein einzelner `collect_block`, der einen langen Tunnel zum Diamanterz gräbt, kann mehr
+  Haltbarkeit verbrauchen, als bis zum nächsten Check übrig ist — beim Diamant-Lauf zerbrach so die
+  **Eisen-Spitzhacke** mitten im `mine_diamond` (`status: partial`, 2 Diamanten, danach Tier 2).
+  Danach wird `mine_diamond` nicht mehr angeboten (Tier < Eisen), und die Kette muss den
+  Eisen-Nachbau vollständig durchlaufen (`mine_iron → mine_coal → smelt_iron → craft_iron_pickaxe`).
+  Das funktioniert (live durchlaufen), ist aber teuer — dieselbe „selbstheilende, aber teure"
+  Klasse wie die Werkbank-Beobachtung oben. Die Diamant-Spitzhacke (1561 Haltbarkeit) macht das
+  Risiko danach klein.
 
 ## M2b — erreicht: Bett/Respawn, Nachtschlaf, Notifications
 
@@ -393,10 +405,13 @@ nur eine Ebene tiefer.
   (Entscheidung/Binding), `recover_drops` (s. M2c/M2d) sowie `craft_table`, `hunt_wool`, `craft_bed`,
   `sleep` (s. M2b) sind **live durchgelaufen**. Damit bleibt in M2/M2b/M2c/M2d kein Pfad ohne
   Live-Lauf; die Bett-/Essensketten sind zusätzlich durch die Determinismus-Tests gepinnt.
-- **Diamant-Tier (implementiert, noch nicht live):** `mine_diamond`, `craft_diamond_pickaxe`
-  sowie `craft_diamond_sword` (erst **nach** der Spitzhacke) sind in `actions.py` mit Vorbedingungen
-  und Bindings abgebildet und getestet (`tests/test_actions.py::DiamondChainTest`). Ein Live-Lauf
-  braucht erst die Eisen-Kette plus **geladenes** `diamond_ore` in der Tiefe.
+- **Diamant-Tier (live validiert):** `mine_diamond` → `craft_diamond_pickaxe` → (2 weitere
+  Diamanten) → `craft_diamond_sword` ist **live durchgelaufen**; Endstand
+  `tools = {"pickaxe": "diamond", "sword": "diamond"}` (Tier 4), `tests/test_actions.py::DiamondChainTest`.
+  Zwei live gefundene Punkte: (a) die Eisen-Spitzhacke zerbrach *innerhalb* eines langen
+  `collect_block` (s. o.), die Kette heilte per Eisen-Nachbau selbst; (b) ein ursprünglicher
+  Tier-Deckel auf `mine_diamond` hatte das Schwert **unerreichbar** gemacht (Deadlock) — der Deckel
+  ist entfernt, `mine_diamond` kennt jetzt die zwei Zielmengen (3 für die Spitzhacke, 2 fürs Schwert).
 - **Nether-Kette (offen):** Eimer/Obsidian/Flint&Steel und Rahmen bauen/anzünden/betreten
   (`activate_portal` zündet nur einen bestehenden Rahmen, baut nichts). Per Entscheidung zunächst
   zurückgestellt.

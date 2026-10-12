@@ -44,6 +44,16 @@ einen **Unblock** ein: zuerst `make_room` (gräbt mit `build_structure` vier Zel
 Ort), dann erst `explore` auf offenes Gelände. Live in einem tiefen Schacht reproduziert und behoben
 (`no_cell` → `make_room` → derselbe Craft geht durch). Gepinnt in `tests/test_graph.py`.
 
+Die **Diamant-Kette** ist jetzt ebenfalls live gelaufen: `mine_iron`/`mine_coal`/`smelt_iron` →
+`craft_iron_pickaxe` (Ersatz, nachdem die Eisen-Hacke im Tunnel zerbrochen war) → `mine_diamond` →
+`craft_diamond_pickaxe` → zwei weitere Diamanten → `craft_diamond_sword` (Endstand Tier 4,
+Hacke **und** Schwert aus Diamant). Dabei einen **Deadlock** gefunden und behoben: `mine_diamond` war
+auf `tier < Diamant` begrenzt und durfte damit nicht mit der Diamant-Hacke selbst die zwei Diamanten
+fürs Schwert abbauen — das Schwert war so unerreichbar. Die Grenze ist entfernt (Regressions-Tests in
+`tests/test_actions.py::DiamondChainTest`). Zweiter Befund: die Eisen-Hacke kann *innerhalb* eines
+langen `collect_block` brechen (die `replace_tool`-Reaktion prüft nur zwischen zwei Ticks) — die
+Kette heilt dann per Eisen-Nachbau selbst, ist aber teuer.
+
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine
 **Tageslicht-Schranke** gebunden (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`): nachts

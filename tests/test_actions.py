@@ -263,6 +263,24 @@ class DiamondChainTest(unittest.TestCase):
                inventory={"crafting_table": 1, "stick": 2, "diamond": 2})
         self.assertNotIn("craft_diamond_sword", candidates(g))
 
+    def test_candidates_mine_diamond_with_diamond_pickaxe_for_the_sword(self) -> None:
+        # Regression: bounding mine_diamond at the diamond tier deadlocked the sword, since
+        # the diamond pickaxe could no longer mine the two diamonds the sword still needs.
+        g = gs(tools={"pickaxe": "diamond"}, resources=_ore("diamond_ore"))
+        self.assertIn("mine_diamond", candidates(g))
+        self.assertEqual(resolve("mine_diamond", g).args["count"], 2)
+
+    def test_candidates_stop_mining_diamonds_once_sword_exists(self) -> None:
+        g = gs(tools={"pickaxe": "diamond"}, inventory={"diamond_sword": 1},
+               resources=_ore("diamond_ore"))
+        self.assertNotIn("mine_diamond", candidates(g))
+
+    def test_candidates_offer_diamond_sword_after_two_diamonds(self) -> None:
+        g = gs(tools={"pickaxe": "diamond"},
+               inventory={"crafting_table": 1, "stick": 2, "diamond": 2},
+               resources=_ore("diamond_ore"))
+        self.assertIn("craft_diamond_sword", candidates(g))
+
 
 if __name__ == "__main__":
     unittest.main()

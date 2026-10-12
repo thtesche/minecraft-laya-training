@@ -335,7 +335,13 @@ def candidates(gs: GameState) -> list[str]:
         out.append("mine_iron")
     if tier >= STONE_PICK_TIER and tier < IRON_PICK_TIER and raw_iron >= 1 and coal < 1 and gs.resource_distance("coal_ore") is not None:
         out.append("mine_coal")
-    if tier >= IRON_PICK_TIER and tier < DIAMOND_PICK_TIER and diamond < 3 and gs.resource_distance("diamond_ore") is not None:
+    # Diamonds are wanted for the pickaxe (three) and then for the sword (two more). There
+    # is deliberately no upper tier bound here: bounding it at the diamond tier locked the
+    # sword away, because a diamond pickaxe could never mine the two diamonds it still
+    # needed (and `craft_diamond_sword` requires the pickaxe to already exist).
+    wants_diamonds = (diamond < 3 if tier < DIAMOND_PICK_TIER
+                      else diamond < 2 and not _has(inv, "diamond_sword"))
+    if tier >= IRON_PICK_TIER and wants_diamonds and gs.resource_distance("diamond_ore") is not None:
         out.append("mine_diamond")
     if tier >= 1 and cobble < 12:
         out.append("mine_stone")
@@ -378,7 +384,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "mine_diamond":
         if tier < IRON_PICK_TIER:
             return None
-        count = max(1, 3 - inv.get("diamond", 0))
+        need = 3 if tier < DIAMOND_PICK_TIER else 2  # the pickaxe first, then the sword
+        count = max(1, need - inv.get("diamond", 0))
         return Action(label, "collect_block", {"block_name": "diamond_ore", "count": count},
                       "mine diamond ore for diamond tools")
     if label == "craft_pickaxe":
