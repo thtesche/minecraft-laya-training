@@ -84,8 +84,8 @@ später das Kopf-Fine-Tuning (M3) verbessert.
 
 ```
 START -> perceive -> decide -> guard --+-> execute -> verify -+-> decide (loop)
-                        |              |                       +-> END (max_iterations)
-                        |              +-> defer ---------------+-> decide (loop)
+                        |              |                       +-> END (Ziel erreicht
+                        |              +-> defer ---------------+    oder max_iterations)
                         |                                          +-> END
                    (System-2-Eskalation bei nicht auflösbarem Label)
 ```
@@ -495,6 +495,14 @@ nur eine Ebene tiefer.
   also bot der Loop live nur `['explore']` an, obwohl `iron_ore at 4m` in Reichweite lag —
   `_iron_goal` (3 für die Hacke/Ersatz, sonst 1 für den Schild, sonst 0) zieht das Eisen. Getestet
   in `tests/test_actions.py::ShieldTest` und `tests/test_perception.py::OffhandParseTest`.
+- **Auto-Stop bei erreichtem Tech-Tree (implementiert):** `actions.tech_tree_complete(gs)` ist wahr,
+  sobald Diamant-Spitzhacke + Diamantschwert vorhanden, **alle vier** Diamant-Rüstungsteile
+  **getragen** (`_worn`, nicht nur im Inventar — sonst würde der Lauf enden, bevor `equip_armor`
+  greift) und der Schild in der Off-Hand liegt. `[loop] stop_when_complete` (Default `true`) lässt
+  `verify`/`defer` den Lauf dann mit `stop: "goal"` beenden statt das Iterationsbudget abzuarbeiten;
+  sonst endet er mit `stop: "limit"`. `run --ignore-goal` schaltet die Abbruchbedingung für einen
+  Lauf ab (Datensatz-Sammlung über das Ziel hinaus, später die Nether-Kette). Getestet in
+  `tests/test_actions.py::TechTreeCompleteTest` und `tests/test_graph.py::GoalStopTest`.
 - **Nether-Kette (offen):** Eimer/Obsidian/Flint&Steel und Rahmen bauen/anzünden/betreten
   (`activate_portal` zündet nur einen bestehenden Rahmen, baut nichts). Per Entscheidung zunächst
   zurückgestellt.

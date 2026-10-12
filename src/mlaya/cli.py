@@ -76,6 +76,8 @@ async def cmd_run(args) -> int:
     settings = load_settings()
     iterations = getattr(args, "iterations", 0) or settings.loop.max_iterations
     settings.loop.max_iterations = iterations
+    if getattr(args, "ignore_goal", False):
+        settings.loop.stop_when_complete = False
     await _health(settings)
     async with MCPExecutor(settings.mcp) as executor:
         policy = await survival.apply_policy(executor, "apply policy at run start")
@@ -83,6 +85,7 @@ async def cmd_run(args) -> int:
         final = await agent.run()
     print(json.dumps({
         "iterations": final.get("iteration"),
+        "stop": final.get("stop"),
         "note": final.get("note"),
         "policy": policy,
         "log": str(settings.log_path()),
@@ -216,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("decide", help="perceive + decide once (dry run, no action)")
     run = sub.add_parser("run", help="run the decision loop")
     run.add_argument("-n", "--iterations", type=int, default=0)
+    run.add_argument("--ignore-goal", action="store_true",
+                     help="keep looping past a completed tech tree (dataset collection)")
     pol = sub.add_parser("policy", help="show/apply the server survival policy")
     pol.add_argument("--apply", action="store_true", help="apply a policy stage")
     pol.add_argument("--preset", choices=["base", "hunt"], default="base",

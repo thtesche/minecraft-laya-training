@@ -393,6 +393,27 @@ def _diamond_craft_ready(gs: GameState, item: str) -> bool:
     return True  # armour is diamonds only
 
 
+def tech_tree_complete(gs: GameState) -> bool:
+    """True when the overworld goal the loop works toward is fully reached.
+
+    A diamond pickaxe (the tier is topped out), a diamond sword, all four diamond armour
+    pieces actually *worn* - not merely carried, since it is `equip_armor` that puts them on -
+    and the shield in the off-hand. At that point the eligible actions collapse to
+    `explore`/`sleep`, so a long unattended run can end itself instead of spending hours on
+    nothing. Requiring the armour to be worn (not just present) is what lets the loop finish
+    `equip_armor` first instead of stopping with the set still in the pack. The Nether chain
+    is deliberately out of scope.
+    """
+    inv = gs.inventory
+    if _pick_tier(inv, gs.tools) < DIAMOND_PICK_TIER:
+        return False
+    if not (_has(inv, "diamond_sword") or str(gs.tools.get("sword", "")).lower() == "diamond"):
+        return False
+    if any(not _worn(gs, f"diamond_{slot}") for slot, _ in DIAMOND_ARMOR):
+        return False
+    return _offhand(gs, SHIELD_ITEM)
+
+
 def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 

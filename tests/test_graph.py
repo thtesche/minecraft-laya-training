@@ -14,6 +14,7 @@ from __future__ import annotations
 import unittest
 
 from mlaya.brain import Decision
+from mlaya.config import Settings
 from mlaya.graph import Agent, blocked_by_surroundings, unblock_action
 from mlaya.perception import BlockHit, GameState
 
@@ -147,6 +148,39 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         # An unrelated failure is not a surroundings block and must not clear a live one.
         agent._note_block("mine_stone", False, "[HUNT_TARGET_NOT_LOADED] sheep")
         self.assertEqual(agent._blocked_label, "craft_furnace")
+
+
+class GoalStopTest(unittest.TestCase):
+    """The run ends early once the tech tree is complete, unless that is switched off."""
+
+    def _agent(self, stop_when_complete: bool = True) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.settings = Settings()
+        agent.settings.loop.max_iterations = 10
+        agent.settings.loop.stop_when_complete = stop_when_complete
+        return agent
+
+    @staticmethod
+    def _complete() -> GameState:
+        return gs(tools={"pickaxe": "diamond", "sword": "diamond"},
+                  inventory={"diamond_sword": 1},
+                  armor={slot: {"item": f"diamond_{slot}"}
+                         for slot in ("helmet", "chestplate", "leggings", "boots")},
+                  offhand="shield")
+
+    def test_the_goal_ends_the_run_early(self) -> None:
+        self.assertEqual(self._agent()._stop_state(self._complete(), 3),
+                         {"done": True, "stop": "goal"})
+
+    def test_an_incomplete_run_keeps_going(self) -> None:
+        self.assertEqual(self._agent()._stop_state(gs(), 3), {"done": False, "stop": ""})
+
+    def test_the_iteration_limit_still_stops(self) -> None:
+        self.assertEqual(self._agent()._stop_state(gs(), 10), {"done": True, "stop": "limit"})
+
+    def test_the_goal_stop_can_be_switched_off(self) -> None:
+        self.assertEqual(self._agent(stop_when_complete=False)._stop_state(self._complete(), 3),
+                         {"done": False, "stop": ""})
 
 
 if __name__ == "__main__":

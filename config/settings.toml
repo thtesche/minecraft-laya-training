@@ -25,6 +25,7 @@ max_len = 0            # 0 = checkpoint default
 max_iterations = 10
 max_escalations = 3
 hitl = false
+stop_when_complete = true   # end the run once diamond tools + worn armour + shield are done
 log_path = "runs/decisions.jsonl"
 memory_path = "MEMORY.md"
 

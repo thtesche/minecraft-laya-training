@@ -77,6 +77,9 @@ class LoopConfig(BaseModel):
     max_iterations: int = 10
     max_escalations: int = 3
     hitl: bool = False
+    # End the loop as soon as the overworld tech tree is complete (diamond tools + armour
+    # worn + shield), instead of walking the full iteration budget. See actions.tech_tree_complete.
+    stop_when_complete: bool = True
     log_path: str = "runs/decisions.jsonl"
     memory_path: str = "MEMORY.md"
 

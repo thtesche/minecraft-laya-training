@@ -9,7 +9,7 @@ from langgraph.graph import END, StateGraph
 from . import perception
 from . import survival
 from . import verify as vmod
-from .actions import candidates, is_hostile_hunt, resolve
+from .actions import candidates, is_hostile_hunt, resolve, tech_tree_complete
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
@@ -78,6 +78,7 @@ class AgentState(TypedDict, total=False):
     deferred: bool
     note: str
     done: bool
+    stop: str  # why the loop ended: "goal" (tech tree complete) or "limit"
 
 
 class Agent:
@@ -177,11 +178,22 @@ class Agent:
         self.history.append({"stage": "defer", "note": decision.note})
         iteration = state.get("iteration", 0) + 1
         gs = state["before"]
-        if iteration < self.settings.loop.max_iterations:
+        stop = self._stop_state(gs, iteration)
+        if not stop["done"]:
             await asyncio.sleep(self.settings.mcp.poll_ms / 1000)
             gs = await perception.build(self.mcp)
-        return {"before": gs, "iteration": iteration,
-                "done": iteration >= self.settings.loop.max_iterations}
+        return {"before": gs, "iteration": iteration, **stop}
+
+    def _goal_reached(self, gs) -> bool:
+        """Whether the run's goal is reached (see `actions.tech_tree_complete`)."""
+        return bool(self.settings.loop.stop_when_complete) and tech_tree_complete(gs)
+
+    def _stop_state(self, gs, iteration: int) -> dict:
+        """`done`/`stop` for the next state: the goal ends the run early, else the limit does."""
+        goal = self._goal_reached(gs)
+        limit = iteration >= self.settings.loop.max_iterations
+        return {"done": goal or limit,
+                "stop": "goal" if goal else ("limit" if limit else "")}
 
     def _note_block(self, label: str, ok: bool, text: str | None) -> None:
         """Update the surroundings-block bookkeeping from one action's result.
@@ -237,7 +249,7 @@ class Agent:
         self.history.append(record)
         iteration = state.get("iteration", 0) + 1
         return {"before": after, "iteration": iteration,
-                "done": iteration >= self.settings.loop.max_iterations}
+                **self._stop_state(after, iteration)}
 
     async def _reapply_after_death(self, gs) -> None:
         """The server restores default policy on death; re-apply once per death."""

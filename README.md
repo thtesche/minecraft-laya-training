@@ -127,10 +127,17 @@ Voraussetzung: Der mine-ai MCP-Server läuft unter `http://localhost:25575/mcp`.
 .venv/bin/python -m mlaya.cli policy --apply              # Stufe `base` setzen
 .venv/bin/python -m mlaya.cli policy --apply --preset hunt  # Stufe `hunt` setzen
 .venv/bin/python -m mlaya.cli run -n 10  # Entscheidungs-Loop (führt echte Aktionen aus)
+.venv/bin/python -m mlaya.cli run --ignore-goal  # über das Tech-Tree-Ziel hinaus weiterlaufen
 ```
 
 Konfiguration: [`config/settings.toml`](config/settings.toml).
 Jede Entscheidung wird nach `runs/decisions.jsonl` geloggt.
+
+Der `run`-Loop **stoppt von selbst**, sobald das Tech-Tree-Ziel steht: Diamant-Spitzhacke +
+Diamantschwert, alle vier Diamant-Rüstungsteile *getragen* und der Schild in der Off-Hand
+(`actions.tech_tree_complete`). Er meldet dann `"stop": "goal"`; ohne Ziel endet er am
+Iterationslimit mit `"stop": "limit"`. Ausschalten (z. B. für die Datensatz-Sammlung über das
+Ziel hinaus) geht über `[loop] stop_when_complete = false` oder `run --ignore-goal`.
 
 ## M3: Logs → Datensatz → Fine-Tuning
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.actions import Action, candidates, resolve
+from mlaya.actions import Action, candidates, resolve, tech_tree_complete
 from mlaya.perception import BlockHit, GameState
 
 
@@ -523,6 +523,44 @@ class ShieldTest(unittest.TestCase):
                offhand="shield", resources=_ore("iron_ore"))
         self.assertNotIn("mine_iron", candidates(g))
         self.assertIsNone(resolve("mine_iron", g))
+
+
+class TechTreeCompleteTest(unittest.TestCase):
+    """The auto-stop predicate: diamond tools + every armour piece actually worn + shield.
+
+    Requiring the armour to be *worn* (not merely carried) is the point: `equip_armor` is still
+    an eligible action while the set sits in the pack, so stopping then would end the run with
+    the gear unequipped.
+    """
+
+    def _complete(self, **overrides) -> GameState:
+        base = dict(
+            tools={"pickaxe": "diamond", "sword": "diamond"},
+            inventory={"diamond_sword": 1},
+            armor={slot: {"item": f"diamond_{slot}"}
+                   for slot in ("helmet", "chestplate", "leggings", "boots")},
+            offhand="shield",
+        )
+        base.update(overrides)
+        return gs(**base)
+
+    def test_a_full_kit_completes_the_tree(self) -> None:
+        self.assertTrue(tech_tree_complete(self._complete()))
+
+    def test_carried_but_unworn_armour_is_not_done(self) -> None:
+        self.assertFalse(tech_tree_complete(self._complete(armor={})))
+        # ...even with every piece waiting in the pack.
+        g = self._complete(armor={}, inventory={"diamond_sword": 1, "diamond_helmet": 1})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_missing_shield_or_sword_is_not_done(self) -> None:
+        self.assertFalse(tech_tree_complete(self._complete(offhand=None)))
+        g = self._complete(tools={"pickaxe": "diamond"}, inventory={})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_diamond_pickaxe_is_required(self) -> None:
+        g = self._complete(tools={"pickaxe": "iron", "sword": "diamond"})
+        self.assertFalse(tech_tree_complete(g))
 
 
 if __name__ == "__main__":
