@@ -282,7 +282,9 @@ class IronOreRuleTest(unittest.TestCase):
         self.assertIn("mine_iron", candidates(g))
 
     def test_a_fresh_iron_pickaxe_stops_mining_iron(self) -> None:
-        g = gs(tools={"pickaxe": "iron"},
+        # Nothing wants iron once the pickaxe is fresh and the shield is already worn (the shield
+        # is the only other iron sink; see ShieldTest.test_missing_shield_pulls_one_iron).
+        g = gs(tools={"pickaxe": "iron"}, offhand="shield",
                tool_meta=self._meta(200.0, "iron_pickaxe", "iron", 250.0),
                resources=_ore("iron_ore"))
         self.assertNotIn("mine_iron", candidates(g))
@@ -447,6 +449,80 @@ class DiamondArmorTest(unittest.TestCase):
                    for slot in ("chestplate", "leggings", "boots", "helmet")}
         self.assertNotIn("mine_diamond", candidates(g))
         self.assertIsNone(resolve("mine_diamond", g))
+
+
+class ShieldTest(unittest.TestCase):
+    """The shield: 6 planks + 1 iron ingot, crafted at a table and then worn in the off-hand.
+    Same lesson as the armour: `craft_item` only puts it in the pack, so it blocks nothing until
+    an `equip` to the off-hand slot actually moves it there."""
+
+    def _ready(self, **inv):
+        base = {"crafting_table": 1, "iron_ingot": 1, "oak_planks": 6}
+        base.update(inv)
+        return gs(tools={"pickaxe": "iron"}, inventory=base)
+
+    def test_shield_is_crafted_once_planks_and_iron_are_there(self) -> None:
+        g = self._ready()
+        self.assertIn("craft_shield", candidates(g))
+        a = resolve("craft_shield", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "shield"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_shield_waits_for_the_iron_pickaxe(self) -> None:
+        # Iron is scarce; the first ingots belong to the pickaxe that unlocks diamonds.
+        g = gs(tools={"pickaxe": "stone"},
+               inventory={"crafting_table": 1, "iron_ingot": 1, "oak_planks": 6})
+        self.assertNotIn("craft_shield", candidates(g))
+        self.assertIsNone(resolve("craft_shield", g))
+
+    def test_shield_needs_six_planks(self) -> None:
+        g = self._ready(oak_planks=1)
+        self.assertNotIn("craft_shield", candidates(g))
+        # Logs the bot converts into planks count toward the six.
+        g.inventory["oak_log"] = 2
+        self.assertIn("craft_shield", candidates(g))
+
+    def test_shield_needs_an_ingot_and_a_table(self) -> None:
+        self.assertNotIn("craft_shield", candidates(self._ready(iron_ingot=0)))
+        g = gs(tools={"pickaxe": "iron"},
+               inventory={"iron_ingot": 1, "oak_planks": 6})
+        self.assertNotIn("craft_shield", candidates(g))
+
+    def test_carried_shield_is_not_rebuilt(self) -> None:
+        self.assertNotIn("craft_shield", candidates(self._ready(shield=1)))
+
+    def test_equip_shield_puts_it_in_the_off_hand(self) -> None:
+        g = self._ready(shield=1)
+        self.assertIn("equip_shield", candidates(g))
+        a = resolve("equip_shield", g)
+        self.assertEqual(a.tool, "equip")
+        self.assertEqual(a.args["items"], [{"item_name": "shield", "destination": "off-hand"}])
+
+    def test_worn_shield_is_not_rebuilt_or_reworn(self) -> None:
+        g = self._ready()
+        g.offhand = "shield"  # equipped leaves the carried inventory
+        self.assertNotIn("craft_shield", candidates(g))
+        self.assertNotIn("equip_shield", candidates(g))
+        self.assertIsNone(resolve("equip_shield", g))
+
+    def test_equip_shield_needs_a_carried_shield(self) -> None:
+        self.assertNotIn("equip_shield", candidates(self._ready()))
+        self.assertIsNone(resolve("equip_shield", self._ready()))
+
+    def test_missing_shield_pulls_one_iron(self) -> None:
+        # Nothing else needs iron once the pickaxe exists, so the shield is the reason to dig:
+        # one ingot is enough (live, the loop was offering only `explore` next to an iron vein).
+        g = gs(tools={"pickaxe": "diamond"},
+               inventory={"crafting_table": 1, "oak_planks": 6}, resources=_ore("iron_ore"))
+        self.assertIn("mine_iron", candidates(g))
+        self.assertEqual(resolve("mine_iron", g).args["count"], 1)
+
+    def test_shield_done_does_not_quarry_iron(self) -> None:
+        g = gs(tools={"pickaxe": "diamond"}, inventory={"crafting_table": 1},
+               offhand="shield", resources=_ore("iron_ore"))
+        self.assertNotIn("mine_iron", candidates(g))
+        self.assertIsNone(resolve("mine_iron", g))
 
 
 if __name__ == "__main__":

@@ -22,6 +22,8 @@ CRITERIA: dict[str, str] = {
     "craft_diamond_pickaxe": "craft a diamond pickaxe from three diamonds and sticks; the best pickaxe the bot can make",
     "craft_diamond_sword": "craft a diamond sword from two diamonds and a stick, once the diamond pickaxe exists",
     "equip_armor": "wear the diamond armour pieces the bot crafted, so their protection is active",
+    "craft_shield": "craft a shield from six planks and one iron ingot; it blocks attacks while held in the off-hand",
+    "equip_shield": "put the crafted shield into the off-hand slot, where it actually blocks attacks",
     "craft_diamond_chestplate": "craft a diamond chestplate from eight diamonds; the most protection per diamond",
     "craft_diamond_leggings": "craft diamond leggings from seven diamonds",
     "craft_diamond_boots": "craft diamond boots from four diamonds",
@@ -69,6 +71,13 @@ ORE_MIN_TIER = {
 # `diamond_<slot>`. Armour needs no sticks, only a crafting table.
 DIAMOND_ARMOR = (("chestplate", 8), ("leggings", 7), ("boots", 4), ("helmet", 5))
 DIAMOND_ARMOR_COST = dict(DIAMOND_ARMOR)
+
+# Shield: 6 planks + 1 iron ingot (3x3, so it needs a carried crafting table). It only blocks
+# while it sits in the off-hand, so the craft is followed by an `equip` to that slot. Gated
+# behind the iron pickaxe so it never spends the first three ingots that pickaxe needs.
+SHIELD_ITEM = "shield"
+SHIELD_PLANKS = 6
+SHIELD_IRON = 1
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
@@ -123,6 +132,11 @@ def _logs(inv: dict[str, int]) -> int:
 
 def _planks(inv: dict[str, int]) -> int:
     return sum(c for n, c in inv.items() if n.endswith("_planks"))
+
+
+def _plank_units(inv: dict[str, int]) -> int:
+    """Planks available once carried logs are accounted for (one log converts into four)."""
+    return _planks(inv) + 4 * _logs(inv)
 
 
 def _first_edible(inv: dict[str, int]) -> str | None:
@@ -326,6 +340,31 @@ def _armor_present(gs: GameState, slot: str) -> bool:
     return _worn(gs, item) or _has(gs.inventory, item)
 
 
+def _offhand(gs: GameState, item: str) -> bool:
+    """Whether `item` currently sits in the off-hand slot (there it leaves the inventory)."""
+    return gs.offhand == item
+
+
+def _has_shield(gs: GameState) -> bool:
+    """A shield counts as done whether it is in the off-hand or still waiting in the inventory."""
+    return _offhand(gs, SHIELD_ITEM) or _has(gs.inventory, SHIELD_ITEM)
+
+
+def _iron_goal(gs: GameState) -> int:
+    """Ingots (or raw iron) still wanted: three build an iron pickaxe, or its fresh spare.
+
+    Once that pickaxe exists nothing needs iron any more, so the loop would stop digging it -
+    but the shield wants one ingot. This is the single source both `candidates` and `resolve`
+    use, so the shield can pull iron in without reopening a mindless iron quarry.
+    """
+    inv = gs.inventory
+    tier = _pick_tier(inv, gs.tools)
+    goal = 3 if (tier < IRON_PICK_TIER or _pickaxe_due_for_spare(gs)) else 0
+    if tier >= IRON_PICK_TIER and not _has_shield(gs):
+        goal = max(goal, SHIELD_IRON)
+    return goal
+
+
 def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:
     """The next diamond thing worth building, and what it costs in diamonds.
 
@@ -448,14 +487,23 @@ def candidates(gs: GameState) -> list[str]:
                 out.append("hunt_wool")
             elif _safe_spider_hunt(gs):
                 out.append("hunt_string")
-    # Iron is wanted for the pickaxe, and again to rebuild one that is nearly worn. A stone
-    # pickaxe is already enough to mine it (wood is not - it breaks the ore), so this no longer
-    # stops at the iron tier; the upper bound was what left a worn iron pickaxe with no way back.
-    iron_wanted = raw_iron + iron < 3 and (tier < IRON_PICK_TIER or _pickaxe_due_for_spare(gs))
-    if iron_wanted and _can_mine(gs, "iron_ore") and gs.resource_distance("iron_ore") is not None:
+    # Iron is wanted for the pickaxe, again to rebuild one that is nearly worn, and for the
+    # shield. A stone pickaxe is already enough to mine it (wood is not - it breaks the ore),
+    # so this no longer stops at the iron tier; the upper bound was what left a worn iron
+    # pickaxe with no way back. `_iron_goal` is the one place that decides how much.
+    if raw_iron + iron < _iron_goal(gs) and _can_mine(gs, "iron_ore") \
+            and gs.resource_distance("iron_ore") is not None:
         out.append("mine_iron")
     if raw_iron >= 1 and coal < 1 and _can_mine(gs, "coal_ore") and gs.resource_distance("coal_ore") is not None:
         out.append("mine_coal")
+    # Shield (6 planks + 1 iron ingot, 3x3 so it needs the table): it only blocks while it sits
+    # in the off-hand, so the craft is immediately followed by `equip_shield`. Gated behind the
+    # iron pickaxe so it never spends the first ingots the pickaxe needs.
+    if (not _has_shield(gs) and table and tier >= IRON_PICK_TIER
+            and _plank_units(inv) >= SHIELD_PLANKS and iron >= SHIELD_IRON):
+        out.append("craft_shield")
+    if _has(inv, SHIELD_ITEM) and not _offhand(gs, SHIELD_ITEM):
+        out.append("equip_shield")
     # A crafted armour piece sits in the inventory until it is worn; `equip` slots armour even
     # without a destination, so one batch puts the whole set on. Wear it before crafting more.
     if any(_has(inv, f"diamond_{slot}") and not _worn(gs, f"diamond_{slot}")
@@ -507,7 +555,9 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "mine_iron":
         if not _can_mine(gs, "iron_ore"):
             return None
-        count = max(1, 3 - inv.get("raw_iron", 0))
+        if inv.get("raw_iron", 0) + inv.get("iron_ingot", 0) >= _iron_goal(gs):
+            return None
+        count = max(1, _iron_goal(gs) - inv.get("raw_iron", 0))
         return Action(label, "collect_block", {"block_name": "iron_ore", "count": count},
                       "mine iron ore for iron tools")
     if label == "mine_coal":
@@ -562,6 +612,19 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": "iron_pickaxe"}], "temporary_workstation": True},
                       "craft an iron pickaxe for mining diamonds")
+    if label == "craft_shield":
+        if (inv.get("iron_ingot", 0) < SHIELD_IRON or _plank_units(inv) < SHIELD_PLANKS
+                or not _has(inv, "crafting_table") or tier < IRON_PICK_TIER or _has_shield(gs)):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": SHIELD_ITEM}], "temporary_workstation": True},
+                      "craft a shield from planks and an iron ingot")
+    if label == "equip_shield":
+        if not _has(inv, SHIELD_ITEM) or _offhand(gs, SHIELD_ITEM):
+            return None
+        return Action(label, "equip",
+                      {"items": [{"item_name": SHIELD_ITEM, "destination": "off-hand"}]},
+                      "put the shield in the off-hand so it blocks attacks")
     if label == "craft_diamond_pickaxe":
         if (inv.get("diamond", 0) < 3 or not _has(inv, "crafting_table")
                 or tier >= DIAMOND_PICK_TIER or not _can_sticks(inv, _logs(inv), _planks(inv))):

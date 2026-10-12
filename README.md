@@ -84,6 +84,17 @@ in einen Rüstungsslot verschiebt. `situation.tools.armour` listet **mitgeführt
 (ob an oder nicht); der **getragene** Satz kommt aus der Inventar-`location`
 (`head`/`torso`/`legs`/`feet`).
 
+**Schild:** Der Schild (6 Planken + 1 Eisenbarren, 3×3 → Werktisch) ist eine eigene kleine Tier:
+`craft_shield` → `equip_shield`. Er blockt nur **in der Off-Hand**, und ein gecrafteter Schild
+bleibt — wie die Rüstung — zunächst im Rucksack; erst ein `equip` mit `destination: "off-hand"`
+legt ihn dorthin. `view_status` meldet den Off-Hand-Gegenstand als Inventar-Stack mit
+`location: "off-hand"`; `GameState.offhand` liest das, und `verify.diff` zählt `offhand_delta`
+als Fortschritt von `equip_shield`. Weil sonst nichts mehr Eisen brauchte (die Diamant-Spitzhacke
+steht), hätte der Loop nie wieder Eisen geschürft — `_iron_goal` macht das Schild zum
+Eisen-Grund: 3 Barren für die (Ersatz-)Eisenhacke, danach genau **1** für den Schild, und **0**,
+sobald beides steht. Der Craft wartet auf die Eisen-Spitzhacke, damit das Schild nicht die ersten
+Barren stiehlt.
+
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine
 **Tageslicht-Schranke** gebunden (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`): nachts

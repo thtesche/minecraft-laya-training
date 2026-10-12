@@ -22,6 +22,9 @@ RESOURCE_LIMIT = 4
 # per class whether or not it is worn, so the worn set has to come from the stack location:
 # an equipped piece moves to head/torso/legs/feet and leaves location main/hotbar.
 ARMOR_SLOTS = {"head": "helmet", "torso": "chestplate", "legs": "leggings", "feet": "boots"}
+# Off-hand slot: a shield (or anything else) carried there reports one of these locations. The
+# hyphen form mirrors the `equip` destination; the others cover a server that normalises it.
+OFFHAND_SLOTS = ("off-hand", "off_hand", "offhand")
 _ARMOR_TIERS = ("netherite", "diamond", "iron", "chainmail", "golden", "leather")
 
 # Event backlog drain. `read_recent_events` returns the OLDEST unread page (max 100),
@@ -151,6 +154,8 @@ class GameState:
     tool_meta: dict[str, dict] = field(default_factory=dict)
     # worn armour per slot class ("helmet"/"chestplate"/"leggings"/"boots") -> {tier, item, left, max}
     armor: dict[str, dict] = field(default_factory=dict)
+    # item currently in the off-hand slot (a shield, usually); None when the slot is empty
+    offhand: str | None = None
     # fresh "target died" reflex outcomes: the mob's drops are lying nearby
     drops: int = 0
 
@@ -181,6 +186,7 @@ class GameState:
             "tools": self.tools,
             "tool_meta": self.tool_meta,
             "armor": self.armor,
+            "offhand": self.offhand,
             "hostiles": self.hostiles,
             "players": self.players,
             "last_death": self.last_death_cause,
@@ -224,6 +230,8 @@ class GameState:
                                if meta.get("tier") and meta.get("tier") != "none")
         if worn_armor:
             parts.append(f"armour: {worn_armor}")
+        if self.offhand:
+            parts.append(f"off-hand: {self.offhand}")
         worn = []
         for cls, meta in self.tool_meta.items():
             left, mx = meta.get("left"), meta.get("max")
@@ -363,20 +371,28 @@ def parse_status(data: dict) -> GameState:
                 "max": _num(t.get("maximumDurability")),
             }
     # Worn armour is the stack that sits in one of the four armour slots (location
-    # head/torso/legs/feet). `situation.tools.armour` lists only the carried set per class and
-    # says nothing about what is on the body, so a worn piece has to be read from the location.
-    # It leaves main/hotbar, so remove it from the carried inventory the loop above added.
+    # head/torso/legs/feet); the off-hand item reports location off-hand. `situation.tools.armour`
+    # lists only the carried set per class and says nothing about what is on the body, so an
+    # equipped piece has to be read from the location. It leaves main/hotbar, so remove it from
+    # the carried inventory the loop above added.
     for st in inv.get("stacks") or []:
         if not isinstance(st, dict):
             continue
-        cls = ARMOR_SLOTS.get(str(st.get("location") or ""))
+        loc = str(st.get("location") or "")
         name = st.get("item_name") or st.get("item") or st.get("name")
-        if not cls or not name:
+        if not name:
             continue
         name = str(name)
-        dur = st.get("durability") or {}
-        gs.armor[cls] = {"tier": _armor_tier(name), "item": name,
-                         "left": _num(dur.get("remaining")), "max": _num(dur.get("maximum"))}
+        cls = ARMOR_SLOTS.get(loc)
+        if cls:
+            dur = st.get("durability") or {}
+            gs.armor[cls] = {"tier": _armor_tier(name), "item": name,
+                             "left": _num(dur.get("remaining")), "max": _num(dur.get("maximum"))}
+        elif loc in OFFHAND_SLOTS:
+            gs.offhand = name
+        else:
+            continue  # carried normally: the loop above already counted it
+        # An equipped piece leaves the pack, so it is not also counted as carried.
         left = gs.inventory.get(name, 0) - int(st.get("count") or 1)
         if left > 0:
             gs.inventory[name] = left

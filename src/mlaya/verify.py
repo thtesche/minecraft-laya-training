@@ -17,6 +17,8 @@ def diff(before: GameState, after: GameState) -> dict:
 
     worn_before = {m.get("item") for m in before.armor.values() if m.get("item")}
     worn_after = {m.get("item") for m in after.armor.values() if m.get("item")}
+    off_before = {before.offhand} if before.offhand else set()
+    off_after = {after.offhand} if after.offhand else set()
 
     return {
         "pos_delta": pos_delta(),
@@ -26,6 +28,7 @@ def diff(before: GameState, after: GameState) -> dict:
         else round(after.food - before.food, 1),
         "inventory_delta": inv_delta,
         "armor_delta": sorted(worn_after - worn_before),
+        "offhand_delta": sorted(off_after - off_before),
         "on_ground": after.on_ground,
         "in_water": after.in_water,
         "phase": after.phase,
@@ -39,19 +42,22 @@ INVENTORY_LABELS = {
     "craft_stone_pickaxe", "craft_furnace", "smelt_iron", "craft_iron_pickaxe", "craft_bed",
     "mine_diamond", "craft_diamond_pickaxe", "craft_diamond_sword",
     "craft_diamond_chestplate", "craft_diamond_leggings", "craft_diamond_boots",
-    "craft_diamond_helmet",
+    "craft_diamond_helmet", "craft_shield",
 }
 
 
 def progressed(label: str, d: dict) -> bool:
     inv_up = any(v > 0 for v in d["inventory_delta"].values())
     armor_up = bool(d.get("armor_delta"))
+    offhand_up = bool(d.get("offhand_delta"))
     if label in INVENTORY_LABELS:
         # A craft normally lands in the pack; a server that auto-equips armour puts the piece
         # straight on the body, so armour_craft progress also shows as armor_delta.
-        return inv_up or armor_up
+        return inv_up or armor_up or offhand_up
     if label == "equip_armor":
         return armor_up  # the piece leaves the pack for a worn slot
+    if label == "equip_shield":
+        return "shield" in d.get("offhand_delta", [])  # the shield reaches the off-hand slot
     if label == "hunt_string":
         return d["inventory_delta"].get("string", 0) > 0
     if label == "hunt_wool":

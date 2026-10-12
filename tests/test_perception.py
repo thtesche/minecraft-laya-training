@@ -52,5 +52,31 @@ class ArmourParseTest(unittest.TestCase):
         self.assertEqual(gs.armor["helmet"]["left"], 363)
 
 
+class OffhandParseTest(unittest.TestCase):
+    """The off-hand item reports a location of its own and leaves the carried inventory, exactly
+    like armour. This is what tells the loop a shield is actually worn (`equip_shield` done)."""
+
+    def test_offhand_item_is_not_also_carried(self) -> None:
+        st = _status({
+            "inventory": {"stacks": [
+                {"slot": 40, "location": "off-hand", "name": "shield", "count": 1},
+            ]},
+        })
+        gs = parse_status(st)
+        self.assertEqual(gs.offhand, "shield")
+        self.assertNotIn("shield", gs.inventory)
+        self.assertIn("off-hand: shield", gs.narrative())
+
+    def test_carried_shield_leaves_the_offhand_empty(self) -> None:
+        st = _status({
+            "inventory": {"stacks": [
+                {"slot": 20, "location": "main", "name": "shield", "count": 1},
+            ]},
+        })
+        gs = parse_status(st)
+        self.assertIsNone(gs.offhand)
+        self.assertEqual(gs.inventory.get("shield"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
