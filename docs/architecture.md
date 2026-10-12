@@ -66,8 +66,11 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     smelt_iron -> craft_iron_pickaxe -> mine_diamond -> craft_diamond_pickaxe
     (-> craft_diamond_sword) -> craft_diamond_<slot> (Brustplatte/Hose/Schuhe/Helm)
     -> equip_armor; Bett-Kette (hunt_wool/hunt_string ->
-    craft_bed -> sleep in der Nacht) und eat_food bei Hunger; explore nur als
-    letzter Fallback (wenn nichts Produktives möglich ist).
+    craft_bed -> sleep in der Nacht) und eat_food bei Hunger; Homebase
+    (establish_base -> go_home, craft_chest/place_chest/stow_surplus) und
+    Nether-Kette (craft_bucket -> fill_bucket -> mine_obsidian -> get_flint ->
+    craft_flint_and_steel -> build_portal -> light_portal -> place_bed); explore
+    nur als letzter Fallback (wenn nichts Produktives möglich ist).
 [5] Verify        (src/mlaya/verify.py)
     view_status erneut lesen; Soll/Ist-Delta (Inventar, Position, Health, Hunger,
     Phase/Schlaf); Fortschritt je Aktion
@@ -505,13 +508,59 @@ nur eine Ebene tiefer.
   `_iron_goal` (3 für die Hacke/Ersatz, sonst 1 für den Schild, sonst 0) zieht das Eisen. Getestet
   in `tests/test_actions.py::ShieldTest` und `tests/test_perception.py::OffhandParseTest`.
 - **Auto-Stop bei erreichtem Tech-Tree (implementiert):** `actions.tech_tree_complete(gs)` ist wahr,
-  sobald Diamant-Spitzhacke + Diamantschwert vorhanden, **alle vier** Diamant-Rüstungsteile
-  **getragen** (`_worn`, nicht nur im Inventar — sonst würde der Lauf enden, bevor `equip_armor`
-  greift) und der Schild in der Off-Hand liegt. `[loop] stop_when_complete` (Default `true`) lässt
-  `verify`/`defer` den Lauf dann mit `stop: "goal"` beenden statt das Iterationsbudget abzuarbeiten;
-  sonst endet er mit `stop: "limit"`. `run --ignore-goal` schaltet die Abbruchbedingung für einen
-  Lauf ab (Datensatz-Sammlung über das Ziel hinaus, später die Nether-Kette). Getestet in
+  sobald das ganze Diamant-Kit steht — Diamant-Spitzhacke + Diamantschwert, **alle vier**
+  Diamant-Rüstungsteile **getragen** (`_worn`, nicht nur im Inventar — sonst würde der Lauf enden,
+  bevor `equip_armor` greift) und der Schild in der Off-Hand — **und** das Overworld-Ziel steht: das
+  Portal ist angezündet und ein Bett daneben platziert. `[loop] stop_when_complete` (Default `true`)
+  lässt `verify`/`defer` den Lauf dann mit `stop: "goal"` beenden statt das Iterationsbudget
+  abzuarbeiten; sonst endet er mit `stop: "limit"`. `run --ignore-goal` schaltet die
+  Abbruchbedingung für einen Lauf ab (Datensatz-Sammlung über das Ziel hinaus). Getestet in
   `tests/test_actions.py::TechTreeCompleteTest` und `tests/test_graph.py::GoalStopTest`.
-- **Nether-Kette (offen):** Eimer/Obsidian/Flint&Steel und Rahmen bauen/anzünden/betreten
-  (`activate_portal` zündet nur einen bestehenden Rahmen, baut nichts). Per Entscheidung zunächst
-  zurückgestellt.
+- **Nether-Kette (implementiert):** Acht Labels in `actions.py` führen vom fertigen Diamant-Kit zum
+  offenen Portal: `craft_bucket` (3 Eisenbarren) → `fill_bucket` → `mine_obsidian` → `get_flint`
+  (aus Gravel) → `craft_flint_and_steel` (2×2, **kein** Werktisch) → `build_portal`
+  (`build_structure portal_frame`, 10 Obsidian + 4 Cobblestone-Ecken) → `light_portal`
+  (`activate_portal`) → `place_bed` (`sleep`). Die ganze Kette hängt an `_gear_ready` (ein frischer
+  Lauf macht erst die Diamant-Tier fertig).
+  **Obsidian wird gemacht, nicht gegraben:** `mine_obsidian` hat in `resolve` zwei Phasen. Liegt
+  Obsidian in Reichweite (`OBSIDIAN_REACH` = 6 m — das, was der letzte Guss geformt hat), wird es
+  abgebaut (`collect_block`, genau die fehlenden Blöcke bis 10). Sonst wird der Wassereimer auf die
+  nächste Lava-Zelle gegossen (`use_bucket pour` mit `x,y,z`, ab `POUR_REACH` = 4,5 m; sonst erst
+  dorthin navigieren — **ohne** `dig`/`scaffold`, damit der Pathfinder nicht in die Lava tunnelt).
+  Natürliches Obsidian liegt nur tief (`y ≈ -55`) unter denselben Lavaseen und fällt nie unter
+  `OBSIDIAN_REACH`; dorthin zu graben ist die **Wasser-Falle** (siehe Reflex unten). Angeboten wird
+  der Schritt nur bei „Eimer voll **und** Lava in Reichweite“ oder „Obsidian in Reichweite“.
+  **Obsidian-Latch (Schlüsseldesign):** Obsidian muss **vor** dem Flint&Steel gebankt sein — genau
+  dieser Craft ist die Sperre, die `mine_obsidian` nach dem Bau (der die 10 Blöcke ausgibt) am
+  erneuten Graben hindert, weil eine reine „Ressource vorhanden“-Prüfung den frischen Rahmen sonst
+  maskieren würde. `light_portal` feuert daher nur bei `has_fs and obsidian < 10 and nearest obsidian`.
+  Getestet in `tests/test_actions.py::NetherGateTest` und `tests/test_verify.py`.
+- **Wasser-Escape-Reflex (implementiert):** `candidates` prüft `gs.in_water and not gs.on_ground` als
+  Allererstes (noch vor den M2d-Reaktionen) und gibt dann **nur** `["escape_water"]` zurück — hier
+  wählt Laya nicht, der Zustand ist ein Rescue. `resolve("escape_water")` navigiert zur Homebase
+  (sonst zum nächsten trockenen Boden aus `targets.base_target`) mit `dig`/`scaffold`. Grund: ohne
+  Grund unter den Füßen bricht der gemeinsame Pathfinder — ein `collect_block` lief live 370 Blöcke
+  weit und netto 0,18 m — während `navigate` aus der Schwimmhaltung heraus weiter funktioniert. Steht
+  der Bot am Grund (Wassergraben, Teich, ein Guss, der ihn nicht flutet), greift der Reflex **nicht**.
+  Getestet in `tests/test_actions.py::EscapeWaterTest`.
+- **Homebase (implementiert):** Ein Anker auf der Oberfläche trägt Bett, Portalrahmen und Truhe.
+  `establish_base` (sobald das Kit steht) läuft zur nächsten offenen Oberfläche über dem Bot
+  (`targets.base_target`: nur `GROUND_NAMES`, auf/oberhalb der Bot-Ebene, nächste zuerst) und
+  legt sie als `GameState.base` fest; `go_home` läuft nur zurück, wenn wirklich Basisarbeit wartet
+  (`_base_steps_ready`). `build_portal`/`place_bed` sind auf `_at_base` beschränkt, `_portal_site`
+  ankert am Base-Block statt an den Füßen. **Schlafen setzt den Respawn:** `place_bed` (via `sleep`)
+  wird **nur nachts** angeboten — bei Tag würde das Bett nur platziert, der Pausepunkt bliebe unset.
+  `_bed_available` zählt auch ein **platziertes** Bett (nicht nur ein getragenes): nach einem
+  manuellen Basisbau oder einem Neustart bleibt das Bett sonst als Block zurück und der Loop würde
+  ohne Not Wolle für ein zweites suchen.
+  Eine **Truhe** (8 Planken, 3×3) hält Überschuss: `craft_chest` → `place_chest` (Koordinaten werden
+  gemerkt) → `stow_surplus` (`use_container deposit`) bei ≥33/36 Slots; `drop_junk` ist nur der
+  Notnagel ohne Truhe. Ein `[INVENTORY_FULL]`-Refusal löst eine eigene Relief-Stufe aus
+  (`blocked_by_inventory` → `inventory_relief`: Truhe, sonst werfen; eine volle Truhe schaltet
+  `allow_stow` ab). Basis/Truhe sind **pro Lauf** und werden vom Loop in jeden `GameState` injiziert.
+  `Agent._adopt_homebase` übernimmt beim Tick-Start ein bereits **stehendes** Bett in Reichweite
+  (`ADOPT_BED_RADIUS` = 12 m) als Anker und eine **Truhe** in Ankernähe (`ADOPT_CHEST_RADIUS` = 4)
+  als `chest_pos` — so läuft ein Neustart an derselben Homebase weiter, statt eine zweite zu bauen
+  (die Truhe steht dafür in `perception.CHAIN_NAMES` im `view_blocks`-Scan).
+  Getestet in `tests/test_actions.py::HomeBaseTest`, `tests/test_targets.py::BaseTargetTest`,
+  `tests/test_graph.py::GuardUnblockTest` und `tests/test_verify.py::HomeBaseProgressTest`.

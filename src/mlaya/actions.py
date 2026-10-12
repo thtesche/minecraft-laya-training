@@ -3,10 +3,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .perception import GameState
+from .perception import INVENTORY_NEAR_FULL, GameState
+from .targets import base_target
 
 # Labels Laya may choose among; each maps to a real mine-ai MCP tool.
 CRITERIA: dict[str, str] = {
+    "escape_water": "swim clear of the water and climb back onto dry ground; with no footing under the bot nothing else can work",
     "eat_food": "eat a carried food item to restore hunger",
     "get_wood": "chop a tree and collect logs; the bot has no wood yet, so this comes first",
     "craft_pickaxe": "craft a wooden pickaxe from the logs the bot carries; this is the next step",
@@ -39,6 +41,22 @@ CRITERIA: dict[str, str] = {
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
     "explore": "walk to new terrain to find missing resources; the last fallback",
     "make_room": "dig a small pocket out of the surrounding blocks so a carried workstation or bed fits",
+    # Home base: one surface anchor the bed, the portal and the chests all stand at.
+    "establish_base": "walk up to open surface ground and set up the home base there",
+    "go_home": "walk back to the home base to place the bed, the portal or store surplus there",
+    "craft_chest": "craft a chest from eight planks to store surplus blocks at the base",
+    "place_chest": "place the crafted chest at the home base",
+    "stow_surplus": "deposit the surplus blocks of a full pack into the chest at the base",
+    # Overworld -> Nether gate (the portal frame and the bed beside it).
+    "craft_bucket": "craft a bucket from three iron ingots; a water bucket is how obsidian is made",
+    "fill_bucket": "fill the carried bucket with water at a source, ready to pour onto lava",
+    "mine_obsidian": "carry a water bucket and mine obsidian: the dig pours the water onto lava and mines what forms",
+    "get_flint": "dig gravel for flint, the spark the flint and steel needs",
+    "craft_flint_and_steel": "craft flint and steel from flint and an iron ingot to light the portal",
+    "build_portal": "build the nether portal frame from the ten banked obsidian and four cobblestone corners",
+    "light_portal": "strike the built portal frame with the carried flint and steel to light it",
+    "place_bed": "place the carried bed beside the lit portal so the respawn point sits at the gate",
+    "drop_junk": "drop low-value blocks from the full pack so a gathering action has room again",
 }
 
 EDIBLE = {
@@ -63,6 +81,7 @@ ORE_MIN_TIER = {
     "coal_ore": 1,                   # coal: any pickaxe
     "iron_ore": STONE_PICK_TIER,     # wood breaks it; stone already yields raw iron
     "diamond_ore": IRON_PICK_TIER,   # wood/stone/gold destroy it
+    "obsidian": DIAMOND_PICK_TIER,   # only diamond or netherite drop it
 }
 
 # Diamond armour in the order the bot should build it: most protection per diamond first
@@ -78,6 +97,46 @@ DIAMOND_ARMOR_COST = dict(DIAMOND_ARMOR)
 SHIELD_ITEM = "shield"
 SHIELD_PLANKS = 6
 SHIELD_IRON = 1
+
+# Overworld -> Nether gate. A portal frame is ten obsidian with four cobblestone corners; the
+# server's `build_structure portal_frame` builds exactly that from a carried stack, so the
+# obsidian is never placed by hand. Obsidian is the one block the bot *makes* rather than finds:
+# `mine_obsidian` walks to the nearest lava and pours the carried water onto it, then mines the
+# obsidian that forms. The water itself needs a bucket (three iron) and the portal needs flint
+# and steel (one flint and one ingot) to light.
+PORTAL_OBSIDIAN = 10
+PORTAL_CORNERS = 4
+PORTAL_BLOCK = "nether_portal"
+BUCKET_ITEM = "bucket"
+WATER_BUCKET = "water_bucket"
+FLINT_ITEM = "flint"
+FLINT_STEEL_ITEM = "flint_and_steel"
+BUCKET_IRON = 3
+FLINT_STEEL_IRON = 1
+# Gravel dug for one flint; the drop is a one-in-ten roll, so a batch and a repeat is the plan.
+FLINT_GRAVEL = 16
+# How close obsidian must be to be mined rather than assumed missing. Water poured on lava forms
+# obsidian at the bot's feet; the natural deposit sits tens of blocks down in the same lava caves
+# and never comes inside this reach, so the test keeps the dig shallow instead of tunnelling to it.
+OBSIDIAN_REACH = 6.0
+# How near the bot must be to a lava cell before the bucket can be emptied into it.
+POUR_REACH = 4.5
+
+# Low-value carried blocks no recipe here wants. When the pack fills up a gathering action is
+# refused with `[INVENTORY_FULL]`, so the loop sheds these to make room. Deliberately excludes
+# anything a recipe consumes: cobblestone (portal corners, furnace), planks/logs/sticks, wool,
+# string, coal, iron, flint, gravel, obsidian and food.
+JUNK_ITEMS = ("tuff", "calcite", "diorite", "andesite", "granite", "cobbled_deepslate",
+              "deepslate", "dirt", "leather", "bone", "raw_copper", "glow_ink_sac")
+
+# Home base. The run keeps one anchor on the surface; the bed, the portal frame and the chest
+# all stand there, and the bot walks back to it to deploy them. Eight planks make a chest, which
+# is how a full pack sheds surplus blocks without scattering them on the ground.
+CHEST_ITEM = "chest"
+CHEST_PLANKS = 8
+# How close the bot must be to the base to lay blocks out there: feet within this many blocks
+# of the anchor in x/z (one more vertically, so a step up or down still counts).
+BASE_RADIUS = 4.0
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
@@ -350,19 +409,139 @@ def _has_shield(gs: GameState) -> bool:
     return _offhand(gs, SHIELD_ITEM) or _has(gs.inventory, SHIELD_ITEM)
 
 
+def _gear_ready(gs: GameState) -> bool:
+    """The Nether-prerequisite gear: diamond pickaxe, diamond sword, the whole armour set
+    actually worn, and the shield in the off-hand. The portal chain hangs off this, so a fresh
+    run finishes the diamond tier before it ever starts banking obsidian."""
+    inv = gs.inventory
+    if _pick_tier(inv, gs.tools) < DIAMOND_PICK_TIER:
+        return False
+    if not (_has(inv, "diamond_sword") or str(gs.tools.get("sword", "")).lower() == "diamond"):
+        return False
+    if any(not _worn(gs, f"diamond_{slot}") for slot, _ in DIAMOND_ARMOR):
+        return False
+    return _offhand(gs, SHIELD_ITEM)
+
+
+def _portal_lit(gs: GameState) -> bool:
+    """A lit nether portal block is loaded nearby (the frame is on and the gate is open)."""
+    return gs.resource_distance(PORTAL_BLOCK) is not None
+
+
+def _bed_placed(gs: GameState) -> bool:
+    """A bed block stands nearby - the bed the run places next to the portal."""
+    return gs.resource_distance("white_bed") is not None
+
+
+def _junk_carried(inv: dict[str, int]) -> list[str]:
+    """Carried low-value blocks no recipe wants, in the fixed shedding order."""
+    return [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]
+
+
+def _chest_ready(gs: GameState) -> bool:
+    """A chest has been placed at the base (its coordinates are remembered)."""
+    return gs.chest_pos is not None
+
+
+def _obsidian_within_reach(gs: GameState) -> bool:
+    """Obsidian close enough to mine: what the last water pour formed lies at the bot's feet."""
+    hit = gs.resource_nearest("obsidian")
+    return hit is not None and hit.distance <= OBSIDIAN_REACH
+
+
+def _within_reach(gs: GameState, hit, reach: float) -> bool:
+    """Whether the bot stands within `reach` of a `view_blocks` hit (needs a known position)."""
+    return gs.pos is not None and _dist(gs.pos, hit.pos) <= reach
+
+
+def _bed_available(gs: GameState) -> bool:
+    """A bed is at hand for `sleep`: carried, or already standing beside the base.
+
+    Counting a *placed* bed matters once the bed item has left the pack (a manual base build, or
+    a restart): a carried-bed-only test would send the loop off to hunt wool for a second bed
+    while one already stands at the base.
+    """
+    return _has_bed(gs.inventory) or _bed_placed(gs)
+
+
+def _at_base(gs: GameState) -> bool:
+    """Whether the bot stands at the home base, close enough to lay blocks out there."""
+    if gs.base is None or gs.pos is None:
+        return False
+    bx, by, bz = gs.base
+    x, y, z = gs.pos
+    return (abs(x - (bx + 0.5)) <= BASE_RADIUS
+            and abs(z - (bz + 0.5)) <= BASE_RADIUS
+            and abs(y - (by + 1)) <= BASE_RADIUS + 1)
+
+
+def _base_steps_ready(gs: GameState) -> bool:
+    """Whether some base step is ready to run once the bot is back at the base.
+
+    Used only to justify `go_home`: the bot walks back exactly when there is work that needs
+    the base (a frame to raise, a bed to lay, a chest to place, surplus to store), never as an
+    idle stroll.
+    """
+    inv = gs.inventory
+    if (_has(inv, FLINT_STEEL_ITEM) and inv.get("obsidian", 0) >= PORTAL_OBSIDIAN
+            and inv.get("cobblestone", 0) >= PORTAL_CORNERS and not _portal_lit(gs)):
+        return True
+    if (_portal_lit(gs) and _has_bed(inv) and not _bed_placed(gs)
+            and gs.phase == "night"):
+        return True
+    if _has(inv, CHEST_ITEM) and not _chest_ready(gs):
+        return True
+    if _chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _junk_carried(inv):
+        return True
+    return False
+
+
+def _portal_iron_goal(gs: GameState) -> int:
+    """Ingots the Nether gate still wants: three for the bucket, then one for flint and steel.
+
+    The bucket is checked first because it is the larger spend and consumes its ingots before
+    the flint and steel is crafted; each is wanted until that item is carried.
+    """
+    inv = gs.inventory
+    if not (_has(inv, BUCKET_ITEM) or _has(inv, WATER_BUCKET)):
+        return BUCKET_IRON
+    if not _has(inv, FLINT_STEEL_ITEM):
+        return FLINT_STEEL_IRON
+    return 0
+
+
 def _iron_goal(gs: GameState) -> int:
     """Ingots (or raw iron) still wanted: three build an iron pickaxe, or its fresh spare.
 
     Once that pickaxe exists nothing needs iron any more, so the loop would stop digging it -
-    but the shield wants one ingot. This is the single source both `candidates` and `resolve`
-    use, so the shield can pull iron in without reopening a mindless iron quarry.
+    but the shield wants one ingot, and once the whole kit is worn the portal gate wants more
+    (a bucket, then flint and steel). This is the single source both `candidates` and
+    `resolve` use, so those pulls never reopen a mindless iron quarry.
     """
     inv = gs.inventory
     tier = _pick_tier(inv, gs.tools)
     goal = 3 if (tier < IRON_PICK_TIER or _pickaxe_due_for_spare(gs)) else 0
     if tier >= IRON_PICK_TIER and not _has_shield(gs):
         goal = max(goal, SHIELD_IRON)
+    # `_gear_ready` (not just "has a shield") is the gate, so banking the bucket's three
+    # ingots waits until the diamond kit is complete - matching where `craft_bucket` appears.
+    if _gear_ready(gs) and not _portal_lit(gs):
+        goal = max(goal, _portal_iron_goal(gs))
     return goal
+
+
+def _portal_site(gs: GameState) -> dict | None:
+    """Where to raise the portal frame: its six interior cells start two blocks east of the
+    base anchor (or, with no base yet, the bot's own feet), one block above the ground the
+    frame stands on. The frame then runs from one block west of that corner out to the east,
+    with the bot standing just clear of its western face, so it is never built into itself."""
+    if gs.base is not None:
+        bx, by, bz = gs.base
+        return {"x": bx + 2, "y": by + 1, "z": bz, "axis": "x"}
+    if gs.pos is None:
+        return None
+    mx, my, mz = (math.floor(v) for v in gs.pos)
+    return {"x": mx + 2, "y": my, "z": mz, "axis": "x"}
 
 
 def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:
@@ -396,22 +575,16 @@ def _diamond_craft_ready(gs: GameState, item: str) -> bool:
 def tech_tree_complete(gs: GameState) -> bool:
     """True when the overworld goal the loop works toward is fully reached.
 
-    A diamond pickaxe (the tier is topped out), a diamond sword, all four diamond armour
-    pieces actually *worn* - not merely carried, since it is `equip_armor` that puts them on -
-    and the shield in the off-hand. At that point the eligible actions collapse to
+    The prerequisite gear (`_gear_ready`): a diamond pickaxe, a diamond sword, all four diamond
+    armour pieces actually *worn* - not merely carried, since it is `equip_armor` that puts them
+    on - and the shield in the off-hand. Then the overworld -> Nether gate itself: the portal is
+    lit and a bed stands beside it to respawn at (the bed is only laid at night, so `sleep`
+    actually ran and the respawn point is set). At that point the eligible actions collapse to
     `explore`/`sleep`, so a long unattended run can end itself instead of spending hours on
     nothing. Requiring the armour to be worn (not just present) is what lets the loop finish
-    `equip_armor` first instead of stopping with the set still in the pack. The Nether chain
-    is deliberately out of scope.
+    `equip_armor` first instead of stopping with the set still in the pack.
     """
-    inv = gs.inventory
-    if _pick_tier(inv, gs.tools) < DIAMOND_PICK_TIER:
-        return False
-    if not (_has(inv, "diamond_sword") or str(gs.tools.get("sword", "")).lower() == "diamond"):
-        return False
-    if any(not _worn(gs, f"diamond_{slot}") for slot, _ in DIAMOND_ARMOR):
-        return False
-    return _offhand(gs, SHIELD_ITEM)
+    return _gear_ready(gs) and _portal_lit(gs) and _bed_placed(gs)
 
 
 def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
@@ -449,6 +622,14 @@ def candidates(gs: GameState) -> list[str]:
 
     eating = gs.food is not None and gs.food < 14 and bool(_first_edible(inv))
 
+    # --- no footing in water (rescue) ---
+    # Live failure: the obsidian dig left the bot treading water off the ground. Off-ground
+    # breaks the shared pathfinder -- `collect_block` then thrashed for minutes without moving a
+    # block -- while `navigate` still works from a floating stance. Nothing else can run until
+    # the bot has ground under it again, so the rescue owns the tick outright (no Laya choice).
+    if gs.in_water and not gs.on_ground:
+        return ["escape_water"]
+
     # --- event-driven reactions (M2d) ---
     # A tool about to break, a mob the reflex just killed (its drops despawn in minutes),
     # or gear lying at a fresh death site are all time-sensitive, so the top reaction
@@ -476,8 +657,9 @@ def candidates(gs: GameState) -> list[str]:
 
     wool = _wool(inv)
     string = inv.get("string", 0)
-    bed = _has_bed(inv)
-    # Night + a carried bed: sleeping skips to morning and pins the respawn point.
+    bed = _bed_available(gs)
+    # Night + a bed (carried or already standing): sleeping skips to morning and pins the
+    # respawn point.
     if gs.phase == "night" and not gs.sleeping and bed:
         out.append("sleep")
 
@@ -544,6 +726,78 @@ def candidates(gs: GameState) -> list[str]:
                 out.append("mine_diamond")
         elif _diamond_craft_ready(gs, item):
             out.append("craft_" + item)
+
+    # --- Home base ---
+    # One surface anchor owns the bed, the portal frame and the chest. It is established once
+    # the diamond kit is complete, and after that the base steps are only eligible while the
+    # bot is there; `go_home` walks it back when base work is waiting.
+    if _gear_ready(gs):
+        if gs.base is None:
+            out.append("establish_base")
+        elif not _at_base(gs) and _base_steps_ready(gs):
+            out.append("go_home")
+
+    # --- Overworld -> Nether gate ---
+    # Gated on the whole diamond kit (`_gear_ready`) so a fresh run finishes the tier first.
+    # The order banks the obsidian *before* the flint and steel is crafted: that craft is the
+    # latch that stops `mine_obsidian` re-mining after `build_portal` has spent the ten blocks.
+    # Without it there is no way to tell our fresh frame from the natural obsidian that lines
+    # the very lava the bot walks to, so the carried count alone cannot decide it.
+    # `build_portal` and `place_bed` run only at the base (`_at_base`), so the gate stands at
+    # one fixed spot the respawn point can be pinned to.
+    if _gear_ready(gs) and not _portal_lit(gs):
+        has_bucket = _has(inv, BUCKET_ITEM)
+        has_water = _has(inv, WATER_BUCKET)
+        has_flint = _has(inv, FLINT_ITEM)
+        has_fs = _has(inv, FLINT_STEEL_ITEM)
+        obsidian = inv.get("obsidian", 0)
+        if not has_bucket and not has_water and table and iron >= BUCKET_IRON:
+            out.append("craft_bucket")
+        elif has_bucket and not has_water:
+            out.append("fill_bucket")
+        if not has_flint and not has_fs and gs.resource_distance("gravel") is not None:
+            out.append("get_flint")
+        # Obsidian is *made*, not dug: the step is offered while the bucket is full and lava is
+        # in range (to pour the water), or while freshly formed obsidian lies within reach (to
+        # mine it). The reach test on the mine side keeps the dig shallow - the natural deposit
+        # under the same lava caves is tens of blocks down and never comes that close.
+        has_lava = gs.resource_nearest("lava") is not None
+        if (obsidian < PORTAL_OBSIDIAN and not has_fs and _can_mine(gs, "obsidian")
+                and ((has_water and has_lava) or _obsidian_within_reach(gs))):
+            out.append("mine_obsidian")
+        if (not has_fs and has_flint and iron >= FLINT_STEEL_IRON and table
+                and obsidian >= PORTAL_OBSIDIAN):
+            out.append("craft_flint_and_steel")
+        if (_at_base(gs) and has_fs and obsidian >= PORTAL_OBSIDIAN
+                and cobble >= PORTAL_CORNERS):
+            out.append("build_portal")
+        # After the build the ten obsidian have left the pack (`obsidian < PORTAL_OBSIDIAN`)
+        # while the flint and steel remains - that is the "frame is standing" signal, and the
+        # frame's own blocks are the nearest obsidian, so the light step can name one.
+        if (has_fs and obsidian < PORTAL_OBSIDIAN
+                and gs.resource_nearest("obsidian") is not None):
+            out.append("light_portal")
+    # The bed goes down at the base at night, because `sleep` is what actually sets the respawn
+    # point: placing it in daylight would leave the pause point unset.
+    if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_placed(gs)
+            and gs.phase == "night"):
+        out.append("place_bed")
+
+    # --- Home base storage ---
+    # A chest at the base is where a filling pack sheds surplus, well before the server's
+    # `[INVENTORY_FULL]` refusal; `drop_junk` is only the fallback when no chest is there.
+    if gs.base is not None and not _chest_ready(gs):
+        if _has(inv, CHEST_ITEM) and _at_base(gs):
+            out.append("place_chest")
+        elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
+            out.append("craft_chest")
+    if gs.slots_used >= INVENTORY_NEAR_FULL and _junk_carried(inv):
+        if gs.base is not None and _chest_ready(gs) and _at_base(gs):
+            out.append("stow_surplus")
+        elif gs.base is None or not _chest_ready(gs):
+            # No chest to hold it: shed the surplus on the ground rather than stall the gather.
+            out.append("drop_junk")
+
     if cobble < 12 and _can_mine(gs, "stone"):
         out.append("mine_stone")
 
@@ -565,6 +819,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     tier = _pick_tier(inv, gs.tools)
     x, y, z = gs.pos or (None, None, None)
 
+    if label == "escape_water":
+        # Swim clear of the water and climb back onto dry ground: the base when one is set,
+        # otherwise the nearest standable cell. `navigate` is the one tool that still moves a
+        # floating body (live: a `collect_block` loop left the bot treading water, and every
+        # later dig thrashed in place while `navigate` walked it home).
+        if gs.base is not None:
+            bx, by, bz = gs.base
+            return Action(label, "navigate",
+                          {"x": bx, "y": by + 1, "z": bz, "dig": True, "scaffold": True},
+                          "swim clear of the water and climb back up to the dry home base")
+        target = base_target(gs)
+        if target is None:
+            return None
+        tx, ty, tz = target.pos
+        return Action(label, "navigate",
+                      {"x": tx, "y": ty + 1, "z": tz, "dig": True, "scaffold": True},
+                      "climb out of the water onto the nearest dry ground")
     if label == "get_wood":
         return Action(label, "collect_block", {"block_name": "logs", "count": 8},
                       "gather logs to start the tech tree")
@@ -677,8 +948,81 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": f"diamond_{armor_slot}"}],
                        "temporary_workstation": True},
                       f"craft a diamond {armor_slot} from {cost} diamonds")
+    if label == "craft_bucket":
+        if (not _gear_ready(gs) or _has(inv, BUCKET_ITEM) or _has(inv, WATER_BUCKET)
+                or inv.get("iron_ingot", 0) < BUCKET_IRON or not _has(inv, "crafting_table")):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": BUCKET_ITEM}], "temporary_workstation": True},
+                      "craft a bucket from three iron ingots")
+    if label == "fill_bucket":
+        if not _has(inv, BUCKET_ITEM) or _has(inv, WATER_BUCKET):
+            return None
+        return Action(label, "use_bucket", {"action": "fill", "liquid": "water"},
+                      "fill the carried bucket with water to pour onto lava")
+    if label == "mine_obsidian":
+        if (not _can_mine(gs, "obsidian") or _has(inv, FLINT_STEEL_ITEM)
+                or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN):
+            return None
+        # Phase 1: obsidian already lies within reach (what the last pour formed) - mine it.
+        if _obsidian_within_reach(gs):
+            count = max(1, PORTAL_OBSIDIAN - inv.get("obsidian", 0))
+            return Action(label, "collect_block", {"block_name": "obsidian", "count": count},
+                          "mine the obsidian the poured water just formed at the bot's feet")
+        # Phase 2: no obsidian in reach, so make some - pour the carried water onto the nearest
+        # lava. Natural obsidian deep under that lava is deliberately *not* a target: tunnelling
+        # to it is what left the bot treading water in a flooded shaft.
+        if not _has(inv, WATER_BUCKET):
+            return None
+        lava = gs.resource_nearest("lava")
+        if lava is None:
+            return None
+        if _within_reach(gs, lava, POUR_REACH):
+            return Action(label, "use_bucket",
+                          {"action": "pour", "liquid": "water",
+                           "x": lava.x, "y": lava.y, "z": lava.z},
+                          "pour the carried water onto the lava to form obsidian")
+        return Action(label, "navigate",
+                      {"x": lava.x, "y": lava.y, "z": lava.z, "range": 3,
+                       "dig": False, "scaffold": False},
+                      "walk to the lava pool to pour the water and make obsidian")
+    if label == "get_flint":
+        if _has(inv, FLINT_ITEM) or _has(inv, FLINT_STEEL_ITEM):
+            return None
+        return Action(label, "collect_block", {"block_name": "gravel", "count": FLINT_GRAVEL},
+                      "dig gravel for flint to make flint and steel")
+    if label == "craft_flint_and_steel":
+        if (not _has(inv, FLINT_ITEM) or inv.get("iron_ingot", 0) < FLINT_STEEL_IRON
+                or not _has(inv, "crafting_table") or _has(inv, FLINT_STEEL_ITEM)
+                or inv.get("obsidian", 0) < PORTAL_OBSIDIAN):
+            return None
+        return Action(label, "craft_item", {"items": [{"item_name": FLINT_STEEL_ITEM}]},
+                      "craft flint and steel from flint and an iron ingot")
+    if label == "build_portal":
+        site = _portal_site(gs)
+        if (site is None or not _at_base(gs) or not _has(inv, FLINT_STEEL_ITEM)
+                or _portal_lit(gs)
+                or inv.get("obsidian", 0) < PORTAL_OBSIDIAN
+                or inv.get("cobblestone", 0) < PORTAL_CORNERS):
+            return None
+        return Action(label, "build_structure",
+                      {"portal_frame": site, "remove_wrong_blocks": True},
+                      "build the obsidian portal frame beside the bot")
+    if label == "light_portal":
+        hit = gs.resource_nearest("obsidian")
+        if (not _has(inv, FLINT_STEEL_ITEM) or _portal_lit(gs)
+                or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN or hit is None):
+            return None
+        return Action(label, "activate_portal", {"x": hit.x, "y": hit.y, "z": hit.z},
+                      "light the built portal frame with the carried flint and steel")
+    if label == "place_bed":
+        if (not _has_bed(inv) or not _portal_lit(gs) or _bed_placed(gs)
+                or not _at_base(gs) or gs.phase != "night"):
+            return None
+        return Action(label, "sleep", {},
+                      "place the carried bed beside the lit portal and set the respawn point")
     if label == "sleep":
-        if gs.phase != "night" or gs.sleeping or not _has_bed(inv):
+        if gs.phase != "night" or gs.sleeping or not _bed_available(gs):
             return None
         return Action(label, "sleep", {},
                       "sleep through the night and set the respawn point")
@@ -755,6 +1099,52 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                  for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
         return Action(label, "build_structure", {"blocks": cells},
                       "dig a small pocket around the bot for the carried workstation or bed")
+    if label == "establish_base":
+        if gs.base is not None or not _gear_ready(gs):
+            return None
+        target = base_target(gs)
+        if target is None:
+            return None
+        tx, ty, tz = target.pos
+        return Action(label, "navigate",
+                      {"x": tx, "y": ty + 1, "z": tz, "dig": True, "scaffold": True},
+                      f"walk up to the surface at {tx},{ty + 1},{tz} and set the base")
+    if label == "go_home":
+        if gs.base is None or _at_base(gs) or not _base_steps_ready(gs):
+            return None
+        bx, by, bz = gs.base
+        return Action(label, "navigate",
+                      {"x": bx, "y": by + 1, "z": bz, "dig": True, "scaffold": True},
+                      "walk back to the home base to place the bed, the portal or a chest")
+    if label == "craft_chest":
+        if (gs.base is None or _has(inv, CHEST_ITEM) or _chest_ready(gs)
+                or not _has(inv, "crafting_table") or _plank_units(inv) < CHEST_PLANKS):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": CHEST_ITEM}], "temporary_workstation": True},
+                      "craft a chest from eight planks to store surplus at the base")
+    if label == "place_chest":
+        if gs.base is None or _chest_ready(gs) or not _has(inv, CHEST_ITEM):
+            return None
+        bx, by, bz = gs.base
+        return Action(label, "place_block",
+                      {"block_name": CHEST_ITEM, "x": bx, "y": by + 1, "z": bz + 1},
+                      "place the chest at the home base")
+    if label == "stow_surplus":
+        items = [{"item_name": n, "count": inv[n]} for n in _junk_carried(inv)]
+        if not _chest_ready(gs) or not items:
+            return None
+        cx, cy, cz = gs.chest_pos
+        return Action(label, "use_container",
+                      {"operation": "deposit", "x": cx, "y": cy, "z": cz, "items": items[:12]},
+                      "deposit the surplus blocks into the chest at the base")
+    if label == "drop_junk":
+        items = [{"item_name": n} for n in _junk_carried(inv)]
+        if not items:
+            return None
+        return Action(label, "drop_item",
+                      {"items": items[:12], "in_a_hole": True},
+                      "drop low-value blocks so the full pack has room again")
     if label == "explore":
         if target is not None:
             tx, ty, tz = target.pos
@@ -768,3 +1158,18 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             args["y"] = int(y)
         return Action(label, "navigate", args, "explore toward new terrain")
     return None
+
+
+def inventory_relief(gs: GameState, allow_stow: bool = True) -> "Action | None":
+    """The step that frees pack space after an `[INVENTORY_FULL]` refusal.
+
+    Prefers the chest at the base (deposit) when the bot is standing there; otherwise it drops
+    the surplus into a disposal pit. Either way the pack gains room so the blocked gather can
+    run again on the next tick. `allow_stow` is False once a deposit has already failed (a full
+    chest), so the loop falls back to dropping instead of retrying a deposit that cannot work.
+    """
+    if allow_stow and _chest_ready(gs) and _at_base(gs):
+        action = resolve("stow_surplus", gs)
+        if action is not None:
+            return action
+    return resolve("drop_junk", gs)

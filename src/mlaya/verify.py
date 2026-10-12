@@ -33,6 +33,12 @@ def diff(before: GameState, after: GameState) -> dict:
         "in_water": after.in_water,
         "phase": after.phase,
         "sleeping": after.sleeping,
+        # World-block milestones the inventory cannot show: lighting touches no stack, and a
+        # placed bed leaves the pack but exists as a block. The portal frame itself is judged
+        # by the obsidian leaving the pack (below), because natural obsidian may already be
+        # loaded and would mask the frame in a resource-presence check.
+        "portal_lit": after.resource_distance("nether_portal") is not None,
+        "bed_placed": after.resource_distance("white_bed") is not None,
     }
 
 
@@ -77,6 +83,38 @@ def progressed(label: str, d: dict) -> bool:
         return inv_up
     if label == "sleep":
         return d.get("phase") != "night" or bool(d.get("sleeping"))
+    # Overworld -> Nether gate. Each step's own item is the proof; the world-block steps use the
+    # booleans above (lighting) or the obsidian leaving the pack (the frame).
+    if label == "craft_bucket":
+        return d["inventory_delta"].get("bucket", 0) > 0
+    if label == "fill_bucket":
+        return d["inventory_delta"].get("water_bucket", 0) > 0
+    if label == "mine_obsidian":
+        return d["inventory_delta"].get("obsidian", 0) > 0
+    if label == "get_flint":
+        return d["inventory_delta"].get("flint", 0) > 0
+    if label == "craft_flint_and_steel":
+        return d["inventory_delta"].get("flint_and_steel", 0) > 0
+    if label == "build_portal":
+        return d["inventory_delta"].get("obsidian", 0) < 0
+    if label == "light_portal":
+        return bool(d.get("portal_lit"))
+    if label == "place_bed":
+        return bool(d.get("bed_placed"))
+    # Home base. Walking home shows as movement; the chest shows as the item entering or
+    # leaving the pack; stowing/dropping shows as any carried item going down.
+    if label in ("establish_base", "go_home"):
+        return (d["pos_delta"] or 0) > 2
+    if label == "escape_water":
+        # The rescue worked if it actually moved the body out of the water; landing back on
+        # ground shows in `on_ground`, but the walk itself is the proof it made progress.
+        return (d["pos_delta"] or 0) > 2 or bool(d.get("on_ground"))
+    if label == "craft_chest":
+        return d["inventory_delta"].get("chest", 0) > 0
+    if label == "place_chest":
+        return d["inventory_delta"].get("chest", 0) < 0
+    if label in ("stow_surplus", "drop_junk"):
+        return any(v < 0 for v in d["inventory_delta"].values())
     if label == "explore":
         return (d["pos_delta"] or 0) > 2
     return False

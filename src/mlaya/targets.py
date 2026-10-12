@@ -90,3 +90,22 @@ def ground_targets(gs: GameState, *, limit: int = EXPLORE_POOL,
         text = f"{hit.name} {hit.distance:.0f}m {direction}, open above"
         out.append(Target(label=f"{hit.name}@{hit.x},{hit.z}", text=text, hit=hit))
     return out
+
+
+def base_target(gs: GameState) -> Target | None:
+    """The nearest standable *surface* ground for the home base.
+
+    Unlike `ground_targets` (farthest first, stone included, meant for wandering) this picks
+    the closest real surface: only the ground queries, and only cells at or above the bot's
+    own level, so the pick is the open ground overhead rather than a cave floor underfoot.
+    """
+    hits = [h for query in GROUND_NAMES for h in gs.resources.get(query, []) if h.standable]
+    if not hits:
+        return None
+    x0 = gs.pos[0] if gs.pos else 0.0
+    z0 = gs.pos[2] if gs.pos else 0.0
+    y0 = gs.pos[1] if gs.pos else 0.0
+    above = [h for h in hits if h.y >= y0] or hits
+    hit = min(above, key=lambda h: (h.y, h.distance))
+    text = f"{hit.name} {hit.distance:.0f}m {_compass(hit.x - x0, hit.z - z0)}, open above"
+    return Target(label=f"{hit.name}@{hit.x},{hit.z}", text=text, hit=hit)

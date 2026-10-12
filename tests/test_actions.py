@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.actions import Action, candidates, resolve, tech_tree_complete
+from mlaya.actions import Action, candidates, inventory_relief, resolve, tech_tree_complete
 from mlaya.perception import BlockHit, GameState
 
 
@@ -533,6 +533,14 @@ class TechTreeCompleteTest(unittest.TestCase):
     the gear unequipped.
     """
 
+    @staticmethod
+    def _gate() -> dict:
+        """The world blocks the gate adds: the lit portal and the bed beside it."""
+        return {
+            "nether_portal": [BlockHit("nether_portal", "nether_portal", -270, 64, -56, 3.0)],
+            "white_bed": [BlockHit("white_bed", "white_bed", -269, 64, -56, 4.0)],
+        }
+
     def _complete(self, **overrides) -> GameState:
         base = dict(
             tools={"pickaxe": "diamond", "sword": "diamond"},
@@ -540,6 +548,7 @@ class TechTreeCompleteTest(unittest.TestCase):
             armor={slot: {"item": f"diamond_{slot}"}
                    for slot in ("helmet", "chestplate", "leggings", "boots")},
             offhand="shield",
+            resources=self._gate(),
         )
         base.update(overrides)
         return gs(**base)
@@ -561,6 +570,397 @@ class TechTreeCompleteTest(unittest.TestCase):
     def test_diamond_pickaxe_is_required(self) -> None:
         g = self._complete(tools={"pickaxe": "iron", "sword": "diamond"})
         self.assertFalse(tech_tree_complete(g))
+
+    def test_the_unlit_portal_is_not_done(self) -> None:
+        # The frame built but not lit: the gate is not open, so the run keeps going.
+        g = self._complete(resources={"white_bed": self._gate()["white_bed"]})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_a_missing_bed_is_not_done(self) -> None:
+        g = self._complete(resources={"nether_portal": self._gate()["nether_portal"]})
+        self.assertFalse(tech_tree_complete(g))
+
+
+class NetherGateTest(unittest.TestCase):
+    """The overworld -> Nether gate: a bucket of water makes the obsidian, gravel supplies the
+    flint, the flint and steel lights the frame, and a bed is placed beside the lit portal.
+
+    The chain is gated on the whole diamond kit (`_gear_ready`) and ordered so the obsidian is
+    banked before the flint and steel is crafted - that craft is the latch that stops
+    `mine_obsidian` from re-mining after `build_portal` has spent the ten blocks.
+    """
+
+    @staticmethod
+    def _geared(**inv) -> GameState:
+        base = {"crafting_table": 1}
+        base.update(inv)
+        g = gs(tools={"pickaxe": "diamond", "sword": "diamond"}, inventory=base)
+        g.armor = {slot: {"item": f"diamond_{slot}"}
+                   for slot in ("helmet", "chestplate", "leggings", "boots")}
+        g.offhand = "shield"
+        return g
+
+    @staticmethod
+    def _blocks(*names: str) -> dict:
+        return {n: [BlockHit(n, n, -270, 64, -56, 3.0)] for n in names}
+
+    @staticmethod
+    def _at_home(g: GameState, base: tuple = (-197, -47, -98)) -> GameState:
+        """Stand the bot on the home base, so the base-only steps (portal, bed) are eligible."""
+        g.base = base
+        g.pos = (base[0] + 0.5, base[1] + 1.0, base[2] + 0.5)
+        return g
+
+    def test_craft_bucket_from_three_iron(self) -> None:
+        a = resolve("craft_bucket", self._geared(iron_ingot=3))
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "bucket"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_bucket_waits_for_the_diamond_kit(self) -> None:
+        # Iron is scarce; the bucket belongs to the finished overworld, not the iron tier.
+        g = gs(tools={"pickaxe": "iron"}, inventory={"crafting_table": 1, "iron_ingot": 3})
+        self.assertNotIn("craft_bucket", candidates(g))
+        self.assertIsNone(resolve("craft_bucket", g))
+
+    def test_bucket_needs_three_ingots(self) -> None:
+        self.assertNotIn("craft_bucket", candidates(self._geared(iron_ingot=2)))
+
+    def test_the_bucket_pulls_three_iron(self) -> None:
+        # With the kit worn, the bucket is the reason to quarry iron: three ingots.
+        g = self._geared()
+        g.resources = self._blocks("iron_ore")
+        self.assertIn("mine_iron", candidates(g))
+        self.assertEqual(resolve("mine_iron", g).args["count"], 3)
+
+    def test_after_the_bucket_only_one_more_ingot(self) -> None:
+        # The bucket is spent, so only the flint and steel's single ingot is left to pull.
+        g = self._geared(water_bucket=1)
+        g.resources = self._blocks("iron_ore")
+        self.assertIn("mine_iron", candidates(g))
+        self.assertEqual(resolve("mine_iron", g).args["count"], 1)
+
+    def test_fill_bucket_scoops_water(self) -> None:
+        a = resolve("fill_bucket", self._geared(bucket=1))
+        self.assertEqual(a.tool, "use_bucket")
+        self.assertEqual(a.args, {"action": "fill", "liquid": "water"})
+
+    def test_fill_bucket_needs_an_empty_bucket(self) -> None:
+        self.assertIsNone(resolve("fill_bucket", self._geared()))
+        self.assertIsNone(resolve("fill_bucket", self._geared(water_bucket=1)))
+
+    def test_mine_obsidian_pours_water_onto_lava(self) -> None:
+        # Obsidian is *made*, not dug: with the bucket full and lava within pouring reach, the
+        # step empties the bucket into the lava cell.
+        g = self._geared(water_bucket=1)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.resources = self._blocks("lava")
+        self.assertIn("mine_obsidian", candidates(g))
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "use_bucket")
+        self.assertEqual(a.args, {"action": "pour", "liquid": "water",
+                                  "x": -270, "y": 64, "z": -56})
+
+    def test_mine_obsidian_walks_to_far_lava_first(self) -> None:
+        # Out of pouring reach the same step walks to the lava pool; the walk neither digs nor
+        # scaffolds, so the pathfinder cannot tunnel into the lava it is aiming at.
+        g = self._geared(water_bucket=1)
+        g.pos = (0.0, 64.0, 0.0)
+        g.resources = self._blocks("lava")
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-270, 64, -56))
+        self.assertFalse(a.args["dig"])
+        self.assertFalse(a.args["scaffold"])
+
+    def test_mine_obsidian_mines_what_the_pour_formed(self) -> None:
+        # Obsidian the last pour formed lies at the bot's feet: mine it, even with no water left.
+        g = self._geared(obsidian=4)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.resources = self._blocks("obsidian")
+        self.assertIn("mine_obsidian", candidates(g))
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "obsidian", "count": 6})
+
+    def test_mine_obsidian_ignores_deep_natural_obsidian(self) -> None:
+        # The natural deposit sits tens of blocks down under the same lava caves. With the bucket
+        # full but no lava in range, the step refuses rather than tunnelling down to it (the live
+        # trap left the bot swimming in its own flooded shaft).
+        g = self._geared(water_bucket=1)
+        g.pos = (0.0, 64.0, 0.0)
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", 0, -55, 0, 119.0)]}
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
+
+    def test_mine_obsidian_needs_water_or_obsidian_in_reach(self) -> None:
+        # Neither a full bucket nor obsidian at hand: nothing for this step to do.
+        self.assertNotIn("mine_obsidian", candidates(self._geared()))
+
+    def test_mine_obsidian_needs_a_diamond_pickaxe(self) -> None:
+        g = gs(tools={"pickaxe": "iron"}, inventory={"water_bucket": 1})
+        self.assertNotIn("mine_obsidian", candidates(g))
+
+    def test_flint_from_gravel(self) -> None:
+        g = self._geared()
+        g.resources = self._blocks("gravel")
+        self.assertIn("get_flint", candidates(g))
+        a = resolve("get_flint", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "gravel")
+
+    def test_craft_flint_and_steel_is_two_by_two(self) -> None:
+        # Flint and steel is a 2x2 recipe: it must NOT ask for the temporary workstation.
+        g = self._geared(flint=1, iron_ingot=1, obsidian=10)
+        self.assertIn("craft_flint_and_steel", candidates(g))
+        a = resolve("craft_flint_and_steel", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args, {"items": [{"item_name": "flint_and_steel"}]})
+
+    def test_flint_and_steel_waits_for_the_obsidian(self) -> None:
+        # The craft is the latch that keeps the obsidian from being mined twice; it may only
+        # fire once the ten blocks are banked.
+        g = self._geared(flint=1, iron_ingot=1)
+        self.assertNotIn("craft_flint_and_steel", candidates(g))
+        self.assertIsNone(resolve("craft_flint_and_steel", g))
+
+    def test_build_portal_raises_the_frame_beside_the_bot(self) -> None:
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=10, cobblestone=4))
+        self.assertIn("build_portal", candidates(g))
+        a = resolve("build_portal", g)
+        self.assertEqual(a.tool, "build_structure")
+        self.assertEqual(a.args["portal_frame"], {"x": -195, "y": -46, "z": -98, "axis": "x"})
+        self.assertTrue(a.args["remove_wrong_blocks"])
+
+    def test_build_portal_waits_until_the_bot_is_at_the_base(self) -> None:
+        g = self._geared(flint_and_steel=1, obsidian=10, cobblestone=4)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)  # geared but far from home
+        self.assertNotIn("build_portal", candidates(g))
+
+    def test_build_portal_needs_the_ten_blocks(self) -> None:
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=9, cobblestone=4))
+        self.assertNotIn("build_portal", candidates(g))
+
+    def test_light_portal_strikes_the_nearest_frame_block(self) -> None:
+        # After the build the ten obsidian have left the pack, so `obsidian < 10` is the
+        # "frame is standing" signal; the frame is the nearest obsidian, so name it.
+        g = self._geared(flint_and_steel=1)
+        g.resources = self._blocks("obsidian")
+        self.assertIn("light_portal", candidates(g))
+        a = resolve("light_portal", g)
+        self.assertEqual(a.tool, "activate_portal")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-270, 64, -56))
+
+    def test_light_portal_waits_until_the_frame_is_built(self) -> None:
+        # Still carrying the ten obsidian: nothing has been placed yet.
+        g = self._geared(flint_and_steel=1, obsidian=10)
+        g.resources = self._blocks("obsidian")
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
+
+    def test_no_gate_actions_once_the_portal_is_lit(self) -> None:
+        g = self._geared(flint_and_steel=1)
+        g.resources = self._blocks("obsidian", "nether_portal")
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertNotIn("mine_obsidian", candidates(g))
+
+    def test_place_bed_beside_the_lit_portal(self) -> None:
+        g = self._at_home(self._geared(white_bed=1))
+        g.resources = self._blocks("nether_portal")
+        g.phase = "night"
+        self.assertIn("place_bed", candidates(g))
+        a = resolve("place_bed", g)
+        self.assertEqual(a.tool, "sleep")
+        self.assertEqual(a.args, {})
+
+    def test_place_bed_waits_for_night_to_set_the_spawn(self) -> None:
+        # `sleep` is what actually sets the respawn point, and a bed can only be slept in at
+        # night; placing it in daylight would leave the pause point unset.
+        g = self._at_home(self._geared(white_bed=1))
+        g.resources = self._blocks("nether_portal")
+        g.phase = "day"
+        self.assertNotIn("place_bed", candidates(g))
+
+    def test_place_bed_waits_for_the_lit_portal(self) -> None:
+        g = self._at_home(self._geared(white_bed=1))
+        g.phase = "night"
+        self.assertNotIn("place_bed", candidates(g))
+        self.assertIsNone(resolve("place_bed", g))
+
+    def test_place_bed_is_not_repeated(self) -> None:
+        g = self._at_home(self._geared(white_bed=1))
+        g.phase = "night"
+        g.resources = self._blocks("nether_portal", "white_bed")
+        self.assertNotIn("place_bed", candidates(g))
+
+
+class HomeBaseTest(unittest.TestCase):
+    """The surface base: one anchor for the bed, the portal and the chest.
+
+    `establish_base` picks the open ground overhead, `go_home` walks the bot back whenever base
+    work is waiting, and a chest at the base stores surplus blocks before the pack ever reaches
+    the server's `[INVENTORY_FULL]` refusal (`drop_junk` is only the fallback with no chest).
+    """
+
+    @staticmethod
+    def _geared(**inv) -> GameState:
+        base = {"crafting_table": 1}
+        base.update(inv)
+        g = gs(tools={"pickaxe": "diamond", "sword": "diamond"}, inventory=base)
+        g.armor = {slot: {"item": f"diamond_{slot}"}
+                   for slot in ("helmet", "chestplate", "leggings", "boots")}
+        g.offhand = "shield"
+        return g
+
+    @staticmethod
+    def _home(g: GameState, base: tuple = (-197, -47, -98)) -> GameState:
+        g.base = base
+        g.pos = (base[0] + 0.5, base[1] + 1.0, base[2] + 0.5)
+        return g
+
+    def test_establish_base_walks_to_the_surface_ground(self) -> None:
+        g = self._geared()
+        g.pos = (-197.44, 64.0, -97.64)
+        g.resources = {"grass_block": [BlockHit("grass_block", "grass_block",
+                                                -196, 70, -98, 5.0, above="air", below="dirt")]}
+        self.assertIn("establish_base", candidates(g))
+        a = resolve("establish_base", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-196, 71, -98))
+        self.assertTrue(a.args["dig"] and a.args["scaffold"])
+
+    def test_establish_base_needs_a_surface_target(self) -> None:
+        g = self._geared()
+        g.pos = (-197.44, 64.0, -97.64)
+        g.resources = {}
+        self.assertIn("establish_base", candidates(g))
+        self.assertIsNone(resolve("establish_base", g))
+
+    def test_no_base_work_once_the_base_is_set(self) -> None:
+        self.assertNotIn("establish_base", candidates(self._home(self._geared())))
+
+    def test_go_home_walks_back_when_base_work_waits(self) -> None:
+        g = self._geared(flint_and_steel=1, obsidian=10, cobblestone=4)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)
+        self.assertIn("go_home", candidates(g))
+        a = resolve("go_home", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -98))
+
+    def test_go_home_not_offered_without_base_work(self) -> None:
+        g = self._geared()
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)
+        self.assertNotIn("go_home", candidates(g))
+        self.assertIsNone(resolve("go_home", g))
+
+    def test_craft_chest_from_eight_planks(self) -> None:
+        g = self._geared(oak_planks=8)
+        g.base = (-197, -47, -98)
+        self.assertIn("craft_chest", candidates(g))
+        a = resolve("craft_chest", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "chest"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_craft_chest_needs_eight_planks(self) -> None:
+        g = self._geared(oak_planks=7)
+        g.base = (-197, -47, -98)
+        self.assertNotIn("craft_chest", candidates(g))
+        self.assertIsNone(resolve("craft_chest", g))
+
+    def test_place_chest_at_the_base(self) -> None:
+        g = self._home(self._geared(chest=1))
+        self.assertIn("place_chest", candidates(g))
+        a = resolve("place_chest", g)
+        self.assertEqual(a.tool, "place_block")
+        self.assertEqual(a.args["block_name"], "chest")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -97))
+
+    def test_stow_surplus_deposits_into_the_base_chest(self) -> None:
+        g = self._home(self._geared(tuff=64))
+        g.chest_pos = (-197, -46, -97)
+        g.slots_used = 34
+        self.assertIn("stow_surplus", candidates(g))
+        a = resolve("stow_surplus", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "deposit")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -97))
+        self.assertEqual(a.args["items"], [{"item_name": "tuff", "count": 64}])
+
+    def test_drop_junk_falls_back_without_a_chest(self) -> None:
+        g = self._home(self._geared(tuff=64))
+        g.slots_used = 34
+        self.assertIn("drop_junk", candidates(g))
+        self.assertNotIn("stow_surplus", candidates(g))
+        a = resolve("drop_junk", g)
+        self.assertEqual(a.tool, "drop_item")
+        self.assertEqual(a.args["items"], [{"item_name": "tuff"}])
+
+    def test_inventory_relief_stows_at_the_base_chest(self) -> None:
+        g = self._home(self._geared(tuff=64))
+        g.chest_pos = (-197, -46, -97)
+        g.slots_used = 36
+        self.assertEqual(inventory_relief(g).tool, "use_container")
+
+    def test_inventory_relief_drops_without_a_chest(self) -> None:
+        g = self._home(self._geared(tuff=64))
+        g.slots_used = 36
+        self.assertEqual(inventory_relief(g).tool, "drop_item")
+
+    def test_inventory_relief_skips_a_full_chest(self) -> None:
+        # After a deposit failed (the chest is full) the relief must drop, not retry depositing.
+        g = self._home(self._geared(tuff=64))
+        g.chest_pos = (-197, -46, -97)
+        g.slots_used = 36
+        self.assertEqual(inventory_relief(g, allow_stow=False).tool, "drop_item")
+
+
+class EscapeWaterTest(unittest.TestCase):
+    """The no-footing rescue: while the bot floats in water nothing else works.
+
+    Live failure: the obsidian dig left the bot treading water off the ground and every
+    following `collect_block` thrashed in place for minutes, while `navigate` still walked it
+    clear. The rescue is forced into `candidates` rather than offered, because without footing
+    no other label can make progress.
+    """
+
+    def test_no_footing_in_water_owns_the_tick(self) -> None:
+        g = gs(in_water=True, on_ground=False)
+        self.assertEqual(candidates(g), ["escape_water"])
+
+    def test_a_grounded_bot_in_water_is_not_rescued(self) -> None:
+        # Wading with the feet on the bottom (a water source, a pour that did not flood the bot)
+        # is ordinary play, not the trap.
+        g = gs(in_water=True, on_ground=True)
+        self.assertNotIn("escape_water", candidates(g))
+
+    def test_a_bot_in_the_air_is_not_rescued(self) -> None:
+        # Mid-jump or mid-fall is not the trap either.
+        g = gs(in_water=False, on_ground=False)
+        self.assertNotIn("escape_water", candidates(g))
+
+    def test_escape_walks_to_the_base(self) -> None:
+        g = gs(in_water=True, on_ground=False, base=(-197, -47, -98),
+               pos=(-300.5, 60.0, -120.5))
+        a = resolve("escape_water", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -98))
+        self.assertTrue(a.args["dig"] and a.args["scaffold"])
+
+    def test_escape_without_a_base_walks_to_dry_ground(self) -> None:
+        g = gs(in_water=True, on_ground=False, pos=(-300.5, 60.0, -120.5))
+        g.resources = {"grass_block": [BlockHit("grass_block", "grass_block",
+                                                -300, 64, -121, 4.0, above="air", below="dirt")]}
+        a = resolve("escape_water", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-300, 65, -121))
+
+    def test_escape_without_ground_defers(self) -> None:
+        g = gs(in_water=True, on_ground=False, pos=(-300.5, 60.0, -120.5))
+        self.assertIsNone(resolve("escape_water", g))
 
 
 if __name__ == "__main__":

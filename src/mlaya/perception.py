@@ -10,12 +10,30 @@ from typing import Any
 # view_blocks -> response.data.result.blocks.find[] = {name, found, listed:[{x,y,z,name,distance,...}]}
 
 # Resources probed each tick to keep the progression decisions grounded in the world.
-RESOURCE_NAMES = ("logs", "stone", "iron_ore", "coal_ore", "diamond_ore")
+# The last three are the overworld -> Nether gate: the obsidian frame and the lit portal
+# block say how far that chain has come, and a placed bed beside it is the run's end state.
+# Eight is the most `view_blocks find` accepts, so this group sits exactly at the limit
+# (the standable-ground group is scanned in a second call).
+RESOURCE_NAMES = ("logs", "stone", "iron_ore", "coal_ore", "diamond_ore",
+                  "obsidian", "nether_portal", "white_bed")
 # Ground blocks probed for the M4 parameter layer: a `view_blocks` hit whose `above` is
 # `air` is real standing ground -- the reliable way to choose a `navigate` target.
 GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
+# The blocks the Nether / home-base chain has to find precisely rather than read off a count.
+# `lava` is where the carried water bucket is poured: obsidian is *made*, not dug (tunnelling to
+# the natural y=-55 deposit is the live trap that left the bot swimming in its own flooded
+# tunnel). `chest` lets a run that did not place the chest itself re-adopt one already standing
+# at the base. Kept as its own `view_blocks find` group: that call takes at most eight names.
+CHAIN_NAMES = ("lava", "chest")
+# Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
+NAMED_RESOURCES = RESOURCE_NAMES + ("lava",)
 RESOURCE_RADIUS = 64.0
 RESOURCE_LIMIT = 4
+# Carried inventory slots the server fills (main 27 + hotbar 9). A gathering action is refused
+# with `[INVENTORY_FULL]` once all 36 are taken, so the loop treats "nearly full" as a reason to
+# shed low-value blocks before it runs into that wall.
+INVENTORY_SLOTS = 36
+INVENTORY_NEAR_FULL = 33
 
 # Equipped-armour slots, keyed by the `location` an inventory stack reports. These names
 # mirror the `equip` destinations. `situation.tools.armour` lists armour the bot *carries*
@@ -129,6 +147,10 @@ class GameState:
     in_lava: bool | None = None
     dimension: str | None = None
     inventory: dict[str, int] = field(default_factory=dict)
+    # Occupied carried inventory slots (main + hotbar stacks). The server refuses a gathering
+    # action with `[INVENTORY_FULL]` once all 36 are taken, so the loop needs the count to see
+    # the pack filling up before that happens (worn armour and the off-hand do not count).
+    slots_used: int = 0
     tools: dict[str, str] = field(default_factory=dict)
     hostiles: list[tuple[str, int, float | None]] = field(default_factory=list)
     nearest_hostile: float | None = None
@@ -158,6 +180,13 @@ class GameState:
     offhand: str | None = None
     # fresh "target died" reflex outcomes: the mob's drops are lying nearby
     drops: int = 0
+    # Home base: the surface anchor the run puts the bed, the portal frame and the chest at.
+    # Injected by the loop (perception cannot know it) and carried into every decision so the
+    # base-relative steps have one fixed point that survives the bot wandering off to mine.
+    base: tuple[int, int, int] | None = None
+    # The placed chest at the base, remembered from `place_chest` so `use_container` can name
+    # its exact coordinates without a second block scan.
+    chest_pos: tuple[int, int, int] | None = None
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
@@ -183,6 +212,7 @@ class GameState:
             "in_water": self.in_water,
             "dimension": self.dimension,
             "inventory": self.inventory,
+            "slots_used": self.slots_used,
             "tools": self.tools,
             "tool_meta": self.tool_meta,
             "armor": self.armor,
@@ -192,6 +222,8 @@ class GameState:
             "last_death": self.last_death_cause,
             "death_pos": self.death_pos,
             "drops": self.drops,
+            "base": self.base,
+            "chest_pos": self.chest_pos,
             "events": self.events,
             "unread": self.unread,
             "notifications": self.notifications,
@@ -220,8 +252,17 @@ class GameState:
             if self.in_water:
                 where = "in water"
             parts.append(f"at x={x:.0f}, y={y:.0f}, z={z:.0f} ({where})")
+        if self.base:
+            bx, by, bz = self.base
+            here = ", at the base" if (self.pos and abs(self.pos[0] - (bx + 0.5)) <= 4
+                                       and abs(self.pos[2] - (bz + 0.5)) <= 4) else ""
+            parts.append(f"home base at x={bx}, y={by}, z={bz}{here}")
+        if self.chest_pos:
+            parts.append("a chest stands at the base")
         inv = ", ".join(f"{c}x {n}" for n, c in sorted(self.inventory.items())) or "empty"
         parts.append(f"inventory: {inv}")
+        if self.slots_used >= INVENTORY_NEAR_FULL:
+            parts.append(f"the pack is full ({self.slots_used}/{INVENTORY_SLOTS} slots)")
         tools = ", ".join(f"{cls} {tier}".strip() for cls, tier in self.tools.items()
                           if tier and tier != "none") or "no tools"
         parts.append(f"tools: {tools}")
@@ -260,7 +301,7 @@ class GameState:
         if self.death_pos and self.last_death_age_s is not None and self.last_death_age_s <= 90:
             parts.append("gear dropped at the last death site can still be recovered")
         present = [(n, hits[0].distance) for n, hits in self.resources.items()
-                   if hits and n in RESOURCE_NAMES]
+                   if hits and n in NAMED_RESOURCES]
         if present:
             present.sort(key=lambda t: t[1])
             parts.append("nearby resources: " + ", ".join(
@@ -375,6 +416,7 @@ def parse_status(data: dict) -> GameState:
     # lists only the carried set per class and says nothing about what is on the body, so an
     # equipped piece has to be read from the location. It leaves main/hotbar, so remove it from
     # the carried inventory the loop above added.
+    gs.slots_used = 0
     for st in inv.get("stacks") or []:
         if not isinstance(st, dict):
             continue
@@ -391,6 +433,7 @@ def parse_status(data: dict) -> GameState:
         elif loc in OFFHAND_SLOTS:
             gs.offhand = name
         else:
+            gs.slots_used += 1
             continue  # carried normally: the loop above already counted it
         # An equipped piece leaves the pack, so it is not also counted as carried.
         left = gs.inventory.get(name, 0) - int(st.get("count") or 1)
@@ -502,12 +545,13 @@ async def build(executor) -> GameState:
     gs.notifications = _previews(preview)
     now_iso = get(status_data, "response", "data", "result", "situation", "observedAt")
     gs.drops = _count_drops(events, now_iso)
-    # `view_blocks find` takes at most 8 block names, and resources (5) plus ground (4)
-    # exceed that, so scan the two groups separately and merge; a failed group just
-    # leaves its names out of the state.
+    # `view_blocks find` takes at most 8 block names per call, and the resource group alone
+    # already uses all eight, so each group is scanned separately and merged; a failed group
+    # just leaves its names out of the state.
     gs.resources = {}
     for names, why in ((RESOURCE_NAMES, "scan nearby resources for the next step"),
-                       (GROUND_NAMES, "scan standable ground for navigate targets")):
+                       (GROUND_NAMES, "scan standable ground for navigate targets"),
+                       (CHAIN_NAMES, "scan the lava to pour on and a chest at the base")):
         try:
             blocks = await executor.read(
                 "view_blocks",

@@ -5,7 +5,7 @@ import unittest
 
 from mlaya.actions import resolve
 from mlaya.perception import BlockHit, GameState
-from mlaya.targets import Target, _compass, ground_targets
+from mlaya.targets import Target, _compass, base_target, ground_targets
 
 
 def hit(query: str, name: str, x: int, y: int, z: int, distance: float,
@@ -90,6 +90,36 @@ class GroundTargetsTest(unittest.TestCase):
         gs = GameState()
         gs.pos = (0.0, 60.0, 0.0)
         self.assertEqual(ground_targets(gs), [])
+
+
+class BaseTargetTest(unittest.TestCase):
+    """The home-base pick: nearest open ground overhead, not a deep cave floor or stone."""
+
+    def test_picks_the_open_ground_overhead(self) -> None:
+        gs = GameState()
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.resources = {
+            "grass_block": [hit("grass_block", "grass_block", -1, 70, -2, 6.0)],
+            "stone": [hit("stone", "stone", 2, 65, 0, 2.0)],
+        }
+        target = base_target(gs)
+        self.assertEqual(target.label, "grass_block@-1,-2")
+        self.assertEqual(target.pos, (-1, 70, -2))
+
+    def test_prefers_ground_overhead_not_a_deep_cave_floor(self) -> None:
+        gs = GameState()
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.resources = {"grass_block": [
+            hit("grass_block", "grass_block", 0, 71, 0, 4.0),
+            hit("grass_block", "grass_block", 0, 50, 0, 3.0),   # deeper, nearer
+        ]}
+        self.assertEqual(base_target(gs).pos, (0, 71, 0))
+
+    def test_none_without_ground(self) -> None:
+        gs = GameState()
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.resources = {"stone": [hit("stone", "stone", 2, 65, 0, 2.0)]}
+        self.assertIsNone(base_target(gs))
 
 
 class ExploreBindingTest(unittest.TestCase):

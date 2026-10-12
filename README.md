@@ -11,13 +11,15 @@ Laya erzeugt keinen Text und keine Tool-Argumente. Deshalb filtert der Code die 
 über ein binäres Gefahr-Gate plus die Wahl unter diesen Optionen; ein separater Python-**Executor**
 ruft die MCP-Tools auf und respektiert das Foreground-Gating des Servers.
 
-Aktueller Stand (**M2/M2b/M2c/M2d/M3/M4**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
+Aktueller Stand (**M2/M2b/M2c/M2d/M3/M4 + Homebase/Nether**): Die Progression läuft von Holz über einen Werktisch und Steinwerkzeuge
 bis zur **Eisen-Spitzhacke** (Ofen + Schmelzen) und weiter über `mine_diamond` zur **Diamant-Spitzhacke**
 (+ Diamant-Schwert und **kompletter Diamant-Rüstung**: Helm/Brustplatte/Hose/Schuhe). `view_blocks`
 liefert die Ressourcen in der Nähe
-(Holz/Stein/Eisen/Kohle/Diamant mit Distanz) in den Zustand. Zusätzlich baut der Agent ein **Bett** (aus
-Schafwolle oder Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den
-Respawn-Punkt), liest die anstehenden **Notifications** mit und setzt beim Start die
+(Holz/Stein/Eisen/Kohle/Diamant mit Distanz) in den Zustand. Auf der Oberfläche legt der Agent eine
+**Homebase** an (Anker für Bett, Portal und Truhe): Er baut ein **Bett** (aus Schafwolle oder
+Spinnenfäden), **schläft nachts** darin (überspringt die Nacht, setzt den Respawn-Punkt), baut aus
+einem Wassereimer **Obsidian**, entzündet damit ein **Nether-Portal** und hält in einer **Truhe**
+Überschuss fest. Er liest die anstehenden **Notifications** mit und setzt beim Start die
 **Server-Survival-Policy** (Scaffold-Blöcke, vorsichtiges Kampf-Fenster, `food.raw.allow: always`);
 gegessen wird über den Server-Reflex, Essen wird über `hunt_food`/`cook_food` beschafft, das einen
 **Mindestvorrat von 16** essbaren Items hält. Die Policy läuft in zwei **Stufen** (`base` für Reisen/
@@ -95,6 +97,28 @@ Eisen-Grund: 3 Barren für die (Ersatz-)Eisenhacke, danach genau **1** für den 
 sobald beides steht. Der Craft wartet auf die Eisen-Spitzhacke, damit das Schild nicht die ersten
 Barren stiehlt.
 
+**Homebase & Nether-Portal:** Sobald das Diamant-Kit steht, sucht `establish_base` die nächste offene
+Oberfläche über dem Bot (`targets.base_target`, nur echte Bodenblöcke) und legt sie als Anker fest;
+`go_home` läuft nur zurück, wenn dort Arbeit wartet (`_base_steps_ready`). Bett, Portalrahmen und
+Truhe stehen alle an diesem Anker (`build_portal`/`place_bed` nur bei `_at_base`). Der Nether-Pfad:
+`craft_bucket` (3 Eisenbarren) → `fill_bucket` → `mine_obsidian` → `get_flint` (Gravel) →
+`craft_flint_and_steel` (2×2) → `build_portal` → `light_portal` → `place_bed`.
+`mine_obsidian` **erzeugt** das Obsidian: der Lauf gießt den Wassereimer auf die nächste Lava
+(`use_bucket pour` auf die Lava-Zelle, notfalls erst dorthin laufen) und baut genau die entstandenen
+Blöcke ab. Natürlicher Obsidian liegt nur tief unter denselben Lavaseen (`y ≈ -55`) und wird bewusst
+nicht angegraben — ein Tiefbohrversuch endete in der **Wasser-Falle** (schwimmend ohne Grund, jedes
+folgende `collect_block` lief leer). Dafür sorgt jetzt der **Wasser-Escape-Reflex**: `in_water and
+not on_ground` macht `escape_water` zum einzigen Kandidaten und navigiert zur Basis bzw. auf den
+nächsten trockenen Boden zurück. Schlüssel der Kette bleibt der **Obsidian-Latch**: Obsidian muss vor
+dem Flint&Steel gebankt sein, damit `mine_obsidian` nach dem Bau (der die 10 Blöcke ausgibt) nicht
+erneut gräbt. Das Bett wird **nur nachts** gelegt — nur Schlafen setzt den Respawn-Punkt.
+Für Überschuss sorgt eine **Truhe** (`craft_chest` aus 8 Planken → `place_chest` → `stow_surplus`) ab
+33/36 Slots; `drop_junk` wirft nur als **Notnagel**, wenn keine Truhe da ist oder sie voll ist. Ein
+`[INVENTORY_FULL]`-Refusal löst eine eigene Relief-Stufe aus (`inventory_relief`). Base und Truhe
+gelten **pro Lauf** und werden vom Loop in jeden `GameState` injiziert; steht beim Start schon ein
+Bett (und eine Truhe) in Reichweite, werden sie übernommen, damit ein Neustart an derselben Homebase
+weiterläuft statt eine zweite zu bauen.
+
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine
 **Tageslicht-Schranke** gebunden (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`): nachts
@@ -134,7 +158,8 @@ Konfiguration: [`config/settings.toml`](config/settings.toml).
 Jede Entscheidung wird nach `runs/decisions.jsonl` geloggt.
 
 Der `run`-Loop **stoppt von selbst**, sobald das Tech-Tree-Ziel steht: Diamant-Spitzhacke +
-Diamantschwert, alle vier Diamant-Rüstungsteile *getragen* und der Schild in der Off-Hand
+Diamantschwert, alle vier Diamant-Rüstungsteile *getragen*, der Schild in der Off-Hand, **das
+Nether-Portal angezündet und ein Bett an der Homebase platziert**
 (`actions.tech_tree_complete`). Er meldet dann `"stop": "goal"`; ohne Ziel endet er am
 Iterationslimit mit `"stop": "limit"`. Ausschalten (z. B. für die Datensatz-Sammlung über das
 Ziel hinaus) geht über `[loop] stop_when_complete = false` oder `run --ignore-goal`.

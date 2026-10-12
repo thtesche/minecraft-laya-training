@@ -85,6 +85,8 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.log = self._Log()
         agent._blocked_label = None
+        agent._blocked_kind = "surroundings"
+        agent._stow_blocked = False
         agent._unblock_attempts = 0
         return agent
 
@@ -149,6 +151,33 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._note_block("mine_stone", False, "[HUNT_TARGET_NOT_LOADED] sheep")
         self.assertEqual(agent._blocked_label, "craft_furnace")
 
+    def test_a_full_pack_is_an_inventory_block(self) -> None:
+        agent = self._agent()
+        agent._note_block("mine_coal", False, "[INVENTORY_FULL] no space for coal_ore.")
+        self.assertEqual(agent._blocked_label, "mine_coal")
+        self.assertEqual(agent._blocked_kind, "inventory")
+
+    async def test_inventory_block_stows_at_the_base_chest(self) -> None:
+        agent = self._agent()
+        agent._blocked_label = "mine_coal"
+        agent._blocked_kind = "inventory"
+        g = gs(pos=(-197.5, -46.0, -98.5), inventory={"tuff": 64}, slots_used=36,
+               base=(-197, -47, -98), chest_pos=(-197, -46, -97))
+        out = await agent._guard({"before": g, "decision": Decision("mine_coal")})
+        self.assertEqual(out["action"].tool, "use_container")
+        # The relief itself makes room, so the label is freed to run again next tick.
+        self.assertIsNone(agent._blocked_label)
+        self.assertEqual(agent.log.records[-1]["reason"], "unblock_inventory")
+
+    async def test_inventory_block_drops_without_a_chest(self) -> None:
+        agent = self._agent()
+        agent._blocked_label = "mine_coal"
+        agent._blocked_kind = "inventory"
+        g = gs(pos=(-197.5, -46.0, -98.5), inventory={"tuff": 64}, slots_used=36,
+               base=(-197, -47, -98))
+        out = await agent._guard({"before": g, "decision": Decision("mine_coal")})
+        self.assertEqual(out["action"].tool, "drop_item")
+
 
 class GoalStopTest(unittest.TestCase):
     """The run ends early once the tech tree is complete, unless that is switched off."""
@@ -162,11 +191,18 @@ class GoalStopTest(unittest.TestCase):
 
     @staticmethod
     def _complete() -> GameState:
+        # The full overworld goal: diamond kit worn, shield off-hand, the portal lit and a bed
+        # beside it (both read from the world-block resources, not the inventory).
         return gs(tools={"pickaxe": "diamond", "sword": "diamond"},
                   inventory={"diamond_sword": 1},
                   armor={slot: {"item": f"diamond_{slot}"}
                          for slot in ("helmet", "chestplate", "leggings", "boots")},
-                  offhand="shield")
+                  offhand="shield",
+                  resources={
+                      "nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                 -270, 64, -56, 3.0)],
+                      "white_bed": [BlockHit("white_bed", "white_bed", -269, 64, -56, 4.0)],
+                  })
 
     def test_the_goal_ends_the_run_early(self) -> None:
         self.assertEqual(self._agent()._stop_state(self._complete(), 3),
