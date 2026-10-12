@@ -45,10 +45,13 @@ INVENTORY_LABELS = {
 
 def progressed(label: str, d: dict) -> bool:
     inv_up = any(v > 0 for v in d["inventory_delta"].values())
+    armor_up = bool(d.get("armor_delta"))
     if label in INVENTORY_LABELS:
-        return inv_up
+        # A craft normally lands in the pack; a server that auto-equips armour puts the piece
+        # straight on the body, so armour_craft progress also shows as armor_delta.
+        return inv_up or armor_up
     if label == "equip_armor":
-        return bool(d.get("armor_delta"))  # armour leaves the inventory for a worn slot
+        return armor_up  # the piece leaves the pack for a worn slot
     if label == "hunt_string":
         return d["inventory_delta"].get("string", 0) > 0
     if label == "hunt_wool":

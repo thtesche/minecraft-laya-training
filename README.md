@@ -75,11 +75,14 @@ geordnet nach **Schutz pro Diamant** (Brustplatte zuerst), damit ein Teil-Set sc
 wie möglich ist. Es wird immer nur **das nächste fehlende Teil** angeboten (`mine_diamond` mit
 `count = Kosten − getragene Diamanten`, sonst `craft_diamond_<slot>`); ein `equip_armor`
 (ein `equip`-Batch, ohne Ziel) rüstet gecraftete Teile an. Rüstung braucht **keine Stöcke**,
-nur den Werktisch, und zählt als „vorhanden", ob getragen (`situation.tools.armour`) oder noch
-im Inventar — so wird kein Teil doppelt gecraftet. **Live durchgelaufen** (25 Ticks): `mine_diamond`
+nur den Werktisch, und zählt als „vorhanden", ob **getragen** oder noch im Inventar — so wird kein
+Teil doppelt gecraftet. **Live durchgelaufen** (25 Ticks): `mine_diamond`
 (8/7/4/5 = exakt 24) → `craft_diamond_chestplate` → `leggings` → `boots` → `helmet`, Endstand
-`armor = {helmet, chestplate, leggings, boots: diamond}`. Befund: der Server **rüstet gecraftete
-Rüstung selbst an** (kein `equip_armor`-Tick nötig — das Label bleibt als Sicherheitsnetz).
+alle vier Teile im Inventar. **Korrektur:** der Server rüstet **nicht** selbst an — die Teile
+bleiben zunächst im Inventar (`location: main`). Getragen wird nur, was ein `equip` (`equip_armor`)
+in einen Rüstungsslot verschiebt. `situation.tools.armour` listet **mitgeführte** Rüstung pro Klasse
+(ob an oder nicht); der **getragene** Satz kommt aus der Inventar-`location`
+(`head`/`torso`/`legs`/`feet`).
 
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine

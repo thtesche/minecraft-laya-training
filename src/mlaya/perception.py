@@ -17,6 +17,13 @@ GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
 RESOURCE_RADIUS = 64.0
 RESOURCE_LIMIT = 4
 
+# Equipped-armour slots, keyed by the `location` an inventory stack reports. These names
+# mirror the `equip` destinations. `situation.tools.armour` lists armour the bot *carries*
+# per class whether or not it is worn, so the worn set has to come from the stack location:
+# an equipped piece moves to head/torso/legs/feet and leaves location main/hotbar.
+ARMOR_SLOTS = {"head": "helmet", "torso": "chestplate", "legs": "leggings", "feet": "boots"}
+_ARMOR_TIERS = ("netherite", "diamond", "iron", "chainmail", "golden", "leather")
+
 # Event backlog drain. `read_recent_events` returns the OLDEST unread page (max 100),
 # so a deep backlog must be walked to the present before fresh events arrive.
 EVENT_PAGE = 100
@@ -64,6 +71,15 @@ def _iter_items(container: Any):
         for key, value in container.items():
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 yield str(key), int(value)
+
+
+def _armor_tier(item: str) -> str | None:
+    """`diamond_chestplate` -> `diamond` (the material prefix the `tools` rows use)."""
+    name = str(item).lower()
+    for tier in _ARMOR_TIERS:
+        if name.startswith(tier + "_"):
+            return tier
+    return None
 
 
 @dataclass(frozen=True)
@@ -133,7 +149,7 @@ class GameState:
     notifications: list[str] = field(default_factory=list)
     # active tool per class -> {tier, item, left, max}; `left`/`max` are durability
     tool_meta: dict[str, dict] = field(default_factory=dict)
-    # worn armour per slot class ("helmet"/"chestplate"/"leggings"/"boots") -> {tier, item}
+    # worn armour per slot class ("helmet"/"chestplate"/"leggings"/"boots") -> {tier, item, left, max}
     armor: dict[str, dict] = field(default_factory=dict)
     # fresh "target died" reflex outcomes: the mob's drops are lying nearby
     drops: int = 0
@@ -346,15 +362,26 @@ def parse_status(data: dict) -> GameState:
                 "left": _num(t.get("durabilityLeft")),
                 "max": _num(t.get("maximumDurability")),
             }
-    # Armour lives in `situation.tools.armour` (British spelling) alongside the tools.
-    for a in (sit.get("tools") or {}).get("armour") or []:
-        if isinstance(a, dict) and a.get("class"):
-            gs.armor[str(a["class"])] = {
-                "tier": a.get("tier"),
-                "item": a.get("item"),
-                "left": _num(a.get("durabilityLeft")),
-                "max": _num(a.get("maximumDurability")),
-            }
+    # Worn armour is the stack that sits in one of the four armour slots (location
+    # head/torso/legs/feet). `situation.tools.armour` lists only the carried set per class and
+    # says nothing about what is on the body, so a worn piece has to be read from the location.
+    # It leaves main/hotbar, so remove it from the carried inventory the loop above added.
+    for st in inv.get("stacks") or []:
+        if not isinstance(st, dict):
+            continue
+        cls = ARMOR_SLOTS.get(str(st.get("location") or ""))
+        name = st.get("item_name") or st.get("item") or st.get("name")
+        if not cls or not name:
+            continue
+        name = str(name)
+        dur = st.get("durability") or {}
+        gs.armor[cls] = {"tier": _armor_tier(name), "item": name,
+                         "left": _num(dur.get("remaining")), "max": _num(dur.get("maximum"))}
+        left = gs.inventory.get(name, 0) - int(st.get("count") or 1)
+        if left > 0:
+            gs.inventory[name] = left
+        else:
+            gs.inventory.pop(name, None)
 
     nearby = sit.get("nearby") or {}
     hostile_rows = nearby.get("hostiles")

@@ -151,8 +151,12 @@ Wichtige Umsetzungsdetails:
   abbaut — beides wäre unerreichbar gewesen.
 - Ein gecraftetes Rüstungsteil liegt zunächst im Inventar; `equip_armor` schickt es mit **einem**
   `equip`-Batch (ohne `destination` — Rüstung findet ihren Slot selbst) an den Körper. Ein Teil
-  zählt als „vorhanden", ob **getragen** (`situation.tools.armour`) oder im Inventar, damit nichts
-  doppelt gecraftet wird.
+  zählt als „vorhanden", ob **getragen** oder im Inventar, damit nichts doppelt gecraftet wird.
+  Achtung: `situation.tools.armour` ist nur eine **Bequemlichkeitsliste der mitgeführten** Rüstung
+  pro Klasse — sie sagt nichts darüber, ob ein Teil angelegt ist. Der **getragene** Satz wird aus
+  der Inventar-`location` gelesen (`head`/`torso`/`legs`/`feet`; ein angelegtes Teil verlässt
+  `main`/`hotbar`). Vorher deutete der Parser `tools.armour` fälschlich als „getragen", wodurch
+  `equip_armor` unterdrückt wurde.
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
   produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
 - **Umgebungs-Blocker (live gefunden & behoben):** In einem 1×1-Schacht nach dem Erz-Abbau
@@ -453,15 +457,18 @@ nur eine Ebene tiefer.
 - **Diamant-Rüstung (live validiert):** `DIAMOND_ARMOR` (Brustplatte 8, Hose 7, Schuhe 4,
   Helm 5 = 24 Diamanten) hängt sich über `_next_diamond_item` an dieselbe Kette; ein fehlendes
   Teil pro Tick, `craft_diamond_<slot>`, danach `equip_armor` (ein `equip`-Batch, ohne
-  `destination`). Perception liest den getragenen Satz aus `situation.tools.armour`; `verify`
-  zählt ein getragenes Teil über `armor_delta` als Fortschritt. Unit-getestet in
-  `tests/test_actions.py::DiamondArmorTest` (9 Tests). **Live durchgelaufen** (25 Ticks):
+  `destination`). Perception liest den **getragenen** Satz aus der Inventar-`location`
+  (`head`/`torso`/`legs`/`feet`); `situation.tools.armour` ist nur die Liste der mitgeführten
+  Rüstung pro Klasse. `verify` zählt ein getragenes Teil über `armor_delta` als Fortschritt.
+  Unit-getestet in `tests/test_actions.py::DiamondArmorTest` (9 Tests) und
+  `tests/test_perception.py::ArmourParseTest` (2 Tests). **Live durchgelaufen** (25 Ticks):
   `mine_diamond` (count 8 → 7 → 4 → 5, zusammen exakt die 24 Diamanten) →
   `craft_diamond_chestplate` → `craft_diamond_leggings` → `craft_diamond_boots` →
-  `craft_diamond_helmet`; Endstand `tools = {pickaxe, sword: diamond}`, `armor = {helmet,
-  chestplate, leggings, boots: diamond}`, hp 20. **Befund:** der Server **rüstet gecraftete
-  Rüstung selbst an** (`armor_delta` zeigt das Teil direkt nach dem Craft im Slot, kein
-  `equip_armor`-Tick) — das Label bleibt als Sicherheitsnetz für Server, die das nicht tun.
+  `craft_diamond_helmet`; `tools = {pickaxe, sword: diamond}`, hp 20. **Korrigierter Befund:** der
+  Server rüstet **nicht** selbst an — die gecrafteten Teile bleiben im Inventar (`location: main`),
+  bis ein `equip` sie in einen Rüstungsslot legt. Der erste Endstand „alle vier in `armor`" war ein
+  Parser-Artefakt (s. o.); nach explizitem `equip` zeigen die Stacks `head`/`torso`/`legs`/`feet`
+  und `tools.armour` erst dann den getragenen Satz.
   **Zweiter Befund:** `sleep` scheiterte im 1×1-Schacht 3× mit `[BED_PLACEMENT_FAILED]`; der
   Unblock-Mechanismus deckt diesen Code jetzt mit ab (s. M2).
 - **Nether-Kette (offen):** Eimer/Obsidian/Flint&Steel und Rahmen bauen/anzünden/betreten
