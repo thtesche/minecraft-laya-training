@@ -88,6 +88,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._blocked_kind = "surroundings"
         agent._stow_blocked = False
         agent._unblock_attempts = 0
+        agent._pour_skip = set()
         return agent
 
     async def test_first_block_digs_a_pocket(self) -> None:
@@ -177,6 +178,50 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
                base=(-197, -47, -98))
         out = await agent._guard({"before": g, "decision": Decision("mine_coal")})
         self.assertEqual(out["action"].tool, "drop_item")
+
+
+class PourSkipTest(unittest.TestCase):
+    """A pour the server refuses for want of a clickable face is remembered, not retried.
+
+    Live, obsidian run: the surface pond holds one usable cell, the bucket answered
+    `[BUCKET_NO_FACE]` there on every tick, and the label was offered again and again. That
+    answer is a property of the cell, so the loop has to move on to the next lava source.
+    """
+
+    class _Action:
+        def __init__(self, tool: str, args: dict) -> None:
+            self.tool = tool
+            self.args = args
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._pour_skip = set()
+        return agent
+
+    def test_remembers_the_refused_cell(self) -> None:
+        agent = self._agent()
+        agent._note_pour(
+            self._Action("use_bucket", {"action": "pour", "x": -129, "y": 66, "z": -30}),
+            False, "[BUCKET_NO_FACE] No solid block beside the target cell faces the bot.")
+        self.assertEqual(agent._pour_skip, {(-129, 66, -30)})
+
+    def test_ignores_success_other_tools_and_other_failures(self) -> None:
+        agent = self._agent()
+        pour = {"action": "pour", "x": 1, "y": 2, "z": 3}
+        agent._note_pour(self._Action("use_bucket", pour), True, "[BUCKET_NO_FACE]")
+        agent._note_pour(self._Action("use_bucket", {"action": "fill"}), False,
+                         "[BUCKET_NO_FACE]")
+        agent._note_pour(self._Action("navigate", pour), False, "[BUCKET_NO_FACE]")
+        agent._note_pour(self._Action("use_bucket", pour), False,
+                         "[BUCKET_EMPTY] the bucket carries no water")
+        self.assertEqual(agent._pour_skip, set())
+
+    def test_inject_hands_the_set_to_the_state(self) -> None:
+        agent = self._agent()
+        agent.base = None
+        agent.chest_pos = None
+        agent._pour_skip = {(-129, 66, -30)}
+        self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
 
 
 class GoalStopTest(unittest.TestCase):

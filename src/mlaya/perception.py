@@ -29,6 +29,14 @@ CHAIN_NAMES = ("lava", "chest")
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava",)
 RESOURCE_RADIUS = 64.0
 RESOURCE_LIMIT = 4
+# Per-group scan depth. The ore and log scans only want the nearest few cells, but two groups
+# need the tail of the list: the lava group, because a pour cell is only recognisable when the
+# *source* beside it is listed too (and that source need not be among the nearest cells), and
+# the ground group, because `explore` drops ground already underfoot -- with only the nearest
+# four hits every candidate sat within 4 m and `explore` navigated onto the block the bot was
+# standing on, which stood it still for the rest of the run.
+GROUND_LIMIT = 16
+CHAIN_LIMIT = 16
 # Carried inventory slots the server fills (main 27 + hotbar 9). A gathering action is refused
 # with `[INVENTORY_FULL]` once all 36 are taken, so the loop treats "nearly full" as a reason to
 # shed low-value blocks before it runs into that wall.
@@ -500,8 +508,14 @@ def parse_status(data: dict) -> GameState:
     return gs
 
 
-def parse_resources(data: dict) -> dict[str, list[BlockHit]]:
-    """view_blocks find -> {query_name: [BlockHit]} within RESOURCE_RADIUS, nearest first."""
+def parse_resources(data: dict, limit: int = RESOURCE_LIMIT) -> dict[str, list[BlockHit]]:
+    """view_blocks find -> {query_name: [BlockHit]} within RESOURCE_RADIUS, nearest first.
+
+    `limit` caps the hits kept per query name. It has to match the `limit` the scan asked
+    the server for, or the parse would throw away hits the state still needs -- the lava
+    group especially, where a pour cell is only recognisable when the *source* beside it is
+    in the list too (and that source is not among the nearest few cells).
+    """
     blocks = get(data, "response", "data", "result", "blocks", default={}) or {}
     groups = blocks.get("find") if isinstance(blocks, dict) else None
     out: dict[str, list[BlockHit]] = {}
@@ -525,7 +539,7 @@ def parse_resources(data: dict) -> dict[str, list[BlockHit]]:
             ))
         hits.sort(key=lambda h: h.distance)
         if hits:
-            out[query] = hits[:RESOURCE_LIMIT]
+            out[query] = hits[:limit]
     return out
 
 
@@ -562,16 +576,20 @@ async def build(executor) -> GameState:
     # already uses all eight, so each group is scanned separately and merged; a failed group
     # just leaves its names out of the state.
     gs.resources = {}
-    for names, why in ((RESOURCE_NAMES, "scan nearby resources for the next step"),
-                       (GROUND_NAMES, "scan standable ground for navigate targets"),
-                       (CHAIN_NAMES, "scan the lava to pour on and a chest at the base")):
+    for names, limit, why in ((RESOURCE_NAMES, RESOURCE_LIMIT,
+                               "scan nearby resources for the next step"),
+                              (GROUND_NAMES, GROUND_LIMIT,
+                               "scan standable ground for navigate targets"),
+                              (CHAIN_NAMES, CHAIN_LIMIT,
+                               "scan the lava to pour on and a chest at the base")):
         try:
             blocks = await executor.read(
                 "view_blocks",
-                {"find": {"block_names": list(names), "limit": RESOURCE_LIMIT}},
+                {"find": {"block_names": list(names), "limit": limit}},
                 why,
             )
-            gs.resources.update(parse_resources(coerce(blocks.data, blocks.text)))
+            gs.resources.update(
+                parse_resources(coerce(blocks.data, blocks.text), limit))
         except Exception:
             pass
     return gs
