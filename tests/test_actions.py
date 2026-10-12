@@ -243,8 +243,13 @@ def _ore(name: str, dist: float = 12.0) -> dict:
 
 class DiamondChainTest(unittest.TestCase):
     def test_mine_diamond_needs_iron_pickaxe(self) -> None:
+        # Wood, stone and gold all destroy diamond ore without a drop, so neither the
+        # candidate nor the binding may fire below iron (golden is tier 1, not "better").
         near = _ore("diamond_ore")
-        self.assertIsNone(resolve("mine_diamond", gs(tools={"pickaxe": "stone"}, resources=near)))
+        for tier in ("wooden", "golden", "stone"):
+            self.assertIsNone(resolve("mine_diamond", gs(tools={"pickaxe": tier}, resources=near)))
+            self.assertNotIn("mine_diamond",
+                             candidates(gs(tools={"pickaxe": tier}, resources=near)))
         a = resolve("mine_diamond", gs(tools={"pickaxe": "iron"}, resources=near))
         self.assertEqual(a.tool, "collect_block")
         self.assertEqual(a.args, {"block_name": "diamond_ore", "count": 3})
@@ -281,6 +286,19 @@ class DiamondChainTest(unittest.TestCase):
         self.assertIn("mine_diamond",
                       candidates(gs(tools={"pickaxe": "iron"}, resources=_ore("diamond_ore"))))
         self.assertNotIn("mine_diamond", candidates(gs(tools={"pickaxe": "iron"})))
+
+    def test_no_diamond_dig_on_a_pickaxe_that_needs_a_backup(self) -> None:
+        # Breaking mid-dig would destroy the ore with the swapped-in lower tier, so do not
+        # start while the pickaxe is due for a backup (unknown durability must not block).
+        def meta(left):
+            return {"pickaxe": {"tier": "iron", "item": "iron_pickaxe",
+                                "left": left, "max": 250.0}}
+        worn = gs(tools={"pickaxe": "iron"}, tool_meta=meta(70.0),
+                  resources=_ore("diamond_ore"))
+        self.assertNotIn("mine_diamond", candidates(worn))
+        fresh = gs(tools={"pickaxe": "iron"}, tool_meta=meta(200.0),
+                   resources=_ore("diamond_ore"))
+        self.assertIn("mine_diamond", candidates(fresh))
 
     def test_candidates_no_diamond_sword_before_pickaxe(self) -> None:
         g = gs(tools={"pickaxe": "iron"},

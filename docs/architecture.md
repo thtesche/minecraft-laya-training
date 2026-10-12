@@ -172,6 +172,10 @@ Wichtige Umsetzungsdetails:
   wird, *bevor* ein langer Grabungslauf ihn aufbrauchen kann; bricht die aktive Hacke dann, schiebt
   der Server den Ersatz automatisch nach und die Stufe (und `mine_diamond`) bleibt erhalten.
   Ein `_has_spare_pickaxe`-Guard verhindert, dass die Reserve denselben Ersatz mehrfach craftet.
+  Zusätzlich wird `mine_diamond` **gar nicht erst angeboten**, solange die aktive Hacke einen Ersatz
+  braucht (`_pickaxe_due_for_spare`) und kein Spare craftbar ist — sonst zerstört ein Bruch mitten im
+  Graben das restliche Erz mit der nachgeschobenen niedrigeren Stufe. (Holz/Stein/Gold zerstören
+  Diamanterz ohne Belohnung; `IRON_PICK_TIER` schließt Gold mit ein, weil Gold Tier 1 ist.)
   Die Diamant-Spitzhacke (1561 Haltbarkeit) macht das Risiko danach klein.
 
 ## M2b — erreicht: Bett/Respawn, Nachtschlaf, Notifications

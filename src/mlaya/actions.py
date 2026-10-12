@@ -376,7 +376,12 @@ def candidates(gs: GameState) -> list[str]:
     # needed (and `craft_diamond_sword` requires the pickaxe to already exist).
     wants_diamonds = (diamond < 3 if tier < DIAMOND_PICK_TIER
                       else diamond < 2 and not _has(inv, "diamond_sword"))
-    if tier >= IRON_PICK_TIER and wants_diamonds and gs.resource_distance("diamond_ore") is not None:
+    # Never start a diamond dig on a pickaxe that is already due for a backup: if it breaks
+    # mid-action the server keeps going with the swapped-in lower tier and the remaining ore
+    # is destroyed without a drop. (While a spare is craftable the replace_tool reaction
+    # already preempts this anyway; this guard covers the no-materials case.)
+    if (tier >= IRON_PICK_TIER and wants_diamonds and not _pickaxe_due_for_spare(gs)
+            and gs.resource_distance("diamond_ore") is not None):
         out.append("mine_diamond")
     if tier >= 1 and cobble < 12:
         out.append("mine_stone")
