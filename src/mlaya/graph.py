@@ -21,6 +21,24 @@ FALLBACK_LABEL = "get_wood"
 # Labels whose step needs a destination; the M4 parameter layer picks it from `view_blocks`.
 TARGET_LABELS = frozenset({"explore"})
 
+# Tool-result codes that mean "the bot's surroundings block the action". `craft_item` and
+# `smelt_item` place a carried workstation beside the bot; in a 1x1 excavation shaft there
+# is no replaceable cell, so the tool answers `[WORKSTATION_PLACEMENT_FAILED] ... no_cell`.
+# Retrying in place loops forever, so the fix is to walk to real standing ground (the same
+# M4 target pool `explore` uses) and try the label again there.
+BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED",)
+
+
+def blocked_by_surroundings(text: str | None) -> bool:
+    """True when a failed tool result says the surroundings prevent the action."""
+    return any(code in (text or "") for code in BLOCKED_CODES)
+
+
+def unblock_action(gs):
+    """The `explore` step toward open ground, or None when no ground is known."""
+    targets = ground_targets(gs)
+    return resolve("explore", gs, targets[0]) if targets else None
+
 
 def _chosen(answers: dict) -> dict:
     """Compact record of Laya's own answers for the log: {qid: choice or score}.
@@ -60,6 +78,9 @@ class Agent:
         self.history: list[dict] = []
         # The server restores default policy on death; re-apply once per death.
         self._policy_for_death_done = False
+        # Label whose last attempt failed because the surroundings blocked it; the next
+        # tick steps out to open ground before retrying it (see `blocked_by_surroundings`).
+        self._blocked_label: str | None = None
         self.graph = self._build()
 
     async def _perceive(self, state: AgentState) -> dict:
@@ -82,6 +103,15 @@ class Agent:
     async def _guard(self, state: AgentState) -> dict:
         gs = state["before"]
         decision = state["decision"]
+        if self._blocked_label == decision.action_label:
+            # The same label failed because the surroundings blocked it. Step out to open
+            # ground first; it stays in `candidates`, so the next tick retries it there.
+            action = unblock_action(gs)
+            if action is not None:
+                self._blocked_label = None
+                self.log.append({"stage": "policy", "reason": "unblock_open_ground",
+                                 "blocked": decision.action_label})
+                return {"action": action, "note": f"unblock -> {action.label}"}
         action = resolve(decision.action_label, gs, decision.target)
         if action is not None:
             return {"action": action}
@@ -143,6 +173,14 @@ class Agent:
         before = state["before"]
         action = state["action"]
         res = state["result"]
+        # Remember a surroundings block so the next tick steps out before retrying; any
+        # successful action clears it.
+        self._blocked_label = (
+            action.label
+            if not getattr(res, "ok", False)
+            and blocked_by_surroundings(getattr(res, "text", ""))
+            else None
+        )
         after = await perception.build(self.mcp)
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)

@@ -143,6 +143,16 @@ Wichtige Umsetzungsdetails:
   3 Diamanten immer in die Werkzeug-Kette gehen.
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
   produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
+- **Umgebungs-Blocker (live gefunden & behoben):** In einem 1×1-Schacht nach dem Erz-Abbau
+  antwortet `craft_item`/`smelt_item` mit `[WORKSTATION_PLACEMENT_FAILED] … no_cell` (keine
+  Zelle für die getragene Werkbank). In der Schleife wäre das ein **Endlos-Retry**. Der
+  `graph.Agent` merkt sich das blockierte Label (`blocked_by_surroundings`) und schiebt **eine**
+  `explore`-Navigation auf offenes Gelände ein (derselbe M4-Zielpool); danach greift der Craft.
+  Live: so kam der Ofen doch zustande (`craft_furnace` → `smelt_iron` → `craft_iron_pickaxe`,
+  Tier 3). Gepinnt in `tests/test_graph.py`.
+- **Beobachtung:** Ein 2×2-Craft (`craft_pickaxe`) hat die getragene Werkbank einmal in die Welt
+  gesetzt statt sie zu behalten. Die Kette heilt sich selbst, weil `craft_table` erneut angeboten
+  wird, solange keine Werkbank getragen wird.
 
 ## M2b — erreicht: Bett/Respawn, Nachtschlaf, Notifications
 
@@ -371,6 +381,10 @@ nur eine Ebene tiefer.
 
 - **M3+ (offen):** Datensatz aus deutlich mehr Läufen bauen und gegen den Zero-Shot-Stand
   evaluieren (Accuracy/Loss auf einem größeren Held-out-Split), um einen echten Gewinn zu zeigen.
+- **Eisen-Kette live (re-)validiert (Tier 0 → 3):** `craft_pickaxe` → `mine_stone` →
+  `craft_stone_pickaxe` → `mine_iron` → `mine_coal` → `craft_furnace` → `smelt_iron` →
+  `craft_iron_pickaxe` ist **live durchgelaufen**, inklusive der neuen Unblock-Recovery
+  (`[WORKSTATION_PLACEMENT_FAILED]` → eine `explore`-Navigation → Craft greift).
 - **M2/M2b/M2c/M2d live validiert:** `replace_tool`, `hunt_food`, `collect_drops`
   (Entscheidung/Binding), `recover_drops` (s. M2c/M2d) sowie `craft_table`, `hunt_wool`, `craft_bed`,
   `sleep` (s. M2b) sind **live durchgelaufen**. Damit bleibt in M2/M2b/M2c/M2d kein Pfad ohne
