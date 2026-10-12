@@ -15,7 +15,7 @@ from mlaya.brain import DANGER_Q, DANGER_QID, INTENT_QID, intent_question
 
 
 def _rec(narrative, candidates, label, *, progressed=True, health=20.0,
-         hostiles=None, answers=None, stage="action"):
+         hostiles=None, answers=None, stage="action", note=None):
     return {
         "stage": stage,
         "narrative": narrative,
@@ -24,6 +24,7 @@ def _rec(narrative, candidates, label, *, progressed=True, health=20.0,
         "progressed": progressed,
         "state": {"health": health, "hostiles": hostiles or []},
         "answers": answers,
+        "note": note,
     }
 
 
@@ -87,13 +88,50 @@ class BuildRowsTest(unittest.TestCase):
         # After filtering unknown labels only one candidate remains -> deterministic -> skipped.
         self.assertEqual(rows, [])
 
-    def test_non_action_stage_ignored(self):
+    def test_a_defer_without_a_danger_reason_is_ignored(self):
         with tempfile.TemporaryDirectory() as d:
             p = _write(Path(d), [
-                _rec("safe", ["mine_stone", "get_wood"], "mine_stone", stage="defer"),
+                _rec("safe", ["mine_stone", "get_wood"], "mine_stone", stage="defer",
+                     answers={DANGER_QID: {"choice": "no"}}, note="no valid action"),
             ])
             rows = ds.build_rows(p)
         self.assertEqual(rows, [])
+
+    def test_a_danger_defer_becomes_a_yes_row(self):
+        # A deferred tick produces no action at all, so an action-only dataset would drop it -
+        # yet it is the one place a real gate `yes` survives. It becomes a danger-only row.
+        with tempfile.TemporaryDirectory() as d:
+            p = _write(Path(d), [
+                _rec("a skeleton is shooting me", ["mine_stone", "get_wood"], None,
+                     stage="defer", answers={DANGER_QID: {"choice": "yes"}},
+                     note="in danger -> survival policy"),
+            ])
+            rows = ds.build_rows(p)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["state"], "a skeleton is shooting me")
+        self.assertEqual(rows[0]["expected"], {DANGER_QID: "yes"})
+        self.assertNotIn(INTENT_QID, rows[0]["questions"])
+
+    def test_a_danger_defer_is_dropped_without_the_danger_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = _write(Path(d), [
+                _rec("a skeleton is shooting me", ["mine_stone", "get_wood"], None,
+                     stage="defer", note="in danger -> survival policy"),
+            ])
+            rows = ds.build_rows(p, with_danger=False)
+        self.assertEqual(rows, [])
+
+    def test_the_danger_note_alone_is_enough(self):
+        # Older logs carry the reason in the note but no logged answers.
+        with tempfile.TemporaryDirectory() as d:
+            p = _write(Path(d), [
+                _rec("hurt", ["mine_stone", "get_wood"], None, stage="defer",
+                     note="in danger -> survival policy"),
+            ])
+            rows = ds.build_rows(p)
+        self.assertEqual(rows, [{"state": "hurt",
+                                 "questions": {DANGER_QID: DANGER_Q},
+                                 "expected": {DANGER_QID: "yes"}}])
 
     def test_limit(self):
         with tempfile.TemporaryDirectory() as d:
@@ -153,7 +191,9 @@ class RealLogSmokeTest(unittest.TestCase):
     def test_questions_use_known_criteria(self):
         rows = ds.build_rows(Path("runs/decisions.jsonl"))
         for row in rows:
-            q = row["questions"][INTENT_QID]
+            q = row["questions"].get(INTENT_QID)
+            if q is None:
+                continue  # a danger-only row from a defer
             for label in q["criteria"]:
                 self.assertIn(label, CRITERIA)
 

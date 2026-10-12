@@ -16,6 +16,12 @@ Why danger rows: Laya's head is selected by question *type* (the checkpoint carr
 would silently un-train the gate. We therefore add an `in_danger` row per state, labelled
 from the logged Laya answer when present, else from a documented state heuristic that
 mirrors the criteria text ("a mob is attacking now or health is very low").
+
+Where the `yes` examples come from: an action tick where the gate fired still runs (the guard
+can override a defer), but the honest danger moments are the *defer* ticks - the bot stood
+aside for the server survival reflex. At run time those produce no action, so an action-only
+dataset drops every one of them and trains the gate on negatives alone. We therefore emit a
+danger-only row for each deferred tick whose label is `yes`.
 """
 from __future__ import annotations
 
@@ -78,6 +84,23 @@ def danger_label(state: dict, answers: dict | None) -> str | None:
     return "no"
 
 
+def _danger_defer_row(narrative: str, answers: dict | None, note: str | None) -> dict | None:
+    """A danger-only row for a deferred tick, or None when the defer was not about danger.
+
+    The defer reason is authoritative: either the gate's own logged `in_danger` answer said
+    `yes`, or the decision carried the danger note. We deliberately do *not* fall back to the
+    state heuristic here - a `no valid action` defer in a state the heuristic calls dangerous
+    would otherwise be mislabelled.
+    """
+    logged = answers.get(DANGER_QID) if isinstance(answers, dict) else None
+    choice = logged.get("choice") if isinstance(logged, dict) else logged
+    if choice != "yes" and "danger" not in (note or ""):
+        return None
+    return {"state": narrative,
+            "questions": {DANGER_QID: DANGER_Q},
+            "expected": {DANGER_QID: "yes"}}
+
+
 def build_rows(
     log_path: Path,
     *,
@@ -85,22 +108,43 @@ def build_rows(
     with_danger: bool = True,
     limit: int | None = None,
 ) -> list[dict]:
-    """Turn action records into `{state, questions, expected}` training rows.
+    """Turn the run log into `{state, questions, expected}` training rows.
 
-    Only ticks with more than one eligible label carry an `intent` choice; a single-candidate
-    tick is deterministic at run time (the filter already picked it), so it teaches nothing.
-    Ticks are de-duplicated on (state, candidates) so the same situation is not repeated.
+    Action ticks: only those with more than one eligible label carry an `intent` choice; a
+    single-candidate tick is deterministic at run time (the filter already picked it), so it
+    teaches nothing. Ticks are de-duplicated on (state, candidates).
+
+    Defer ticks: a deferred tick is the bot standing aside for the server survival reflex.
+    When the reason is danger that is a labelled `in_danger = yes` example - the case an
+    action-only dataset never sees. It becomes a danger-only row. A defer for another reason
+    ("no valid action") is ignored.
     """
     rows: list[dict] = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
     for rec in _read_records(log_path):
-        if rec.get("stage") != "action":
+        stage = rec.get("stage")
+        if stage not in ("action", "defer"):
             continue
         narrative = rec.get("narrative")
-        candidates = tuple(c for c in (rec.get("candidates") or []) if c in CRITERIA)
-        label = rec.get("label")
         if not isinstance(narrative, str) or not narrative:
             continue
+        state = rec.get("state") if isinstance(rec.get("state"), dict) else {}
+
+        if stage == "defer":
+            if not with_danger:
+                continue
+            row = _danger_defer_row(narrative, rec.get("answers"), rec.get("note"))
+            key = (narrative, ("in_danger",))
+            if row is None or key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+            if limit and len(rows) >= limit:
+                break
+            continue
+
+        candidates = tuple(c for c in (rec.get("candidates") or []) if c in CRITERIA)
+        label = rec.get("label")
         if len(candidates) < 2 or label not in candidates:
             continue
         if not rec.get("progressed") and not include_failed:
@@ -113,7 +157,6 @@ def build_rows(
         questions: dict[str, Any] = {INTENT_QID: intent_question(list(candidates))}
         expected: dict[str, Any] = {INTENT_QID: label}
         if with_danger:
-            state = rec.get("state") if isinstance(rec.get("state"), dict) else {}
             dlabel = danger_label(state, rec.get("answers"))
             if dlabel:
                 questions[DANGER_QID] = DANGER_Q

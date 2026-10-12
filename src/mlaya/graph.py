@@ -172,8 +172,10 @@ class Agent:
             "stage": "defer",
             "iteration": state.get("iteration", 0),
             "state": state["before"].as_state(),
+            "narrative": state["before"].narrative(),
             "candidates": decision.candidates,
             "note": decision.note,
+            "answers": _chosen(getattr(decision, "answers", {})),
         })
         self.history.append({"stage": "defer", "note": decision.note})
         iteration = state.get("iteration", 0) + 1
