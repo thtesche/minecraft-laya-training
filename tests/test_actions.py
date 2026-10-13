@@ -22,6 +22,32 @@ def gs(**kw) -> GameState:
     return g
 
 
+def geared(**inv) -> GameState:
+    """A state with the whole diamond kit worn and the shield in the off-hand (`_gear_ready`)."""
+    base = {"crafting_table": 1}
+    base.update(inv)
+    g = gs(tools={"pickaxe": "diamond", "sword": "diamond"}, inventory=base)
+    g.armor = {slot: {"item": f"diamond_{slot}"}
+               for slot in ("helmet", "chestplate", "leggings", "boots")}
+    g.offhand = "shield"
+    return g
+
+
+def at_home(g: GameState, base: tuple = (-197, -47, -98)) -> GameState:
+    """Stand the bot on the home base, so the base-only steps are eligible (`_at_base`)."""
+    g.base = base
+    g.pos = (base[0] + 0.5, base[1] + 1.0, base[2] + 0.5)
+    return g
+
+
+def lit_portal(g: GameState) -> GameState:
+    """Load a lit nether portal beside the bot, so `_portal_lit` holds (the Nether lull)."""
+    g.resources = {**(g.resources or {}),
+                   "nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                              -196, -47, -98, 3.0)]}
+    return g
+
+
 class CollectDropsTest(unittest.TestCase):
     def test_fresh_drop_is_picked_up(self) -> None:
         a = resolve("collect_drops", gs(drops=2))
@@ -201,6 +227,81 @@ class FoodChainTest(unittest.TestCase):
         self.assertEqual(a.tool, "smelt_item")
         self.assertEqual(a.args["item_name"], "beef")
         self.assertEqual(a.args["fuel_item_name"], "coal")
+
+    def test_cook_with_wood_fuel_in_the_nether_lull(self) -> None:
+        # After the portal is lit the daytime lull is food-prep time: raw meat cooks on any
+        # fuel, so a bot carrying wood but no coal cooks instead of falling through to explore
+        # (live, from-zero run: `coal` was None, so `cook_food` never fired).
+        g = lit_portal(at_home(geared(furnace=1, beef=7, acacia_planks=3)))
+        self.assertIn("cook_food", candidates(g))
+        a = resolve("cook_food", g)
+        self.assertEqual(a.args["item_name"], "beef")
+        self.assertEqual(a.args["fuel_item_name"], "acacia_planks")
+        # A plank smelts 1.5 items, so one cooks exactly one item; coal would cook three (the
+        # batch cap).
+        self.assertEqual(a.args["count"], 1)
+
+    def test_wood_fuel_waits_for_the_nether_lull(self) -> None:
+        # Before the gate is open, cooking must not spend the wood the chain still wants and the
+        # step is not even offered (only coal/charcoal may cook outside the lull).
+        g = geared(furnace=1, beef=7, acacia_planks=3)
+        self.assertIsNone(resolve("cook_food", g))
+        self.assertNotIn("cook_food", candidates(g))
+
+    def test_the_reserve_deepens_to_the_nether_target_in_the_lull(self) -> None:
+        # 17 edibles is above the ordinary floor (16) but below the Nether target (24), so in the
+        # lull the bot keeps stocking; outside it 17 is already enough (live: 17 edibles and no
+        # work drove the bot to `explore`).
+        lull = lit_portal(at_home(geared(beef=17, cooked_beef=0, cobblestone=12,
+                                         flint_and_steel=1, white_bed=1)))
+        lull.mobs = [("cow", "animal", 5, 10.0)]
+        self.assertIn("hunt_food", candidates(lull))
+        before = geared(beef=17, cooked_beef=0, cobblestone=12,
+                        flint_and_steel=1, white_bed=1)
+        before.mobs = [("cow", "animal", 5, 10.0)]
+        self.assertNotIn("hunt_food", candidates(before))
+
+    def test_hunt_food_stops_at_the_nether_target(self) -> None:
+        g = lit_portal(at_home(geared(beef=24, cobblestone=12, flint_and_steel=1, white_bed=1)))
+        g.mobs = [("cow", "animal", 5, 10.0)]
+        self.assertIsNone(resolve("hunt_food", g))
+
+
+class NetherLullWaitTest(unittest.TestCase):
+    """The daytime lull after the portal is lit: the only work left is the night bed, so the bot
+    holds at the base instead of wandering off on `explore` (live, from-zero run: 25 idle ticks,
+    five of them wasted on `[NAVIGATION_STOPPED]` pathfinder timeouts)."""
+
+    @staticmethod
+    def _idle() -> GameState:
+        g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=12, white_bed=1,
+                                      iron_ingot=1, cooked_beef=24, furnace=1)))
+        g.food = 20.0
+        g.chest_pos = (-198, -47, -98)
+        return g
+
+    def test_holding_at_the_base_beats_exploring(self) -> None:
+        self.assertEqual(candidates(self._idle()), ["wait"])
+        a = resolve("wait", self._idle())
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["z"]), (-197, -98))
+        self.assertEqual(a.args["range"], 1)
+
+    def test_before_the_portal_falls_back_to_explore(self) -> None:
+        # No lit portal yet: the gate is still to do, so the bot explores rather than waits.
+        g = at_home(geared(flint_and_steel=1, cobblestone=12, white_bed=1,
+                           iron_ingot=1, cooked_beef=24, furnace=1))
+        g.food = 20.0
+        self.assertIn("explore", candidates(g))
+        self.assertNotIn("wait", candidates(g))
+
+    def test_wait_needs_the_lit_portal(self) -> None:
+        g = at_home(geared(flint_and_steel=1, cobblestone=12, white_bed=1, cooked_beef=24))
+        self.assertIsNone(resolve("wait", g))
+
+    def test_wait_needs_the_base(self) -> None:
+        g = lit_portal(geared(flint_and_steel=1, cobblestone=12, white_bed=1, cooked_beef=24))
+        self.assertIsNone(resolve("wait", g))
 
 
 class MakeRoomTest(unittest.TestCase):

@@ -174,7 +174,9 @@ Wichtige Umsetzungsdetails:
   den Schild, **0** sobald beides steht. `candidates` **und** `resolve` teilen sie; der Craft ist
   zudem hinter die Eisen-Spitzhacke gated, damit er die ersten drei Barren nicht stiehlt.
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
-  produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl.
+  produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl. Ausnahme:
+  in der Lull nach dem Anzünden des Portals (s. Essen/Auto-Stop) steht an seiner Stelle `wait` —
+  der Bot hält an der Basis, statt in der Dämmerung wegzulaufen (live: 5 Pathfinder-Timeouts).
 - **Umgebungs-Blocker (live gefunden & behoben):** In einem 1×1-Schacht nach dem Erz-Abbau
   antwortet `craft_item`/`smelt_item` mit `[WORKSTATION_PLACEMENT_FAILED] … no_cell` (keine
   Zelle für die getragene Werkbank). In der Schleife wäre das ein **Endlos-Retry**. Der
@@ -298,10 +300,20 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   einer tageslichtabhängigen Reichweite** (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`:
   nachts nur, was schon nah ist) oder, als Rückfall, ein **einzelner Zombie** (`rotten_flesh`,
   gegated: ≤2 Hostiles ≤16 m und alle Zombies, Health ≥18). `cook_food` brät rohes Fleisch
-  (`smelt_item` im getragenen Ofen mit Kohle). `hunt_food` wird angeboten, solange der Vorrat < 16 ist
+  (`smelt_item` im getragenen Ofen). `hunt_food` wird angeboten, solange der Vorrat < `_food_goal` ist
   **und** nicht gerade gegessen wird („feed to 20 first, then bank"); die Aktion ist mit
   `allow_without_shield: true` markiert. Gegessen wird über den Server-Reflex (roh erlaubt), `eat_food`
   bleibt der manuelle Nachschlag.
+  **Lull-Nachschlag (`_nether_idle`, live gefunden):** Sobald das Diamant-Kit steht **und** das Portal
+  brennt, ist nur noch das Nacht-Bett offen — der Bot fiel tagsüber in reines `explore` (live im
+  From-Zero-Lauf: 25 Idle-Ticks, davon 5 × `[NAVIGATION_STOPPED]`-Timeouts). Diese Lull wird jetzt zur
+  Nether-Vorbereitung genutzt: `_food_goal` hebt das Reservenziel auf `NETHER_FOOD_RESERVE = 24`
+  (live hatte der Bot 17 Esswaren — über der Schwelle 16, unter dem Nether-Ziel), und `cook_food`
+  darf in der Lull mit **jedem** Brennstoff arbeiten (`_furnace_fuel`: Kohle/Holzkohle zuerst, sonst
+  Planken/Logs — ein Holz brät genau einen Gegenstand). Außerhalb der Lull bleibt es beim alten
+  Verhalten (nur Kohle), damit das Braten nie Holz stiehlt, das die Kette noch braucht. Findet sich
+  gar keine Arbeit mehr, hält `wait` (s. u.) die Position. Getestet in
+  `tests/test_actions.py::FoodChainTest`.
 - **Gefahr (live, jetzt entschärft):** `hunt_food` wählte früher das **nächstgelegene** Tier
   unabhängig von der Distanz, und `collect_mob_drop` roamt dorthin. Ein nächtlicher `run` wanderte so
   **159–190 m** und wurde **zweimal getötet** (u. a. „slain by Enderman"), was **das komplette

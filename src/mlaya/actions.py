@@ -34,12 +34,13 @@ CRITERIA: dict[str, str] = {
     "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
-    "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank at least 16 edible items",
-    "cook_food": "cook carried raw meat in the furnace so it feeds more hunger",
+    "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the portal is lit, stock the deeper Nether reserve",
+    "cook_food": "cook carried raw meat in the furnace so it feeds more hunger; before the Nether trip any carried fuel will do",
     "replace_tool": "craft a fresh pickaxe to replace the one that is nearly worn out",
     "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
     "explore": "walk to new terrain to find missing resources; the last fallback",
+    "wait": "hold position at the home base until night falls; the only work left is the bed, which cannot be placed in daylight",
     "make_room": "dig the block a placement was refused at, or a small pocket, so a carried workstation or bed fits",
     # Home base: one surface anchor the bed, the portal and the chests all stand at.
     "establish_base": "walk up to open surface ground and set up the home base there",
@@ -146,9 +147,11 @@ FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
 COOKED = {"beef": "cooked_beef", "porkchop": "cooked_porkchop",
           "chicken": "cooked_chicken", "mutton": "cooked_mutton",
           "rabbit": "cooked_rabbit", "cod": "cooked_cod", "salmon": "cooked_salmon"}
-# Minimum edible items to keep banked. 16 is the Nether floor (24 the real target):
+# Minimum edible items to keep banked. 16 is the floor held through the tech tree; 24 is the
+# real Nether target, stocked in the daytime lull after the portal is lit (see `_food_goal`) --
 # hunger drains fast while sprinting and fighting, and death drops everything.
 FOOD_RESERVE = 16
+NETHER_FOOD_RESERVE = 24
 # Food hunting is the one gather that walks to a moving target, so it is bounded by
 # daylight: a long walk to a distant animal is cheap in daylight, but after dark the bot
 # only tops up from animals already at hand. The old unguarded hunt roamed ~180 m at
@@ -251,6 +254,24 @@ def _food_hunt_range(gs: GameState) -> float:
 
 def _first_cookable(inv: dict[str, int]) -> str | None:
     return next((n for n in inv if n in COOKED and inv[n] > 0), None)
+
+
+def _furnace_fuel(inv: dict[str, int]) -> tuple[str, int] | None:
+    """The best carried furnace fuel and how many items one unit of it smelts, or None.
+
+    Coal and charcoal smelt eight items each and are preferred, so their use for iron smelting
+    is not stolen; a plank or log smelts one and a half, so a single one cooks exactly one item.
+    Requiring coal alone was too strict: a bot carrying a stack of raw meat and plenty of wood
+    still could not cook (live, the from-zero run: `coal` was None, so `cook_food` never fired
+    and the daytime lull after the portal fell through to `explore`).
+    """
+    for name in ("coal", "charcoal"):
+        if inv.get(name, 0) > 0:
+            return name, 8
+    for name in inv:
+        if name == "logs" or name.endswith("_log") or name.endswith("_planks"):
+            return name, 1
+    return None
 
 
 def _wool(inv: dict[str, int]) -> int:
@@ -436,6 +457,20 @@ def _portal_lit(gs: GameState) -> bool:
 def _bed_placed(gs: GameState) -> bool:
     """A bed block stands nearby - the bed the run places next to the portal."""
     return gs.resource_distance("white_bed") is not None
+
+
+def _nether_idle(gs: GameState) -> bool:
+    """The daytime lull after the portal is lit: the kit is done, the gate is open and only the
+    night bed is left. The extra Nether-prep work (deepening the food reserve, cooking on any
+    fuel, holding at the base) is scoped to this window; before it the bot is busy with the
+    chain and must not be pulled off it."""
+    return _gear_ready(gs) and _portal_lit(gs)
+
+
+def _food_goal(gs: GameState) -> int:
+    """How many edible items to keep banked: the ordinary floor, or the deeper Nether target
+    stocked during the lull so the next trip starts with a full supply."""
+    return NETHER_FOOD_RESERVE if _nether_idle(gs) else FOOD_RESERVE
 
 
 def _junk_carried(inv: dict[str, int]) -> list[str]:
@@ -744,12 +779,17 @@ def candidates(gs: GameState) -> list[str]:
 
     if eating:
         out.append("eat_food")
-    if _has(inv, "furnace") and inv.get("coal", 0) >= 1 and _first_cookable(inv):
-        out.append("cook_food")
-    # Food reserve: bank FOOD_RESERVE edible items. At full hunger the reflex cannot
-    # eat, so gathered drops accumulate; when hunger drops it spends them. Never
-    # compete with eating: feed to 20 first, bank after.
-    if (_edible_count(inv) < FOOD_RESERVE and not eating
+    if _has(inv, "furnace") and _first_cookable(inv) and not eating:
+        # Cook raw meat so it feeds far more hunger. Outside the Nether lull only coal/charcoal
+        # may be spent on it (as before, so it never steals wood from the chain); during the lull
+        # any carried fuel does, so a bot with raw meat and wood still cooks.
+        fuel = _furnace_fuel(inv)
+        if fuel is not None and (fuel[0] in ("coal", "charcoal") or _nether_idle(gs)):
+            out.append("cook_food")
+    # Food reserve: bank edible items. At full hunger the reflex cannot eat, so gathered drops
+    # accumulate; when hunger drops it spends them. Never compete with eating: feed to 20 first,
+    # bank after. The goal deepens to the Nether target in the lull after the portal is lit.
+    if (_edible_count(inv) < _food_goal(gs) and not eating
             and _food_target(gs) is not None):
         out.append("hunt_food")
 
@@ -913,9 +953,12 @@ def candidates(gs: GameState) -> list[str]:
     if cobble < 12 and _can_mine(gs, "stone"):
         out.append("mine_stone")
 
-    # explore is the explicit last fallback: only when nothing productive is available.
+    # The explicit last fallback when nothing productive is available. In the lull after the
+    # portal is lit the only work left is the night bed, and wandering off just burned five
+    # pathfinder timeouts and left the bot away from the base at dusk (live, from-zero run), so
+    # hold at the base and wait it out rather than explore.
     if not out:
-        out.append("explore")
+        out.append("wait" if _at_base(gs) and _nether_idle(gs) else "explore")
     return out
 
 
@@ -1179,6 +1222,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                        "allow_without_shield": True},
                       "collect string from a lone spider to craft wool")
     if label == "hunt_food":
+        if _edible_count(inv) >= _food_goal(gs):
+            return None
         target = _food_target(gs)
         if not target:
             return None
@@ -1190,12 +1235,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       f"hunt a {mob} for {drop}")
     if label == "cook_food":
         raw = _first_cookable(inv)
-        if not raw or not _has(inv, "furnace") or inv.get("coal", 0) < 1:
+        fuel = _furnace_fuel(inv)
+        if not raw or not _has(inv, "furnace") or fuel is None:
             return None
+        # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
+        if fuel[0] not in ("coal", "charcoal") and not _nether_idle(gs):
+            return None
+        fuel_name, capacity = fuel
         return Action(label, "smelt_item",
-                      {"item_name": raw, "count": min(inv.get(raw, 0), 3),
-                       "fuel_item_name": "coal", "temporary_workstation": True},
-                      f"cook {raw} into {COOKED[raw]}")
+                      {"item_name": raw, "count": min(inv.get(raw, 0), 3, capacity),
+                       "fuel_item_name": fuel_name, "temporary_workstation": True},
+                      f"cook {raw} into {COOKED[raw]} using {fuel_name}")
     if label == "eat_food":
         food = _first_edible(inv)
         if not food:
@@ -1292,6 +1342,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "drop_item",
                       {"items": items[:12], "in_a_hole": not gs.drop_hole_blocked},
                       "drop low-value blocks so the full pack has room again")
+    if label == "wait":
+        # Hold at the base: navigate to the anchor, which is at most a step away, so the tick
+        # settles at once and the bot does not wander off while daylight burns.
+        if gs.base is None or not _nether_idle(gs):
+            return None
+        bx, by, bz = gs.base
+        return Action(label, "navigate",
+                      {"x": bx, "y": by + 1, "z": bz, "range": 1},
+                      "hold at the home base until night falls and the bed can be placed")
     if label == "explore":
         if target is not None:
             tx, ty, tz = target.pos
