@@ -118,7 +118,9 @@ der generische Nachtschlaf ein Bett genau dorthin). Der Nether-Pfad:
 `craft_flint_and_steel` (2×2) → `clear_portal` → `build_portal` → `light_portal` → `place_bed`.
 `mine_obsidian` **erzeugt** das Obsidian: der Lauf gießt den Wassereimer auf die nächste Lava
 (`use_bucket pour` auf die Lava-Zelle, notfalls erst dorthin laufen) und baut genau die entstandenen
-Blöcke ab. Natürlicher Obsidian liegt nur tief unter denselben Lavaseen (`y ≈ -55`) und wird bewusst
+Blöcke ab. Als „offen" über der Guss-Zelle zählt auch `cave_air` (`perception.AIR_NAMES`): unterirdische
+Lavaseen sind von Höhlenluft statt `air` überdeckt, und die Guss-Prüfung verwarf solche Zellen
+zuerst — live im From-Zero-Lauf behoben. Natürlicher Obsidian liegt nur tief unter denselben Lavaseen (`y ≈ -55`) und wird bewusst
 nicht angegraben — ein Tiefbohrversuch endete in der **Wasser-Falle** (schwimmend ohne Grund, jedes
 folgende `collect_block` lief leer). Dafür sorgt jetzt der **Wasser-Escape-Reflex**: `in_water and
 not on_ground` macht `escape_water` zum einzigen Kandidaten und navigiert zur Basis bzw. auf den
@@ -138,7 +140,11 @@ weiterläuft statt eine zweite zu bauen. Kann die Truhe am gewählten Platz nich
 Server antwortet `[PLACE_NO_SUPPORT]`, wenn kein fester Block an die Zelle grenzt (live stand die
 Basis auf einer schmalen Kante, und der Lauf hing in jedem Tick auf `place_chest`, statt das Portal
 zu bauen) —, lässt der Loop die Truhen-Kette fallen: das Relief wirft den Überschuss dann einfach
-auf den Boden (`drop_junk`), was dieselben Slots freimacht und nicht scheitern kann.
+auf den Boden (`drop_junk`), was dieselben Slots freimacht und nicht scheitern kann. Ist die
+Zielzelle dagegen **belegt** (`[PLACE_TARGET_OCCUPIED]` — live im From-Zero-Lauf: ein Grasblock in
+der Truhen-Zelle), merkt sich der Loop die Zelle (`gs.blocked_cell`) und zeigt den Unblock exakt
+darauf: `make_room` gräbt die verweigerte Zelle aus, danach geht `place_chest` durch (it10 → it11 →
+it12). Gepinnt in `tests/test_actions.py::MakeRoomTest`.
 
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine

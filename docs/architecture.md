@@ -196,6 +196,9 @@ Wichtige Umsetzungsdetails:
   Label selbst** gelingt (`_note_block`); ein erfolgreicher Unblock lässt Zähler und Label
   stehen, sodass der zweite Versuch wirklich `explore` nimmt. Gepinnt in
   `tests/test_graph.py::GuardUnblockTest`.
+  **Ergänzung:** Der Unblock feuert nur, wenn wirklich ein Label blockiert ist
+  (`_blocked_label is not None`). Eine reine Gefahr-Deferral trägt `action_label=None` und darf die
+  Leiter nicht re-arman — sonst schöbe ein unblockbarer Tick einen sinnlosen `make_room` nach.
 - **Beobachtung:** Ein 2×2-Craft (`craft_pickaxe`) hat die getragene Werkbank einmal in die Welt
   gesetzt statt sie zu behalten. Die Kette heilt sich selbst, weil `craft_table` erneut angeboten
   wird, solange keine Werkbank getragen wird.
@@ -531,6 +534,9 @@ nur eine Ebene tiefer.
   abgebaut (`collect_block`, genau die fehlenden Blöcke bis 10). Sonst wird der Wassereimer auf die
   nächste Lava-Zelle gegossen (`use_bucket pour` mit `x,y,z`, ab `POUR_REACH` = 4,5 m; sonst erst
   dorthin navigieren — **ohne** `dig`/`scaffold`, damit der Pathfinder nicht in die Lava tunnelt).
+  Als „offen" über der Guss-Zelle zählt neben `air` auch `cave_air` (`perception.AIR_NAMES`):
+  unterirdische Lavaseen sind von Höhlenluft statt `air` überdeckt, und die Guss-Prüfung verwarf
+  solche Zellen zuerst (live im From-Zero-Lauf behoben).
   Natürliches Obsidian liegt nur tief (`y ≈ -55`) unter denselben Lavaseen und fällt nie unter
   `OBSIDIAN_REACH`; dorthin zu graben ist die **Wasser-Falle** (siehe Reflex unten). Angeboten wird
   der Schritt nur bei „Eimer voll **und** Lava in Reichweite“ oder „Obsidian in Reichweite“.
@@ -596,6 +602,11 @@ nur eine Ebene tiefer.
   `place_chest` lief in jedem Tick auf, statt das Portal zu bauen) —, so merkt sich
   `Agent._note_chest` das und lässt die ganze Truhen-Kette fallen (`gs.chest_blocked`); das Relief
   greift dann auf `drop_junk` zurück, das dieselben Slots freimacht und nicht scheitern kann.
+  **Belegte Zielzelle (`[PLACE_TARGET_OCCUPIED]`, live im From-Zero-Lauf):** enthielt die Truhen-
+  Zelle einen Fremdblock (Gras), verweigerte der Server den Bau. `_note_place` schreibt die
+  verweigerte Zelle nach `gs.blocked_cell`, und der Unblock wählt genau diese Zelle: `make_room`
+  gräbt sie frei, danach geht `place_chest` durch (it10 → it11 → it12). Vorher lief der Lauf in
+  einen Endlos-Retry auf dieselbe belegte Zelle.
   `Agent._adopt_homebase` übernimmt beim Tick-Start ein bereits **stehendes** Bett in Reichweite
   (`ADOPT_BED_RADIUS` = 12 m) als Anker und eine **Truhe** in Ankernähe (`ADOPT_CHEST_RADIUS` = 4)
   als `chest_pos` — so läuft ein Neustart an derselben Homebase weiter, statt eine zweite zu bauen
