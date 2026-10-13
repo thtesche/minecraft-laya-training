@@ -5,7 +5,8 @@ import unittest
 
 from mlaya.actions import resolve
 from mlaya.perception import BlockHit, GameState
-from mlaya.targets import Target, _compass, base_target, flat_build_site, ground_targets
+from mlaya.targets import (Target, _compass, base_target, boxed_in, flat_build_site,
+                           frontier_heading, ground_targets)
 
 
 def hit(query: str, name: str, x: int, y: int, z: int, distance: float,
@@ -92,6 +93,61 @@ class GroundTargetsTest(unittest.TestCase):
         self.assertEqual(ground_targets(gs), [])
 
 
+class BoxedInTest(unittest.TestCase):
+    """`boxed_in` is the signal that turns an `explore` into a frontier push."""
+
+    def test_true_when_only_adjacent_ground(self) -> None:
+        gs = GameState()
+        gs.pos = (0.0, 60.0, 0.0)
+        gs.resources = {"stone": [hit("stone", "stone", 1, 60, 0, 1.0)]}
+        self.assertTrue(boxed_in(gs))
+
+    def test_false_when_outward_ground_exists(self) -> None:
+        gs = GameState()
+        gs.pos = (0.0, 60.0, 0.0)
+        gs.resources = {"stone": [hit("stone", "stone", 30, 60, 0, 30.0),
+                                  hit("stone", "stone", 1, 60, 0, 1.0)]}
+        self.assertFalse(boxed_in(gs))
+
+    def test_true_without_resources(self) -> None:
+        gs = GameState()
+        gs.pos = (0.0, 60.0, 0.0)
+        self.assertTrue(boxed_in(gs))
+
+    def test_ignores_non_standable_outward_ground(self) -> None:
+        # A far block with no air above is not a destination; the bot is still boxed in.
+        gs = GameState()
+        gs.pos = (0.0, 60.0, 0.0)
+        gs.resources = {"stone": [hit("stone", "stone", 30, 60, 0, 30.0, above="stone"),
+                                  hit("stone", "stone", 1, 60, 0, 1.0)]}
+        self.assertTrue(boxed_in(gs))
+
+
+class FrontierHeadingTest(unittest.TestCase):
+    """The heading points away from the home base, into ground not worked yet."""
+
+    def test_away_from_the_base_on_each_side(self) -> None:
+        gs = GameState()
+        gs.base = (0, 64, 0)
+        for pos, expected in (((0.0, 64.0, -100.0), 0.0),    # north
+                              ((100.0, 64.0, 0.0), 90.0),     # east
+                              ((0.0, 64.0, 100.0), 180.0),    # south
+                              ((-100.0, 64.0, 0.0), 270.0)):  # west
+            gs.pos = pos
+            self.assertEqual(frontier_heading(gs), expected, pos)
+
+    def test_north_without_a_base(self) -> None:
+        gs = GameState()
+        gs.pos = (5.0, 64.0, 5.0)
+        self.assertEqual(frontier_heading(gs), 0.0)
+
+    def test_north_on_the_base(self) -> None:
+        gs = GameState()
+        gs.base = (5, 64, 5)
+        gs.pos = (5.0, 64.0, 5.0)
+        self.assertEqual(frontier_heading(gs), 0.0)
+
+
 class BaseTargetTest(unittest.TestCase):
     """The home-base pick: nearest open ground overhead, not a deep cave floor or stone."""
 
@@ -139,11 +195,22 @@ class ExploreBindingTest(unittest.TestCase):
         self.assertEqual(action.args["z"], 10)
         self.assertTrue(action.args["dig"])
 
-    def test_falls_back_to_offset_without_target(self) -> None:
+    def test_without_an_outward_target_extends_the_frontier(self) -> None:
+        # No target at all (no ground in reach) still means "leave": push north (no base).
         action = resolve("explore", self._gs())
         self.assertIsNotNone(action)
-        self.assertEqual(action.args["x"], 26)
-        self.assertEqual(action.args["z"], -3)
+        self.assertEqual(action.tool, "explore_frontier")
+        self.assertEqual(action.args["heading"], 0.0)
+        self.assertEqual(action.args["chunks"], 2)
+
+    def test_a_near_target_extends_the_frontier_instead_of_ping_ponging(self) -> None:
+        # A target at the bot's feet is the boxed-in case; 211 of 298 live ticks were exactly
+        # this navigate ping-pong while the portal chain waited on lava.
+        target = Target(label="grass_block@11,-3", text="grass_block 1m east, open above",
+                        hit=hit("grass_block", "grass_block", 11, 64, -3, 0.8))
+        action = resolve("explore", self._gs(), target)
+        self.assertIsNotNone(action)
+        self.assertEqual(action.tool, "explore_frontier")
 
     def test_no_position_no_action(self) -> None:
         gs = GameState()

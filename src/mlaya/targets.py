@@ -24,6 +24,9 @@ DESTINATION_QUERIES = frozenset(GROUND_NAMES) | {"stone"}
 # hits of a query, so this is a hop toward open terrain, not a cross-map trek.
 EXPLORE_MIN_M = 4.0
 EXPLORE_POOL = 8
+# Chunk columns one `explore_frontier` hop extends the map boundary by. Two is a real step
+# outward without committing the whole tick to a long route.
+EXPLORE_FRONTIER_CHUNKS = 2
 
 
 @dataclass(frozen=True)
@@ -53,21 +56,10 @@ def _compass(dx: float, dz: float) -> str:
     return points[int(round(angle / 45.0)) % 8]
 
 
-def ground_targets(gs: GameState, *, limit: int = EXPLORE_POOL,
-                   min_distance: float = EXPLORE_MIN_M) -> list[Target]:
-    """Standable destinations from the perceived block hits, farthest first.
-
-    Each candidate is a distinct (x, z) column whose block has open air above it, drawn
-    from the ground queries plus stone. Ground already underfoot (< `min_distance`) is
-    dropped when farther ground exists, so an `explore` pick is a real step outward; when
-    the bot is boxed in, the nearest ground is offered instead of nothing. Descriptions
-    stay short because Laya shares one `head_max_len` token budget across every option and
-    the brain shortlists a larger pool.
-    """
+def _ground_hits(gs: GameState) -> list[BlockHit]:
+    """Distinct standable (x, z) columns from the destination queries, farthest first."""
     if not gs.resources:
         return []
-    x0 = gs.pos[0] if gs.pos else 0.0
-    z0 = gs.pos[2] if gs.pos else 0.0
     seen: set[tuple[int, int]] = set()
     hits: list[BlockHit] = []
     for query, group in gs.resources.items():
@@ -82,6 +74,23 @@ def ground_targets(gs: GameState, *, limit: int = EXPLORE_POOL,
             seen.add(column)
             hits.append(hit)
     hits.sort(key=lambda h: h.distance, reverse=True)
+    return hits
+
+
+def ground_targets(gs: GameState, *, limit: int = EXPLORE_POOL,
+                   min_distance: float = EXPLORE_MIN_M) -> list[Target]:
+    """Standable destinations from the perceived block hits, farthest first.
+
+    Each candidate is a distinct (x, z) column whose block has open air above it, drawn
+    from the ground queries plus stone. Ground already underfoot (< `min_distance`) is
+    dropped when farther ground exists, so an `explore` pick is a real step outward; when
+    the bot is boxed in, the nearest ground is offered instead of nothing. Descriptions
+    stay short because Laya shares one `head_max_len` token budget across every option and
+    the brain shortlists a larger pool.
+    """
+    x0 = gs.pos[0] if gs.pos else 0.0
+    z0 = gs.pos[2] if gs.pos else 0.0
+    hits = _ground_hits(gs)
     outward = [h for h in hits if h.distance >= min_distance]
     chosen = outward or hits
     out: list[Target] = []
@@ -90,6 +99,32 @@ def ground_targets(gs: GameState, *, limit: int = EXPLORE_POOL,
         text = f"{hit.name} {hit.distance:.0f}m {direction}, open above"
         out.append(Target(label=f"{hit.name}@{hit.x},{hit.z}", text=text, hit=hit))
     return out
+
+
+def boxed_in(gs: GameState, *, min_distance: float = EXPLORE_MIN_M) -> bool:
+    """True when no standable ground lies at or beyond `min_distance`.
+
+    `ground_targets` then offers only cells at the bot's own feet, and a `navigate` between two
+    of those ping-pongs in place: live, the from-zero run spent 211 of 298 ticks stepping 0.8 m
+    back and forth (`grass_block@-32,-68` <-> `@-33,-68`) while the portal chain waited on lava.
+    Callers should extend the frontier (`explore_frontier`) rather than navigate a near cell.
+    """
+    return not any(h.distance >= min_distance for h in _ground_hits(gs))
+
+
+def frontier_heading(gs: GameState) -> float:
+    """Compass heading (0 = north, 90 = east) that pushes into ground not worked yet.
+
+    Away from the home base, so repeated frontier pushes fan over fresh terrain instead of
+    re-covering the walk home. North when no base is set or the bot stands on it.
+    """
+    if gs.base is None or gs.pos is None:
+        return 0.0
+    dx = gs.pos[0] - gs.base[0]
+    dz = gs.pos[2] - gs.base[2]
+    if dx == 0 and dz == 0:
+        return 0.0
+    return round(math.degrees(math.atan2(dx, -dz)) % 360.0, 1)
 
 
 def base_target(gs: GameState) -> Target | None:

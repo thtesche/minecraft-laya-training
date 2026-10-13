@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 
 from .perception import AIR_NAMES, INVENTORY_NEAR_FULL, GameState
-from .targets import base_target
+from .targets import EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target, frontier_heading
 
 # Labels Laya may choose among; each maps to a real mine-ai MCP tool.
 CRITERIA: dict[str, str] = {
@@ -1582,17 +1582,20 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": bx, "y": by + 1, "z": bz, "range": 1},
                       "hold at the home base until night falls and the bed can be placed")
     if label == "explore":
-        if target is not None:
+        if x is None or z is None:
+            return None
+        if target is not None and target.hit.distance >= EXPLORE_MIN_M:
             tx, ty, tz = target.pos
             return Action(label, "navigate",
                           {"x": tx, "y": ty, "z": tz, "dig": True, "scaffold": True},
                           f"explore toward {target.name} at {tx},{ty},{tz}")
-        if x is None or z is None:
-            return None
-        args: dict = {"x": int(x) + 16, "z": int(z), "dig": True, "scaffold": True}
-        if y is not None:
-            args["y"] = int(y)
-        return Action(label, "navigate", args, "explore toward new terrain")
+        # No real destination: the best `ground_targets` can offer is a cell at the bot's feet,
+        # and a `navigate` between two of those ping-pongs in place (see `targets.boxed_in`).
+        # Extend the remembered frontier in a real heading instead, so the bot leaves terrain it
+        # has already worked and can find what `explore` is out for (live: lava for the portal).
+        return Action(label, "explore_frontier",
+                      {"heading": frontier_heading(gs), "chunks": EXPLORE_FRONTIER_CHUNKS},
+                      "explore: no outward ground in reach, extend the frontier toward new terrain")
     return None
 
 
