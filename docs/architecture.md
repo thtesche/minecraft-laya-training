@@ -555,7 +555,10 @@ nur eine Ebene tiefer.
   `establish_base` (sobald das Kit steht) läuft zuerst auf einen **ebenen, freien** Platz: zwei
   `view_blocks box`-Reads um den Bot — seine Ebene und vier darüber — (`Agent._scan_build_site` →
   `perception.scan_ground` → `targets.flat_build_site`) verlangen eine durchgehende Bodenreihe auf
-  gleicher Höhe mit Luft darüber, damit der Portalrahmen aufs Gelände passt (live lief der alte Pick
+  gleicher Höhe mit Luft darüber **und festem Grund eine Ebene darunter**: der Server gräbt die
+  Bodenreihe aus und setzt sie als Obsidian neu, eine Zelle über einem Loch bliebe also „ohne
+  Anlegefläche" falsch stehen und die Öffnung schlösse nie (live hing `light_portal` so in
+  `[PORTAL_NO_FRAME]`). Damit passt der Rahmen aufs Gelände (live lief der alte Pick
   — die *niedrigste* standbare Zelle — in eine Mulde, und 15 von 20 Rahmenzellen steckten in Stein). Ist kein Platz in
   Scan-Reichweite, greift wie zuvor `targets.base_target` (nur `GROUND_NAMES`, auf/oberhalb der
   Bot-Ebene, nächste zuerst). `establish_base` legt den Anker als `GameState.base` fest; `go_home`

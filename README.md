@@ -101,7 +101,10 @@ Barren stiehlt.
 freien Platz für den Portalrahmen: zwei `view_blocks box`-Reads um den Bot — seine eigene Ebene und
 vier darüber, damit auch ebenes Gelände über einer Mulde gefunden wird — (`perception.scan_ground`
 → `targets.flat_build_site`) verlangen eine durchgehende Bodenreihe auf gleicher Höhe mit Luft
-darüber, weil der Rahmen auf Hanggrund sonst in Stein stecken bleibt. Findet der Scan nichts, fällt
+darüber **und festem Grund eine Ebene darunter**: der Server gräbt die Bodenreihe aus und setzt sie
+als Obsidian neu, also bliebe eine Zelle über einem Loch „ohne Anlegefläche" falsch stehen und die
+Öffnung schlösse nie (live hing `light_portal` so in `[PORTAL_NO_FRAME]`); ebenso bleibt der Rahmen
+auf Hanggrund sonst in Stein stecken. Findet der Scan nichts, fällt
 die Wahl auf die nächste offene Oberfläche über dem Bot (`targets.base_target`) zurück. `go_home`
 läuft nur zurück, wenn dort Arbeit wartet (`_base_steps_ready`). Bett, Portalrahmen und Truhe stehen
 alle an diesem Anker (`build_portal`/`place_bed` nur bei `_at_base`). Der Nether-Pfad:
