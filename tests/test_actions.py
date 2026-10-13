@@ -842,15 +842,39 @@ class NetherGateTest(unittest.TestCase):
         g = self._at_home(self._geared(flint_and_steel=1, obsidian=9, cobblestone=4))
         self.assertNotIn("build_portal", candidates(g))
 
+    def test_build_portal_resumes_a_frame_it_already_started(self) -> None:
+        # A partial build leaves exactly the cells it still needs in the pack; the obsidian in
+        # the frame plane is the signal to re-send the same structure and finish it.
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=7, cobblestone=4))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        self.assertIn("build_portal", candidates(g))
+        a = resolve("build_portal", g)
+        self.assertEqual(a.args["portal_frame"], {"x": -195, "y": -46, "z": -98, "axis": "x"})
+
+    def test_build_portal_stays_put_without_ten_blocks_or_a_frame(self) -> None:
+        # Seven obsidian and no frame started yet: the bot must bank the rest first.
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=7, cobblestone=4))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -260, 64, -56, 3.0)]}
+        self.assertNotIn("build_portal", candidates(g))
+        self.assertIsNone(resolve("build_portal", g))
+
     def test_light_portal_strikes_the_nearest_frame_block(self) -> None:
-        # After the build the ten obsidian have left the pack, so `obsidian < 10` is the
-        # "frame is standing" signal; the frame is the nearest obsidian, so name it.
-        g = self._geared(flint_and_steel=1)
-        g.resources = self._blocks("obsidian")
+        # After the build the ten obsidian have left the pack; an obsidian hit *inside the
+        # frame plane* confirms the frame is standing, and its nearest block is struck.
+        g = self._at_home(self._geared(flint_and_steel=1))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
         self.assertIn("light_portal", candidates(g))
         a = resolve("light_portal", g)
         self.assertEqual(a.tool, "activate_portal")
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-270, 64, -56))
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-195, -47, -98))
+
+    def test_light_portal_ignores_obsidian_off_the_frame(self) -> None:
+        # Natural obsidian near the base is not our frame: without an obsidian block in the
+        # frame plane the light step must not fire (it would answer `[PORTAL_NO_FRAME]`).
+        g = self._at_home(self._geared(flint_and_steel=1))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -260, 64, -56, 3.0)]}
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
 
     def test_light_portal_waits_until_the_frame_is_built(self) -> None:
         # Still carrying the ten obsidian: nothing has been placed yet.

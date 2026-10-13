@@ -198,6 +198,7 @@ class PourSkipTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._pour_skip = set()
         agent._drop_hole_blocked = False
+        agent.build_site = None
         return agent
 
     def test_remembers_the_refused_cell(self) -> None:
@@ -244,6 +245,7 @@ class DropHoleTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._drop_hole_blocked = False
+        agent.build_site = None
         return agent
 
     def test_remembers_the_unavailable_pit(self) -> None:

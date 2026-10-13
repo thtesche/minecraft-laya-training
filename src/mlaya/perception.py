@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -218,6 +219,12 @@ class GameState:
     # out of scan range, so without the raw count the loop could never dig down to the diamond
     # armour piece it still needs once one is lost.
     resource_found: dict[str, int] = field(default_factory=dict)
+    # A level, clear surface cell to raise the home base on, proposed by a one-off
+    # `view_blocks box` scan while `base` is still unset. The loop owns the base, so this is
+    # only the *site proposal*; `None` means no flat site was found and the base pick falls
+    # back to the nearest standable ground. A frame raised on a slope leaves its cells holding
+    # stone, which the build server will not dig (live: 15 of 20 frame cells stayed stone).
+    build_site: tuple[int, int, int] | None = None
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
@@ -572,6 +579,59 @@ def parse_resource_counts(data: dict) -> dict[str, int]:
         if isinstance(found, (int, float)) and found > 0:
             out[str(group["name"])] = int(found)
     return out
+
+
+def parse_box(data: dict) -> dict[tuple[int, int, int], str]:
+    """view_blocks box -> {(x, y, z): block_name} over every cell of the box.
+
+    `layers` holds one entry per y, each with a row per z whose `blocks` list runs x from the
+    centre's `halfWidth` to the west to the same to the east. Used only to find a flat base
+    site, so a missing or malformed box just yields no grid.
+    """
+    box = get(data, "response", "data", "result", "blocks", "box", default=None)
+    if not isinstance(box, dict):
+        return {}
+    centre = box.get("center")
+    half = box.get("halfWidth")
+    if not isinstance(centre, dict) or not isinstance(half, int):
+        return {}
+    try:
+        cx = int(centre["x"])
+    except (KeyError, TypeError, ValueError):
+        return {}
+    out: dict[tuple[int, int, int], str] = {}
+    for layer in box.get("layers") or []:
+        if not isinstance(layer, dict):
+            continue
+        y = layer.get("y")
+        for row in layer.get("rows") or []:
+            if not isinstance(row, dict):
+                continue
+            z = row.get("z")
+            blocks = row.get("blocks") or []
+            if not isinstance(y, int) or not isinstance(z, int):
+                continue
+            for i, name in enumerate(blocks):
+                out[(cx - half + i, y, z)] = str(name)
+    return out
+
+
+async def scan_ground(executor, pos, dy: int = 0) -> dict:
+    """One `view_blocks box` read around the bot, for the flat base-site search.
+
+    `half_width`/`half_height` are the server's maxima (4 and 3), which is exactly the reach
+    the frame footprint needs: 5 cells along x, 5 layers up from the anchor's ground. `dy`
+    lifts the read's centre, so a second read four above the bot's feet extends the scanned
+    column from `feet-3` to `feet+7` and covers the level ground a bot standing in a dip has
+    overhead. Returns the coerced result for `parse_box`.
+    """
+    cx, cy, cz = (int(math.floor(v)) for v in pos)
+    res = await executor.read(
+        "view_blocks",
+        {"box": {"x": cx, "y": cy + dy, "z": cz, "half_width": 4, "half_height": 3}},
+        "read the terrain around the bot to place the home base on level ground",
+    )
+    return coerce(res.data, res.text)
 
 
 def _age_seconds(now_iso: Any, then_iso: Any) -> float | None:

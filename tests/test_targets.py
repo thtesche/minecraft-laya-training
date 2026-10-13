@@ -5,7 +5,7 @@ import unittest
 
 from mlaya.actions import resolve
 from mlaya.perception import BlockHit, GameState
-from mlaya.targets import Target, _compass, base_target, ground_targets
+from mlaya.targets import Target, _compass, base_target, flat_build_site, ground_targets
 
 
 def hit(query: str, name: str, x: int, y: int, z: int, distance: float,
@@ -148,6 +148,47 @@ class ExploreBindingTest(unittest.TestCase):
     def test_no_position_no_action(self) -> None:
         gs = GameState()
         self.assertIsNone(resolve("explore", gs))
+
+
+class FlatBuildSiteTest(unittest.TestCase):
+    """The flat base-site pick: the portal frame only fits where its whole bottom row stands on
+    level ground with clear air above. The old pick took the *lowest* standable cell, which in a
+    dip left 15 of 20 frame cells holding stone the build server will not dig."""
+
+    @staticmethod
+    def _grid(bx_range, bz_range, ground: int = 63, top: int = 72) -> dict:
+        grid = {}
+        for x in bx_range:
+            for z in bz_range:
+                for y in range(ground, top):
+                    grid[(x, y, z)] = "air"
+                grid[(x, ground, z)] = "grass_block"
+        return grid
+
+    def test_picks_level_ground_for_the_frame(self) -> None:
+        grid = self._grid(range(0, 6), range(-2, 3))
+        site = flat_build_site(grid, (2.5, 64.0, 0.5))
+        self.assertEqual(site, (0, 63, 0))
+        bx, by, bz = site
+        self.assertTrue(all(grid[(bx + i, 63, bz)] == "grass_block" for i in range(5)))
+        self.assertTrue(all(grid[(bx + i, 63 + dy, bz)] == "air"
+                            for i in range(5) for dy in range(1, 5)))
+
+    def test_rejects_a_slope_that_leaves_frame_cells_solid(self) -> None:
+        # Every candidate row runs east into a step up: those frame cells hold stone.
+        grid = self._grid(range(0, 6), range(-2, 3))
+        for x in (4, 5):
+            for z in range(-2, 3):
+                grid[(x, 64, z)] = "stone"
+        self.assertIsNone(flat_build_site(grid, (2.5, 64.0, 0.5)))
+
+    def test_a_plant_in_a_frame_cell_is_replaceable(self) -> None:
+        grid = self._grid(range(0, 6), range(-2, 3))
+        grid[(2, 65, 0)] = "short_grass"  # not a blocker: placement replaces it
+        self.assertIsNotNone(flat_build_site(grid, (2.5, 64.0, 0.5)))
+
+    def test_no_grid_no_site(self) -> None:
+        self.assertIsNone(flat_build_site({}, (0.0, 64.0, 0.0)))
 
 
 if __name__ == "__main__":

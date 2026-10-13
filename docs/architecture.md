@@ -536,7 +536,12 @@ nur eine Ebene tiefer.
   **Obsidian-Latch (Schlüsseldesign):** Obsidian muss **vor** dem Flint&Steel gebankt sein — genau
   dieser Craft ist die Sperre, die `mine_obsidian` nach dem Bau (der die 10 Blöcke ausgibt) am
   erneuten Graben hindert, weil eine reine „Ressource vorhanden“-Prüfung den frischen Rahmen sonst
-  maskieren würde. `light_portal` feuert daher nur bei `has_fs and obsidian < 10 and nearest obsidian`.
+  maskieren würde. Damit ein **teilweise** gebauter Rahmen nicht in eine Sackgasse läuft, prüft
+  `_portal_frame_started` die feste Rahmenebene (`_portal_site` ± Nachbarn) auf Obsidian: liegt dort
+  welches, darf `build_portal` mit dem Rest im Inventar **fortsetzen** (nach einem Teilbau ist die
+  Restmenge genau die noch fehlenden Zellen), und `light_portal` feuert nur, wenn wirklich Obsidian
+  **im Rahmen** steht (`has_fs and obsidian < 10 and _portal_frame_started`) — natürliches Obsidian
+  neben der Basis zählt nicht mehr.
   Getestet in `tests/test_actions.py::NetherGateTest` und `tests/test_verify.py`.
 - **Wasser-Escape-Reflex (implementiert):** `candidates` prüft `gs.in_water and not gs.on_ground` als
   Allererstes (noch vor den M2d-Reaktionen) und gibt dann **nur** `["escape_water"]` zurück — hier
@@ -547,11 +552,16 @@ nur eine Ebene tiefer.
   der Bot am Grund (Wassergraben, Teich, ein Guss, der ihn nicht flutet), greift der Reflex **nicht**.
   Getestet in `tests/test_actions.py::EscapeWaterTest`.
 - **Homebase (implementiert):** Ein Anker auf der Oberfläche trägt Bett, Portalrahmen und Truhe.
-  `establish_base` (sobald das Kit steht) läuft zur nächsten offenen Oberfläche über dem Bot
-  (`targets.base_target`: nur `GROUND_NAMES`, auf/oberhalb der Bot-Ebene, nächste zuerst) und
-  legt sie als `GameState.base` fest; `go_home` läuft nur zurück, wenn wirklich Basisarbeit wartet
-  (`_base_steps_ready`). `build_portal`/`place_bed` sind auf `_at_base` beschränkt, `_portal_site`
-  ankert am Base-Block statt an den Füßen. **Schlafen setzt den Respawn:** `place_bed` (via `sleep`)
+  `establish_base` (sobald das Kit steht) läuft zuerst auf einen **ebenen, freien** Platz: zwei
+  `view_blocks box`-Reads um den Bot — seine Ebene und vier darüber — (`Agent._scan_build_site` →
+  `perception.scan_ground` → `targets.flat_build_site`) verlangen eine durchgehende Bodenreihe auf
+  gleicher Höhe mit Luft darüber, damit der Portalrahmen aufs Gelände passt (live lief der alte Pick
+  — die *niedrigste* standbare Zelle — in eine Mulde, und 15 von 20 Rahmenzellen steckten in Stein). Ist kein Platz in
+  Scan-Reichweite, greift wie zuvor `targets.base_target` (nur `GROUND_NAMES`, auf/oberhalb der
+  Bot-Ebene, nächste zuerst). `establish_base` legt den Anker als `GameState.base` fest; `go_home`
+  läuft nur zurück, wenn wirklich Basisarbeit wartet (`_base_steps_ready`). `build_portal`/`place_bed`
+  sind auf `_at_base` beschränkt, `_portal_site` ankert am Base-Block statt an den Füßen.
+  **Schlafen setzt den Respawn:** `place_bed` (via `sleep`)
   wird **nur nachts** angeboten — bei Tag würde das Bett nur platziert, der Pausepunkt bliebe unset.
   `_bed_available` zählt auch ein **platziertes** Bett (nicht nur ein getragenes): nach einem
   manuellen Basisbau oder einem Neustart bleibt das Bett sonst als Block zurück und der Loop würde

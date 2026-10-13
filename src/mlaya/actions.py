@@ -542,7 +542,9 @@ def _base_steps_ready(gs: GameState) -> bool:
     idle stroll.
     """
     inv = gs.inventory
-    if (_has(inv, FLINT_STEEL_ITEM) and inv.get("obsidian", 0) >= PORTAL_OBSIDIAN
+    can_build = (inv.get("obsidian", 0) >= PORTAL_OBSIDIAN
+                 or (inv.get("obsidian", 0) >= 1 and _portal_frame_started(gs)))
+    if (_has(inv, FLINT_STEEL_ITEM) and can_build
             and inv.get("cobblestone", 0) >= PORTAL_CORNERS and not _portal_lit(gs)):
         return True
     if (_portal_lit(gs) and _has_bed(inv) and not _bed_placed(gs)
@@ -601,6 +603,25 @@ def _portal_site(gs: GameState) -> dict | None:
         return None
     mx, my, mz = (math.floor(v) for v in gs.pos)
     return {"x": mx + 2, "y": my, "z": mz, "axis": "x"}
+
+
+def _portal_frame_started(gs: GameState) -> bool:
+    """Whether obsidian already stands where our frame goes.
+
+    The frame is a fixed plane relative to the base (`_portal_site`), so one obsidian hit
+    inside that plane means a build ran -- possibly only partly. That is the signal which lets
+    `build_portal` resume with what the bot still carries: after a partial build the carried
+    count equals the cells left, so the frame can always be finished with the remainder,
+    without first re-banking ten blocks (which is impossible once flint and steel is crafted).
+    """
+    site = _portal_site(gs)
+    if site is None:
+        return False
+    sx, sy, sz = site["x"], site["y"], site["z"]
+    for hit in gs.resources.get("obsidian", []):
+        if hit.z == sz and sx - 1 <= hit.x <= sx + 2 and sy - 1 <= hit.y <= sy + 3:
+            return True
+    return False
 
 
 def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:
@@ -840,14 +861,18 @@ def candidates(gs: GameState) -> list[str]:
         if (not has_fs and has_flint and iron >= FLINT_STEEL_IRON and table
                 and obsidian >= PORTAL_OBSIDIAN):
             out.append("craft_flint_and_steel")
-        if (_at_base(gs) and has_fs and obsidian >= PORTAL_OBSIDIAN
-                and cobble >= PORTAL_CORNERS):
+        # `build_portal` runs while the bot carries ten obsidian, or to *resume* a frame it
+        # already started: a partial build leaves exactly the cells it still needs in the pack,
+        # and re-sending the same structure resumes it (the server takes the interior corner).
+        can_build = (obsidian >= PORTAL_OBSIDIAN
+                     or (obsidian >= 1 and _portal_frame_started(gs)))
+        if (_at_base(gs) and has_fs and can_build and cobble >= PORTAL_CORNERS):
             out.append("build_portal")
         # After the build the ten obsidian have left the pack (`obsidian < PORTAL_OBSIDIAN`)
-        # while the flint and steel remains - that is the "frame is standing" signal, and the
-        # frame's own blocks are the nearest obsidian, so the light step can name one.
-        if (has_fs and obsidian < PORTAL_OBSIDIAN
-                and gs.resource_nearest("obsidian") is not None):
+        # while the flint and steel remains - that is the "frame is standing" signal. It is
+        # confirmed against the frame plane (`_portal_frame_started`) so natural obsidian near
+        # the base cannot be mistaken for our frame.
+        if has_fs and obsidian < PORTAL_OBSIDIAN and _portal_frame_started(gs):
             out.append("light_portal")
     # The bed goes down at the base at night, because `sleep` is what actually sets the respawn
     # point: placing it in daylight would leave the pause point unset.
@@ -1077,9 +1102,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "craft flint and steel from flint and an iron ingot")
     if label == "build_portal":
         site = _portal_site(gs)
+        obsidian = inv.get("obsidian", 0)
+        can_build = (obsidian >= PORTAL_OBSIDIAN
+                     or (obsidian >= 1 and _portal_frame_started(gs)))
         if (site is None or not _at_base(gs) or not _has(inv, FLINT_STEEL_ITEM)
-                or _portal_lit(gs)
-                or inv.get("obsidian", 0) < PORTAL_OBSIDIAN
+                or _portal_lit(gs) or not can_build
                 or inv.get("cobblestone", 0) < PORTAL_CORNERS):
             return None
         return Action(label, "build_structure",
@@ -1088,7 +1115,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "light_portal":
         hit = gs.resource_nearest("obsidian")
         if (not _has(inv, FLINT_STEEL_ITEM) or _portal_lit(gs)
-                or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN or hit is None):
+                or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN or hit is None
+                or not _portal_frame_started(gs)):
             return None
         return Action(label, "activate_portal", {"x": hit.x, "y": hit.y, "z": hit.z},
                       "light the built portal frame with the carried flint and steel")
@@ -1179,6 +1207,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "establish_base":
         if gs.base is not None or not _gear_ready(gs):
             return None
+        # Prefer the level, clear site the base scan found (`flat_build_site`): the portal
+        # frame only fits on ground that is flat along its whole bottom row. Fall back to the
+        # nearest standable surface when no such site was in scan reach.
+        if gs.build_site is not None:
+            bx, by, bz = gs.build_site
+            return Action(label, "navigate",
+                          {"x": bx, "y": by + 1, "z": bz, "dig": True, "scaffold": True},
+                          f"walk to the level ground at {bx},{by + 1},{bz} and set the base")
         target = base_target(gs)
         if target is None:
             return None

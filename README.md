@@ -97,10 +97,14 @@ Eisen-Grund: 3 Barren für die (Ersatz-)Eisenhacke, danach genau **1** für den 
 sobald beides steht. Der Craft wartet auf die Eisen-Spitzhacke, damit das Schild nicht die ersten
 Barren stiehlt.
 
-**Homebase & Nether-Portal:** Sobald das Diamant-Kit steht, sucht `establish_base` die nächste offene
-Oberfläche über dem Bot (`targets.base_target`, nur echte Bodenblöcke) und legt sie als Anker fest;
-`go_home` läuft nur zurück, wenn dort Arbeit wartet (`_base_steps_ready`). Bett, Portalrahmen und
-Truhe stehen alle an diesem Anker (`build_portal`/`place_bed` nur bei `_at_base`). Der Nether-Pfad:
+**Homebase & Nether-Portal:** Sobald das Diamant-Kit steht, sucht `establish_base` einen ebenen,
+freien Platz für den Portalrahmen: zwei `view_blocks box`-Reads um den Bot — seine eigene Ebene und
+vier darüber, damit auch ebenes Gelände über einer Mulde gefunden wird — (`perception.scan_ground`
+→ `targets.flat_build_site`) verlangen eine durchgehende Bodenreihe auf gleicher Höhe mit Luft
+darüber, weil der Rahmen auf Hanggrund sonst in Stein stecken bleibt. Findet der Scan nichts, fällt
+die Wahl auf die nächste offene Oberfläche über dem Bot (`targets.base_target`) zurück. `go_home`
+läuft nur zurück, wenn dort Arbeit wartet (`_base_steps_ready`). Bett, Portalrahmen und Truhe stehen
+alle an diesem Anker (`build_portal`/`place_bed` nur bei `_at_base`). Der Nether-Pfad:
 `craft_bucket` (3 Eisenbarren) → `fill_bucket` → `mine_obsidian` → `get_flint` (Gravel) →
 `craft_flint_and_steel` (2×2) → `build_portal` → `light_portal` → `place_bed`.
 `mine_obsidian` **erzeugt** das Obsidian: der Lauf gießt den Wassereimer auf die nächste Lava

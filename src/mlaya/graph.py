@@ -9,11 +9,12 @@ from langgraph.graph import END, StateGraph
 from . import perception
 from . import survival
 from . import verify as vmod
-from .actions import candidates, inventory_relief, is_hostile_hunt, resolve, tech_tree_complete
+from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
+                      tech_tree_complete, _gear_ready)
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
-from .targets import ground_targets
+from .targets import flat_build_site, ground_targets
 
 # Safe default when a chosen label cannot be resolved (should be rare; candidates are filtered).
 FALLBACK_LABEL = "get_wood"
@@ -122,6 +123,11 @@ class Agent:
         # placed chest there. Both are per-run only and injected into each GameState.
         self.base: tuple[int, int, int] | None = None
         self.chest_pos: tuple[int, int, int] | None = None
+        # Level ground the base scan proposed for the portal frame (`targets.flat_build_site`).
+        # Per-run like `base`; `_build_site_scanned` remembers where the last box read was taken
+        # so standing still does not pay for the same scan every tick.
+        self.build_site: tuple[int, int, int] | None = None
+        self._build_site_scanned: tuple[float, float] | None = None
         # Lava cells a pour already failed on with `[BUCKET_NO_FACE]`. That answer is
         # structural -- no solid block beside that cell faces the bot -- so retrying it can
         # only fail again; remembering it lets the next tick pour elsewhere (live: the
@@ -138,8 +144,43 @@ class Agent:
         self._adopt_homebase(gs)
         gs.base = self.base
         gs.chest_pos = self.chest_pos
+        gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
         gs.drop_hole_blocked = self._drop_hole_blocked
+        return gs
+
+    async def _scan_build_site(self, gs) -> None:
+        """Look for level ground to raise the base on, while the base is still unset.
+
+        The portal frame only fits where its whole bottom row stands on level ground, so the
+        base scan reads two boxes around the bot -- its own level and four above
+        (`perception.scan_ground` + `targets.flat_build_site`). Skipped once a site is found or
+        a base is adopted, and before the diamond kit exists (the base is not raised yet);
+        re-run only after the bot has moved a few blocks, so it does not pay for the reads
+        every tick.
+        """
+        if self.base is not None or self.build_site is not None or gs.pos is None:
+            return
+        if not _gear_ready(gs):
+            return
+        px, _, pz = gs.pos
+        at = self._build_site_scanned
+        if at is not None and abs(at[0] - px) + abs(at[1] - pz) < 4.0:
+            return
+        self._build_site_scanned = (px, pz)
+        grid: dict = {}
+        # Two reads: the bot's own level, and four above it. The single box reaches only ±3,
+        # and a frame site needs four clear cells above its ground, so one read alone can only
+        # confirm ground at or below the bot's feet -- useless to a bot that stands in a dip
+        # with the level ground overhead.
+        for dy in (0, 4):
+            grid.update(perception.parse_box(await perception.scan_ground(self.mcp, gs.pos, dy)))
+        self.build_site = flat_build_site(grid, gs.pos)
+
+    async def _observe(self):
+        """One perception read, with the loop-owned facts and the base-site scan folded in."""
+        gs = self._inject(await perception.build(self.mcp))
+        await self._scan_build_site(gs)
         return gs
 
     def _adopt_homebase(self, gs) -> None:
@@ -163,7 +204,7 @@ class Agent:
                     break
 
     async def _perceive(self, state: AgentState) -> dict:
-        gs = self._inject(await perception.build(self.mcp))
+        gs = await self._observe()
         return {"iteration": 0, "before": gs, "done": False, "note": "", "escalated": False,
                 "deferred": False}
 
@@ -260,7 +301,7 @@ class Agent:
         stop = self._stop_state(gs, iteration)
         if not stop["done"]:
             await asyncio.sleep(self.settings.mcp.poll_ms / 1000)
-            gs = self._inject(await perception.build(self.mcp))
+            gs = await self._observe()
         return {"before": gs, "iteration": iteration, **stop}
 
     def _goal_reached(self, gs) -> bool:
@@ -352,7 +393,7 @@ class Agent:
             elif action.label == "place_chest" and "x" in action.args:
                 self.chest_pos = (int(action.args["x"]), int(action.args["y"]),
                                   int(action.args["z"]))
-        after = self._inject(await perception.build(self.mcp))
+        after = await self._observe()
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
         progressed = vmod.progressed(action.label, delta)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.perception import parse_resource_counts, parse_status
+from mlaya.perception import parse_box, parse_resource_counts, parse_status
 
 
 def _status(situation: dict) -> dict:
@@ -25,6 +25,43 @@ class ResourceCountParseTest(unittest.TestCase):
 
     def test_missing_find_block_is_empty(self) -> None:
         self.assertEqual(parse_resource_counts({}), {})
+
+
+class BoxParseTest(unittest.TestCase):
+    """`parse_box` flattens a `view_blocks box` read into {(x, y, z): block} for the base-site
+    scan (the frame needs its whole bottom row on level ground, which the sparse `find` hits
+    cannot show)."""
+
+    _DATA = {"response": {"data": {"result": {"blocks": {"box": {
+        "center": {"x": 10, "y": 64, "z": -5},
+        "halfWidth": 1, "halfHeight": 1,
+        "layers": [
+            {"y": 65, "rows": [
+                {"z": -6, "blocks": ["air", "air", "air"]},
+                {"z": -5, "blocks": ["stone", "air", "stone"]},
+                {"z": -4, "blocks": ["air", "air", "air"]},
+            ]},
+            {"y": 64, "rows": [
+                {"z": -6, "blocks": ["dirt", "dirt", "dirt"]},
+                {"z": -5, "blocks": ["dirt", "grass_block", "dirt"]},
+                {"z": -4, "blocks": ["dirt", "dirt", "dirt"]},
+            ]},
+        ],
+    }}}}}}
+
+    def test_every_cell_maps_to_its_block_name(self) -> None:
+        grid = parse_box(self._DATA)
+        self.assertEqual(len(grid), 18)  # 2 layers * 3 z-rows * 3 x-blocks
+        self.assertEqual(grid[(9, 64, -5)], "dirt")
+        self.assertEqual(grid[(10, 64, -5)], "grass_block")
+        self.assertEqual(grid[(11, 64, -5)], "dirt")
+        self.assertEqual(grid[(10, 65, -5)], "air")
+        self.assertEqual(grid[(11, 65, -5)], "stone")
+
+    def test_malformed_box_is_empty(self) -> None:
+        self.assertEqual(parse_box({}), {})
+        self.assertEqual(parse_box({"response": {"data": {"result": {"blocks": {
+            "box": {"center": None}}}}}}), {})
 
 
 class ArmourParseTest(unittest.TestCase):
