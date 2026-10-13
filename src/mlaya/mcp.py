@@ -84,6 +84,28 @@ def _extract(res: Any) -> ToolResult:
     return ToolResult(ok, text, data, action_id, settled, status, res)
 
 
+def _gated_id(res: ToolResult) -> tuple[str, str | None]:
+    """(code, action_id) when a foreground submission was refused until another result is retrieved.
+
+    The server answers `RESULT_NOT_RETRIEVED` with the id in the *structured* data
+    (`unretrievedActionId`), and `ACTION_BUSY` with `activeActionId`; the human-readable text only
+    names the parameter, so a regex over the text finds nothing. Live, a `navigate` whose result was
+    never retrieved blocked every later tick and the loop stood still.
+    """
+    data = res.data if isinstance(res.data, dict) else {}
+    code = _find(data, "code") if data else None
+    for candidate, key in (("RESULT_NOT_RETRIEVED", "unretrievedActionId"),
+                           ("ACTION_BUSY", "activeActionId")):
+        if candidate not in (res.text or "") and code != candidate:
+            continue
+        pending = _find(data, key) if data else None
+        if isinstance(pending, str):
+            return candidate, pending
+        m = re.search(r"([0-9a-fA-F]{8}-[0-9a-fA-F-]{4,})", res.text or "")
+        return candidate, (m.group(1) if m else None)
+    return "", None
+
+
 class MCPExecutor:
     """Streamable-HTTP MCP client with the foreground gating state machine."""
 
@@ -129,25 +151,35 @@ class MCPExecutor:
     async def call(self, tool: str, args: dict, rationale: str) -> ToolResult:
         """Foreground action: serialised, with submission_id and result retrieval."""
         async with self._lock:
-            payload = {
-                **args,
-                "submission_id": self._sub(tool),
-                "rationale": clip(rationale),
-                "wait_timeout_ms": self.cfg.initial_wait_ms,
-                "response_format": "json",
-            }
-            res = _extract(await self._raw_call(tool, payload))
-            if not res.ok:
-                res = await self._recover(res)
+            res = ToolResult(False, "", None, None, False)
+            for _ in range(3):
+                res = _extract(await self._raw_call(tool, self._payload(tool, args, rationale)))
+                _, pending = _gated_id(res)
+                if pending:
+                    # The refusal means *our* action never started, so draining the named result
+                    # and resubmitting cannot double-run anything.
+                    await self._wait_settled(pending)
+                    continue
+                if not res.ok:
+                    res = await self._recover(res)
+                break
             if res.action_id and not res.settled:
                 res = await self._wait_settled(res.action_id)
             return res
 
+    def _payload(self, tool: str, args: dict, rationale: str) -> dict:
+        return {
+            **args,
+            "submission_id": self._sub(tool),
+            "rationale": clip(rationale),
+            "wait_timeout_ms": self.cfg.initial_wait_ms,
+            "response_format": "json",
+        }
+
     async def _recover(self, res: ToolResult) -> ToolResult:
         """ACTION_BUSY / lost action id: wait on whatever the server points at."""
         m = re.search(r"([0-9a-fA-F-]{8,})", res.text)
-        if m and ("ACTION_BUSY" in res.text or "RESULT_NOT_RETRIEVED" in res.text
-                  or "unretrieved" in res.text.lower()):
+        if m and "ACTION_BUSY" in res.text:
             return await self._wait_settled(m.group(1))
         return res
 
