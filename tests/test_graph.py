@@ -88,6 +88,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._blocked_kind = "surroundings"
         agent._stow_blocked = False
         agent._unblock_attempts = 0
+        agent._unblock_done = False
         agent._pour_skip = set()
         agent._drop_hole_blocked = False
         return agent
@@ -113,6 +114,37 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         state = {"before": gs(pos=(-277.5, 87.0, -51.6), resources=_ground()),
                  "decision": Decision("craft_furnace")}
         out = await agent._guard(state)
+        self.assertEqual(out["action"].tool, "navigate")
+        self.assertEqual(agent.log.records[-1]["via"], "explore")
+
+    async def test_the_label_gets_its_retry_after_the_pocket(self) -> None:
+        # Regression, live from-zero run: `smelt_iron` on grass answered
+        # `[WORKSTATION_PLACEMENT_FAILED] furnace: no_cell`; the guard then intercepted every
+        # retry with `explore`, so the furnace never got to use the pocket `make_room` had just
+        # dug and the label stayed blocked for the rest of the run.
+        agent = self._agent()
+        agent._blocked_label = "craft_furnace"
+        first = await agent._guard({"before": gs(pos=(-277.5, 87.0, -51.6)),
+                                    "decision": Decision("craft_furnace")})
+        self.assertEqual(first["action"].tool, "build_structure")  # make_room
+        self.assertTrue(agent._unblock_done)
+        # The very next tick the label itself runs, not another unblock step.
+        second = await agent._guard({"before": gs(inventory={"crafting_table": 1, "cobblestone": 8}),
+                                     "decision": Decision("craft_furnace")})
+        self.assertEqual(second["action"].tool, "craft_item")
+        self.assertFalse(agent._unblock_done)
+
+    async def test_a_failed_retry_reaches_the_explore_rung(self) -> None:
+        agent = self._agent()
+        agent._blocked_label = "craft_furnace"
+        agent._unblock_attempts = 1
+        agent._unblock_done = True  # the pocket ran; the label is retrying
+        agent._note_block("craft_furnace", False, "[WORKSTATION_PLACEMENT_FAILED] furnace: no_cell")
+        self.assertEqual(agent._blocked_label, "craft_furnace")
+        self.assertEqual(agent._unblock_attempts, 1)
+        self.assertFalse(agent._unblock_done)
+        out = await agent._guard({"before": gs(pos=(-277.5, 87.0, -51.6), resources=_ground()),
+                                  "decision": Decision("craft_furnace")})
         self.assertEqual(out["action"].tool, "navigate")
         self.assertEqual(agent.log.records[-1]["via"], "explore")
 

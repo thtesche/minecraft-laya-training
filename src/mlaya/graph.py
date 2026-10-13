@@ -119,6 +119,13 @@ class Agent:
         self._stow_blocked = False
         # How many unblock steps have been spent on that label: pocket first, then explore.
         self._unblock_attempts = 0
+        # Set right after an unblock step: the next time the blocked label is chosen it runs
+        # instead of being intercepted again. Without it the guard answers every retry with a
+        # fresh unblock step, so the label can never succeed and stays blocked for the rest of
+        # the run (live: `smelt_iron` on grassy ground, the guard answered `explore` forever
+        # while the furnace never got its retry). It is only set for a terrain fix; the
+        # inventory relief removes the cause itself, so it frees the label immediately.
+        self._unblock_done = False
         # Home base: the surface anchor the loop chooses once (see `establish_base`) and the
         # placed chest there. Both are per-run only and injected into each GameState.
         self.base: tuple[int, int, int] | None = None
@@ -259,7 +266,13 @@ class Agent:
         gs = state["before"]
         decision = state["decision"]
         if self._blocked_label == decision.action_label:
-            if self._blocked_kind == "inventory":
+            if self._unblock_done:
+                # The surroundings were changed for this label (`make_room`, then `explore`);
+                # let the label itself run now, otherwise the guard intercepts it on every tick
+                # and it can never succeed. It only clears in `_note_block` if it succeeds; a
+                # fresh failure takes the next rung of the ladder (pocket -> explore).
+                self._unblock_done = False
+            elif self._blocked_kind == "inventory":
                 # The pack was full. Make room (deposit at the base chest, else drop the
                 # surplus) and let the blocked label run again next tick: unlike a terrain
                 # fix, this step removes the cause itself, so the label must not stay blocked.
@@ -272,11 +285,11 @@ class Agent:
                     return {"action": action, "note": f"unblock -> {action.label}"}
             else:
                 # The same label failed because the surroundings blocked it. Clear a pocket
-                # (or, on a second try, move to open ground) first; the label stays in
-                # `candidates`, so the next tick retries it there.
+                # (or, on a second try, move to open ground) first, then let the label retry.
                 action = unblock_action(gs, self._unblock_attempts)
                 if action is not None:
                     self._unblock_attempts += 1
+                    self._unblock_done = True
                     self.log.append({"stage": "policy", "reason": "unblock_surroundings",
                                      "blocked": decision.action_label, "via": action.label})
                     return {"action": action, "note": f"unblock -> {action.label}"}
@@ -357,21 +370,30 @@ class Agent:
         (`make_room`) must not clear it: otherwise the stage-2 `explore` escape is unreachable
         and `make_room` retries forever (live: `sleep` in a 1x1 shaft alternated
         sleep/make_room for the rest of the run, and the shield run burned 12 of 16 ticks on it).
+        Balance is kept by `_unblock_done`: the guard lets the label run exactly once per
+        unblock step, so the pocket gets its retry while the ladder still reaches `explore`.
         """
         if label == self._blocked_label:
             if ok:
                 self._blocked_label = None
                 self._unblock_attempts = 0
+                self._unblock_done = False
+            else:
+                # It failed again right after its unblock step: the guard takes the next rung
+                # of the ladder (pocket -> explore) on the following tick. The count is kept.
+                self._unblock_done = False
         elif not ok and blocked_by_inventory(text):
             # A full pack is not terrain: the unblock makes room (stow at the base, else drop),
             # and that frees the label to run again on the next tick.
             self._blocked_label = label
             self._blocked_kind = "inventory"
             self._unblock_attempts = 0
+            self._unblock_done = False
         elif not ok and blocked_by_surroundings(text):
             self._blocked_label = label
             self._blocked_kind = "surroundings"
             self._unblock_attempts = 0
+            self._unblock_done = False
 
     def _note_pour(self, action, ok: bool, text: str | None) -> None:
         """Remember a lava cell a pour was refused at, so it is never poured at again.
