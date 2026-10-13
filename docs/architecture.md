@@ -45,7 +45,10 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     Streamable-HTTP-Client + Gating-State-Machine:
     submission_id-Fabrik, rationale-Guard (<=200), Action-ID-Parsing,
     wait_for_action (initial_wait_ms, dann poll_ms x max_polls),
-    ACTION_BUSY / RESULT_NOT_RETRIEVED-Recovery. Reads sind ungated.
+    ACTION_BUSY / RESULT_NOT_RETRIEVED-Recovery: die blockierende Action-ID wird aus den
+    strukturierten Daten gelesen (`unretrievedActionId` / `activeActionId`; der Text nennt nur
+    den Parameternamen), ihr Ergebnis abgeholt und die eigene Einreichung wiederholt - die
+    Ablehnung heißt, dass die eigene Aktion nie startete. Reads sind ungated.
 [2] Perception    (src/mlaya/perception.py)
     view_status + read_recent_events + view_blocks (alle frei) -> GameState
     -> kompakter NL-State (`narrative()`); Ressourcen (logs/stone/iron_ore/coal_ore/
