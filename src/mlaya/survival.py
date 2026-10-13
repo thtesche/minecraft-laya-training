@@ -7,8 +7,11 @@ import copy
 # scaffolding), so they are configuration, not code that Laya re-implements.
 #
 # Two stages ("Stufen"):
-#   base  - cautious travel/progression, safe to leave on: don't start fights below
-#           17 health, heal back to 18 between fights, eat raw food rather than hoard.
+#   base  - cautious travel/progression, safe to leave on: don't *pursue* below 14 health,
+#           heal back to 16 between fights, eat raw food rather than hoard. (Was 17/18; a
+#           lone melee spider at 16.5 health fell just under the pursuit floor, so the bot
+#           evaded instead of killing it, then bled out below the old emergency line - see
+#           the tuning note on `combat` below.)
 #   hunt  - an explicitly requested hostile hunt runs with the floor dropped to zero
 #           so the engagement actually happens, then the base stage is restored.
 # The auto-eating stage is `food.raw.allow`: "always" (base/hunt) vs "emergency_only"
@@ -35,9 +38,12 @@ BASE_CHANGES: dict = {
         "bow": True,
         "shield": True,
         "terrain": {"dig": True, "place": True},
-        "engage_min_health": 17,
-        "critical_health": 14,
-        "recover_to_health": 18,
+        # Tuned 2026-10-13: the server treats immediate contact defence as separate from this
+        # pursuit floor, so a health just under 17 turned a lone spider into an evasion and a
+        # hide. 14 opens a fighting band; 10 keeps emergency protection for the truly critical.
+        "engage_min_health": 14,
+        "critical_health": 10,
+        "recover_to_health": 16,
         "protected_wait_ticks": 300,
         # 40 (not the 300 default) or enderman hunts never finish.
         "enderman_wait_ticks": 40,
