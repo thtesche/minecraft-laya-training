@@ -35,7 +35,7 @@ CRITERIA: dict[str, str] = {
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
     "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the portal is lit, stock the deeper Nether reserve",
-    "cook_food": "cook carried raw meat in the furnace so it feeds more hunger; before the Nether trip any carried fuel will do",
+    "cook_food": "cook carried raw meat in the furnace so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
     "replace_tool": "craft a fresh pickaxe to replace the one that is nearly worn out",
     "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
@@ -147,11 +147,30 @@ FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
 COOKED = {"beef": "cooked_beef", "porkchop": "cooked_porkchop",
           "chicken": "cooked_chicken", "mutton": "cooked_mutton",
           "rabbit": "cooked_rabbit", "cod": "cooked_cod", "salmon": "cooked_salmon"}
-# Minimum edible items to keep banked. 16 is the floor held through the tech tree; 24 is the
-# real Nether target, stocked in the daytime lull after the portal is lit (see `_food_goal`) --
-# hunger drains fast while sprinting and fighting, and death drops everything.
+# Saturation each edible restores (Minecraft's hidden hunger buffer): cooked meat keeps the bot
+# fed far longer than bread or raw meat, and rotten flesh barely counts. `_first_edible` eats the
+# richest carried food first, so a full pack is spent on steak before bread. Golden carrots
+# (14.4, the best food in the game) would top the list, but they need carrots and gold, which
+# this bot neither farms nor mines -- cooked meat is the richest food within its reach.
+FOOD_SATURATION = {
+    "cooked_beef": 12.8, "cooked_porkchop": 12.8, "cooked_mutton": 9.6, "cooked_salmon": 9.6,
+    "cooked_chicken": 7.2, "mushroom_stew": 7.2,
+    "bread": 6.0, "baked_potato": 6.0,
+    "cooked_rabbit": 5.0, "cooked_cod": 5.0,
+    "carrot": 3.6, "apple": 2.4,
+    "beef": 1.8, "porkchop": 1.8, "rabbit": 1.8,
+    "chicken": 1.2, "mutton": 1.2, "beetroot": 1.2, "melon_slice": 1.2,
+    "rotten_flesh": 0.8,
+    "potato": 0.6, "sweet_berries": 0.6, "dried_kelp": 0.6,
+    "cod": 0.4, "salmon": 0.4, "cookie": 0.4,
+}
+# Minimum edible items to keep banked. 16 is the floor held through the tech tree; the Nether
+# wants far more -- hunger drains fast while sprinting and fighting there and a death drops the
+# whole pack -- so the target deepens in the daytime lull after the portal is lit (see
+# `_food_goal`). The usual advice is 64-128 units (one to two stacks) of high-saturation food;
+# a stack of cooked meat is a single inventory slot, so 64 is cheap to carry.
 FOOD_RESERVE = 16
-NETHER_FOOD_RESERVE = 24
+NETHER_FOOD_RESERVE = 64
 # Food hunting is the one gather that walks to a moving target, so it is bounded by
 # daylight: a long walk to a distant animal is cheap in daylight, but after dark the bot
 # only tops up from animals already at hand. The old unguarded hunt roamed ~180 m at
@@ -207,7 +226,11 @@ def _plank_units(inv: dict[str, int]) -> int:
 
 
 def _first_edible(inv: dict[str, int]) -> str | None:
-    return next((n for n in inv if n in EDIBLE), None)
+    """The most nutritious carried food, so the bot eats cooked meat before bread or raw meat."""
+    foods = [n for n in inv if n in EDIBLE and inv.get(n, 0) > 0]
+    if not foods:
+        return None
+    return max(foods, key=lambda n: FOOD_SATURATION.get(n, 0.0))
 
 
 def _edible_count(inv: dict[str, int]) -> int:

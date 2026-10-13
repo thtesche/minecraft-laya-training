@@ -249,22 +249,34 @@ class FoodChainTest(unittest.TestCase):
         self.assertNotIn("cook_food", candidates(g))
 
     def test_the_reserve_deepens_to_the_nether_target_in_the_lull(self) -> None:
-        # 17 edibles is above the ordinary floor (16) but below the Nether target (24), so in the
+        # 17 edibles is above the ordinary floor (16) but below the Nether target (64), so in the
         # lull the bot keeps stocking; outside it 17 is already enough (live: 17 edibles and no
         # work drove the bot to `explore`).
         lull = lit_portal(at_home(geared(beef=17, cooked_beef=0, cobblestone=12,
-                                         flint_and_steel=1, white_bed=1)))
+                                         flint_and_steel=1, white_bed=1, furnace=1)))
         lull.mobs = [("cow", "animal", 5, 10.0)]
         self.assertIn("hunt_food", candidates(lull))
         before = geared(beef=17, cooked_beef=0, cobblestone=12,
-                        flint_and_steel=1, white_bed=1)
+                        flint_and_steel=1, white_bed=1, furnace=1)
         before.mobs = [("cow", "animal", 5, 10.0)]
         self.assertNotIn("hunt_food", candidates(before))
 
     def test_hunt_food_stops_at_the_nether_target(self) -> None:
-        g = lit_portal(at_home(geared(beef=24, cobblestone=12, flint_and_steel=1, white_bed=1)))
+        # A full stack of cooked meat is the target; at it the bot stops hunting.
+        g = lit_portal(at_home(geared(cooked_beef=64, cobblestone=12, flint_and_steel=1,
+                                      white_bed=1, furnace=1)))
         g.mobs = [("cow", "animal", 5, 10.0)]
         self.assertIsNone(resolve("hunt_food", g))
+
+    def test_eat_prefers_the_most_nutritious_food(self) -> None:
+        # Cooked meat outlasts everything else and is spent first; among what is left, bread
+        # (6.0) beats raw meat (1.8) and rotten flesh (0.8), so the worst food is a last resort.
+        a = resolve("eat_food", gs(inventory={"bread": 3, "beef": 5, "cooked_beef": 1}))
+        self.assertEqual(a.args["food_name"], "cooked_beef")
+        b = resolve("eat_food", gs(inventory={"bread": 3, "beef": 5}))
+        self.assertEqual(b.args["food_name"], "bread")
+        c = resolve("eat_food", gs(inventory={"rotten_flesh": 2, "apple": 1}))
+        self.assertEqual(c.args["food_name"], "apple")
 
 
 class NetherLullWaitTest(unittest.TestCase):

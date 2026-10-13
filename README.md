@@ -157,10 +157,13 @@ Details + 22 Determinismus-Tests: [`docs/architecture.md`](docs/architecture.md#
 **Lull nach dem Portal (live gefunden):** Sobald das Kit steht und das Portal brennt, ist tagsüber nur
 noch das Nacht-Bett offen — der Bot fiel in reines `explore` (25 Idle-Ticks, 5 davon
 `[NAVIGATION_STOPPED]`-Timeouts). Diese Lull ist jetzt Nether-Vorbereitung: der Essensvorrat wird auf
-das **Nether-Ziel 24** aufgefüllt (`_food_goal`; live hatte der Bot 17), und `cook_food` darf dann mit
-**jedem** Brennstoff braten (`_furnace_fuel`: Kohle zuerst, sonst Planken/Logs) — vorher verlangte es
-Kohle, und ohne Kohle blieb das rohe Fleisch liegen. Findet sich gar keine Arbeit, hält `wait` die
-Position an der Basis, statt wegzulaufen.
+das **Nether-Ziel `NETHER_FOOD_RESERVE = 64`** (eine volle Kelle, ~1 Inventarplatz) aufgefüllt
+(`_food_goal`; live hatte der Bot 17), und `cook_food` darf dann mit **jedem** Brennstoff braten
+(`_furnace_fuel`: Kohle zuerst, sonst Planken/Logs) — vorher verlangte es Kohle, und ohne Kohle blieb
+das rohe Fleisch liegen. Gegessen wird nach **Sättigung** (`FOOD_SATURATION`): Steak vor Brot vor rohem
+Fleisch vor `rotten_flesh`. Goldene Karotten (die beste Nether-Nahrung) brauchen Karotten und Gold, die
+dieser Bot weder anbaut noch schürft — gebratenes Fleisch ist das Beste in Reichweite. Findet sich gar
+keine Arbeit, hält `wait` die Position an der Basis, statt wegzulaufen.
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 

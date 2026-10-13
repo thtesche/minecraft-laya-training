@@ -296,7 +296,7 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   zurück). Der `execute`-Knoten schaltet für eine **feindliche** Jagd (`is_hostile_hunt`) auf `hunt`
   und im `finally` zurück auf `base`. `mlaya.cli policy [--apply] [--preset base|hunt]`.
 - **Essen** in `actions.py`: `hunt_food` beschafft den **Mindestvorrat** (`FOOD_RESERVE = 16`;
-  Nether-Ziel 24) — nächstes passives Tier (`FOOD_MOBS = cow/pig/chicken/sheep/rabbit`) **innerhalb
+  Nether-Ziel 64, s. Lull) — nächstes passives Tier (`FOOD_MOBS = cow/pig/chicken/sheep/rabbit`) **innerhalb
   einer tageslichtabhängigen Reichweite** (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`:
   nachts nur, was schon nah ist) oder, als Rückfall, ein **einzelner Zombie** (`rotten_flesh`,
   gegated: ≤2 Hostiles ≤16 m und alle Zombies, Health ≥18). `cook_food` brät rohes Fleisch
@@ -307,12 +307,17 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   **Lull-Nachschlag (`_nether_idle`, live gefunden):** Sobald das Diamant-Kit steht **und** das Portal
   brennt, ist nur noch das Nacht-Bett offen — der Bot fiel tagsüber in reines `explore` (live im
   From-Zero-Lauf: 25 Idle-Ticks, davon 5 × `[NAVIGATION_STOPPED]`-Timeouts). Diese Lull wird jetzt zur
-  Nether-Vorbereitung genutzt: `_food_goal` hebt das Reservenziel auf `NETHER_FOOD_RESERVE = 24`
-  (live hatte der Bot 17 Esswaren — über der Schwelle 16, unter dem Nether-Ziel), und `cook_food`
-  darf in der Lull mit **jedem** Brennstoff arbeiten (`_furnace_fuel`: Kohle/Holzkohle zuerst, sonst
-  Planken/Logs — ein Holz brät genau einen Gegenstand). Außerhalb der Lull bleibt es beim alten
-  Verhalten (nur Kohle), damit das Braten nie Holz stiehlt, das die Kette noch braucht. Findet sich
-  gar keine Arbeit mehr, hält `wait` (s. u.) die Position. Getestet in
+  Nether-Vorbereitung genutzt: `_food_goal` hebt das Reservenziel auf `NETHER_FOOD_RESERVE = 64` (eine
+  volle Kelle; live hatte der Bot 17 Esswaren). Die übliche Faustregel für den Nether sind **64–128
+  Einheiten** hochersättigenden Essens, weil Hunger beim Sprinten und Kämpfen schneller fällt und der
+  Tod das ganze Inventar kostet; eine Kelle gebratenes Fleisch ist nur ein Inventarplatz, also billig.
+  `cook_food` darf in der Lull mit **jedem** Brennstoff arbeiten (`_furnace_fuel`: Kohle/Holzkohle
+  zuerst, sonst Planken/Logs — ein Holz brät genau einen Gegenstand). Gegessen wird nach **Sättigung**
+  (`FOOD_SATURATION`): gebratenes Fleisch vor Brot vor rohem Fleisch vor `rotten_flesh`. Goldene
+  Karotten (14,4 Sättigung — die beste Nahrung im Spiel) brauchen Karotten und Gold, die dieser Bot
+  weder anbaut noch schürft, und sind damit außerhalb der Reichweite. Außerhalb der Lull bleibt es beim
+  alten Verhalten (nur Kohle), damit das Braten nie Holz stiehlt, das die Kette noch braucht. Findet
+  sich gar keine Arbeit mehr, hält `wait` (s. u.) die Position. Getestet in
   `tests/test_actions.py::FoodChainTest`.
 - **Gefahr (live, jetzt entschärft):** `hunt_food` wählte früher das **nächstgelegene** Tier
   unabhängig von der Distanz, und `collect_mob_drop` roamt dorthin. Ein nächtlicher `run` wanderte so
