@@ -516,9 +516,16 @@ def parse_status(data: dict) -> GameState:
     for m in hostile_rows:
         if not isinstance(m, dict):
             continue
-        nearest = m.get("nearest") or {}
-        dist = _num(nearest.get("distance")) if isinstance(nearest, dict) else None
-        gs.hostiles.append((str(m.get("name") or "?"), int(m.get("count") or 1), dist))
+        # `nearby.hostiles` rows carry `distance` directly and no `count`; `nearby.mobs` rows
+        # nest it under `nearest`. Reading only the nested form dropped every hostile distance,
+        # so the narrative said "spider x1" with no "at Xm" and the danger gate could not tell a
+        # mob across the room from one in contact (live: it deferred every tick over a zombie
+        # 13.5 m away in a cave while health was full, and the bot stood still).
+        nearest = m.get("nearest")
+        dist = m.get("distance")
+        if dist is None and isinstance(nearest, dict):
+            dist = nearest.get("distance")
+        gs.hostiles.append((str(m.get("name") or "?"), int(m.get("count") or 1), _num(dist)))
     dists = [d for _, _, d in gs.hostiles if d is not None]
     gs.nearest_hostile = min(dists) if dists else None
 

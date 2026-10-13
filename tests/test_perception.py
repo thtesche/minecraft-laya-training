@@ -163,5 +163,35 @@ class OffhandParseTest(unittest.TestCase):
         self.assertEqual(gs.inventory.get("shield"), 1)
 
 
+class HostileParseTest(unittest.TestCase):
+    """`view_status.nearby.hostiles` rows carry `distance` directly; `mobs` rows nest it under
+    `nearest`. Reading only the nested form left every distance None, so the narrative said
+    "spider x1" with no range and the danger gate deferred every tick over a mob it could not
+    place (live: a zombie 13.5 m away in a cave, health and hunger full, the bot stood still)."""
+
+    def test_direct_hostile_distance_is_read(self) -> None:
+        st = _status({"nearby": {"hostiles": [
+            {"name": "zombie", "distance": 13.0, "position": {"x": -43, "y": 44, "z": -27}},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(gs.hostiles, [("zombie", 1, 13.0)])
+        self.assertEqual(gs.nearest_hostile, 13.0)
+        self.assertIn("zombie x1 at 13m", gs.narrative())
+
+    def test_nested_hostile_distance_is_read_from_the_mob_list(self) -> None:
+        st = _status({"nearby": {"mobs": [
+            {"name": "spider", "kind": "hostile", "count": 2,
+             "nearest": {"distance": 3.5, "position": {"x": 0, "y": 64, "z": 0}}},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(gs.hostiles, [("spider", 2, 3.5)])
+
+    def test_hostile_without_a_distance_is_still_listed(self) -> None:
+        st = _status({"nearby": {"hostiles": [{"name": "creeper"}]}})
+        gs = parse_status(st)
+        self.assertEqual(gs.hostiles, [("creeper", 1, None)])
+        self.assertIn("creeper x1", gs.narrative())
+
+
 if __name__ == "__main__":
     unittest.main()
