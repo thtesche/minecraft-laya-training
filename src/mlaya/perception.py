@@ -231,6 +231,12 @@ class GameState:
     # back to the nearest standable ground. A frame raised on a slope leaves its cells holding
     # stone, which the build server will not dig (live: 15 of 20 frame cells stayed stone).
     build_site: tuple[int, int, int] | None = None
+    # Cells of the portal opening (`portal_interior`) that hold a stray block, read from one
+    # `view_blocks cells` scan while a frame build is pending. The opening sits *above* the
+    # support layer and must end up air: a block left there is built around and `activate_portal`
+    # answers `[PORTAL_NO_FRAME]` on every tick (live, Nether run: a bed the generic sleep laid
+    # "beside the bot" landed in the opening). `clear_portal` digs these cells before the build.
+    portal_blocked: list[tuple[int, int, int]] = field(default_factory=list)
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
@@ -636,6 +642,55 @@ async def scan_ground(executor, pos, dy: int = 0) -> dict:
         "view_blocks",
         {"box": {"x": cx, "y": cy + dy, "z": cz, "half_width": 4, "half_height": 3}},
         "read the terrain around the bot to place the home base on level ground",
+    )
+    return coerce(res.data, res.text)
+
+
+def parse_cells(data: dict) -> dict[tuple[int, int, int], str]:
+    """view_blocks cells -> {(x, y, z): block_name} for every requested cell.
+
+    `cells` holds one entry per coordinate with its `name` and `shape`. Used to read the portal
+    opening cell by cell before the frame is built; a malformed reply just yields no grid.
+    """
+    cells = get(data, "response", "data", "result", "blocks", "cells", default=None)
+    if not isinstance(cells, list):
+        return {}
+    out: dict[tuple[int, int, int], str] = {}
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+        try:
+            key = (int(cell["x"]), int(cell["y"]), int(cell["z"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        out[key] = str(cell.get("name"))
+    return out
+
+
+def portal_interior(base: tuple[int, int, int]) -> list[tuple[int, int, int]]:
+    """The six cells of the portal opening above the support layer.
+
+    The frame is a west-east plane at z = bz with its bottom row on the ground (see
+    `targets.flat_build_site`), so the opening is the 2x3 interior at (bx+2..bx+3, by+1..by+3).
+    These cells must end up air for the portal to form and they sit *above* the support layer.
+    """
+    bx, by, bz = base
+    return [(x, y, bz) for x in (bx + 2, bx + 3) for y in (by + 1, by + 2, by + 3)]
+
+
+async def scan_frame_volume(executor, base: tuple[int, int, int]) -> dict:
+    """One `view_blocks cells` read of the portal opening, for the frame-clearance step.
+
+    The base scan (`targets.flat_build_site`) only proves clearance for a site *it* chose; a
+    base the loop adopted from a standing bed, or one taken from the `base_target` fallback,
+    never got that check. This read is what lets `clear_portal` dig a stray block out of the
+    opening before `build_portal`. Returns the coerced result for `parse_cells`.
+    """
+    cells = [{"x": x, "y": y, "z": z} for x, y, z in portal_interior(base)]
+    res = await executor.read(
+        "view_blocks",
+        {"cells": cells},
+        "read the portal opening for stray blocks before the frame is built",
     )
     return coerce(res.data, res.text)
 

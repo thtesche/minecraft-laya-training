@@ -199,6 +199,7 @@ class PourSkipTest(unittest.TestCase):
         agent._pour_skip = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
+        agent._portal_blocked = []
         agent.build_site = None
         return agent
 
@@ -247,6 +248,7 @@ class DropHoleTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
+        agent._portal_blocked = []
         agent.build_site = None
         return agent
 
@@ -291,6 +293,7 @@ class ChestSupportTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._chest_blocked = False
+        agent._portal_blocked = []
         agent.build_site = None
         return agent
 
@@ -356,6 +359,81 @@ class GoalStopTest(unittest.TestCase):
     def test_the_goal_stop_can_be_switched_off(self) -> None:
         self.assertEqual(self._agent(stop_when_complete=False)._stop_state(self._complete(), 3),
                          {"done": False, "stop": ""})
+
+
+class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
+    """The loop reads the portal opening while a frame build is pending, so a stray block left
+    above the support layer is dug before the build (a base the loop adopted from a standing bed,
+    or one taken from the `base_target` fallback, never got the `flat_build_site` clearance
+    check). Live, a block in the opening left `light_portal` answering `[PORTAL_NO_FRAME]`."""
+
+    class _Read:
+        def __init__(self, cells):
+            self.data = {"response": {"data": {"result": {"blocks": {"cells": cells}}}}}
+            self.text = None
+
+    class _Mcp:
+        def __init__(self, cells):
+            self.cells = cells
+            self.calls: list = []
+
+        async def read(self, tool, args, why):
+            self.calls.append((tool, args))
+            return PortalOpeningTest._Read(self.cells)
+
+    @staticmethod
+    def _cells(blocked=()):
+        return [{"x": x, "y": y, "z": -98,
+                 "name": "cobblestone" if (x, y) in blocked else "air"}
+                for x in (-195, -194) for y in (-46, -45, -44)]
+
+    def _agent(self, cells) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.base = (-197, -47, -98)
+        agent.chest_pos = None
+        agent._portal_blocked = []
+        agent.mcp = self._Mcp(cells)
+        return agent
+
+    async def test_reads_the_opening_and_flags_a_stray_block(self) -> None:
+        agent = self._agent(self._cells(blocked={(-195, -46)}))
+        await agent._scan_portal_opening(gs(pos=(-196.5, -46.0, -98.5),
+                                                  inventory={"flint_and_steel": 1}))
+        self.assertEqual(agent._portal_blocked, [(-195, -46, -98)])
+        self.assertEqual(agent.mcp.calls[0][0], "view_blocks")
+
+    async def test_a_clear_opening_leaves_nothing_to_dig(self) -> None:
+        agent = self._agent(self._cells())
+        await agent._scan_portal_opening(gs(pos=(-196.5, -46.0, -98.5),
+                                                  inventory={"flint_and_steel": 1}))
+        self.assertEqual(agent._portal_blocked, [])
+
+    async def test_skips_without_flint_and_steel_or_a_base(self) -> None:
+        agent = self._agent(self._cells())
+        await agent._scan_portal_opening(gs(pos=(-196.5, -46.0, -98.5)))
+        self.assertEqual(agent.mcp.calls, [])
+        agent.mcp.calls.clear()
+        agent.base = None
+        await agent._scan_portal_opening(gs(pos=(-196.5, -46.0, -98.5),
+                                                  inventory={"flint_and_steel": 1}))
+        self.assertEqual(agent.mcp.calls, [])
+
+    async def test_skips_once_the_portal_is_lit(self) -> None:
+        agent = self._agent(self._cells(blocked={(-195, -46)}))
+        g = gs(pos=(-196.5, -46.0, -98.5), inventory={"flint_and_steel": 1},
+               resources={"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                     -195, -46, -98, 3.0)]})
+        await agent._scan_portal_opening(g)
+        self.assertEqual(agent.mcp.calls, [])
+
+    def test_inject_hands_the_cells_to_the_state(self) -> None:
+        agent = self._agent(self._cells())
+        agent._portal_blocked = [(-195, -46, -98)]
+        agent._pour_skip = set()
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent.build_site = None
+        self.assertEqual(agent._inject(gs()).portal_blocked, [(-195, -46, -98)])
 
 
 if __name__ == "__main__":

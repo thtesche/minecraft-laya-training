@@ -14,7 +14,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
-from .targets import flat_build_site, ground_targets
+from .targets import flat_build_site, ground_targets, _clear
 
 # Safe default when a chosen label cannot be resolved (should be rare; candidates are filtered).
 FALLBACK_LABEL = "get_wood"
@@ -142,6 +142,11 @@ class Agent:
         # fail again, so the chain is dropped and the relief falls back to `drop_junk` (live,
         # Nether run: the answer came on every tick and the run never reached the portal).
         self._chest_blocked = False
+        # Cells of the portal opening (`perception.portal_interior`) that hold a stray block,
+        # read while a frame build is pending. `clear_portal` digs them, so a block left above
+        # the support layer cannot stall the gate (live: a bed in the opening left
+        # `light_portal` answering `[PORTAL_NO_FRAME]` on every tick).
+        self._portal_blocked: list[tuple[int, int, int]] = []
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -153,6 +158,7 @@ class Agent:
         gs.pour_skip = frozenset(self._pour_skip)
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.chest_blocked = self._chest_blocked
+        gs.portal_blocked = list(self._portal_blocked)
         return gs
 
     async def _scan_build_site(self, gs) -> None:
@@ -187,7 +193,30 @@ class Agent:
         """One perception read, with the loop-owned facts and the base-site scan folded in."""
         gs = self._inject(await perception.build(self.mcp))
         await self._scan_build_site(gs)
+        await self._scan_portal_opening(gs)
         return gs
+
+    async def _scan_portal_opening(self, gs) -> None:
+        """Read the portal opening while a frame build is pending, so a stray block is dug.
+
+        The base scan (`flat_build_site`) only proves clearance for a site *it* chose; a base the
+        loop adopted from a standing bed, or one taken from the `base_target` fallback, never got
+        that check. A block left in the opening above the support layer would be built around and
+        `activate_portal` would answer `[PORTAL_NO_FRAME]` forever. One cheap `view_blocks cells`
+        read of the six opening cells fills `gs.portal_blocked` for `clear_portal`. Gated on the
+        flint and steel being carried and the portal unlit, which is exactly the build window.
+        """
+        if self.base is None or gs.pos is None or "flint_and_steel" not in gs.inventory:
+            return
+        if gs.resource_nearest("nether_portal") is not None:
+            return
+        try:
+            names = perception.parse_cells(
+                await perception.scan_frame_volume(self.mcp, self.base))
+        except Exception:
+            return
+        self._portal_blocked = [cell for cell in perception.portal_interior(self.base)
+                                if not _clear(names.get(cell))]
 
     def _adopt_homebase(self, gs) -> None:
         """Re-adopt a home base and chest a previous run left standing in the world.

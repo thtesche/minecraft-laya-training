@@ -53,6 +53,7 @@ CRITERIA: dict[str, str] = {
     "mine_obsidian": "carry a water bucket and mine obsidian: the dig pours the water onto lava and mines what forms",
     "get_flint": "dig gravel for flint, the spark the flint and steel needs",
     "craft_flint_and_steel": "craft flint and steel from flint and an iron ingot to light the portal",
+    "clear_portal": "dig stray blocks out of the portal opening so the frame can be built and lit",
     "build_portal": "build the nether portal frame from the ten banked obsidian and four cobblestone corners",
     "light_portal": "strike the built portal frame with the carried flint and steel to light it",
     "place_bed": "place the carried bed beside the lit portal so the respawn point sits at the gate",
@@ -872,7 +873,12 @@ def candidates(gs: GameState) -> list[str]:
         can_build = (obsidian >= PORTAL_OBSIDIAN
                      or (obsidian >= 1 and _portal_frame_started(gs)))
         if (_at_base(gs) and has_fs and can_build and cobble >= PORTAL_CORNERS):
-            out.append("build_portal")
+            # A block left standing in the opening (above the support layer) has to go first:
+            # the frame would be built around it and `light_portal` would answer
+            # `[PORTAL_NO_FRAME]` forever (live, Nether run: a bed the generic sleep laid
+            # "beside the bot" landed in the opening). `gs.portal_blocked` is filled by the
+            # loop's opening read; while it is non-empty the dig stands in front of the build.
+            out.append("clear_portal" if gs.portal_blocked else "build_portal")
         # After the build the ten obsidian have left the pack (`obsidian < PORTAL_OBSIDIAN`)
         # while the flint and steel remains - that is the "frame is standing" signal. It is
         # confirmed against the frame plane (`_portal_frame_started`) so natural obsidian near
@@ -1105,6 +1111,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         return Action(label, "craft_item", {"items": [{"item_name": FLINT_STEEL_ITEM}]},
                       "craft flint and steel from flint and an iron ingot")
+    if label == "clear_portal":
+        if (not _at_base(gs) or _portal_lit(gs) or not _has(inv, FLINT_STEEL_ITEM)
+                or not gs.portal_blocked):
+            return None
+        # At most four cells per call: `build_structure` runs one route search per cell and a
+        # long list has watchdog-killed the server. The opening is re-read every tick, so a
+        # bigger pile is dug over several ticks.
+        cells = [{"x": x, "y": y, "z": z, "block_name": "air"}
+                 for x, y, z in gs.portal_blocked[:4]]
+        return Action(label, "build_structure", {"blocks": cells},
+                      "dig the stray blocks out of the portal opening before the frame is built")
     if label == "build_portal":
         site = _portal_site(gs)
         obsidian = inv.get("obsidian", 0)

@@ -107,9 +107,15 @@ als Obsidian neu, also bliebe eine Zelle über einem Loch „ohne Anlegefläche"
 auf Hanggrund sonst in Stein stecken. Findet der Scan nichts, fällt
 die Wahl auf die nächste offene Oberfläche über dem Bot (`targets.base_target`) zurück. `go_home`
 läuft nur zurück, wenn dort Arbeit wartet (`_base_steps_ready`). Bett, Portalrahmen und Truhe stehen
-alle an diesem Anker (`build_portal`/`place_bed` nur bei `_at_base`). Der Nether-Pfad:
+alle an diesem Anker (`build_portal`/`place_bed` nur bei `_at_base`). Die **Portalöffnung** wird
+zusätzlich **vor dem Bau** geprüft und freigeräumt: der Loop liest die sechs Innenzellen
+(`perception.scan_frame_volume`) und `clear_portal` gräbt einen Fremdblock dort weg, bevor
+`build_portal` läuft (höchstens vier Zellen je Aufruf). Nötig ist das für die Basen, die *keinen*
+Scan hatten — eine übernommene oder per `base_target` gewählte Basis —, denn ein Block über der
+Tragschicht wird sonst umgebaut, und `light_portal` antwortet für immer `[PORTAL_NO_FRAME]` (live warf
+der generische Nachtschlaf ein Bett genau dorthin). Der Nether-Pfad:
 `craft_bucket` (3 Eisenbarren) → `fill_bucket` → `mine_obsidian` → `get_flint` (Gravel) →
-`craft_flint_and_steel` (2×2) → `build_portal` → `light_portal` → `place_bed`.
+`craft_flint_and_steel` (2×2) → `clear_portal` → `build_portal` → `light_portal` → `place_bed`.
 `mine_obsidian` **erzeugt** das Obsidian: der Lauf gießt den Wassereimer auf die nächste Lava
 (`use_bucket pour` auf die Lava-Zelle, notfalls erst dorthin laufen) und baut genau die entstandenen
 Blöcke ab. Natürlicher Obsidian liegt nur tief unter denselben Lavaseen (`y ≈ -55`) und wird bewusst

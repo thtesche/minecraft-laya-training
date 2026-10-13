@@ -72,7 +72,7 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     craft_bed -> sleep in der Nacht) und eat_food bei Hunger; Homebase
     (establish_base -> go_home, craft_chest/place_chest/stow_surplus) und
     Nether-Kette (craft_bucket -> fill_bucket -> mine_obsidian -> get_flint ->
-    craft_flint_and_steel -> build_portal -> light_portal -> place_bed); explore
+    craft_flint_and_steel -> clear_portal -> build_portal -> light_portal -> place_bed); explore
     nur als letzter Fallback (wenn nichts Produktives möglich ist).
 [5] Verify        (src/mlaya/verify.py)
     view_status erneut lesen; Soll/Ist-Delta (Inventar, Position, Health, Hunger,
@@ -519,9 +519,10 @@ nur eine Ebene tiefer.
   abzuarbeiten; sonst endet er mit `stop: "limit"`. `run --ignore-goal` schaltet die
   Abbruchbedingung für einen Lauf ab (Datensatz-Sammlung über das Ziel hinaus). Getestet in
   `tests/test_actions.py::TechTreeCompleteTest` und `tests/test_graph.py::GoalStopTest`.
-- **Nether-Kette (implementiert):** Acht Labels in `actions.py` führen vom fertigen Diamant-Kit zum
+- **Nether-Kette (implementiert):** Neun Labels in `actions.py` führen vom fertigen Diamant-Kit zum
   offenen Portal: `craft_bucket` (3 Eisenbarren) → `fill_bucket` → `mine_obsidian` → `get_flint`
-  (aus Gravel) → `craft_flint_and_steel` (2×2, **kein** Werktisch) → `build_portal`
+  (aus Gravel) → `craft_flint_and_steel` (2×2, **kein** Werktisch) → `clear_portal` (störende Blöcke
+  aus der Öffnung, s. Homebase) → `build_portal`
   (`build_structure portal_frame`, 10 Obsidian + 4 Cobblestone-Ecken) → `light_portal`
   (`activate_portal`) → `place_bed` (`sleep`). Die ganze Kette hängt an `_gear_ready` (ein frischer
   Lauf macht erst die Diamant-Tier fertig).
@@ -564,6 +565,15 @@ nur eine Ebene tiefer.
   Bot-Ebene, nächste zuerst). `establish_base` legt den Anker als `GameState.base` fest; `go_home`
   läuft nur zurück, wenn wirklich Basisarbeit wartet (`_base_steps_ready`). `build_portal`/`place_bed`
   sind auf `_at_base` beschränkt, `_portal_site` ankert am Base-Block statt an den Füßen.
+  **Öffnung vor dem Bau freiräumen:** Der Scan sichert die Lichtung nur für die Basis, die *er*
+  gewählt hat. Eine übernommene Basis (`_adopt_homebase`) oder eine per `base_target` gewählte hatte
+  diese Prüfung nie. Darum liest der Loop während des Bau-Fensters (Flint&Steel getragen, Portal
+  unlit) die sechs Innenzellen der Öffnung (`perception.scan_frame_volume` → `parse_cells` →
+  `perception.portal_interior`); liegt dort ein nicht-replacebarer Block, steht in den Kandidaten
+  `clear_portal` statt `build_portal` und gräbt ihn weg (`build_structure` mit `block_name: "air"`,
+  höchstens vier Zellen je Aufruf — der Server startet je Zelle eine Routensuche). Ein Block über
+  der Tragschicht würde sonst umgebaut und `light_portal` antwortete für immer `[PORTAL_NO_FRAME]`
+  (live warf der generische Nachtschlaf ein Bett genau dorthin).
   **Schlafen setzt den Respawn:** `place_bed` (via `sleep`)
   wird **nur nachts** angeboten — bei Tag würde das Bett nur platziert, der Pausepunkt bliebe unset.
   `_bed_available` zählt auch ein **platziertes** Bett (nicht nur ein getragenes): nach einem

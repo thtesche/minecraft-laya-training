@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.perception import parse_box, parse_resource_counts, parse_status
+from mlaya.perception import (parse_box, parse_cells, parse_resource_counts, parse_status,
+                              portal_interior)
 
 
 def _status(situation: dict) -> dict:
@@ -62,6 +63,35 @@ class BoxParseTest(unittest.TestCase):
         self.assertEqual(parse_box({}), {})
         self.assertEqual(parse_box({"response": {"data": {"result": {"blocks": {
             "box": {"center": None}}}}}}), {})
+
+
+class FrameOpeningParseTest(unittest.TestCase):
+    """`parse_cells` + `portal_interior`: the opening read that gates `clear_portal`.
+
+    The opening is read cell by cell (`view_blocks cells`, not a box), so it needs its own
+    parser; a block found there sits above the support layer and blocks the build.
+    """
+
+    _DATA = {"response": {"data": {"result": {"blocks": {"cells": [
+        {"x": 1, "y": 2, "z": 3, "name": "air", "shape": "open"},
+        {"x": 4, "y": 5, "z": 6, "name": "cobblestone", "shape": "solid"},
+    ]}}}}}
+
+    def test_every_cell_maps_to_its_block_name(self) -> None:
+        self.assertEqual(parse_cells(self._DATA),
+                         {(1, 2, 3): "air", (4, 5, 6): "cobblestone"})
+
+    def test_malformed_cells_read_is_empty(self) -> None:
+        self.assertEqual(parse_cells({}), {})
+        self.assertEqual(parse_cells({"response": {"data": {"result": {"blocks": {}}}}}), {})
+
+    def test_the_interior_is_the_two_by_three_opening_above_the_ground(self) -> None:
+        # Base anchor (-197, -47, -98): the frame stands at z = -98 with its bottom row on the
+        # ground, so the opening is the 2x3 interior at (-195..-194, -46..-44).
+        cells = portal_interior((-197, -47, -98))
+        self.assertEqual(len(cells), 6)
+        self.assertEqual(set(cells),
+                         {(x, y, -98) for x in (-195, -194) for y in (-46, -45, -44)})
 
 
 class ArmourParseTest(unittest.TestCase):

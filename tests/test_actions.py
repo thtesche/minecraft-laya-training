@@ -858,6 +858,45 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("build_portal", candidates(g))
         self.assertIsNone(resolve("build_portal", g))
 
+    def test_stray_block_in_the_opening_is_dug_before_the_build(self) -> None:
+        # A block left above the support layer (a bed the old sleep laid "beside the bot", a
+        # leftover block) must go first: the frame would be built around it and `light_portal`
+        # would answer `[PORTAL_NO_FRAME]` forever. The loop's opening read fills
+        # `gs.portal_blocked`, and while it is non-empty the dig stands in front of the build.
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=10, cobblestone=4))
+        g.portal_blocked = [(-195, -46, -98), (-195, -45, -98)]
+        self.assertIn("clear_portal", candidates(g))
+        self.assertNotIn("build_portal", candidates(g))
+        a = resolve("clear_portal", g)
+        self.assertEqual(a.tool, "build_structure")
+        self.assertEqual(a.args["blocks"], [
+            {"x": -195, "y": -46, "z": -98, "block_name": "air"},
+            {"x": -195, "y": -45, "z": -98, "block_name": "air"},
+        ])
+
+    def test_clear_portal_digs_at_most_four_cells_a_call(self) -> None:
+        # `build_structure` runs one route search per cell and a long list watchdog-kills the
+        # server; the opening is re-read every tick, so a bigger pile is dug over several ticks.
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=10, cobblestone=4))
+        g.portal_blocked = [(-195, -46, -98), (-195, -45, -98), (-195, -44, -98),
+                            (-194, -46, -98), (-194, -45, -98), (-194, -44, -98)]
+        a = resolve("clear_portal", g)
+        self.assertEqual(len(a.args["blocks"]), 4)
+        self.assertTrue(all(c["block_name"] == "air" for c in a.args["blocks"]))
+
+    def test_clear_portal_stays_put_without_a_blocked_opening(self) -> None:
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=10, cobblestone=4))
+        self.assertIsNone(resolve("clear_portal", g))
+        self.assertIn("build_portal", candidates(g))
+        self.assertNotIn("clear_portal", candidates(g))
+
+    def test_clear_portal_waits_until_the_bot_is_at_the_base(self) -> None:
+        g = self._geared(flint_and_steel=1, obsidian=10, cobblestone=4)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)  # geared but far from home
+        g.portal_blocked = [(-195, -46, -98)]
+        self.assertIsNone(resolve("clear_portal", g))
+
     def test_light_portal_strikes_the_nearest_frame_block(self) -> None:
         # After the build the ten obsidian have left the pack; an obsidian hit *inside the
         # frame plane* confirms the frame is standing, and its nearest block is struck.
