@@ -265,7 +265,10 @@ class Agent:
     async def _guard(self, state: AgentState) -> dict:
         gs = state["before"]
         decision = state["decision"]
-        if self._blocked_label == decision.action_label:
+        # `_blocked_label is not None` matters: a deferral carries `action_label = None`, and
+        # `None == None` would otherwise inject an unblock step instead of letting the
+        # server-side survival policy own that tick.
+        if self._blocked_label is not None and self._blocked_label == decision.action_label:
             if self._unblock_done:
                 # The surroundings were changed for this label (`make_room`, then `explore`);
                 # let the label itself run now, otherwise the guard intercepts it on every tick

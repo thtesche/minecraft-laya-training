@@ -155,6 +155,14 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         out = await agent._guard(state)
         self.assertEqual(out["action"].tool, "craft_item")
 
+    async def test_a_deferral_with_nothing_blocked_stays_a_deferral(self) -> None:
+        # A deferral carries `action_label = None`; `None == None` used to inject `make_room`
+        # (live, from-zero run it5) instead of leaving the tick to the survival policy.
+        agent = self._agent()
+        out = await agent._guard({"before": gs(pos=(-277.5, 87.0, -51.6), resources=_ground()),
+                                  "decision": Decision(None, deferred=True)})
+        self.assertEqual(out, {"action": None, "deferred": True, "note": ""})
+
     def test_a_successful_unblock_keeps_the_label_and_the_count(self) -> None:
         # Regression: the shield run's sleep/make_room loop. Clearing the label when the
         # *unblock* succeeds reset the count each time, so the stage-2 explore was unreachable.
