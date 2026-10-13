@@ -550,7 +550,7 @@ def _base_steps_ready(gs: GameState) -> bool:
     if (_portal_lit(gs) and _has_bed(inv) and not _bed_placed(gs)
             and gs.phase == "night"):
         return True
-    if _has(inv, CHEST_ITEM) and not _chest_ready(gs):
+    if not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs):
         return True
     if _chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _junk_carried(inv):
         return True
@@ -888,7 +888,7 @@ def candidates(gs: GameState) -> list[str]:
     # --- Home base storage ---
     # A chest at the base is where a filling pack sheds surplus, well before the server's
     # `[INVENTORY_FULL]` refusal; `drop_junk` is only the fallback when no chest is there.
-    if gs.base is not None and not _chest_ready(gs):
+    if gs.base is not None and not _chest_ready(gs) and not gs.chest_blocked:
         if _has(inv, CHEST_ITEM) and _at_base(gs):
             out.append("place_chest")
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
@@ -1236,14 +1236,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": bx, "y": by + 1, "z": bz, "dig": True, "scaffold": True},
                       "walk back to the home base to place the bed, the portal or a chest")
     if label == "craft_chest":
-        if (gs.base is None or _has(inv, CHEST_ITEM) or _chest_ready(gs)
+        if (gs.base is None or _has(inv, CHEST_ITEM) or _chest_ready(gs) or gs.chest_blocked
                 or not _has(inv, "crafting_table") or _plank_units(inv) < CHEST_PLANKS):
             return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": CHEST_ITEM}], "temporary_workstation": True},
                       "craft a chest from eight planks to store surplus at the base")
     if label == "place_chest":
-        if gs.base is None or _chest_ready(gs) or not _has(inv, CHEST_ITEM):
+        if gs.base is None or _chest_ready(gs) or gs.chest_blocked or not _has(inv, CHEST_ITEM):
             return None
         bx, by, bz = gs.base
         return Action(label, "place_block",

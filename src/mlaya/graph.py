@@ -137,6 +137,11 @@ class Agent:
         # then on the relief drops the surplus on the open ground instead. That still frees the
         # slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall on it.
         self._drop_hole_blocked = False
+        # A `place_chest` the base's ground refused (`[PLACE_NO_SUPPORT]`): no solid block
+        # touches the cell beside the base, so the chest cannot stand there. Retrying can only
+        # fail again, so the chain is dropped and the relief falls back to `drop_junk` (live,
+        # Nether run: the answer came on every tick and the run never reached the portal).
+        self._chest_blocked = False
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -147,6 +152,7 @@ class Agent:
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
         gs.drop_hole_blocked = self._drop_hole_blocked
+        gs.chest_blocked = self._chest_blocked
         return gs
 
     async def _scan_build_site(self, gs) -> None:
@@ -369,6 +375,19 @@ class Agent:
         if "DROP_HOLE_UNAVAILABLE" in (text or ""):
             self._drop_hole_blocked = True
 
+    def _note_chest(self, action, ok: bool, text: str | None) -> None:
+        """Remember that the base's ground cannot hold the chest, so the chain is dropped.
+
+        `[PLACE_NO_SUPPORT]` says no solid block touches the cell beside the base: a property
+        of the base site, not of the attempt (live, Nether run: the run answered it on every
+        tick and never reached the portal). Giving the chest up lets the inventory relief fall
+        back to `drop_junk`, which still frees the slots it is for and cannot fail.
+        """
+        if ok or action.label != "place_chest":
+            return
+        if "PLACE_NO_SUPPORT" in (text or ""):
+            self._chest_blocked = True
+
     async def _verify(self, state: AgentState) -> dict:
         before = state["before"]
         action = state["action"]
@@ -380,6 +399,7 @@ class Agent:
         self._note_block(action.label, _ok, _text)
         self._note_pour(action, _ok, _text)
         self._note_drop(action, _ok, _text)
+        self._note_chest(action, _ok, _text)
         if action.label == "stow_surplus":
             # A failed deposit means the chest is full; stop offering it as the relief.
             self._stow_blocked = not _ok

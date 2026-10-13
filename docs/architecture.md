@@ -578,6 +578,11 @@ nur eine Ebene tiefer.
   Notnagel ohne Truhe. Ein `[INVENTORY_FULL]`-Refusal löst eine eigene Relief-Stufe aus
   (`blocked_by_inventory` → `inventory_relief`: Truhe, sonst werfen; eine volle Truhe schaltet
   `allow_stow` ab). Basis/Truhe sind **pro Lauf** und werden vom Loop in jeden `GameState` injiziert.
+  Kann die Truhe am Platz nicht stehen — der Server antwortet `[PLACE_NO_SUPPORT]`, wenn kein
+  fester Block an die Zelle grenzt (live, Nether-Lauf: die Basis lag auf einer schmalen Kante und
+  `place_chest` lief in jedem Tick auf, statt das Portal zu bauen) —, so merkt sich
+  `Agent._note_chest` das und lässt die ganze Truhen-Kette fallen (`gs.chest_blocked`); das Relief
+  greift dann auf `drop_junk` zurück, das dieselben Slots freimacht und nicht scheitern kann.
   `Agent._adopt_homebase` übernimmt beim Tick-Start ein bereits **stehendes** Bett in Reichweite
   (`ADOPT_BED_RADIUS` = 12 m) als Anker und eine **Truhe** in Ankernähe (`ADOPT_CHEST_RADIUS` = 4)
   als `chest_pos` — so läuft ein Neustart an derselben Homebase weiter, statt eine zweite zu bauen

@@ -212,6 +212,12 @@ class GameState:
     # from then on the drop goes onto the open ground instead of into a dug hole. Both free the
     # slots the relief is for, and the open drop cannot fail, so the loop cannot stall on it.
     drop_hole_blocked: bool = False
+    # A `place_chest` the terrain refused for want of a supporting block (`[PLACE_NO_SUPPORT]`):
+    # no solid block touches the cell beside the base, so the chest cannot stand there. That is
+    # a property of the base's ground, so the loop gives the chest chain up and lets the
+    # inventory relief drop surplus instead of retrying a placement that can never land (live,
+    # Nether run: the answer came on every tick and the run never reached the portal).
+    chest_blocked: bool = False
     # Whether a block kind exists anywhere in the loaded world, even beyond RESOURCE_RADIUS.
     # `view_blocks find` reports a per-name `found` count across every loaded chunk, so a deep
     # deposit the 64 m scan cannot list still proves the ore is there to dig for. This is what

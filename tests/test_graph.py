@@ -198,6 +198,7 @@ class PourSkipTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._pour_skip = set()
         agent._drop_hole_blocked = False
+        agent._chest_blocked = False
         agent.build_site = None
         return agent
 
@@ -245,6 +246,7 @@ class DropHoleTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._drop_hole_blocked = False
+        agent._chest_blocked = False
         agent.build_site = None
         return agent
 
@@ -269,6 +271,51 @@ class DropHoleTest(unittest.TestCase):
         agent._pour_skip = set()
         agent._drop_hole_blocked = True
         self.assertTrue(agent._inject(gs()).drop_hole_blocked)
+
+
+class ChestSupportTest(unittest.TestCase):
+    """A chest the base's ground cannot hold is dropped from the chain, not retried forever.
+
+    Live, Nether run: the base stood on a narrow ledge, the cell beside it had no supporting
+    block, and `place_chest` answered `[PLACE_NO_SUPPORT]` on every tick, so the run never
+    reached the portal. The answer is a property of the base site, so the loop remembers it and
+    the inventory relief falls back to `drop_junk`.
+    """
+
+    class _Action:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            self.tool = "place_block"
+            self.args = {"block_name": "chest", "x": 1, "y": 2, "z": 3}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._chest_blocked = False
+        agent.build_site = None
+        return agent
+
+    def test_remembers_the_unsupported_cell(self) -> None:
+        agent = self._agent()
+        agent._note_chest(self._Action("place_chest"), False,
+                          "[PLACE_NO_SUPPORT] No adjacent solid block can support placement "
+                          "into the target cell.")
+        self.assertTrue(agent._chest_blocked)
+
+    def test_ignores_success_and_other_labels(self) -> None:
+        agent = self._agent()
+        agent._note_chest(self._Action("place_chest"), True, "[PLACE_NO_SUPPORT]")
+        agent._note_chest(self._Action("place_bed"), False, "[PLACE_NO_SUPPORT]")
+        agent._note_chest(self._Action("place_chest"), False, "[PLACE_BLOCK_FAILED]")
+        self.assertFalse(agent._chest_blocked)
+
+    def test_inject_hands_the_flag_to_the_state(self) -> None:
+        agent = self._agent()
+        agent.base = None
+        agent.chest_pos = None
+        agent._pour_skip = set()
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = True
+        self.assertTrue(agent._inject(gs()).chest_blocked)
 
 
 class GoalStopTest(unittest.TestCase):

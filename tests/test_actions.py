@@ -1030,6 +1030,28 @@ class HomeBaseTest(unittest.TestCase):
         self.assertEqual(a.args["block_name"], "chest")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -97))
 
+    def test_the_chest_chain_is_dropped_when_the_ground_cannot_hold_it(self) -> None:
+        # `[PLACE_NO_SUPPORT]` says no solid block touches the cell beside the base, so the
+        # chest cannot stand there (live: the run looped on it and never reached the portal).
+        # Once the loop knows, neither half of the chain is offered again, so the portal gets
+        # its turn and the relief falls back to `drop_junk`.
+        g = self._home(self._geared(chest=1))
+        g.chest_blocked = True
+        self.assertNotIn("place_chest", candidates(g))
+        self.assertIsNone(resolve("place_chest", g))
+        g2 = self._home(self._geared(oak_planks=8))
+        g2.chest_blocked = True
+        self.assertNotIn("craft_chest", candidates(g2))
+        self.assertIsNone(resolve("craft_chest", g2))
+
+    def test_a_blocked_chest_does_not_justify_going_home(self) -> None:
+        g = self._geared(chest=1)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)
+        g.chest_blocked = True
+        self.assertNotIn("go_home", candidates(g))
+        self.assertIsNone(resolve("go_home", g))
+
     def test_stow_surplus_deposits_into_the_base_chest(self) -> None:
         g = self._home(self._geared(tuff=64))
         g.chest_pos = (-197, -46, -97)

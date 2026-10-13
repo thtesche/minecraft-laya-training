@@ -125,7 +125,11 @@ Für Überschuss sorgt eine **Truhe** (`craft_chest` aus 8 Planken → `place_ch
 `[INVENTORY_FULL]`-Refusal löst eine eigene Relief-Stufe aus (`inventory_relief`). Base und Truhe
 gelten **pro Lauf** und werden vom Loop in jeden `GameState` injiziert; steht beim Start schon ein
 Bett (und eine Truhe) in Reichweite, werden sie übernommen, damit ein Neustart an derselben Homebase
-weiterläuft statt eine zweite zu bauen.
+weiterläuft statt eine zweite zu bauen. Kann die Truhe am gewählten Platz nicht stehen — der
+Server antwortet `[PLACE_NO_SUPPORT]`, wenn kein fester Block an die Zelle grenzt (live stand die
+Basis auf einer schmalen Kante, und der Lauf hing in jedem Tick auf `place_chest`, statt das Portal
+zu bauen) —, lässt der Loop die Truhen-Kette fallen: das Relief wirft den Überschuss dann einfach
+auf den Boden (`drop_junk`), was dieselben Slots freimacht und nicht scheitern kann.
 
 **Entschärft:** `hunt_food` war ungeschützt zur nächsten Kreatur geroamt (ein Nachtlauf wanderte
 159–190 m und wurde zweimal getötet, Totalverlust des Inventars). Jetzt ist es an eine
