@@ -112,6 +112,13 @@ def _armor_tier(item: str) -> str | None:
     return None
 
 
+# The server's air variants: a cell holding one of these has no block in it. `cave_air` is the
+# variant for air enclosed by blocks (a cave, or a spot under an overhang) and behaves like open
+# `air` wherever a cell only has to be empty -- a lava source in a cave is as pourable as one
+# under open sky.
+AIR_NAMES = frozenset({"air", "cave_air", "void_air"})
+
+
 @dataclass(frozen=True)
 class BlockHit:
     """One `view_blocks find` hit: a concrete block, its position, and its neighbours.

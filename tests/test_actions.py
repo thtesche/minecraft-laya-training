@@ -765,6 +765,36 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("mine_obsidian", candidates(g))
         self.assertIsNone(resolve("mine_obsidian", g))
 
+    def test_mine_obsidian_accepts_a_source_under_a_cave_roof(self) -> None:
+        # Live, from-zero run: both lava sources in scan reach sat under `cave_air`, and the step
+        # required exactly `"air"` above the target, so `mine_obsidian` was never offered at all
+        # and the bot wandered the surface with `explore` alone until the iteration limit.
+        g = self._geared(water_bucket=1)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -270, 64, -56, 3.0,
+                     above="cave_air", below="stone", level=2),
+            BlockHit("lava", "lava", -270, 64, -57, 4.0,
+                     above="cave_air", below="stone", level=0),
+        ]}
+        self.assertIn("mine_obsidian", candidates(g))
+        self.assertEqual(resolve("mine_obsidian", g).args,
+                         {"action": "pour", "liquid": "water", "x": -270, "y": 64, "z": -56})
+
+    def test_mine_obsidian_needs_solid_ground_not_cave_air(self) -> None:
+        # The floor rule reads the same air variants: `cave_air` under the target is not a block
+        # to click beside, so this cell stays out.
+        g = self._geared(water_bucket=1)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -270, 64, -56, 3.0,
+                     above="air", below="cave_air", level=2),
+            BlockHit("lava", "lava", -270, 64, -57, 4.0,
+                     above="air", below="stone", level=0),
+        ]}
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
+
     def test_mine_obsidian_skips_a_refused_pour_cell(self) -> None:
         # The loop remembers a cell a pour was refused at; the next tick goes to the next
         # source instead of retrying the stopped-up one forever.

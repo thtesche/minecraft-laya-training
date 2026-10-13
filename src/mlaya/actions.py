@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .perception import INVENTORY_NEAR_FULL, GameState
+from .perception import AIR_NAMES, INVENTORY_NEAR_FULL, GameState
 from .targets import base_target
 
 # Labels Laya may choose among; each maps to a real mine-ai MCP tool.
@@ -472,8 +472,12 @@ def _lava_pour_target(gs: GameState) -> BlockHit | None:
         Pouring straight *into* a source deletes it, so the target is a lava cell *beside* a
         source -- the poured water then flows onto the source and makes obsidian.
       * The bucket clicks a solid block beside the target cell, so a target over lava or air
-        answers `[BUCKET_NO_FACE]`; its `below` must be solid.
-      * The cell must be open above (`above == "air"`), or the water cannot be placed at all.
+        answers `[BUCKET_NO_FACE]`; its `below` must be solid (no air variant and not lava).
+      * The cell must be open above: `above` is one of the server's air variants, since
+        `cave_air` under an overhang is as good as open `air`. Requiring exactly `"air"` threw
+        every cave source away and the run never offered `mine_obsidian` at all (live, from-zero
+        run: both lava sources in scan reach sat under `cave_air`, so the bot wandered the
+        surface with `explore` alone while the portal chain waited for obsidian).
     Cells the server already refused (`gs.pour_skip`) are passed over, so a stopped-up pond
     does not starve the run of the lava lake further off.
     """
@@ -484,8 +488,8 @@ def _lava_pour_target(gs: GameState) -> BlockHit | None:
     if not sources:
         return None
     for h in hits:  # already nearest first
-        if (h.pos in gs.pour_skip or h.above != "air"
-                or h.below in (None, "lava", "air")):
+        if (h.pos in gs.pour_skip or h.above not in AIR_NAMES
+                or h.below in (None, "lava") or h.below in AIR_NAMES):
             continue
         if any((h.x + dx, h.y, h.z + dz) in sources for dx, _, dz in _LATERAL):
             return h
