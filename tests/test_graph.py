@@ -403,9 +403,10 @@ class GoalStopTest(unittest.TestCase):
     @staticmethod
     def _complete() -> GameState:
         # The full overworld goal: diamond kit worn, shield off-hand, the portal lit and a bed
-        # beside it (both read from the world-block resources, not the inventory).
+        # beside it (both read from the world-block resources, not the inventory), and the Nether
+        # prep banked (bow + arrows + the deep cobblestone stack, see `_nether_prep_steps`).
         return gs(tools={"pickaxe": "diamond", "sword": "diamond"},
-                  inventory={"diamond_sword": 1},
+                  inventory={"diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64},
                   armor={slot: {"item": f"diamond_{slot}"}
                          for slot in ("helmet", "chestplate", "leggings", "boots")},
                   offhand="shield",

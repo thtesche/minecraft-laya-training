@@ -165,10 +165,25 @@ Fleisch vor `rotten_flesh`. Goldene Karotten (die beste Nether-Nahrung) brauchen
 dieser Bot weder anbaut noch schürft — gebratenes Fleisch ist das Beste in Reichweite. Findet sich gar
 keine Arbeit, hält `wait` die Position an der Basis, statt wegzulaufen.
 
-**Nether-Vorbereitung (Post-Portal-Schritt):** Zwischen „Portal brennt" und „Bot betritt den
-Nether" fehlt eine Vorbereitungsstufe. Der Entwurf — Abgleich des optimalen Nether-Inventars mit
-dem, was der Bot kann (Bogen+Pfeile als eigentliche Lücke, Goldhelm für Piglins, Feuerschutz als
-Henne-Ei, Sicherheits-Gates gegen Bett/Wasser im Nether) — steht in
+**Nether-Vorbereitung (Post-Portal-Schritt, umgesetzt):** Dieselbe Lull rüstet jetzt auch die
+übrige Nether-Ausrüstung nach (`_all_nether_prep_steps`, ein einziger Ort für Angebot **und**
+Auto-Stop): einen **Bogen mit ≥ 16 Pfeilen** (`craft_bow`; 3 Fäden aus `hunt_string` + Stöcke, Pfeile
+aus Flint + Stock + Feder — `get_flint` wird nach dem Feuerzeug dafür wieder geöffnet, `hunt_feather`
+sammelt Federn), einen **Goldhelm** (`mine_gold` → `smelt_gold` → `craft_gold_helmet`; ein Stück
+goldene Rüstung hält Piglins neutral, getragen erst im Nether) und einen **tiefen Bruchstein-Vorrat**
+(`NETHER_COBBLE = 64`). Der Bogen ist die eigentliche Lücke: der **Server-Kampf feuert ihn selbst**
+(`combat.bow`), der Bot muss ihn nur tragen. `tech_tree_complete` verlangt jetzt zusätzlich, dass
+kein Prep-Schritt mehr offen ist — der Lauf bereitet sich also fertig vor, statt mit dem Bett in der
+ersten Nacht zu enden. Jeder Schritt fällt aus der Liste, sobald er nicht mehr weiterkommt (kein
+Spawn, kein Erz geladen), ein unerreichbares Item blockiert den Lauf also nie. Der Tiefen-Grab nach
+Gold ist nachts nicht im Angebot (`_nether_prep_steps` filtert ihn), bleibt aber für den Auto-Stop
+offen.
+
+**Sicherheits-Gates Nether:** `sleep`, `place_bed` und `fill_bucket` sind über `_overworld(gs)` auf
+die Oberwelt beschränkt — ein Bett im Nether explodiert, Wasser verdunstet dort.
+
+Entwurf, Abgleich des optimalen Nether-Inventars mit dem, was der Bot kann (Feuerschutz als
+Henne-Ei, Elytra/Totem/Shulker außer Reichweite, offene Frage Goldhelm vs. Diamanthelm), steht in
 [`docs/nether-prep.md`](docs/nether-prep.md).
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).

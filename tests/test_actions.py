@@ -286,8 +286,11 @@ class NetherLullWaitTest(unittest.TestCase):
 
     @staticmethod
     def _idle() -> GameState:
-        g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=12, white_bed=1,
-                                      iron_ingot=1, cooked_beef=24, furnace=1)))
+        # The Nether prep is already banked (bow, arrows, deep cobblestone stack), so the lull
+        # has no productive step left and the only sensible tick is holding at the base.
+        g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=64, white_bed=1,
+                                      iron_ingot=1, cooked_beef=24, furnace=1,
+                                      bow=1, arrow=16)))
         g.food = 20.0
         g.chest_pos = (-198, -47, -98)
         return g
@@ -314,6 +317,170 @@ class NetherLullWaitTest(unittest.TestCase):
     def test_wait_needs_the_base(self) -> None:
         g = lit_portal(geared(flint_and_steel=1, cobblestone=12, white_bed=1, cooked_beef=24))
         self.assertIsNone(resolve("wait", g))
+
+
+class NetherPrepTest(unittest.TestCase):
+    """The post-portal lull stocks the Nether kit beyond the food: a bow with arrows, a gold
+    helmet and a deep cobblestone stack (`_nether_prep_steps`). Each step is offered only while
+    it can progress, so an unreachable material never blocks the run."""
+
+    @staticmethod
+    def _lull(**inv) -> GameState:
+        base = {"flint_and_steel": 1, "white_bed": 1, "cooked_beef": 24, "furnace": 1,
+                "cobblestone": 64, "acacia_planks": 4}
+        base.update(inv)
+        g = at_home(lit_portal(geared(**base)))
+        g.food = 20.0
+        return g
+
+    # --- bow: three string from a lone spider plus sticks ---
+    def test_craft_bow_from_string_and_sticks(self) -> None:
+        a = resolve("craft_bow", self._lull(string=3))
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "bow"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_craft_bow_needs_three_string(self) -> None:
+        self.assertIsNone(resolve("craft_bow", self._lull(string=2)))
+
+    def test_bow_string_goal_drops_to_three_once_the_bed_exists(self) -> None:
+        # Twelve string is the bed's price; with the bed placed the bow only wants three.
+        g = self._lull()
+        g.mobs = [("spider", "hostile", 1, 8.0)]
+        g.health = 20.0
+        a = resolve("hunt_string", g)
+        self.assertEqual(a.args["count"], 3)
+
+    # --- arrows: flint, stick and feather ---
+    def test_craft_arrows_needs_flint_and_feather(self) -> None:
+        a = resolve("craft_arrows", self._lull(bow=1, flint=1, feather=1))
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "arrow"}])
+
+    def test_craft_arrows_needs_a_feather(self) -> None:
+        self.assertIsNone(resolve("craft_arrows", self._lull(bow=1, flint=1)))
+
+    def test_arrows_are_not_crafted_before_the_lull(self) -> None:
+        # No lit portal: the prep is out of scope, so arrow craft stays closed.
+        self.assertIsNone(resolve("craft_arrows", geared(flint=1, feather=1)))
+
+    def test_feathers_come_from_a_chicken(self) -> None:
+        g = self._lull(bow=1)
+        g.mobs = [("chicken", "animal", 4, 6.0)]
+        a = resolve("hunt_feather", g)
+        self.assertEqual(a.args["mob_name"], "chicken")
+        self.assertEqual(a.args["drop_name"], "feather")
+
+    def test_flint_reopens_for_arrows_after_flint_and_steel(self) -> None:
+        # Carrying flint and steel used to close the gravel dig for good; the bow reopens it.
+        g = self._lull(bow=1)
+        g.resources = {**g.resources,
+                       "gravel": [BlockHit("gravel", "gravel", -196, -48, -98, 5.0)]}
+        a = resolve("get_flint", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "gravel")
+
+    # --- gold helmet: mine, smelt, craft ---
+    def test_mine_gold_for_the_helmet(self) -> None:
+        g = self._lull()
+        g.resources = {**g.resources,
+                       "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
+        a = resolve("mine_gold", g)
+        self.assertEqual(a.args["block_name"], "gold_ore")
+        self.assertEqual(a.args["count"], 5)
+
+    def test_mine_gold_needs_a_deposit(self) -> None:
+        self.assertIsNone(resolve("mine_gold", self._lull()))
+
+    def test_mine_gold_counts_raw_gold_already_banked(self) -> None:
+        g = self._lull(raw_gold=2)
+        g.resources = {**g.resources,
+                       "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
+        self.assertIsNone(resolve("mine_gold", g))
+
+    def test_smelt_gold(self) -> None:
+        a = resolve("smelt_gold", self._lull(raw_gold=5, coal=1))
+        self.assertEqual(a.tool, "smelt_item")
+        self.assertEqual(a.args["item_name"], "raw_gold")
+        self.assertEqual(a.args["fuel_item_name"], "coal")
+
+    def test_craft_gold_helmet(self) -> None:
+        a = resolve("craft_gold_helmet", self._lull(gold_ingot=5))
+        self.assertEqual(a.args["items"], [{"item_name": "golden_helmet"}])
+
+    def test_gold_helmet_needs_five_ingots(self) -> None:
+        self.assertIsNone(resolve("craft_gold_helmet", self._lull(gold_ingot=4)))
+
+    def test_a_carried_helmet_closes_the_gold_chain(self) -> None:
+        self.assertIsNone(resolve("craft_gold_helmet", self._lull(gold_ingot=5, golden_helmet=1)))
+
+    # --- candidates: the lull offers the prep, the chain does not ---
+    def test_lull_offers_the_prep_steps(self) -> None:
+        g = self._lull(string=3, bow=1, flint=1, feather=1)
+        g.resources = {**g.resources,
+                       "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
+        cand = candidates(g)
+        self.assertIn("craft_arrows", cand)
+        self.assertIn("mine_gold", cand)
+
+    def test_no_prep_before_the_portal(self) -> None:
+        g = geared(flint_and_steel=1, cobblestone=64, string=3)
+        self.assertNotIn("craft_bow", candidates(g))
+
+    def test_light_cobble_floor_before_the_portal(self) -> None:
+        # Before the portal the floor stays twelve, so twelve carried blocks are enough.
+        self.assertNotIn("mine_stone", candidates(geared(cobblestone=12)))
+
+    def test_deep_cobble_stack_is_stocked_in_the_lull(self) -> None:
+        g = self._lull(bow=1, arrow=16, cobblestone=12)
+        self.assertIn("mine_stone", candidates(g))
+
+    def test_mine_stone_is_not_listed_twice(self) -> None:
+        # Both the light floor and the deep lull stack want it; the list keeps one occurrence.
+        g = self._lull(bow=1, arrow=16, cobblestone=5)
+        self.assertEqual(candidates(g).count("mine_stone"), 1)
+
+    def test_the_gold_dig_waits_for_daylight(self) -> None:
+        # At night the run sleeps; the deep gold dig is not offered then, but it stays pending
+        # for the completion gate so nightfall cannot end the run early.
+        from mlaya.actions import _all_nether_prep_steps, tech_tree_complete
+        g = self._lull(bow=1, arrow=16)
+        g.resources = {**g.resources,
+                       "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)],
+                       "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -97, 2.0)]}
+        g.phase = "night"
+        self.assertNotIn("mine_gold", candidates(g))
+        self.assertIn("mine_gold", _all_nether_prep_steps(g))
+        self.assertFalse(tech_tree_complete(g))
+        g.phase = "day"
+        self.assertIn("mine_gold", candidates(g))
+
+
+class OverworldGateTest(unittest.TestCase):
+    """A bed placed in the Nether explodes and water evaporates there, so the Overworld-only
+    steps (`sleep`, `place_bed`, `fill_bucket`) are refused off-dimension."""
+
+    def _night(self, dimension: str) -> GameState:
+        g = lit_portal(at_home(geared(white_bed=1)))
+        g.phase = "night"
+        g.dimension = dimension
+        return g
+
+    def test_sleep_refused_in_the_nether(self) -> None:
+        g = self._night("minecraft:the_nether")
+        self.assertIsNone(resolve("sleep", g))
+        self.assertNotIn("sleep", candidates(g))
+
+    def test_place_bed_refused_in_the_nether(self) -> None:
+        self.assertIsNone(resolve("place_bed", self._night("minecraft:the_nether")))
+
+    def test_overworld_still_allows_the_bed(self) -> None:
+        self.assertIsNotNone(resolve("sleep", self._night("minecraft:overworld")))
+
+    def test_fill_bucket_refused_in_the_nether(self) -> None:
+        g = geared(bucket=1)
+        g.dimension = "the_nether"
+        self.assertIsNone(resolve("fill_bucket", g))
 
 
 class MakeRoomTest(unittest.TestCase):
@@ -691,7 +858,9 @@ class TechTreeCompleteTest(unittest.TestCase):
     def _complete(self, **overrides) -> GameState:
         base = dict(
             tools={"pickaxe": "diamond", "sword": "diamond"},
-            inventory={"diamond_sword": 1},
+            # The Nether prep is banked too: a bow with arrows and the deep cobblestone stack
+            # (`_nether_prep_steps`), so the completion gate is satisfied.
+            inventory={"diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64},
             armor={slot: {"item": f"diamond_{slot}"}
                    for slot in ("helmet", "chestplate", "leggings", "boots")},
             offhand="shield",
@@ -726,6 +895,26 @@ class TechTreeCompleteTest(unittest.TestCase):
     def test_a_missing_bed_is_not_done(self) -> None:
         g = self._complete(resources={"nether_portal": self._gate()["nether_portal"]})
         self.assertFalse(tech_tree_complete(g))
+
+    def test_the_deep_cobble_stack_is_required(self) -> None:
+        # Portal, bed and the whole kit stand, but the Nether shield stack is not banked.
+        g = self._complete(inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
+                                      "cobblestone": 6})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_pending_gold_prep_blocks_completion(self) -> None:
+        res = {**self._gate(),
+               "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
+        g = self._complete(resources=res,
+                           inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
+                                      "cobblestone": 64, "crafting_table": 1})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_unreachable_prep_does_not_block_completion(self) -> None:
+        # No string source, no chicken, no gold ore: every prep step drops out, so the run can
+        # still end instead of stalling on an item it can never get.
+        g = self._complete(inventory={"diamond_sword": 1, "cobblestone": 64})
+        self.assertTrue(tech_tree_complete(g))
 
 
 class NetherGateTest(unittest.TestCase):

@@ -36,6 +36,13 @@ CRITERIA: dict[str, str] = {
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
     "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the portal is lit, stock the deeper Nether reserve",
     "cook_food": "cook carried raw meat in the furnace so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
+    # Nether prep, stocked in the daytime lull after the portal is lit (see `_nether_prep_steps`).
+    "craft_bow": "craft a bow from string and sticks; the server's combat layer fires it for ranged defence against ghasts and blazes",
+    "craft_arrows": "craft arrows from flint, sticks and feathers so the carried bow has ammunition",
+    "hunt_feather": "kill a nearby chicken to collect feathers for the Nether arrows",
+    "mine_gold": "mine gold ore for the helmet that keeps piglins neutral in the Nether",
+    "smelt_gold": "smelt raw gold into gold ingots in the furnace for the gold helmet",
+    "craft_gold_helmet": "craft the gold helmet that keeps piglins from attacking; carry it until the Nether trip",
     "replace_tool": "craft a fresh pickaxe to replace the one that is nearly worn out",
     "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
@@ -82,6 +89,7 @@ ORE_MIN_TIER = {
     "stone": 1,                      # cobblestone: any pickaxe
     "coal_ore": 1,                   # coal: any pickaxe
     "iron_ore": STONE_PICK_TIER,     # wood breaks it; stone already yields raw iron
+    "gold_ore": IRON_PICK_TIER,      # stone breaks it; iron or better yields raw gold
     "diamond_ore": IRON_PICK_TIER,   # wood/stone/gold destroy it
     "obsidian": DIAMOND_PICK_TIER,   # only diamond or netherite drop it
 }
@@ -171,6 +179,29 @@ FOOD_SATURATION = {
 # a stack of cooked meat is a single inventory slot, so 64 is cheap to carry.
 FOOD_RESERVE = 16
 NETHER_FOOD_RESERVE = 64
+
+# --- Nether prep (the daytime lull after the portal) ---
+# Beyond the deep food reserve, the expedition wants a ranged answer, a piglin pass and building
+# material. All of it is stocked in the same lull, so the run reaches the gate fully prepared:
+#   * a bow with arrows -- the server's combat layer fires the bow itself (`survival.BASE_CHANGES`
+#     `combat.bow`), so the bot only has to *carry* one and keep arrows in the pack; string comes
+#     from spiders, feathers from chickens, flint from gravel, sticks from wood.
+#   * a gold helmet -- one worn piece of gold armour is all it takes to keep piglins neutral; it
+#     is carried until the Nether trip (worn it would displace the diamond helmet).
+#   * a deep cobblestone stack for a ghast-proof shelter around the arrival portal and for bridging.
+# Every step is offered only while it can actually progress, so a material with no source (no
+# spider, no chicken, no gold ore loaded) drops that step out and never blocks the run.
+BOW_ITEM = "bow"
+ARROW_ITEM = "arrow"
+BOW_STRING = 3
+NETHER_ARROWS = 16
+FEATHER_ITEM = "feather"
+GOLD_HELMET_ITEM = "golden_helmet"
+GOLD_HELMET_INGOTS = 5
+GOLD_ORE = "gold_ore"
+RAW_GOLD = "raw_gold"
+GOLD_INGOT = "gold_ingot"
+NETHER_COBBLE = 64
 # Food hunting is the one gather that walks to a moving target, so it is bounded by
 # daylight: a long walk to a distant animal is cheap in daylight, but after dark the bot
 # only tops up from animals already at hand. The old unguarded hunt roamed ~180 m at
@@ -496,6 +527,105 @@ def _food_goal(gs: GameState) -> int:
     return NETHER_FOOD_RESERVE if _nether_idle(gs) else FOOD_RESERVE
 
 
+def _overworld(gs: GameState) -> bool:
+    """Whether the bot is in the Overworld. A bed placed in the Nether explodes and water
+    evaporates there, so `sleep`, `place_bed` and `fill_bucket` are Overworld-only."""
+    dim = str(gs.dimension or "").lower()
+    return "nether" not in dim and "end" not in dim
+
+
+def _string_goal(gs: GameState) -> int:
+    """String still wanted: twelve for a bed, or three for the Nether bow once the bed exists."""
+    if not _bed_available(gs):
+        return 12
+    return 0 if _has(gs.inventory, BOW_ITEM) else BOW_STRING
+
+
+def _arrows_pending(gs: GameState) -> bool:
+    """The bow is built in the lull but the arrow reserve is not, so `craft_arrows` keeps
+    working; also what lets `get_flint` reopen the gravel dig after flint and steel already
+    exists (the only other flint sink)."""
+    return (_nether_idle(gs) and _has(gs.inventory, BOW_ITEM)
+            and gs.inventory.get(ARROW_ITEM, 0) < NETHER_ARROWS)
+
+
+def _gold_ore_available(gs: GameState) -> bool:
+    """Gold ore to dig for: within the scan, or merely present in a loaded chunk.
+
+    Like `_diamond_ore_available`: a surface bot never lists the gold tens of blocks below it,
+    but `collect_block` will tunnel to a named target, so a loaded deposit still justifies the
+    dig. Without this the gold helmet could never be built from the surface.
+    """
+    return (gs.resource_distance(GOLD_ORE) is not None
+            or gs.resource_found.get(GOLD_ORE, 0) > 0)
+
+
+def _gold_goal(inv: dict[str, int]) -> int:
+    """Gold ingots still wanted for the helmet, counting raw gold already banked."""
+    return max(0, GOLD_HELMET_INGOTS - inv.get(GOLD_INGOT, 0) - inv.get(RAW_GOLD, 0))
+
+
+def _nether_prep_steps(gs: GameState) -> list[str]:
+    """The Nether prep to offer in the daytime lull after the portal, in order, or [].
+
+    Each step appears only while it can actually make progress, so an unreachable material (no
+    spider, no chicken, no gold ore loaded) drops that step out and never blocks the run -- the
+    same shape as `hunt_food` needing a `_food_target`. Scoped to `_nether_idle`, so it never
+    competes with the chain.
+    """
+    steps = _all_nether_prep_steps(gs)
+    # The gold dig is a daylight job: it tunnels down from the base, so it is not offered at
+    # night (the run sleeps then). It stays in `_all_nether_prep_steps` so the completion gate
+    # still counts it as pending -- otherwise nightfall would end the run before the dig.
+    if gs.phase == "night":
+        steps = [s for s in steps if s != "mine_gold"]
+    return steps
+
+
+def _all_nether_prep_steps(gs: GameState) -> list[str]:
+    """Every prep step whose preconditions hold, without the day/night filter.
+
+    This is the one source both `candidates` (through `_nether_prep_steps`) and
+    `tech_tree_complete` read, so the offered steps and the completion gate cannot disagree on
+    what the expedition still needs.
+    """
+    if not _nether_idle(gs):
+        return []
+    inv = gs.inventory
+    table = _has(inv, "crafting_table")
+    sticks = _can_sticks(inv, _logs(inv), _planks(inv))
+    out: list[str] = []
+    # Bow: three string from spiders and three sticks, crafted at the table.
+    if not _has(inv, BOW_ITEM):
+        if table and inv.get("string", 0) >= BOW_STRING and sticks:
+            out.append("craft_bow")
+        elif _safe_spider_hunt(gs):
+            out.append("hunt_string")
+    elif inv.get(ARROW_ITEM, 0) < NETHER_ARROWS:
+        # Arrows: one flint, one stick and one feather each, crafted at the table.
+        if table and _has(inv, FLINT_ITEM) and _has(inv, FEATHER_ITEM) and sticks:
+            out.append("craft_arrows")
+        else:
+            if not _has(inv, FLINT_ITEM) and gs.resource_distance("gravel") is not None:
+                out.append("get_flint")
+            if not _has(inv, FEATHER_ITEM) and gs.mob_nearest("chicken") is not None:
+                out.append("hunt_feather")
+    # Gold helmet: mine the ore, smelt it, craft the piece (worn later, in the Nether).
+    if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+        if inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS:
+            if table:
+                out.append("craft_gold_helmet")
+        elif _has(inv, RAW_GOLD):
+            if _has(inv, "furnace") and _furnace_fuel(inv) is not None:
+                out.append("smelt_gold")
+        elif _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
+            out.append("mine_gold")
+    # Cobblestone: a deep stack for the ghast-proof shelter around the arrival portal.
+    if inv.get("cobblestone", 0) < NETHER_COBBLE and _can_mine(gs, "stone"):
+        out.append("mine_stone")
+    return out
+
+
 def _junk_carried(inv: dict[str, int]) -> list[str]:
     """Carried low-value blocks no recipe wants, in the fixed shedding order."""
     return [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]
@@ -722,12 +852,17 @@ def tech_tree_complete(gs: GameState) -> bool:
     armour pieces actually *worn* - not merely carried, since it is `equip_armor` that puts them
     on - and the shield in the off-hand. Then the overworld -> Nether gate itself: the portal is
     lit and a bed stands beside it to respawn at (the bed is only laid at night, so `sleep`
-    actually ran and the respawn point is set). At that point the eligible actions collapse to
-    `explore`/`sleep`, so a long unattended run can end itself instead of spending hours on
-    nothing. Requiring the armour to be worn (not just present) is what lets the loop finish
+    actually ran and the respawn point is set). Finally the Nether prep must be finished: the
+    run keeps stocking the lull (`_all_nether_prep_steps`) until a bow with arrows, a gold helmet
+    and a deep cobblestone stack are banked, so the trip starts prepared rather than stopping
+    the moment the bed is laid. A prep step whose material has no source simply drops out of
+    the list, so an unreachable item never leaves the run unable to end.
+
+    Requiring the armour to be worn (not just present) is what lets the loop finish
     `equip_armor` first instead of stopping with the set still in the pack.
     """
-    return _gear_ready(gs) and _portal_lit(gs) and _bed_placed(gs)
+    return (_gear_ready(gs) and _portal_lit(gs) and _bed_placed(gs)
+            and not _all_nether_prep_steps(gs))
 
 
 def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
@@ -826,7 +961,8 @@ def candidates(gs: GameState) -> list[str]:
     # prohibits breaking this block" for a bed). Live, the bed landed in the opening and
     # `light_portal` answered `[PORTAL_NO_FRAME]` on every tick. `place_bed` owns the base bed
     # and only runs once the portal is lit.
-    if gs.phase == "night" and not gs.sleeping and bed and not (_at_base(gs) and not _portal_lit(gs)):
+    if (gs.phase == "night" and not gs.sleeping and bed and _overworld(gs)
+            and not (_at_base(gs) and not _portal_lit(gs))):
         out.append("sleep")
 
     # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
@@ -955,7 +1091,7 @@ def candidates(gs: GameState) -> list[str]:
     # The bed goes down at the base at night, because `sleep` is what actually sets the respawn
     # point: placing it in daylight would leave the pause point unset.
     if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_placed(gs)
-            and gs.phase == "night"):
+            and gs.phase == "night" and _overworld(gs)):
         out.append("place_bed")
 
     # --- Home base storage ---
@@ -975,6 +1111,16 @@ def candidates(gs: GameState) -> list[str]:
 
     if cobble < 12 and _can_mine(gs, "stone"):
         out.append("mine_stone")
+
+    # --- Nether prep (the daytime lull after the portal) ---
+    # The bow, its arrows, the gold helmet and the deep cobblestone stack, stocked once the
+    # portal is lit. `_nether_prep_steps` is the single source for both this list and the
+    # completion gate, so the offered steps and `tech_tree_complete` never disagree.
+    out.extend(_nether_prep_steps(gs))
+
+    # The same label can arrive twice (the light `mine_stone` above and the deep lull stack in
+    # `_nether_prep_steps`); keep the first occurrence so the priority order is stable.
+    out = list(dict.fromkeys(out))
 
     # The explicit last fallback when nothing productive is available. In the lull after the
     # portal is lit the only work left is the night bed, and wandering off just burned five
@@ -1089,6 +1235,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": SHIELD_ITEM}], "temporary_workstation": True},
                       "craft a shield from planks and an iron ingot")
+    if label == "craft_bow":
+        if (_has(inv, BOW_ITEM) or not _has(inv, "crafting_table")
+                or inv.get("string", 0) < BOW_STRING
+                or not _can_sticks(inv, _logs(inv), _planks(inv))):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": BOW_ITEM}], "temporary_workstation": True},
+                      "craft a bow from string and sticks for the ranged answer to ghasts")
+    if label == "craft_arrows":
+        if (not _nether_idle(gs) or not _has(inv, "crafting_table")
+                or not _has(inv, FLINT_ITEM) or not _has(inv, FEATHER_ITEM)
+                or not _can_sticks(inv, _logs(inv), _planks(inv))
+                or inv.get(ARROW_ITEM, 0) >= NETHER_ARROWS):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": ARROW_ITEM}], "temporary_workstation": True},
+                      "craft arrows from flint, sticks and feathers for the carried bow")
     if label == "equip_shield":
         if not _has(inv, SHIELD_ITEM) or _offhand(gs, SHIELD_ITEM):
             return None
@@ -1134,7 +1297,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": BUCKET_ITEM}], "temporary_workstation": True},
                       "craft a bucket from three iron ingots")
     if label == "fill_bucket":
-        if not _has(inv, BUCKET_ITEM) or _has(inv, WATER_BUCKET):
+        if not _has(inv, BUCKET_ITEM) or _has(inv, WATER_BUCKET) or not _overworld(gs):
             return None
         return Action(label, "use_bucket", {"action": "fill", "liquid": "water"},
                       "fill the carried bucket with water to pour onto lava")
@@ -1170,7 +1333,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                        "dig": True, "scaffold": False},
                       "walk to the lava source, stand on the block beside it and pour")
     if label == "get_flint":
-        if _has(inv, FLINT_ITEM) or _has(inv, FLINT_STEEL_ITEM):
+        if _has(inv, FLINT_ITEM):
+            return None
+        # Flint feeds the flint and steel; afterwards the only sink is the Nether arrows, so the
+        # dig reopens in the lull while the arrow reserve is short.
+        if _has(inv, FLINT_STEEL_ITEM) and not _arrows_pending(gs):
             return None
         return Action(label, "collect_block", {"block_name": "gravel", "count": FLINT_GRAVEL},
                       "dig gravel for flint to make flint and steel")
@@ -1214,13 +1381,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "light the built portal frame with the carried flint and steel")
     if label == "place_bed":
         if (not _has_bed(inv) or not _portal_lit(gs) or _bed_placed(gs)
-                or not _at_base(gs) or gs.phase != "night"):
+                or not _at_base(gs) or gs.phase != "night" or not _overworld(gs)):
             return None
         return Action(label, "sleep", {},
                       "place the carried bed beside the lit portal and set the respawn point")
     if label == "sleep":
         if (gs.phase != "night" or gs.sleeping or not _bed_available(gs)
-                or (_at_base(gs) and not _portal_lit(gs))):
+                or not _overworld(gs) or (_at_base(gs) and not _portal_lit(gs))):
             return None
         return Action(label, "sleep", {},
                       "sleep through the night and set the respawn point")
@@ -1238,12 +1405,52 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"mob_name": "sheep", "drop_name": "white_wool", "count": 3},
                       "collect white wool from a sheep for a bed")
     if label == "hunt_string":
-        if inv.get("string", 0) >= 12 or not _safe_spider_hunt(gs):
+        goal = _string_goal(gs)
+        if goal <= 0 or inv.get("string", 0) >= goal or not _safe_spider_hunt(gs):
             return None
         return Action(label, "collect_mob_drop",
-                      {"mob_name": "spider", "drop_name": "string", "count": 12,
+                      {"mob_name": "spider", "drop_name": "string",
+                       "count": max(1, goal - inv.get("string", 0)),
                        "allow_without_shield": True},
-                      "collect string from a lone spider to craft wool")
+                      "collect string from a lone spider")
+    if label == "hunt_feather":
+        if not _arrows_pending(gs) or _has(inv, FEATHER_ITEM) or gs.mob_nearest("chicken") is None:
+            return None
+        return Action(label, "collect_mob_drop",
+                      {"mob_name": "chicken", "drop_name": FEATHER_ITEM, "count": 4,
+                       "allow_without_shield": True},
+                      "collect feathers from a chicken for the Nether arrows")
+    if label == "mine_gold":
+        if (not _can_mine(gs, GOLD_ORE) or not _gold_ore_available(gs) or _has(inv, RAW_GOLD)
+                or inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS):
+            return None
+        return Action(label, "collect_block",
+                      {"block_name": GOLD_ORE, "count": _gold_goal(inv)},
+                      "mine gold ore for the helmet that keeps piglins neutral")
+    if label == "smelt_gold":
+        fuel = _furnace_fuel(inv)
+        if (not _has(inv, "furnace") or inv.get(RAW_GOLD, 0) < 1 or fuel is None
+                or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+            return None
+        fuel_name, capacity = fuel
+        # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
+        if fuel_name not in ("coal", "charcoal") and not _nether_idle(gs):
+            return None
+        count = min(inv.get(RAW_GOLD, 0), 3, capacity,
+                    max(0, GOLD_HELMET_INGOTS - inv.get(GOLD_INGOT, 0)))
+        if count < 1:
+            return None
+        return Action(label, "smelt_item",
+                      {"item_name": RAW_GOLD, "count": count, "fuel_item_name": fuel_name,
+                       "temporary_workstation": True},
+                      f"smelt raw gold into ingots using {fuel_name}")
+    if label == "craft_gold_helmet":
+        if (inv.get(GOLD_INGOT, 0) < GOLD_HELMET_INGOTS or not _has(inv, "crafting_table")
+                or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": GOLD_HELMET_ITEM}], "temporary_workstation": True},
+                      "craft the gold helmet that keeps piglins neutral in the Nether")
     if label == "hunt_food":
         if _edible_count(inv) >= _food_goal(gs):
             return None

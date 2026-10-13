@@ -24,8 +24,11 @@ GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
 # `lava` is where the carried water bucket is poured: obsidian is *made*, not dug (tunnelling to
 # the natural y=-55 deposit is the live trap that left the bot swimming in its own flooded
 # tunnel). `chest` lets a run that did not place the chest itself re-adopt one already standing
-# at the base. Kept as its own `view_blocks find` group: that call takes at most eight names.
-CHAIN_NAMES = ("lava", "chest")
+# at the base. `gold_ore` is the Nether-prep dig (the gold helmet that keeps piglins neutral):
+# like the diamonds, a deposit deep under the surface counts through `resource_found` so the
+# `collect_block` tunnel is still offered. Kept as its own `view_blocks find` group: that call
+# takes at most eight names.
+CHAIN_NAMES = ("lava", "chest", "gold_ore")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava",)
 RESOURCE_RADIUS = 64.0
