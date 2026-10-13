@@ -89,6 +89,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._stow_blocked = False
         agent._unblock_attempts = 0
         agent._pour_skip = set()
+        agent._drop_hole_blocked = False
         return agent
 
     async def test_first_block_digs_a_pocket(self) -> None:
@@ -196,6 +197,7 @@ class PourSkipTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._pour_skip = set()
+        agent._drop_hole_blocked = False
         return agent
 
     def test_remembers_the_refused_cell(self) -> None:
@@ -222,6 +224,49 @@ class PourSkipTest(unittest.TestCase):
         agent.chest_pos = None
         agent._pour_skip = {(-129, 66, -30)}
         self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
+
+
+class DropHoleTest(unittest.TestCase):
+    """A drop whose disposal pit the terrain refuses falls back to the open ground.
+
+    Live, obsidian run: the bot sat in a 1-wide tunnel with a nearly full pack and chose
+    `drop_junk` on every tick, but each call answered `[DROP_HOLE_UNAVAILABLE]` (no adjacent
+    terrain can be dug into a dry, enclosed pit), so the run stood still. The answer is a
+    property of the ground, so the loop remembers it and drops without a pit from then on.
+    """
+
+    class _Action:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            self.tool = "drop_item"
+            self.args: dict = {}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._drop_hole_blocked = False
+        return agent
+
+    def test_remembers_the_unavailable_pit(self) -> None:
+        agent = self._agent()
+        agent._note_drop(self._Action("drop_junk"), False,
+                         "[DROP_HOLE_UNAVAILABLE] No adjacent terrain can be excavated into "
+                         "a dry, enclosed disposal pit.")
+        self.assertTrue(agent._drop_hole_blocked)
+
+    def test_ignores_success_and_other_labels(self) -> None:
+        agent = self._agent()
+        agent._note_drop(self._Action("drop_junk"), True, "[DROP_HOLE_UNAVAILABLE]")
+        agent._note_drop(self._Action("stow_surplus"), False, "[DROP_HOLE_UNAVAILABLE]")
+        agent._note_drop(self._Action("drop_junk"), False, "[INVENTORY_FULL]")
+        self.assertFalse(agent._drop_hole_blocked)
+
+    def test_inject_hands_the_flag_to_the_state(self) -> None:
+        agent = self._agent()
+        agent.base = None
+        agent.chest_pos = None
+        agent._pour_skip = set()
+        agent._drop_hole_blocked = True
+        self.assertTrue(agent._inject(gs()).drop_hole_blocked)
 
 
 class GoalStopTest(unittest.TestCase):

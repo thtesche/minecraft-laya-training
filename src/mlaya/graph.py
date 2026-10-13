@@ -127,6 +127,10 @@ class Agent:
         # only fail again; remembering it lets the next tick pour elsewhere (live: the
         # surface pond holds one usable cell and the obsidian would never be made there).
         self._pour_skip: set[tuple[int, int, int]] = set()
+        # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): from
+        # then on the relief drops the surplus on the open ground instead. That still frees the
+        # slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall on it.
+        self._drop_hole_blocked = False
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -135,6 +139,7 @@ class Agent:
         gs.base = self.base
         gs.chest_pos = self.chest_pos
         gs.pour_skip = frozenset(self._pour_skip)
+        gs.drop_hole_blocked = self._drop_hole_blocked
         return gs
 
     def _adopt_homebase(self, gs) -> None:
@@ -309,6 +314,20 @@ class Agent:
         if all(isinstance(v, int) for v in pos):
             self._pour_skip.add(pos)
 
+    def _note_drop(self, action, ok: bool, text: str | None) -> None:
+        """Remember that no disposal pit can be dug where the bot stands, so the next drop does
+        not ask for one.
+
+        `[DROP_HOLE_UNAVAILABLE]` says no adjacent terrain can be excavated into a dry, enclosed
+        pit. That is a property of the ground, not of the attempt (live, obsidian run: a 1-wide
+        tunnel answered it on every tick while `drop_junk` retried in place). Dropping on the open
+        ground instead still frees the slot, which is all the relief is for.
+        """
+        if ok or action.label != "drop_junk":
+            return
+        if "DROP_HOLE_UNAVAILABLE" in (text or ""):
+            self._drop_hole_blocked = True
+
     async def _verify(self, state: AgentState) -> dict:
         before = state["before"]
         action = state["action"]
@@ -319,6 +338,7 @@ class Agent:
         _text = getattr(res, "text", "")
         self._note_block(action.label, _ok, _text)
         self._note_pour(action, _ok, _text)
+        self._note_drop(action, _ok, _text)
         if action.label == "stow_surplus":
             # A failed deposit means the chest is full; stop offering it as the relief.
             self._stow_blocked = not _ok

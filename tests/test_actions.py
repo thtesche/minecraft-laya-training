@@ -973,6 +973,16 @@ class HomeBaseTest(unittest.TestCase):
         self.assertEqual(a.tool, "drop_item")
         self.assertEqual(a.args["items"], [{"item_name": "tuff"}])
 
+    def test_drop_junk_uses_a_hole_until_the_terrain_refuses_one(self) -> None:
+        # `in_a_hole` digs an enclosed disposal pit so the dropped blocks stay put; where the
+        # terrain cannot give one (live: a 1-wide tunnel answered `[DROP_HOLE_UNAVAILABLE]` on
+        # every tick) the relief drops on the open ground instead, which still frees the slot.
+        g = self._home(self._geared(tuff=64))
+        g.slots_used = 34
+        self.assertTrue(resolve("drop_junk", g).args["in_a_hole"])
+        g.drop_hole_blocked = True
+        self.assertFalse(resolve("drop_junk", g).args["in_a_hole"])
+
     def test_inventory_relief_stows_at_the_base_chest(self) -> None:
         g = self._home(self._geared(tuff=64))
         g.chest_pos = (-197, -46, -97)

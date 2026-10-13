@@ -1203,7 +1203,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if not items:
             return None
         return Action(label, "drop_item",
-                      {"items": items[:12], "in_a_hole": True},
+                      {"items": items[:12], "in_a_hole": not gs.drop_hole_blocked},
                       "drop low-value blocks so the full pack has room again")
     if label == "explore":
         if target is not None:

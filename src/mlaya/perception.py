@@ -207,6 +207,10 @@ class GameState:
     # and the obsidian step passes them over, which is what moves the search from a stopped-up
     # surface pond to the next lava pool instead of looping on the nearest cell forever.
     pour_skip: frozenset = frozenset()
+    # A `drop_junk` the terrain refused to give a disposal pit for (`[DROP_HOLE_UNAVAILABLE]`):
+    # from then on the drop goes onto the open ground instead of into a dug hole. Both free the
+    # slots the relief is for, and the open drop cannot fail, so the loop cannot stall on it.
+    drop_hole_blocked: bool = False
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
