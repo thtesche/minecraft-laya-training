@@ -137,6 +137,11 @@ def flat_build_site(grid: dict[tuple[int, int, int], str],
     dig. Picking level ground up front is what keeps the frame build from stalling -- live, the
     auto-base landed in a dip and 15 of 20 frame cells stayed stone.
 
+    The ground layer *below* the bottom row must be solid too. The server digs the bottom row
+    out and re-places it as obsidian, so a cell with a hole beneath it has "nothing to place
+    against": that frame cell is left wrong and the opening never closes (live, Nether run: a
+    one-block hole under the bottom row left a frame `light_portal` refused as incomplete).
+
     Candidates are ranked by squared distance to the bot (cells and level together), so the
     walk is short and the base lands at the bot's own height rather than on a ledge or in a pit.
     """
@@ -150,6 +155,8 @@ def flat_build_site(grid: dict[tuple[int, int, int], str],
         row = range(bx, bx + FRAME_WIDTH)
         if not all(_solid(grid.get((x, by, bz))) for x in row):
             continue
+        if not all(_solid(grid.get((x, by - 1, bz))) for x in row):
+            continue  # a hole below the bottom row gives the obsidian nothing to sit on
         clear = True
         for x in row:
             for dy in range(1, FRAME_HEIGHT):

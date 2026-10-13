@@ -160,9 +160,10 @@ class FlatBuildSiteTest(unittest.TestCase):
         grid = {}
         for x in bx_range:
             for z in bz_range:
-                for y in range(ground, top):
+                for y in range(ground + 1, top):
                     grid[(x, y, z)] = "air"
                 grid[(x, ground, z)] = "grass_block"
+                grid[(x, ground - 1, z)] = "dirt"  # the subsurface the bottom row sits on
         return grid
 
     def test_picks_level_ground_for_the_frame(self) -> None:
@@ -186,6 +187,14 @@ class FlatBuildSiteTest(unittest.TestCase):
         grid = self._grid(range(0, 6), range(-2, 3))
         grid[(2, 65, 0)] = "short_grass"  # not a blocker: placement replaces it
         self.assertIsNotNone(flat_build_site(grid, (2.5, 64.0, 0.5)))
+
+    def test_rejects_a_hole_under_the_bottom_row(self) -> None:
+        # The server digs the bottom row out and re-places it as obsidian, so a cell with a hole
+        # beneath it has nothing to place against and is left wrong; the opening then never
+        # closes and the portal cannot light (live, Nether run).
+        grid = self._grid(range(0, 6), range(0, 1))
+        grid[(2, 62, 0)] = "air"
+        self.assertIsNone(flat_build_site(grid, (2.5, 64.0, 0.5)))
 
     def test_no_grid_no_site(self) -> None:
         self.assertIsNone(flat_build_site({}, (0.0, 64.0, 0.0)))
