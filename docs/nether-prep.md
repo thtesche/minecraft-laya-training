@@ -105,25 +105,29 @@ Nether-Gelände ist also im Serverreflex vorgesehen.
   gilt weiter außerhalb des Lulls. Vor dem Durchgang trägt der Bot einen Ersatz-Spitzhacken-Reflex
   (`replace_tool`).
 
-**Phase 2 — erledigt (Goldhelm, getragen):** 
+**Phase 2 — erledigt (Goldhelm, bereitgetragen):** 
 - **Goldhelm** (`mine_gold` → `smelt_gold` → `craft_gold_helmet`), ein Stück goldene Rüstung hält
   Piglins neutral. Golderz wird wie Diamant über `resource_found` gefunden (`gold_ore` in
   `perception.CHAIN_NAMES`) und per `collect_block`-Tunnel abgebaut; Eisen-Spitzhacke genügt.
-- **Offen:** der Helm wird **getragen erst im Nether** — er belegt denselben Slot wie der
-  Diamanthelm (siehe offene Frage unten). Bis dahin nur im Gepäck.
+- Der Helm wird **im Gepäck** bereitgehalten; getragen wird er erst beim Durchgang (Phase 3), weil
+  er denselben Slot wie der Diamanthelm belegt — entschieden: **Goldhelm ersetzt den Diamanthelm**
+  (`_swap_to_gold_helmet` beim Betreten, siehe unten).
 
 **Phase 3 — offen (der eigentliche Nether-Besuch):**
 - **`enter_portal`**: hinein navigieren (`dimension → nether`).
+- **Rüstungs-Tausch beim Betreten:** Diamanthelm ab, Goldhelm auf (`_swap_to_gold_helmet`), damit
+  Piglins neutral bleiben. Der Diamanthelm bleibt im Gepäck für den Rückweg.
 - **Schutzraum** bauen, **Rückweg** sichern, dann die erste Nether-Ressource (Blaze/Neterrack) als
   Ziel der darauffolgenden Kette.
 
-## Offene Frage: Goldhelm vs. voller Diamant-Satz
+## Entschieden: Goldhelm ersetzt den Diamanthelm
 
 Ein Stück goldene Rüstung hält Piglins neutral, aber der Bot trägt einen **vollen Diamant-Satz** —
-der Goldhelm würde den **Diamanthelm ersetzen** (ein Rüstungsslot ist belegt). Das ist eine
-Abwägung: Piglin-Neutralität gegen etwas weniger Schutz. Der Schritt legt den Helm deshalb nur an
-(noch nicht getragen) bereit; die Entscheidung „im Nether Goldhelm statt Diamanthelm" gehört zu
-Phase 3 (oder der Bot trägt goldene Stiefel statt Diamantstiefel).
+der Goldhelm belegt denselben Slot wie der Diamanthelm. **Entscheidung (mit dem Nutzer abgestimmt):
+beim Betreten des Nether wird der Diamanthelm abgelegt und der Goldhelm getragen** (Piglin-
+Neutralität ist den etwas geringeren Kopfschutz wert). Der Diamanthelm bleibt im Gepäck und kommt
+auf dem Rückweg in die Oberwelt wieder auf (Phase 3, `_swap_to_gold_helmet`). Bis dahin trägt der
+Bot den Diamanthelm und führt den Goldhelm nur mit.
 
 ## Außerhalb der Reichweite (bewusst nicht gebaut)
 

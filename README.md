@@ -183,8 +183,8 @@ offen.
 die Oberwelt beschränkt — ein Bett im Nether explodiert, Wasser verdunstet dort.
 
 Entwurf, Abgleich des optimalen Nether-Inventars mit dem, was der Bot kann (Feuerschutz als
-Henne-Ei, Elytra/Totem/Shulker außer Reichweite, offene Frage Goldhelm vs. Diamanthelm), steht in
-[`docs/nether-prep.md`](docs/nether-prep.md).
+Henne-Ei, Elytra/Totem/Shulker außer Reichweite; entschieden: Goldhelm ersetzt beim Betreten den
+Diamanthelm), steht in [`docs/nether-prep.md`](docs/nether-prep.md).
 
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
