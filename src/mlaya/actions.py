@@ -40,7 +40,7 @@ CRITERIA: dict[str, str] = {
     "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
     "explore": "walk to new terrain to find missing resources; the last fallback",
-    "make_room": "dig a small pocket out of the surrounding blocks so a carried workstation or bed fits",
+    "make_room": "dig the block a placement was refused at, or a small pocket, so a carried workstation or bed fits",
     # Home base: one surface anchor the bed, the portal and the chests all stand at.
     "establish_base": "walk up to open surface ground and set up the home base there",
     "go_home": "walk back to the home base to place the bed, the portal or store surplus there",
@@ -1218,10 +1218,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "make_room":
         if gs.pos is None:
             return None
-        # `build_structure` with `block_name: "air"` digs cells clear. One small pocket at
-        # the bot's own level is enough: each cleared side cell has the tunnel floor under
-        # it, so the placement search finds a supported, replaceable cell within reach.
-        # Kept to four cells on purpose -- the tool cost grows with the cell list.
+        # A placement the terrain refused at a named cell (`[PLACE_TARGET_OCCUPIED]`): dig that
+        # exact cell. The block standing in it is the whole cause, and the pocket below would
+        # not even touch it (the chest cell sits beside the base, not beside the bot).
+        if gs.blocked_cell is not None:
+            x, y, z = gs.blocked_cell
+            cells = [{"x": x, "y": y, "z": z, "block_name": "air"}]
+            return Action(label, "build_structure", {"blocks": cells},
+                          "dig the block out of the cell the placement was refused at")
+        # Otherwise one small pocket at the bot's own level is enough: each cleared side cell
+        # has the tunnel floor under it, so the placement search finds a supported, replaceable
+        # cell within reach. Kept to four cells on purpose -- the tool cost grows with the list.
         mx, my, mz = (math.floor(v) for v in gs.pos)
         cells = [{"x": mx + dx, "y": my, "z": mz + dz, "block_name": "air"}
                  for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]

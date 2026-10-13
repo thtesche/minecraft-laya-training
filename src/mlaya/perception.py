@@ -218,6 +218,11 @@ class GameState:
     # inventory relief drop surplus instead of retrying a placement that can never land (live,
     # Nether run: the answer came on every tick and the run never reached the portal).
     chest_blocked: bool = False
+    # The cell a placement was refused at because a block stood in it (`[PLACE_TARGET_OCCUPIED]`):
+    # `make_room` digs exactly that cell, since the block in it is the whole cause and a pocket
+    # around the bot need not touch it (the chest cell sits beside the base, not the bot). Live,
+    # from-zero run: the cell held `grass_block` and `place_chest` answered the code every tick.
+    blocked_cell: tuple[int, int, int] | None = None
     # Whether a block kind exists anywhere in the loaded world, even beyond RESOURCE_RADIUS.
     # `view_blocks find` reports a per-name `found` count across every loaded chunk, so a deep
     # deposit the 64 m scan cannot list still proves the ore is there to dig for. This is what

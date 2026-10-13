@@ -35,9 +35,12 @@ ADOPT_CHEST_RADIUS = 4
 # is no replaceable cell, so the tool answers `[WORKSTATION_PLACEMENT_FAILED] ... no_cell`.
 # `sleep` places the carried bed the same way and needs two supported cells, so the same
 # shaft answers `[BED_PLACEMENT_FAILED] ... no ... flat ground` (live, armour run: three
-# wasted ticks). Retrying in place loops forever, so the fix is to change the surroundings
-# and try again.
-BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED", "BED_PLACEMENT_FAILED", "PLACE_BLOCK_FAILED")
+# wasted ticks). `place_block` names its cell, and a block standing in it answers
+# `[PLACE_TARGET_OCCUPIED]` (live, from-zero run: the cell beside the base held `grass_block`,
+# so `place_chest` answered it on every tick). Retrying in place loops forever, so the fix is
+# to change the surroundings and try again.
+BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED", "BED_PLACEMENT_FAILED", "PLACE_BLOCK_FAILED",
+                 "PLACE_TARGET_OCCUPIED")
 # A gathering action is refused with `[INVENTORY_FULL]` once all 36 carried slots are taken; the
 # unblock there is not terrain but pack space (stow at the base, else drop), so it routes through
 # a separate relief step.
@@ -149,6 +152,10 @@ class Agent:
         # fail again, so the chain is dropped and the relief falls back to `drop_junk` (live,
         # Nether run: the answer came on every tick and the run never reached the portal).
         self._chest_blocked = False
+        # The exact cell a placement was refused at because a block stood in it
+        # (`[PLACE_TARGET_OCCUPIED]`): `make_room` digs that cell clear, since a pocket around
+        # the bot need not even touch it (the chest cell sits beside the base, not the bot).
+        self._blocked_cell: tuple[int, int, int] | None = None
         # Cells of the portal opening (`perception.portal_interior`) that hold a stray block,
         # read while a frame build is pending. `clear_portal` digs them, so a block left above
         # the support layer cannot stall the gate (live: a bed in the opening left
@@ -165,6 +172,7 @@ class Agent:
         gs.pour_skip = frozenset(self._pour_skip)
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.chest_blocked = self._chest_blocked
+        gs.blocked_cell = self._blocked_cell
         gs.portal_blocked = list(self._portal_blocked)
         return gs
 
@@ -442,6 +450,24 @@ class Agent:
         if "PLACE_NO_SUPPORT" in (text or ""):
             self._chest_blocked = True
 
+    def _note_place(self, action, ok: bool, text: str | None) -> None:
+        """Remember the cell a placement was refused at, so the unblock step can dig it clear.
+
+        `[PLACE_TARGET_OCCUPIED]` names that cell (`place_block` args): the block standing there
+        is the whole cause, and only digging that exact cell lets the placement land. Live,
+        from-zero run: the cell beside the base held `grass_block` and `place_chest` answered
+        the code on every tick. `make_room` reads the cell back out of the GameState.
+        """
+        args = getattr(action, "args", None) or {}
+        cell = (args.get("x"), args.get("y"), args.get("z"))
+        if not ok and "PLACE_TARGET_OCCUPIED" in (text or "") and all(
+                isinstance(v, int) for v in cell):
+            self._blocked_cell = cell
+        elif ok and action.label == "make_room":
+            # The pocket that dug that cell succeeded: the next tick the placement retries (see
+            # `_unblock_done`), so the cell no longer needs digging.
+            self._blocked_cell = None
+
     async def _verify(self, state: AgentState) -> dict:
         before = state["before"]
         action = state["action"]
@@ -454,6 +480,7 @@ class Agent:
         self._note_pour(action, _ok, _text)
         self._note_drop(action, _ok, _text)
         self._note_chest(action, _ok, _text)
+        self._note_place(action, _ok, _text)
         if action.label == "stow_surplus":
             # A failed deposit means the chest is full; stop offering it as the relief.
             self._stow_blocked = not _ok

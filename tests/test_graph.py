@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import unittest
 
+from mlaya.actions import Action
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import Agent, blocked_by_surroundings, unblock_action
@@ -89,6 +90,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._stow_blocked = False
         agent._unblock_attempts = 0
         agent._unblock_done = False
+        agent._blocked_cell = None
         agent._pour_skip = set()
         agent._drop_hole_blocked = False
         return agent
@@ -220,6 +222,30 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         out = await agent._guard({"before": g, "decision": Decision("mine_coal")})
         self.assertEqual(out["action"].tool, "drop_item")
 
+    def test_a_refused_placement_cell_is_remembered_and_cleared(self) -> None:
+        # Live, from-zero run: `place_chest` targets the cell beside the base anchor, a
+        # `grass_block` stood in it, and the server answered on every tick.
+        agent = self._agent()
+        act = Action("place_chest", "place_block",
+                     {"block_name": "chest", "x": -180, "y": 64, "z": -118}, "place the chest")
+        agent._note_place(act, False,
+                          "[PLACE_TARGET_OCCUPIED] The target cell contains grass_block")
+        self.assertEqual(agent._blocked_cell, (-180, 64, -118))
+        dig = Action("make_room", "build_structure",
+                     {"blocks": [{"x": -180, "y": 64, "z": -118, "block_name": "air"}]}, "dig it")
+        agent._note_place(dig, True, "")
+        self.assertIsNone(agent._blocked_cell)
+
+    async def test_the_placement_block_digs_the_refused_cell(self) -> None:
+        agent = self._agent()
+        agent._blocked_label = "place_chest"
+        agent._blocked_cell = (-180, 64, -118)
+        g = gs(pos=(-178.5, 63.0, -120.4), blocked_cell=(-180, 64, -118))
+        out = await agent._guard({"before": g, "decision": Decision("place_chest")})
+        self.assertEqual(out["action"].tool, "build_structure")
+        self.assertEqual(out["action"].args["blocks"],
+                         [{"x": -180, "y": 64, "z": -118, "block_name": "air"}])
+
 
 class PourSkipTest(unittest.TestCase):
     """A pour the server refuses for want of a clickable face is remembered, not retried.
@@ -240,6 +266,7 @@ class PourSkipTest(unittest.TestCase):
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
         agent._portal_blocked = []
+        agent._blocked_cell = None
         agent.build_site = None
         return agent
 
@@ -289,6 +316,7 @@ class DropHoleTest(unittest.TestCase):
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
         agent._portal_blocked = []
+        agent._blocked_cell = None
         agent.build_site = None
         return agent
 
@@ -334,6 +362,7 @@ class ChestSupportTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._chest_blocked = False
         agent._portal_blocked = []
+        agent._blocked_cell = None
         agent.build_site = None
         return agent
 
@@ -432,6 +461,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent.base = (-197, -47, -98)
         agent.chest_pos = None
         agent._portal_blocked = []
+        agent._blocked_cell = None
         agent.mcp = self._Mcp(cells)
         return agent
 

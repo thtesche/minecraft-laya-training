@@ -219,6 +219,14 @@ class MakeRoomTest(unittest.TestCase):
     def test_none_without_position(self) -> None:
         self.assertIsNone(resolve("make_room", gs()))
 
+    def test_digs_the_cell_a_placement_was_refused_at(self) -> None:
+        # Live, from-zero run: `place_chest` targets the cell beside the base anchor, that cell
+        # held `grass_block`, and a pocket around the bot would not have touched it.
+        a = resolve("make_room", gs(pos=(-178.5, 63.0, -120.4), blocked_cell=(-180, 64, -118)))
+        self.assertEqual(a.tool, "build_structure")
+        self.assertEqual(a.args["blocks"],
+                         [{"x": -180, "y": 64, "z": -118, "block_name": "air"}])
+
 
 class ReactionPriorityTest(unittest.TestCase):
     def _recoverable(self) -> GameState:
