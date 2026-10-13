@@ -918,6 +918,33 @@ class NetherGateTest(unittest.TestCase):
         g.resources = self._blocks("nether_portal", "white_bed")
         self.assertNotIn("place_bed", candidates(g))
 
+    def test_sleep_is_held_off_the_base_until_the_portal_is_lit(self) -> None:
+        # The server lays the bed "beside the bot", and at the base that spot is the portal's
+        # own interior, which the later frame build cannot clear (`remove_wrong_blocks` answers
+        # "movement policy prohibits breaking this block" for a bed). The base bed is
+        # `place_bed`'s job and waits for the lit portal; the generic night sleep must not
+        # pre-empt it. Live, the bed fell into the opening and `light_portal` answered
+        # `[PORTAL_NO_FRAME]` on every tick.
+        g = self._at_home(self._geared(white_bed=1))
+        g.phase = "night"
+        self.assertNotIn("sleep", candidates(g))
+        self.assertIsNone(resolve("sleep", g))
+
+    def test_sleep_returns_once_the_portal_is_lit(self) -> None:
+        g = self._at_home(self._geared(white_bed=1))
+        g.phase = "night"
+        g.resources = self._blocks("nether_portal")
+        self.assertIn("sleep", candidates(g))
+        self.assertEqual(resolve("sleep", g).tool, "sleep")
+
+    def test_sleep_away_from_the_base_is_unaffected(self) -> None:
+        # Away from the base a night bed is only a respawn convenience, never the portal.
+        g = self._geared(white_bed=1)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)
+        g.phase = "night"
+        self.assertIn("sleep", candidates(g))
+
 
 class HomeBaseTest(unittest.TestCase):
     """The surface base: one anchor for the bed, the portal and the chest.

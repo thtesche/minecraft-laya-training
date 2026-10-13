@@ -566,6 +566,13 @@ nur eine Ebene tiefer.
   `_bed_available` zählt auch ein **platziertes** Bett (nicht nur ein getragenes): nach einem
   manuellen Basisbau oder einem Neustart bleibt das Bett sonst als Block zurück und der Loop würde
   ohne Not Wolle für ein zweites suchen.
+  **Bett erst nach dem Portal:** Vor dem angezündeten Portal wird der generische `sleep` an der
+  Basis **unterdrückt** (`_at_base` und *nicht* `_portal_lit`). Der Server legt das Bett „neben den
+  Bot", und an der Basis ist das genau das Portal-Innere — `build_portal` kann ein Bett dort nicht
+  wegräumen (`remove_wrong_blocks` antwortet „movement policy prohibits breaking this block"). Live
+  landete das Bett in der Öffnung und `light_portal` antwortete in jedem Tick mit
+  `[PORTAL_NO_FRAME]`. Das Basisbett ist Sache von `place_bed` und wartet auf das *angezündete*
+  Portal; abseits der Basis bleibt der Nachtschlaf unverändert.
   Eine **Truhe** (8 Planken, 3×3) hält Überschuss: `craft_chest` → `place_chest` (Koordinaten werden
   gemerkt) → `stow_surplus` (`use_container deposit`) bei ≥33/36 Slots; `drop_junk` ist nur der
   Notnagel ohne Truhe. Ein `[INVENTORY_FULL]`-Refusal löst eine eigene Relief-Stufe aus

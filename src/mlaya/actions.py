@@ -752,8 +752,13 @@ def candidates(gs: GameState) -> list[str]:
     string = inv.get("string", 0)
     bed = _bed_available(gs)
     # Night + a bed (carried or already standing): sleeping skips to morning and pins the
-    # respawn point.
-    if gs.phase == "night" and not gs.sleeping and bed:
+    # respawn point. But *not* at the home base before the portal is lit: the server lays the
+    # bed "beside the bot", and at the base that spot is the portal's own interior, which the
+    # later frame build then cannot clear (`remove_wrong_blocks` answers "movement policy
+    # prohibits breaking this block" for a bed). Live, the bed landed in the opening and
+    # `light_portal` answered `[PORTAL_NO_FRAME]` on every tick. `place_bed` owns the base bed
+    # and only runs once the portal is lit.
+    if gs.phase == "night" and not gs.sleeping and bed and not (_at_base(gs) and not _portal_lit(gs)):
         out.append("sleep")
 
     # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
@@ -1127,7 +1132,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "sleep", {},
                       "place the carried bed beside the lit portal and set the respawn point")
     if label == "sleep":
-        if gs.phase != "night" or gs.sleeping or not _bed_available(gs):
+        if (gs.phase != "night" or gs.sleeping or not _bed_available(gs)
+                or (_at_base(gs) and not _portal_lit(gs))):
             return None
         return Action(label, "sleep", {},
                       "sleep through the night and set the respawn point")

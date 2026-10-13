@@ -115,7 +115,11 @@ folgende `collect_block` lief leer). Dafür sorgt jetzt der **Wasser-Escape-Refl
 not on_ground` macht `escape_water` zum einzigen Kandidaten und navigiert zur Basis bzw. auf den
 nächsten trockenen Boden zurück. Schlüssel der Kette bleibt der **Obsidian-Latch**: Obsidian muss vor
 dem Flint&Steel gebankt sein, damit `mine_obsidian` nach dem Bau (der die 10 Blöcke ausgibt) nicht
-erneut gräbt. Das Bett wird **nur nachts** gelegt — nur Schlafen setzt den Respawn-Punkt.
+erneut gräbt. Das Bett wird **nur nachts** gelegt — nur Schlafen setzt den Respawn-Punkt. An der
+Basis wird der generische Nachtschlaf vor dem angezündeten Portal **unterdrückt**: der Server legt
+das Bett „neben den Bot", und dort wäre das das Portal-Innere; der Rahmenbau kann ein Bett nicht
+entfernen, also blieb live `light_portal` in jedem Tick bei `[PORTAL_NO_FRAME]` hängen. Das Basisbett
+legt deshalb `place_bed`, nachdem das Portal brennt.
 Für Überschuss sorgt eine **Truhe** (`craft_chest` aus 8 Planken → `place_chest` → `stow_surplus`) ab
 33/36 Slots; `drop_junk` wirft nur als **Notnagel**, wenn keine Truhe da ist oder sie voll ist. Ein
 `[INVENTORY_FULL]`-Refusal löst eine eigene Relief-Stufe aus (`inventory_relief`). Base und Truhe
