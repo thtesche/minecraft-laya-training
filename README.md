@@ -165,6 +165,12 @@ Fleisch vor `rotten_flesh`. Goldene Karotten (die beste Nether-Nahrung) brauchen
 dieser Bot weder anbaut noch schürft — gebratenes Fleisch ist das Beste in Reichweite. Findet sich gar
 keine Arbeit, hält `wait` die Position an der Basis, statt wegzulaufen.
 
+**Nether-Vorbereitung (Post-Portal-Schritt):** Zwischen „Portal brennt" und „Bot betritt den
+Nether" fehlt eine Vorbereitungsstufe. Der Entwurf — Abgleich des optimalen Nether-Inventars mit
+dem, was der Bot kann (Bogen+Pfeile als eigentliche Lücke, Goldhelm für Piglins, Feuerschutz als
+Henne-Ei, Sicherheits-Gates gegen Bett/Wasser im Nether) — steht in
+[`docs/nether-prep.md`](docs/nether-prep.md).
+
 Architektur + Zero-Shot-Befunde: [`docs/architecture.md`](docs/architecture.md).
 
 ## Setup
