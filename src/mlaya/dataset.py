@@ -14,14 +14,23 @@ so the head is trained on exactly the rendering it meets at run time.
 Why danger rows: Laya's head is selected by question *type* (the checkpoint carries a
 `type_emb.`), so `in_danger` and `intent` share one `choice` head. An intent-only dataset
 would silently un-train the gate. We therefore add an `in_danger` row per state, labelled
-from the logged Laya answer when present, else from a documented state heuristic that
-mirrors the criteria text ("a mob is attacking now or health is very low").
+from a documented state heuristic that mirrors the criteria text ("a mob is attacking now or
+health is very low"), with a logged Laya answer used only where the heuristic is silent.
+
+The heuristic is a *floor*, not a fallback. A logged `no` while the state is unambiguously
+dangerous is exactly the zero-shot gate mis-calibration this dataset exists to fix (live: a
+tick at 0.3 health with a spider in range still answered `no`), so trusting that answer would
+train the error in. A logged `yes` survives, because the gate is observed to under-trigger,
+not over-trigger.
 
 Where the `yes` examples come from: an action tick where the gate fired still runs (the guard
 can override a defer), but the honest danger moments are the *defer* ticks - the bot stood
 aside for the server survival reflex. At run time those produce no action, so an action-only
 dataset drops every one of them and trains the gate on negatives alone. We therefore emit a
-danger-only row for each deferred tick whose label is `yes`.
+danger-only row for each deferred tick whose label is `yes`, and - because a refused action
+in danger (`progressed=False`, e.g. a body owned by the hostile reflex) is the same honest
+moment - for each such tick the heuristic calls dangerous, even though it carries no usable
+intent.
 """
 from __future__ import annotations
 
@@ -67,20 +76,30 @@ def _min_hostile_distance(state: dict) -> float | None:
     return min(dists) if dists else None
 
 
+def _heuristic_danger(state: dict) -> bool:
+    """State-only danger: fatal health or a hostile inside contact range."""
+    health = state.get("health")
+    if isinstance(health, (int, float)) and health < DANGER_LOW_HEALTH:
+        return True
+    d = _min_hostile_distance(state)
+    return d is not None and d <= DANGER_CLOSE_M
+
+
 def danger_label(state: dict, answers: dict | None) -> str | None:
-    """Label for the `in_danger` question: a logged Laya answer wins, else the heuristic."""
+    """Label for the `in_danger` question.
+
+    The state heuristic is a floor: where it says danger the label is `yes` even if the logged
+    gate answered `no`. A logged `yes` is kept where the heuristic is silent, so the gate only
+    ever gains `yes` examples it was missing. See the module docstring.
+    """
+    if _heuristic_danger(state):
+        return "yes"
     if isinstance(answers, dict):
         ans = answers.get(DANGER_QID)
         if isinstance(ans, dict) and ans.get("choice") in ("yes", "no"):
             return ans["choice"]
         if ans in ("yes", "no"):
             return ans
-    health = state.get("health")
-    if isinstance(health, (int, float)) and health < DANGER_LOW_HEALTH:
-        return "yes"
-    d = _min_hostile_distance(state)
-    if d is not None and d <= DANGER_CLOSE_M:
-        return "yes"
     return "no"
 
 
@@ -145,26 +164,38 @@ def build_rows(
 
         candidates = tuple(c for c in (rec.get("candidates") or []) if c in CRITERIA)
         label = rec.get("label")
-        if len(candidates) < 2 or label not in candidates:
-            continue
-        if not rec.get("progressed") and not include_failed:
-            continue
-        key = (narrative, candidates)
-        if key in seen:
-            continue
-        seen.add(key)
+        teachable = len(candidates) >= 2 and label in candidates
+        if teachable and (rec.get("progressed") or include_failed):
+            key = (narrative, candidates)
+            if key in seen:
+                continue
+            seen.add(key)
 
-        questions: dict[str, Any] = {INTENT_QID: intent_question(list(candidates))}
-        expected: dict[str, Any] = {INTENT_QID: label}
-        if with_danger:
-            dlabel = danger_label(state, rec.get("answers"))
-            if dlabel:
-                questions[DANGER_QID] = DANGER_Q
-                expected[DANGER_QID] = dlabel
+            questions: dict[str, Any] = {INTENT_QID: intent_question(list(candidates))}
+            expected: dict[str, Any] = {INTENT_QID: label}
+            if with_danger:
+                dlabel = danger_label(state, rec.get("answers"))
+                if dlabel:
+                    questions[DANGER_QID] = DANGER_Q
+                    expected[DANGER_QID] = dlabel
 
-        rows.append({"state": narrative, "questions": questions, "expected": expected})
-        if limit and len(rows) >= limit:
-            break
+            rows.append({"state": narrative, "questions": questions, "expected": expected})
+            if limit and len(rows) >= limit:
+                break
+            continue
+
+        # A refused action (no progress) carries no usable intent, but in danger it is a `yes`
+        # example for the gate - the low-health tick an action-only dataset would drop.
+        if with_danger and _heuristic_danger(state):
+            key = (narrative, ("in_danger",))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({"state": narrative,
+                         "questions": {DANGER_QID: DANGER_Q},
+                         "expected": {DANGER_QID: "yes"}})
+            if limit and len(rows) >= limit:
+                break
     return rows
 
 

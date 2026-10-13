@@ -280,10 +280,17 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
 - **`survival.py`** hält die Policy als **zwei Stufen** (Presets), entlang der dokumentierten
   Enums:
   - **`base`** (Reisen/Progression): `navigation.scaffold_blocks` inkl. Deepslate/Tuff,
-    `hostile_avoidance_multiplier: 3`, das vorsichtige Combat-Fenster
-    (`engagement: respond_to_threats`, `engage_min_health 17`, `critical_health 14`,
-    `recover_to_health 18`, `retreat: true`, `enderman_wait_ticks 40`, Timeouts) und
+    `hostile_avoidance_multiplier: 3`, das Combat-Fenster
+    (`engagement: respond_to_threats`, `engage_min_health 14`, `critical_health 10`,
+    `recover_to_health 16`, `retreat: true`, `enderman_wait_ticks 40`, Timeouts) und
     `food.raw.allow: "always"` mit `hunger_at_most: 20`.
+    **Getunt (2026-10-13):** vorher `17/14/18`. Die Server-Beschreibung nennt `engage_min_health`
+    ausdrücklich die Schwelle für eine **verfolgende** Aktion („immediate contact defence remains
+    separate") und `critical_health` die Notfall-Schwelle **vor** Kontakt. Live fiel der Bot mit
+    16,5 HP knapp unter die 17er-Verfolgungsschwelle, ging einer einzelnen Spinne aus dem Weg statt
+    sie zu töten und blutete unter die alte Notschwelle 14 aus (hp 16,5 → 0,3, „hide, walled 9").
+    Das Fenster `14/10` lässt ihn bei 14–16 HP kämpfen und hebt sich die Notfall-Schutzreaktion
+    für < 10 auf. `recover_to_health 16` hält die Heilung zwischen Kämpfen konservativ.
   - **`hunt`** (Kampf-Stufe): dieselbe Basis mit **`engage_min_health 0`, `critical_health 0`,
     `retreat: false`** — sonst blockiert der Combat-Floor eine ausdrücklich angeforderte Jagd mit
     `[HUNT_CAPABILITY_BLOCKED]`. Die Null-Stufe ist bewusst **temporär**: mit ihr hält der
@@ -403,8 +410,13 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
 - **Warum Danger-Zeilen:** Laya wählt den Kopf über den **Fragetyp** (das Checkpoint trägt ein
   `type_emb.`), also teilen sich `in_danger` und `intent` **einen** `choice`-Kopf. Ein reiner
   Intent-Datensatz würde das Gate stillschweigend verlernen. Daher eine `in_danger`-Zeile pro
-  Zustand: eine geloggte Laya-Antwort hat Vorrang, sonst greift eine dokumentierte Heuristik
-  („ein Mob greift an oder Gesundheit sehr niedrig", `DANGER_CLOSE_M = 4`, `DANGER_LOW_HEALTH = 8`).
+  Zustand: eine dokumentierte Heuristik („ein Mob greift an oder Gesundheit sehr niedrig",
+  `DANGER_CLOSE_M = 4`, `DANGER_LOW_HEALTH = 8`) ist der **Boden**, eine geloggte Laya-Antwort
+  greift nur, wo die Heuristik schweigt. **Getunt (2026-10-13):** vorher hatte die geloggte
+  Antwort Vorrang. Live antwortete das Gate bei **0,3 HP mit Spinne in Reichweite** trotzdem
+  `no` — genau die Fehlkalibrierung, die das Training beheben soll. Ein geloggtes `no` würde den
+  Fehler also einlernen; jetzt gewinnt die Heuristik, ein geloggtes `yes` bleibt erhalten (das
+  Gate under-triggert, es over-triggert nicht).
   `--no-danger` lässt die Zeilen weg. `graph._verify` loggt dazu jetzt kompakt `answers`
   (`{qid: choice|score}`), damit künftige Läufe das echte Gate-Label liefern.
 - **Split:** stabiler Hash über den State (`--eval-frac`, `--seed`), reproduzierbar; < 4 Zeilen
@@ -437,6 +449,12 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   verwendet. Getestet in `tests/test_dataset.py` (Defer-Fälle). Für den frischen Lauf kam der Fix
   zu spät — seine 10 Gefahr-Ticks sind alte `defer`-Records ohne `narrative`; der Datensatz wurde
   daher mit `--no-danger` gebaut und das Gate bleibt zero-shot.
+- **Abgelehnte Gefahr-Ticks (2026-10-13):** Ein `action`-Tick mit `progressed=false` (z. B. der
+  Körper gehörte dem Hostile-Reflex) wurde bisher **ganz** verworfen — genau das waren live die
+  härtesten Zustände (hp 0,3–6,5 mit Spinne). Der Builder emittiert für so einen Tick jetzt eine
+  **reine Danger-Zeile** (`in_danger: yes`), wenn die Heuristik ihn als gefährlich einstuft: kein
+  brauchbares Intent, aber ein ehrliches Gate-Positiv. Getestet in
+  `tests/test_dataset.py::BuildRowsTest::test_a_refused_danger_tick_becomes_a_yes_row`.
 
 ## M4 — erreicht: Parameter-Layer (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`)
 

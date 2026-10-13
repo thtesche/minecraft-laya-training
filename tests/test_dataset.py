@@ -69,6 +69,19 @@ class BuildRowsTest(unittest.TestCase):
         self.assertEqual(len(kept), 1)
         self.assertEqual(kept[0]["expected"][INTENT_QID], "get_wood")
 
+    def test_a_refused_danger_tick_becomes_a_yes_row(self):
+        # A refused action carries no usable intent, but at 0.3 health it is the one example
+        # that teaches the gate the low-health `yes` - even with a logged `no`.
+        with tempfile.TemporaryDirectory() as d:
+            p = _write(Path(d), [
+                _rec("hurt", ["eat_food", "hunt_wool"], "eat_food", progressed=False,
+                     health=0.3, answers={DANGER_QID: {"choice": "no"}}),
+            ])
+            rows = ds.build_rows(p)
+        self.assertEqual(rows, [{"state": "hurt",
+                                 "questions": {DANGER_QID: DANGER_Q},
+                                 "expected": {DANGER_QID: "yes"}}])
+
     def test_duplicate_state_and_candidates_deduped(self):
         with tempfile.TemporaryDirectory() as d:
             p = _write(Path(d), [
@@ -162,10 +175,18 @@ class DangerLabelTest(unittest.TestCase):
         state = {"health": 20.0, "hostiles": [["zombie", 1, 12.0]]}
         self.assertEqual(ds.danger_label(state, None), "no")
 
-    def test_logged_answer_wins_over_heuristic(self):
-        state = {"health": 3.0, "hostiles": []}  # heuristic would say yes
+    def test_heuristic_yes_overrides_a_logged_no(self):
+        # The logged `no` at fatal health is the mis-calibration the gate is trained to fix,
+        # so the state heuristic wins over it.
+        state = {"health": 3.0, "hostiles": []}  # heuristic says yes
         answers = {DANGER_QID: {"choice": "no"}}
-        self.assertEqual(ds.danger_label(state, answers), "no")
+        self.assertEqual(ds.danger_label(state, answers), "yes")
+
+    def test_logged_yes_survives_a_safe_heuristic(self):
+        # The gate under-triggers, so a logged `yes` is kept where the heuristic is silent.
+        state = {"health": 20.0, "hostiles": [["zombie", 1, 12.0]]}
+        answers = {DANGER_QID: {"choice": "yes"}}
+        self.assertEqual(ds.danger_label(state, answers), "yes")
 
     def test_flat_choice_answer_accepted(self):
         answers = {DANGER_QID: "yes"}
