@@ -661,6 +661,19 @@ def _can_recover(gs: GameState) -> bool:
     return _dist(gs.pos, gs.death_pos) <= RECOVER_RANGE
 
 
+def _diamond_ore_available(gs: GameState) -> bool:
+    """Diamond ore to dig for: within the 64 m scan, or merely present in a loaded chunk.
+
+    The listed resource hits are radius-limited, so the nearest diamond ore under a bot standing
+    on the surface (y<16) never appears while the bot is over it. `resource_found` counts every
+    loaded chunk, and `collect_block` will tunnel to a named target, so a deep deposit still
+    justifies offering the dig - otherwise the loop can never leave the surface toward the
+    diamonds its next armour piece needs.
+    """
+    return (gs.resource_distance("diamond_ore") is not None
+            or gs.resource_found.get("diamond_ore", 0) > 0)
+
+
 def candidates(gs: GameState) -> list[str]:
     """The actions whose preconditions currently hold, in tech-tree priority order.
 
@@ -781,7 +794,7 @@ def candidates(gs: GameState) -> list[str]:
     if nxt is not None:
         item, cost = nxt
         if diamond < cost:
-            if _can_mine(gs, "diamond_ore") and gs.resource_distance("diamond_ore") is not None:
+            if _can_mine(gs, "diamond_ore") and _diamond_ore_available(gs):
                 out.append("mine_diamond")
         elif _diamond_craft_ready(gs, item):
             out.append("craft_" + item)

@@ -211,6 +211,13 @@ class GameState:
     # from then on the drop goes onto the open ground instead of into a dug hole. Both free the
     # slots the relief is for, and the open drop cannot fail, so the loop cannot stall on it.
     drop_hole_blocked: bool = False
+    # Whether a block kind exists anywhere in the loaded world, even beyond RESOURCE_RADIUS.
+    # `view_blocks find` reports a per-name `found` count across every loaded chunk, so a deep
+    # deposit the 64 m scan cannot list still proves the ore is there to dig for. This is what
+    # gates `mine_diamond`: standing on the surface, the nearest diamond ore (y<16) is always
+    # out of scan range, so without the raw count the loop could never dig down to the diamond
+    # armour piece it still needs once one is lost.
+    resource_found: dict[str, int] = field(default_factory=dict)
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
@@ -253,6 +260,7 @@ class GameState:
             "notifications": self.notifications,
             "sleeping": self.sleeping,
             "resources": {n: [h.as_dict() for h in hits[:2]] for n, hits in self.resources.items() if hits},
+            "resource_found": self.resource_found,
             "mobs": self.mobs,
         }
 
@@ -547,6 +555,25 @@ def parse_resources(data: dict, limit: int = RESOURCE_LIMIT) -> dict[str, list[B
     return out
 
 
+def parse_resource_counts(data: dict) -> dict[str, int]:
+    """view_blocks find -> {query_name: found} across every loaded chunk.
+
+    The listed hits `parse_resources` keeps are radius-limited, but each group also carries a
+    `found` total for the whole loaded world. Kept separately so a deposit that is present but
+    past RESOURCE_RADIUS (diamond ore under a surface bot) can still justify a tunnel dig.
+    """
+    blocks = get(data, "response", "data", "result", "blocks", default={}) or {}
+    groups = blocks.get("find") if isinstance(blocks, dict) else None
+    out: dict[str, int] = {}
+    for group in groups or []:
+        if not isinstance(group, dict) or not group.get("name"):
+            continue
+        found = group.get("found")
+        if isinstance(found, (int, float)) and found > 0:
+            out[str(group["name"])] = int(found)
+    return out
+
+
 def _age_seconds(now_iso: Any, then_iso: Any) -> float | None:
     if not (isinstance(now_iso, str) and isinstance(then_iso, str)):
         return None
@@ -592,8 +619,9 @@ async def build(executor) -> GameState:
                 {"find": {"block_names": list(names), "limit": limit}},
                 why,
             )
-            gs.resources.update(
-                parse_resources(coerce(blocks.data, blocks.text), limit))
+            payload = coerce(blocks.data, blocks.text)
+            gs.resources.update(parse_resources(payload, limit))
+            gs.resource_found.update(parse_resource_counts(payload))
         except Exception:
             pass
     return gs

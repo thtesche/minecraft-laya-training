@@ -2,11 +2,29 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.perception import parse_status
+from mlaya.perception import parse_resource_counts, parse_status
 
 
 def _status(situation: dict) -> dict:
     return {"response": {"data": {"result": {"situation": situation}}}}
+
+
+class ResourceCountParseTest(unittest.TestCase):
+    """`parse_resource_counts` keeps the per-name `found` total across every loaded chunk, which
+    the radius-limited hit list drops. A surface bot needs it to know that loaded diamond ore
+    exists below, so the change that offers the tunnel dig can fire without a nearby hit."""
+
+    def test_found_total_is_kept_outside_the_hit_radius(self) -> None:
+        data = {"response": {"data": {"result": {"blocks": {"find": [
+            {"name": "diamond_ore", "found": 15479, "listed": [
+                {"x": 0, "y": 8, "z": 0, "name": "diamond_ore", "distance": 109.6},
+            ]},
+            {"name": "iron_ore", "found": 0, "listed": []},
+        ]}}}}}
+        self.assertEqual(parse_resource_counts(data), {"diamond_ore": 15479})
+
+    def test_missing_find_block_is_empty(self) -> None:
+        self.assertEqual(parse_resource_counts({}), {})
 
 
 class ArmourParseTest(unittest.TestCase):

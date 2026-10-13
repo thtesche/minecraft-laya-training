@@ -350,6 +350,25 @@ class DiamondChainTest(unittest.TestCase):
                       candidates(gs(tools={"pickaxe": "iron"}, resources=_ore("diamond_ore"))))
         self.assertNotIn("mine_diamond", candidates(gs(tools={"pickaxe": "iron"})))
 
+    def test_deep_unscanned_diamond_ore_still_offers_the_dig(self) -> None:
+        # The resource scan is radius-limited (RESOURCE_RADIUS), so diamond ore more than 64 m
+        # down never appears in `resources` while the bot stands on the surface over it. The raw
+        # `found` count from `view_blocks` proves the ore is loaded and `collect_block` tunnels to
+        # it, so the dig must stay on offer - otherwise a lost diamond armour piece (the live
+        # case: the boots were destroyed and the whole kit sat at 33/36 slots) could never be
+        # rebuilt and `_gear_ready` would never close.
+        deep = gs(tools={"pickaxe": "diamond"},
+                  inventory={"diamond_sword": 1, "diamond_chestplate": 1,
+                             "diamond_leggings": 1, "diamond_helmet": 1, "diamond": 1},
+                  resource_found={"diamond_ore": 15479})
+        self.assertIn("mine_diamond", candidates(deep))
+        self.assertEqual(resolve("mine_diamond", deep).args["count"], 3)
+
+    def test_no_dig_offer_without_any_diamond_ore_loaded(self) -> None:
+        self.assertNotIn("mine_diamond",
+                         candidates(gs(tools={"pickaxe": "diamond"},
+                                       resource_found={"iron_ore": 900, "coal_ore": 400})))
+
     def test_no_diamond_dig_on_a_pickaxe_that_needs_a_backup(self) -> None:
         # Breaking mid-dig would destroy the ore with the swapped-in lower tier, so do not
         # start while the pickaxe is due for a backup (unknown durability must not block).
