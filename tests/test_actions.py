@@ -42,8 +42,15 @@ class RecoverDropsTest(unittest.TestCase):
 
     def test_too_old(self) -> None:
         g = gs(pos=(0.0, 64.0, 0.0), death_pos=(10.0, 64.0, 0.0),
-               last_death_age_s=200.0, dimension="overworld", death_dim="overworld")
+               last_death_age_s=400.0, dimension="overworld", death_dim="overworld")
         self.assertIsNone(resolve("recover_drops", g))
+
+    def test_far_but_recent_is_still_recovered(self) -> None:
+        # The dropped stack's despawn timer pauses in an unloaded chunk, so a death a long walk
+        # away (a respawn at the base, ~230 m) is still worth going back for.
+        g = gs(pos=(0.0, 64.0, 0.0), death_pos=(230.0, 64.0, 0.0),
+               last_death_age_s=120.0, dimension="overworld", death_dim="overworld")
+        self.assertIsNotNone(resolve("recover_drops", g))
 
     def test_other_dimension(self) -> None:
         g = gs(pos=(0.0, 64.0, 0.0), death_pos=(10.0, 64.0, 0.0),

@@ -168,8 +168,12 @@ LOW_DURABILITY = 0.15
 # same-tier spare is then already carried, and the server swaps it in the instant the active
 # one breaks, so the tier (and with it `mine_diamond`) never goes away.
 MINING_HEADROOM = 80
-RECOVER_WINDOW_S = 90.0
-RECOVER_RANGE = 120.0
+# Gear recovery walks back to the last death site. The dropped stack's despawn timer only ticks
+# while its chunk is loaded, so a death that happened while the bot was far away (a respawn at the
+# base, hundreds of blocks off) is still worth the walk: the window is the ambient 5-minute item
+# despawn, the range one long trek out. Live, a 230 m death was written off as a total loss.
+RECOVER_WINDOW_S = 300.0
+RECOVER_RANGE = 320.0
 
 
 @dataclass
