@@ -55,7 +55,7 @@ async def cmd_decide(args) -> int:
     async with MCPExecutor(settings.mcp) as executor:
         gs = await perception.build(executor)
         cands = candidates(gs)
-        decision = Brain(settings.laya).decide(gs.narrative(), cands)
+        decision = Brain(settings.laya).decide(gs.narrative(), cands, gs)
         action = resolve(decision.action_label, gs)
     print(json.dumps({
         "narrative": gs.narrative(),

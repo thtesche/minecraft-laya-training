@@ -58,7 +58,8 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     fließen in den State.
 [3] Brain (S1)    (src/mlaya/brain.py)
     Laya-Router, EIN predict()-Pass:
-      in_danger  (binäres Gate)      -> defer an die Survival-Policy
+      in_danger  (binäres Gate)      -> defer an die Survival-Policy; `danger_matters` begrenzt ihn
+                                       (Hostile ≤ 8 m oder Health < 15, sonst arbeitet der Loop weiter)
       danger     (score, nur Logging)
       intent     (choice)            -> unter den gefilterten Kandidaten
 [4] Actions       (src/mlaya/actions.py)
@@ -455,6 +456,19 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   **reine Danger-Zeile** (`in_danger: yes`), wenn die Heuristik ihn als gefährlich einstuft: kein
   brauchbares Intent, aber ein ehrliches Gate-Positiv. Getestet in
   `tests/test_dataset.py::BuildRowsTest::test_a_refused_danger_tick_becomes_a_yes_row`.
+
+- **Danger-Band zur Laufzeit (2026-10-13):** Das Gate antwortet aus dem Narrativ, das nur „hostile
+  mobs within 16 blocks" sagen kann — es sieht die Distanz nicht und liest einen bloß geladenen Mob
+  als Gefahr. `yes` defert **bedingungslos**, die Server-Policy hatte aber nichts zu tun (hp/hunger
+  voll, kein Kontakt): run7b stand auf Diamanttiefe Tick um Tick still. Zwei Fixes greifen: (1)
+  `perception.parse_status` liest die Hostile-Distanz jetzt **direkt** aus `nearby.hostiles` (vorher
+  aus `nearest.distance`, wo sie fehlt → jede Distanz war `None`, das Narrativ ohne „at Xm"); (2)
+  `brain.danger_matters` begrenzt das Gate: ein `yes` übergibt den Tick **nur**, wenn ein Hostile ≤
+  `DANGER_DEFER_M = 8` m ist oder Health < `DANGER_DEFER_HEALTH = 15`. Das ist eine **weitere**
+  Schwelle als der Trainings-Boden (`DANGER_CLOSE_M = 4` / `DANGER_LOW_HEALTH = 8`, der die
+  *Wahrheit* labelt); die Laufzeit braucht Vorlauf vor dem Kontakt. Die `DANGER_Q`-Kriterien wurden
+  zudem geschärft („within a few blocks and closing in"). Getestet in `tests/test_brain.py` und
+  `tests/test_perception.py`.
 
 ## M4 — erreicht: Parameter-Layer (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`)
 

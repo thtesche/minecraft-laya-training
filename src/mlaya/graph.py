@@ -260,7 +260,7 @@ class Agent:
 
     async def _decide(self, state: AgentState) -> dict:
         gs = state["before"]
-        decision = self.brain.decide(gs.narrative(), candidates(gs))
+        decision = self.brain.decide(gs.narrative(), candidates(gs), gs)
         if not decision.deferred and decision.action_label in TARGET_LABELS:
             # M4 parameter layer: turn "where?" into a Laya choice over grounded candidates.
             targets = ground_targets(gs)
@@ -514,6 +514,10 @@ class Agent:
             "progressed": progressed,
             "answers": _chosen(getattr(state["decision"], "answers", {})),
         }
+        if state["decision"].note:
+            # The danger band rewriting a gate `yes` shows here, so the run log does not read as
+            # "the gate said yes and the bot worked anyway" without a reason.
+            record["note"] = state["decision"].note
         target = getattr(state["decision"], "target", None)
         if target is not None:
             record["target"] = getattr(target, "label", str(target))

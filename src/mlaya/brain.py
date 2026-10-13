@@ -18,8 +18,9 @@ DANGER_Q = {
     "type": "choice",
     "instructions": "Is the bot in immediate danger right now?",
     "criteria": {
-        "no": "no: no mob is attacking and health is comfortably high",
-        "yes": "yes: a mob is attacking now or health is very low",
+        "no": "no: no mob is attacking and health is comfortably high - a hostile that is not "
+              "within a few blocks and closing in does not count",
+        "yes": "yes: a mob is within a few blocks and attacking now, or health is very low",
     },
 }
 DANGER_SCORE = {
@@ -27,6 +28,37 @@ DANGER_SCORE = {
     "instructions": "How dangerous is the situation?",
     "criteria": ["none", "low", "high", "critical"],
 }
+
+# The zero-shot gate answers from the narrative, which can only say a hostile is "within 16
+# blocks" - it cannot tell a mob across the room from one in contact, so it reads a merely
+# loaded mob as danger. Live (run7b) a zombie 9-15 m away in a cave kept it answering `yes`,
+# and `yes` defers the tick unconditionally: the server policy had nothing to do (health and
+# hunger full, no contact) while the bot stood still at diamond depth tick after tick. The band
+# below is the runtime guard - a wider sibling of the dataset's danger floor (`DANGER_CLOSE_M`
+# / `DANGER_LOW_HEALTH`, which label the *truth*) - so a `yes` only yields the tick when the
+# body is genuinely at risk and the loop keeps working otherwise. The server reflexes still
+# guard contact independently of this gate.
+DANGER_DEFER_M = 8.0
+DANGER_DEFER_HEALTH = 15.0
+DANGER_BAND_NOTE = "danger band: no mob in range -> keep working"
+
+
+def danger_matters(gs: Any) -> bool:
+    """Whether a gate `yes` should really hand the tick to the survival policy.
+
+    True when health has dropped below the band or a hostile is inside the defer radius. A mob
+    further out, or none parsed at all, with health in hand does not hold the loop back. A
+    `None` state (a bare `decide` call, or a caller with no perception) keeps the old,
+    unconditional defer.
+    """
+    if gs is None:
+        return True
+    if gs.health is not None and gs.health < DANGER_DEFER_HEALTH:
+        return True
+    nearest = gs.nearest_hostile
+    return nearest is not None and nearest <= DANGER_DEFER_M
+
+
 INTENT_INSTRUCTIONS = "The bot is safe enough to work. What should it do next?"
 
 
@@ -94,7 +126,13 @@ class Brain:
             questions[INTENT_QID] = intent_question(candidates)
         return questions
 
-    def decide(self, state: str, candidates: list[str]) -> Decision:
+    def decide(self, state: str, candidates: list[str], gs: Any = None) -> Decision:
+        """One forward pass: the danger gate, then the intent over the eligible labels.
+
+        `gs` (the perceived state) bounds the gate: a `yes` from a merely distant mob is
+        rewritten to `no` so the loop keeps working (see `danger_matters`). Callers without a
+        state, and tests, keep the unconditional defer by leaving it `None`.
+        """
         questions = self._questions(candidates)
         kwargs: dict[str, Any] = {}
         if self._cfg.model:
@@ -113,20 +151,25 @@ class Brain:
         }
 
         in_danger = answers.get(DANGER_QID, {}).get("choice") == "yes"
+        band = in_danger and not danger_matters(gs)
+        if band:
+            # The gate over-read a distant mob; keep working instead of standing aside.
+            in_danger = False
         if in_danger:
             return Decision(None, deferred=True, candidates=candidates,
                             answers=answers, probabilities=probabilities,
                             note="in danger -> survival policy")
+        note = DANGER_BAND_NOTE if band else ""
         if not candidates:
             return Decision(None, deferred=True, answers=answers,
                             probabilities=probabilities, note="no valid action")
         if len(candidates) == 1:
-            return Decision(candidates[0], candidates=candidates,
+            return Decision(candidates[0], candidates=candidates, note=note,
                             answers=answers, probabilities=probabilities)
         label = answers.get(INTENT_QID, {}).get("choice")
         if label not in candidates:
             label = candidates[0]
-        return Decision(label, candidates=candidates,
+        return Decision(label, candidates=candidates, note=note,
                         answers=answers, probabilities=probabilities)
 
     def _target_embed_fn(self):
