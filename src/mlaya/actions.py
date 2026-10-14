@@ -4,7 +4,8 @@ import math
 from dataclasses import dataclass
 
 from .perception import AIR_NAMES, INVENTORY_NEAR_FULL, GameState
-from .targets import EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target, frontier_heading
+from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
+                      frontier_heading, nearest_ground)
 
 # Labels Laya may choose among; each maps to a real mine-ai MCP tool.
 CRITERIA: dict[str, str] = {
@@ -1205,22 +1206,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     x, y, z = gs.pos or (None, None, None)
 
     if label == "escape_water":
-        # Swim clear of the water and climb back onto dry ground: the base when one is set,
-        # otherwise the nearest standable cell. `navigate` is the one tool that still moves a
-        # floating body (live: a `collect_block` loop left the bot treading water, and every
-        # later dig thrashed in place while `navigate` walked it home).
+        # Get ground underfoot *now*: the nearest dry standable cell is the one target a floating
+        # body can actually reach, so it wins outright. A far or underground home base is only the
+        # fallback -- from treading water it cannot be walked to (live run8: the bot drowned ten-plus
+        # times trying to dig 70 m down to a base 300 m off, lost its diamond kit, and the runtime
+        # died). `navigate` is the one tool that still moves a floating body.
+        target = nearest_ground(gs)
+        if target is not None:
+            tx, ty, tz = target.pos
+            return Action(label, "navigate",
+                          {"x": tx, "y": ty + 1, "z": tz, "dig": True, "scaffold": True},
+                          "climb out of the water onto the nearest dry ground")
         if gs.base is not None:
             bx, by, bz = gs.base
             return Action(label, "navigate",
                           {"x": bx, "y": by + 1, "z": bz, "dig": True, "scaffold": True},
                           "swim clear of the water and climb back up to the dry home base")
-        target = base_target(gs)
-        if target is None:
-            return None
-        tx, ty, tz = target.pos
-        return Action(label, "navigate",
-                      {"x": tx, "y": ty + 1, "z": tz, "dig": True, "scaffold": True},
-                      "climb out of the water onto the nearest dry ground")
+        return None
     if label == "get_wood":
         return Action(label, "collect_block", {"block_name": "logs", "count": 8},
                       "gather logs to start the tech tree")

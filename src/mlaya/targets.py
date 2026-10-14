@@ -146,13 +146,38 @@ def base_target(gs: GameState) -> Target | None:
     return Target(label=f"{hit.name}@{hit.x},{hit.z}", text=text, hit=hit)
 
 
+def nearest_ground(gs: GameState) -> Target | None:
+    """The closest standable ground at any level, for the water rescue.
+
+    `base_target` looks only at or above the bot, so an underground base is not anchored to the
+    cave floor underfoot; a bot treading water needs the opposite -- the dry cell it can actually
+    reach may sit a block below the waterline -- so this takes the closest hit outright. `standable`
+    still requires open `air` overhead, so a picker cannot target a cell under a cave ceiling.
+    """
+    hits = [h for query in GROUND_NAMES for h in gs.resources.get(query, []) if h.standable]
+    if not hits:
+        return None
+    hit = min(hits, key=lambda h: (h.distance, h.y))
+    x0 = gs.pos[0] if gs.pos else 0.0
+    z0 = gs.pos[2] if gs.pos else 0.0
+    text = f"{hit.name} {hit.distance:.0f}m {_compass(hit.x - x0, hit.z - z0)}, open above"
+    return Target(label=f"{hit.name}@{hit.x},{hit.z}", text=text, hit=hit)
+
+
 # Cells that are neither solid footing nor room to place into: water and lava would spoil a
 # frame cell, and a bottom row over them would not hold the frame.
 _NOT_SOLID = frozenset({"air", "cave_air", "void_air", "water", "lava"})
-# A cell a frame block may be placed into: air, or the thin plants placement replaces
-# without a separate dig.
+# A cell a block may be placed into: any air variant, or the thin plants placement replaces
+# without a separate dig. Used by `_clear` for the portal opening, where enclosed air is fine.
 _REPLACEABLE = frozenset({"air", "cave_air", "void_air", "short_grass", "tall_grass",
                           "grass", "fern", "snow", "torch"})
+# The same, minus the enclosed air variants: a *home base* has to stand under open sky, so
+# `flat_build_site` uses this for the frame volume and rejects a cave floor. Admitting `cave_air`
+# there is what let the site scan anchor the base to a cave (live run8: the base landed at y=-9
+# while the bot was still 70 m underground, and every later base step -- the water rescue
+# included -- was then aimed straight down). The base criterion is "open surface ground".
+_OPEN_SKY = frozenset({"air", "short_grass", "tall_grass",
+                       "grass", "fern", "snow", "torch"})
 
 # Frame geometry of `build_structure`'s `portal_frame`: it takes the *interior corner*, so a
 # frame whose base anchor is the ground block (bx, by, bz) stands as a west-east plane at
@@ -167,10 +192,11 @@ def flat_build_site(grid: dict[tuple[int, int, int], str],
     """A level, clear surface cell near the bot where the portal frame fits, or None.
 
     `grid` is one `view_blocks box` read (see `perception.parse_box`). The frame needs solid
-    ground under all five cells of its bottom row and replaceable air above them up to the top
-    row; a site on a slope leaves those cells holding stone, which the build server will not
-    dig. Picking level ground up front is what keeps the frame build from stalling -- live, the
-    auto-base landed in a dip and 15 of 20 frame cells stayed stone.
+    ground under all five cells of its bottom row and replaceable **open-sky** air above them up
+    to the top row (see `_OPEN_SKY`: `cave_air` is not accepted, so a cave floor never becomes
+    the home base); a site on a slope leaves those cells holding stone, which the build server
+    will not dig. Picking level ground up front is what keeps the frame build from stalling --
+    live, the auto-base landed in a dip and 15 of 20 frame cells stayed stone.
 
     The ground layer *below* the bottom row must be solid too. The server digs the bottom row
     out and re-places it as obsidian, so a cell with a hole beneath it has "nothing to place
@@ -195,7 +221,7 @@ def flat_build_site(grid: dict[tuple[int, int, int], str],
         clear = True
         for x in row:
             for dy in range(1, FRAME_HEIGHT):
-                if not _clear(grid.get((x, by + dy, bz))):
+                if not _open_sky(grid.get((x, by + dy, bz))):
                     clear = False
                     break
             if not clear:
@@ -213,3 +239,8 @@ def _solid(name: str | None) -> bool:
 
 def _clear(name: str | None) -> bool:
     return name in _REPLACEABLE
+
+
+def _open_sky(name: str | None) -> bool:
+    """Whether a cell is replaceable *and* under open sky (no enclosed `cave_air` above the base)."""
+    return name in _OPEN_SKY

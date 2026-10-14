@@ -1603,7 +1603,20 @@ class EscapeWaterTest(unittest.TestCase):
         g = gs(in_water=False, on_ground=False)
         self.assertNotIn("escape_water", candidates(g))
 
-    def test_escape_walks_to_the_base(self) -> None:
+    def test_escape_prefers_near_dry_ground_over_a_far_deep_base(self) -> None:
+        # Live run8: treading water, the bot drowned ten-plus times while `navigate` tried to dig
+        # 70 m straight down to a base 300 m off. The nearest dry cell is the target it can reach.
+        g = gs(in_water=True, on_ground=False, base=(305, -9, -177),
+               pos=(332.5, 62.4, -208.5))
+        g.resources = {"sand": [BlockHit("sand", "sand", 336, 62, -206, 4.2,
+                                         above="air", below="sand")]}
+        a = resolve("escape_water", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (336, 63, -206))
+        self.assertTrue(a.args["dig"] and a.args["scaffold"])
+
+    def test_escape_falls_back_to_the_base_without_dry_ground(self) -> None:
+        # The base is the last resort, for open water with no standable cell in scan reach.
         g = gs(in_water=True, on_ground=False, base=(-197, -47, -98),
                pos=(-300.5, 60.0, -120.5))
         a = resolve("escape_water", g)

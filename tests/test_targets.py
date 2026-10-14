@@ -6,7 +6,7 @@ import unittest
 from mlaya.actions import resolve
 from mlaya.perception import BlockHit, GameState
 from mlaya.targets import (Target, _compass, base_target, boxed_in, flat_build_site,
-                           frontier_heading, ground_targets)
+                           frontier_heading, ground_targets, nearest_ground)
 
 
 def hit(query: str, name: str, x: int, y: int, z: int, distance: float,
@@ -178,6 +178,32 @@ class BaseTargetTest(unittest.TestCase):
         self.assertIsNone(base_target(gs))
 
 
+class NearestGroundTest(unittest.TestCase):
+    """The water rescue's target: the closest dry standable cell at any level."""
+
+    def test_picks_the_nearest_cell_below_the_waterline(self) -> None:
+        # `base_target` would drop the shore for sitting below the floating bot; the rescue must
+        # not, because that lower dry cell is exactly the ground the bot can still climb onto.
+        gs = GameState()
+        gs.pos = (0.0, 63.0, 0.0)
+        gs.resources = {"sand": [
+            hit("sand", "sand", 40, 60, 0, 40.0),
+            hit("sand", "sand", 3, 62, 1, 3.2),
+        ]}
+        self.assertEqual(nearest_ground(gs).pos, (3, 62, 1))
+
+    def test_ignores_ground_under_a_cave_ceiling(self) -> None:
+        gs = GameState()
+        gs.pos = (0.0, 63.0, 0.0)
+        gs.resources = {"dirt": [hit("dirt", "dirt", 2, 58, 0, 2.5, above="cave_air")]}
+        self.assertIsNone(nearest_ground(gs))
+
+    def test_none_without_ground(self) -> None:
+        gs = GameState()
+        gs.pos = (0.0, 63.0, 0.0)
+        self.assertIsNone(nearest_ground(gs))
+
+
 class ExploreBindingTest(unittest.TestCase):
     def _gs(self) -> GameState:
         gs = GameState()
@@ -254,6 +280,17 @@ class FlatBuildSiteTest(unittest.TestCase):
         grid = self._grid(range(0, 6), range(-2, 3))
         grid[(2, 65, 0)] = "short_grass"  # not a blocker: placement replaces it
         self.assertIsNotNone(flat_build_site(grid, (2.5, 64.0, 0.5)))
+
+    def test_rejects_a_cave_floor_under_enclosed_air(self) -> None:
+        # `cave_air` is the enclosed variant: a level floor with room above it inside a cave is
+        # not "open surface ground" and must not become the home base (live run8: the base
+        # anchored at y=-9 while the bot was still 70 m underground, and every later base step --
+        # the water rescue included -- was then aimed straight down).
+        grid = self._grid(range(0, 6), range(-2, 3))
+        for key, name in list(grid.items()):
+            if name == "air":
+                grid[key] = "cave_air"
+        self.assertIsNone(flat_build_site(grid, (2.5, 64.0, 0.5)))
 
     def test_rejects_a_hole_under_the_bottom_row(self) -> None:
         # The server digs the bottom row out and re-places it as obsidian, so a cell with a hole

@@ -618,23 +618,36 @@ nur eine Ebene tiefer.
   Getestet in `tests/test_actions.py::NetherGateTest` und `tests/test_verify.py`.
 - **Wasser-Escape-Reflex (implementiert):** `candidates` prüft `gs.in_water and not gs.on_ground` als
   Allererstes (noch vor den M2d-Reaktionen) und gibt dann **nur** `["escape_water"]` zurück — hier
-  wählt Laya nicht, der Zustand ist ein Rescue. `resolve("escape_water")` navigiert zur Homebase
-  (sonst zum nächsten trockenen Boden aus `targets.base_target`) mit `dig`/`scaffold`. Grund: ohne
-  Grund unter den Füßen bricht der gemeinsame Pathfinder — ein `collect_block` lief live 370 Blöcke
-  weit und netto 0,18 m — während `navigate` aus der Schwimmhaltung heraus weiter funktioniert. Steht
-  der Bot am Grund (Wassergraben, Teich, ein Guss, der ihn nicht flutet), greift der Reflex **nicht**.
-  Getestet in `tests/test_actions.py::EscapeWaterTest`.
+  wählt Laya nicht, der Zustand ist ein Rescue. `resolve("escape_water")` navigiert **zuerst zum
+  nächsten trockenen, standbaren Boden** (`targets.nearest_ground`, jeder Ebene — die trockene Zelle,
+  die ein schwimmender Körper wirklich erreicht, darf *unter* der Wasserlinie liegen) mit
+  `dig`/`scaffold`; die Homebase ist **nur der Notnagel**, wenn kein Boden in Scan-Reichweite liegt.
+  Grund: ohne Grund unter den Füßen bricht der gemeinsame Pathfinder — ein `collect_block` lief live
+  370 Blöcke weit und netto 0,18 m — während `navigate` aus der Schwimmhaltung heraus weiter
+  funktioniert. (**Live run8:** der Bot ertrank zehnmal und mehr, weil der Reflex stur zur
+  unterirdischen Basis navigierte — 70 m senkrecht hinab, 300 m entfernt — statt zur nahen Küste; die
+  Basis-zuerst-Regel war der Fehler, nicht das Modell.) Steht der Bot am Grund (Wassergraben, Teich,
+  ein Guss, der ihn nicht flutet), greift der Reflex **nicht**. Getestet in
+  `tests/test_actions.py::EscapeWaterTest`.
 - **Homebase (implementiert):** Ein Anker auf der Oberfläche trägt Bett, Portalrahmen und Truhe.
   `establish_base` (sobald das Kit steht) läuft zuerst auf einen **ebenen, freien** Platz: zwei
   `view_blocks box`-Reads um den Bot — seine Ebene und vier darüber — (`Agent._scan_build_site` →
   `perception.scan_ground` → `targets.flat_build_site`) verlangen eine durchgehende Bodenreihe auf
-  gleicher Höhe mit Luft darüber **und festem Grund eine Ebene darunter**: der Server gräbt die
+  gleicher Höhe mit **offener Himmelsluft** (`_OPEN_SKY`) darüber **und festem Grund eine Ebene
+  darunter**: der Server gräbt die
   Bodenreihe aus und setzt sie als Obsidian neu, eine Zelle über einem Loch bliebe also „ohne
   Anlegefläche" falsch stehen und die Öffnung schlösse nie (live hing `light_portal` so in
   `[PORTAL_NO_FRAME]`). Damit passt der Rahmen aufs Gelände (live lief der alte Pick
   — die *niedrigste* standbare Zelle — in eine Mulde, und 15 von 20 Rahmenzellen steckten in Stein). Ist kein Platz in
   Scan-Reichweite, greift wie zuvor `targets.base_target` (nur `GROUND_NAMES`, auf/oberhalb der
-  Bot-Ebene, nächste zuerst). `establish_base` legt den Anker als `GameState.base` fest; `go_home`
+  Bot-Ebene, nächste zuerst). **Beide Wege verlangen offenen Himmel:** `flat_build_site` prüft das
+  Rahmenvolumen gegen `_OPEN_SKY` (ohne `cave_air`/`void_air`) und `base_target` gegen
+  `BlockHit.standable` (`above == "air"`), sodass ein **unterirdischer Anker ausgeschlossen** ist —
+  vorher zählte `_REPLACEABLE` auch `cave_air`, und der Scan setzte die Basis auf einen
+  Höhlenboden (**live run8:** Anker bei `y = -9`, tief unter Tage; die Basis-Kriterien sagen aber
+  „auf offenen Oberflächenboden laufen"). `_REPLACEABLE` (inkl. `cave_air`) bleibt nur für die
+  Öffnungs-Prüfung `_clear`, wo eingeschlossene Luft korrekt ist. `establish_base` legt den Anker
+  als `GameState.base` fest; `go_home`
   läuft nur zurück, wenn wirklich Basisarbeit wartet (`_base_steps_ready`). `build_portal`/`place_bed`
   sind auf `_at_base` beschränkt, `_portal_site` ankert am Base-Block statt an den Füßen.
   **Öffnung vor dem Bau freiräumen:** Der Scan sichert die Lichtung nur für die Basis, die *er*
