@@ -20,8 +20,15 @@ health is very low"), with a logged Laya answer used only where the heuristic is
 The heuristic is a *floor*, not a fallback. A logged `no` while the state is unambiguously
 dangerous is exactly the zero-shot gate mis-calibration this dataset exists to fix (live: a
 tick at 0.3 health with a spider in range still answered `no`), so trusting that answer would
-train the error in. A logged `yes` survives, because the gate is observed to under-trigger,
-not over-trigger.
+train the error in.
+
+A *ceiling* bounds the label from above: a state that proves itself safe - health comfortably
+high and the nearest hostile known to be beyond the runtime band - is a `no` even where the
+gate answered `yes`. Without it a logged `yes` for a merely loaded mob is kept, training in the
+very over-trigger the runtime band absorbs (`brain.danger_matters`): live run7b answered `yes`
+at 9-24 m with health 20. Only a state that proves its own safety trips the ceiling; where the
+nearest hostile is unknown (an empty `hostiles` list cannot tell "no mob" from "not recorded")
+the logged answer still stands.
 
 Where the `yes` examples come from: an action tick where the gate fired still runs (the guard
 can override a defer), but the honest danger moments are the *defer* ticks - the bot stood
@@ -40,11 +47,16 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .actions import CRITERIA
-from .brain import DANGER_Q, INTENT_QID, DANGER_QID, intent_question
+# The danger ceiling reuses the runtime band's thresholds, so the label says exactly what the
+# loop acts on (see brain.danger_matters).
+from .brain import (DANGER_Q, INTENT_QID, DANGER_QID, intent_question,
+                    DANGER_DEFER_M as DANGER_SAFE_M,
+                    DANGER_DEFER_HEALTH as DANGER_SAFE_HEALTH)
 
 # Heuristic `in_danger` label, used only when a state carries no logged Laya answer.
 # Mirrors the criteria text: a hostile close enough to be hitting the bot, or health low
-# enough that the next hit is fatal.
+# enough that the next hit is fatal. Floor and ceiling (DANGER_SAFE_M / DANGER_SAFE_HEALTH,
+# imported above) bound the label; between them the logged gate answer stands.
 DANGER_CLOSE_M = 4.0
 DANGER_LOW_HEALTH = 8.0
 
@@ -85,15 +97,33 @@ def _heuristic_danger(state: dict) -> bool:
     return d is not None and d <= DANGER_CLOSE_M
 
 
+def _clearly_safe(state: dict) -> bool:
+    """State-only safety: health high and the nearest hostile known to be past the band.
+
+    Requires a *known* distance beyond `DANGER_SAFE_M`: an empty or absent `hostiles` list
+    cannot tell "no mob" from "not recorded", so it stays ambiguous and does not trip the
+    ceiling (the logged answer stands).
+    """
+    health = state.get("health")
+    if not isinstance(health, (int, float)) or health < DANGER_SAFE_HEALTH:
+        return False
+    d = _min_hostile_distance(state)
+    return d is not None and d > DANGER_SAFE_M
+
+
 def danger_label(state: dict, answers: dict | None) -> str | None:
     """Label for the `in_danger` question.
 
-    The state heuristic is a floor: where it says danger the label is `yes` even if the logged
-    gate answered `no`. A logged `yes` is kept where the heuristic is silent, so the gate only
-    ever gains `yes` examples it was missing. See the module docstring.
+    The state heuristic is a *floor*: where it says danger the label is `yes` even if the logged
+    gate answered `no`. A clearly safe state is a *ceiling*: where it proves safety the label is
+    `no` even if the gate answered `yes`. Between the two the logged answer stands, so the gate
+    gains the `yes` examples it was missing without learning the far-mob over-trigger. See the
+    module docstring.
     """
     if _heuristic_danger(state):
         return "yes"
+    if _clearly_safe(state):
+        return "no"
     if isinstance(answers, dict):
         ans = answers.get(DANGER_QID)
         if isinstance(ans, dict) and ans.get("choice") in ("yes", "no"):

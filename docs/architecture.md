@@ -415,9 +415,14 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   `DANGER_CLOSE_M = 4`, `DANGER_LOW_HEALTH = 8`) ist der **Boden**, eine geloggte Laya-Antwort
   greift nur, wo die Heuristik schweigt. **Getunt (2026-10-13):** vorher hatte die geloggte
   Antwort Vorrang. Live antwortete das Gate bei **0,3 HP mit Spinne in Reichweite** trotzdem
-  `no` — genau die Fehlkalibrierung, die das Training beheben soll. Ein geloggtes `no` würde den
-  Fehler also einlernen; jetzt gewinnt die Heuristik, ein geloggtes `yes` bleibt erhalten (das
-  Gate under-triggert, es over-triggert nicht).
+  `no` — genau die Fehlkalibrierung, die das Training beheben soll; jetzt gewinnt die Heuristik.
+  **Obergrenze (2026-10-14):** Ein Zustand, der sich selbst als sicher erweist — Health ≥
+  `DANGER_SAFE_HEALTH = 15` **und** der nächste Hostile **bekannt** jenseits `DANGER_SAFE_M = 8`
+  m (dieselben Schwellen wie das Laufzeit-Band, s. u.) — wird als `no` gelabelt, auch wenn das
+  Gate `yes` sagte. Sonst würde das Über-Auslösen für einen bloß geladenen Mob eintrainiert
+  (live: run7b `yes` bei 9–24 m, Health 20). Nur ein Zustand, der seine eigene Sicherheit
+  beweist, kippt die Obergrenze; ist die Hostile-Distanz unbekannt (leere `hostiles`-Liste),
+  gilt weiter die geloggte Antwort.
   `--no-danger` lässt die Zeilen weg. `graph._verify` loggt dazu jetzt kompakt `answers`
   (`{qid: choice|score}`), damit künftige Läufe das echte Gate-Label liefern.
 - **Split:** stabiler Hash über den State (`--eval-frac`, `--seed`), reproduzierbar; < 4 Zeilen
@@ -435,13 +440,22 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   ganze Kette (`get_wood` … `equip_armor`). Kopf-Fine-Tuning (4 Epochen, `rlcd`, Encoder
   eingefroren) → 842 MB Checkpoint. Held-out (9 Items): `choice`-Accuracy **1.000 → 1.000**,
   Loss **0.734 → 0.532 (−0.20)**, ECE **0.501 → 0.392**, Brier **0.412 → 0.284**, `mean_confidence`
-  0.499 → 0.608. Der `Router` lädt den Checkpoint unter `english` ohne Codeänderung. 16 Unit-Tests
+  0.499 → 0.608. Der `Router` lädt den Checkpoint unter `english` ohne Codeänderung. 24 Unit-Tests
   (`tests/test_dataset.py`, stdlib `unittest`).
 - **Befund (Accuracy-Deckel):** Die Held-out-Accuracy ist **schon zero-shot 1.0** — der Split ist
   in-distribution (jede Zeile ist ein Zustand, den Laya im Lauf selbst gelöst hat). Ein
   Accuracy-Gewinn ist hier nicht messbar; der Fine-Tune zeigt sich in Loss, Brier und ECE. Für
   einen echten Accuracy-Vergleich braucht es einen **out-of-distribution**-Split (Zustände aus
   einem anderen Lauf), nicht mehr In-Distribution-Zeilen.
+- **OOD-Ergebnis (2026-10-14):** Datensatz über **mehrere Läufe** statt eines einzelnen: 252
+  Train-Zeilen (nur Ticks mit Fortschritt, über die Läufe dedupliziert; Stall-Läufe und der
+  Über-Auslöser-Lauf `run7b` raus, `in_danger=yes` 28). Held-out ist ein **kompletter Lauf**
+  (`run7d`, 61 Items, kein Zustand im Training). Die Zero-Shot-Accuracy auf diesem OOD-Set ist
+  **0.934** (4 Fehler) — also *kein* 1.0-Deckel. Der Fine-Tune (4 Epochen, `rlcd`, Encoder
+  eingefroren, MPS) lässt die Accuracy unverändert — die Labels sind die geloggte Gate-Wahl, und
+  Imitation kann deren Fehler nicht beheben — verbessert aber die Kalibrierung deutlich:
+  **Loss 0.474 → 0.372, ECE 0.250 → 0.132, Brier 0.261 → 0.187**, `mean_confidence` 0.691 → 0.891.
+  (Der Kopf wird also treffsicher-konfident, nicht treffsicherer.)
 - **Gefahr-Ticks landen jetzt im Datensatz:** Ein `in_danger=yes`-Tick führt zur **Defer** (kein
   `action`-Record), der Builder sah aber nur `action` → `danger_yes: 0`, das Gate hätte nur `no`
   gelernt. `graph._defer` loggt jetzt `narrative` + `answers`, und der Builder macht aus einem
@@ -466,9 +480,11 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   `brain.danger_matters` begrenzt das Gate: ein `yes` übergibt den Tick **nur**, wenn ein Hostile ≤
   `DANGER_DEFER_M = 8` m ist oder Health < `DANGER_DEFER_HEALTH = 15`. Das ist eine **weitere**
   Schwelle als der Trainings-Boden (`DANGER_CLOSE_M = 4` / `DANGER_LOW_HEALTH = 8`, der die
-  *Wahrheit* labelt); die Laufzeit braucht Vorlauf vor dem Kontakt. Die `DANGER_Q`-Kriterien wurden
-  zudem geschärft („within a few blocks and closing in"). Getestet in `tests/test_brain.py` und
-  `tests/test_perception.py`.
+  *Wahrheit* labelt); die Laufzeit braucht Vorlauf vor dem Kontakt. Seit 2026-10-14 spiegelt der
+  Builder dieselben Band-Schwellen als **Obergrenze** (`DANGER_SAFE_M` / `DANGER_SAFE_HEALTH`,
+  direkt aus `brain` importiert), damit ein `yes` für einen fernen Mob nicht eintrainiert wird.
+  Die `DANGER_Q`-Kriterien wurden zudem geschärft („within a few blocks and closing in"). Getestet
+  in `tests/test_brain.py` und `tests/test_perception.py`.
 
 ## M4 — erreicht: Parameter-Layer (Zielwahl über `view_blocks`-Kandidaten, `predict_shortlist`)
 
@@ -516,11 +532,12 @@ nur eine Ebene tiefer.
 
 ## Nächste Meilensteine
 
-- **M3+ (offen):** Für einen echten Accuracy-Gewinn braucht es einen **out-of-distribution**
-  Held-out-Split (Zustände aus einem anderen Lauf) — auf dem frischen In-Distribution-Split ist
-  die Zero-Shot-Accuracy schon 1.0, der Fine-Tune zeigt sich nur in Loss/Brier/ECE. Außerdem mehr
-  Läufe sammeln, damit die `in_danger`-Klassen (`yes` **und** `no`) beide vertreten sind; die
-  `yes`-Fälle liefert der Defer-Fix jetzt automatisch.
+- **M3+ (offen):** Der **out-of-distribution**-Held-out-Split ist jetzt gebaut (kompletter Lauf
+  `run7d`): die Zero-Shot-Accuracy liegt dort bei **0.934**, der Fine-Tune verbessert Loss/ECE/Brier,
+  aber **nicht** die Accuracy — die Zeilen imitieren die geloggte Gate-Wahl, und Imitation kann deren
+  Fehler nicht beheben. Für einen echten Accuracy-Gewinn bräuchte es ein stärkeres Signal als
+  Imitation (z. B. Verifier-Reward direkt) oder mehr/vielfältigere Läufe. Beide `in_danger`-Klassen
+  sind mit dem Defer-Fix vertreten; die neue Obergrenze kappt nur die fernen `yes`.
 - **Eisen-Kette live (re-)validiert (Tier 0 → 3):** `craft_pickaxe` → `mine_stone` →
   `craft_stone_pickaxe` → `mine_iron` → `mine_coal` → `craft_furnace` → `smelt_iron` →
   `craft_iron_pickaxe` ist **live durchgelaufen**, inklusive der neuen Unblock-Recovery

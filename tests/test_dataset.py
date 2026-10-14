@@ -182,9 +182,31 @@ class DangerLabelTest(unittest.TestCase):
         answers = {DANGER_QID: {"choice": "no"}}
         self.assertEqual(ds.danger_label(state, answers), "yes")
 
-    def test_logged_yes_survives_a_safe_heuristic(self):
-        # The gate under-triggers, so a logged `yes` is kept where the heuristic is silent.
+    def test_logged_yes_survives_an_ambiguous_state(self):
+        # No hostile distance recorded: the state cannot prove safety, so the logged `yes`
+        # (the example the gate was missing) still stands.
+        state = {"health": 20.0, "hostiles": []}
+        answers = {DANGER_QID: {"choice": "yes"}}
+        self.assertEqual(ds.danger_label(state, answers), "yes")
+
+    def test_logged_yes_survives_a_hostile_inside_the_band(self):
+        # Inside the runtime band (<= DANGER_SAFE_M, boundary included) the gate's `yes` still
+        # changes behaviour, so it is kept.
+        answers = {DANGER_QID: {"choice": "yes"}}
+        for d in (4.5, 6.0, 8.0):
+            state = {"health": 20.0, "hostiles": [["zombie", 1, d]]}
+            self.assertEqual(ds.danger_label(state, answers), "yes", f"at {d} m")
+
+    def test_logged_yes_is_dropped_when_the_state_proves_safe(self):
+        # A far, known hostile at full health is the over-trigger the runtime band absorbs
+        # (live run7b answered `yes` at 9-24 m): the ceiling labels it `no` despite the `yes`.
         state = {"health": 20.0, "hostiles": [["zombie", 1, 12.0]]}
+        answers = {DANGER_QID: {"choice": "yes"}}
+        self.assertEqual(ds.danger_label(state, answers), "no")
+
+    def test_ceiling_needs_health_above_the_band(self):
+        # Low-ish health keeps the logged `yes` even with the mob far away.
+        state = {"health": 14.0, "hostiles": [["zombie", 1, 12.0]]}
         answers = {DANGER_QID: {"choice": "yes"}}
         self.assertEqual(ds.danger_label(state, answers), "yes")
 

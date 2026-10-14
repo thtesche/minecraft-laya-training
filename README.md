@@ -254,13 +254,24 @@ Positivbeispielen (`--include-failed` für reine Imitation). Tests:
 35 Datensatzzeilen (26 Train / 9 Held-out). Der Held-out-Vergleich zeigt **keinen** Accuracy-Gewinn
 (1.000 → 1.000) — der Split ist in-distribution, jede Zeile ist ein Zustand, den Laya im Lauf selbst
 gelöst hat; der Fine-Tune zeigt sich in **Loss 0.734 → 0.532**, **ECE 0.501 → 0.392** und
-**Brier 0.412 → 0.284** (besser kalibrierte Konfidenz). Ein echter Accuracy-Vergleich braucht einen
-**out-of-distribution**-Split.
+**Brier 0.412 → 0.284** (besser kalibrierte Konfidenz).
+
+**Ergebnis über einen ganzen gehaltenen Lauf (OOD, 2026-10-14):** Korpus = alle From-Zero-Läufe
+außer den Stall-Läufen und dem Über-Auslöser-Lauf `run7b`, **252 Train-Zeilen** (`in_danger=yes`
+28, nur Ticks mit Fortschritt). Held-out ist der **komplette** Lauf `run7d` (**61 Items**, kein
+Zustand im Training — auch der Zustands-Dedup war leer). Die Zero-Shot-Accuracy auf diesem
+out-of-distribution-Split ist **0.934** — also **kein** 1.0-Deckel mehr. Der Fine-Tune (4 Epochen,
+`rlcd`, Encoder eingefroren, MPS) lässt die Accuracy unverändert (die Labels sind die geloggte
+Gate-Wahl; Imitation kann deren Fehler nicht beheben) und verbessert die Kalibrierung:
+**Loss 0.474 → 0.372**, **ECE 0.250 → 0.132**, **Brier 0.261 → 0.187**, `mean_confidence`
+0.691 → 0.891.
 
 **Gefahr-Zeilen:** Ein `in_danger = yes`-Tick endet als **`defer`** (keine Aktion) — genau dort
 steckt der echte `yes`-Fall. Der Builder nimmt solche Defer-Ticks jetzt als reine `in_danger`-Zeile
-mit. Solange noch kein `yes`-Fall im Log liegt, mit `--no-danger` bauen, sonst zieht das Training
-den geteilten `choice`-Kopf auf „immer no".
+mit. Umgekehrt kappt eine **Obergrenze** ein `yes` für einen bloß geladenen Mob: ein Zustand mit
+Health ≥ 15 und dem nächsten Hostile bekannt jenseits 8 m wird als `no` gelabelt — dieselben
+Schwellen wie das Laufzeit-Band `brain.danger_matters`. Solange noch kein `yes`-Fall im Log liegt,
+mit `--no-danger` bauen, sonst zieht das Training den geteilten `choice`-Kopf auf „immer no".
 
 ## M4: Parameter-Layer (Zielwahl)
 
