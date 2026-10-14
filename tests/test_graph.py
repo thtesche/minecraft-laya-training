@@ -51,6 +51,15 @@ class BlockedBySurroundingsTest(unittest.TestCase):
         self.assertFalse(blocked_by_surroundings(""))
         self.assertFalse(blocked_by_surroundings(None))
 
+    def test_detects_a_pathfinder_that_cannot_move(self) -> None:
+        # Live, run10: boxed in a 1-wide flooded shaft, the body did not move on any route the
+        # pathfinder re-issued, so `navigate`, `collect_block` and `build_structure` all answered
+        # this. Treating it as a surroundings block lets the unblock ladder fire instead of the
+        # forced `escape_water` rescue spinning on it forever.
+        self.assertTrue(blocked_by_surroundings(
+            "[NAVIGATION_STOPPED] Pathfinder stopped: repeated_movement_failure: "
+            "Server confirmation deadline elapsed."))
+
 
 class UnblockActionTest(unittest.TestCase):
     def test_first_attempt_digs_a_pocket_in_place(self) -> None:

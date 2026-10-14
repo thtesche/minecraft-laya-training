@@ -150,11 +150,13 @@ CHEST_PLANKS = 8
 # How close the bot must be to the base to lay blocks out there: feet within this many blocks
 # of the anchor in x/z (one more vertically, so a step up or down still counts).
 BASE_RADIUS = 4.0
-# How far below the surface cell it last learned the bot may still stand and count as "on the
-# surface" for the base. The base belongs under open sky, and a mined tunnel's `air` reads the
-# same as sky, so the depth below the probed surface is the only reliable test: a shallow scoop
-# within this margin still opens to the sky, while a cave floor tens of blocks down does not.
-BASE_SURFACE_TOL = 8
+# How far the bot's feet may sit from the surface cell it last learned for *its own* column and
+# still count as "on the surface" for the base. The base belongs under open sky, and a mined
+# tunnel's `air` reads the same as sky, so the depth below the probed surface is the only reliable
+# test. A one-block scoop or slab at the column's own surface still opens to the sky, so a small
+# margin stays; anything more is a cave floor, and a cell learned for a *different* column never
+# counts at all (`_at_surface`).
+BASE_SURFACE_TOL = 2
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
@@ -781,15 +783,27 @@ def _at_base(gs: GameState) -> bool:
 def _at_surface(gs: GameState) -> bool:
     """Whether the bot stands at open surface ground, high enough to anchor the base.
 
-    `gs.surface` is the surface cell the loop last learned for the bot's column (`x, feet_y, z`).
+    `gs.surface` is the surface cell the loop last learned for one column (`x, feet_y, z`).
     A cave floor sits far below it, while a mined tunnel's `air` overhead is indistinguishable
     from sky, so the base gate is this depth test rather than any `view_blocks` reading: the bot
-    is at the surface when its feet are within `BASE_SURFACE_TOL` of that cell. Unknown surface,
-    or none, is never "at the surface" -- the climb has to prove it first.
+    is at the surface only when it stands in that same column and its feet rest on the learned
+    floor. Unknown surface, a different column, or feet below that floor is never "at the
+    surface" -- the climb has to prove it first.
+
+    The column test is load-bearing: the cell was learned for the probed column, and a bot that
+    mined its way under a *different* column must not read as "at the surface" merely because
+    that column's height happens to be close. Live, run10: feet on a y=54 cave floor sat within
+    the old eight-block tolerance of a y=59 surface learned in another column, so
+    `establish_base` fired underground and the walk to it wedged the bot in a flooded shaft.
+    `BASE_SURFACE_TOL` now only absorbs the odd slab or one-block dip at the column's own
+    surface.
     """
     if gs.surface is None or gs.pos is None:
         return False
-    return gs.pos[1] >= gs.surface[1] - BASE_SURFACE_TOL
+    sx, sy, sz = gs.surface
+    if (math.floor(gs.pos[0]), math.floor(gs.pos[2])) != (sx, sz):
+        return False
+    return abs(gs.pos[1] - sy) <= BASE_SURFACE_TOL
 
 
 def _base_steps_ready(gs: GameState) -> bool:

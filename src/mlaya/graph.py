@@ -40,8 +40,14 @@ ADOPT_CHEST_RADIUS = 4
 # `[PLACE_TARGET_OCCUPIED]` (live, from-zero run: the cell beside the base held `grass_block`,
 # so `place_chest` answered it on every tick). Retrying in place loops forever, so the fix is
 # to change the surroundings and try again.
+# `repeated_movement_failure` is the pathfinder saying the body did not actually move on a
+# route it kept re-issuing: the bot is boxed in (live, run10: wedged in a 1-wide flooded shaft,
+# every `navigate`, `collect_block` and `build_structure` answered it and the forced
+# `escape_water` rescue spun on it forever with no Laya choice and no way out). Treating it as a
+# surroundings block lets the same unblock ladder fire -- dig a pocket, then walk to open ground
+# -- instead of an infinite forced loop.
 BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED", "BED_PLACEMENT_FAILED", "PLACE_BLOCK_FAILED",
-                 "PLACE_TARGET_OCCUPIED")
+                 "PLACE_TARGET_OCCUPIED", "repeated_movement_failure")
 # A gathering action is refused with `[INVENTORY_FULL]` once all 36 carried slots are taken; the
 # unblock there is not terrain but pack space (stow at the base, else drop), so it routes through
 # a separate relief step.

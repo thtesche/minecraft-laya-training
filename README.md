@@ -105,7 +105,9 @@ Oberfläche unbekannt ist oder der Bot zu tief steht, bieten die Kandidaten `sur
 `navigate` **ohne `y`** fragt den Server nach der Oberfläche der Spalte (er läuft bei eindeutiger
 Spalte selbst hoch, sonst stoppt er mit `[NAVIGATION_HEIGHT_REQUIRED] … at y=N`), und der nächste
 Tick steigt mit `dig`/`scaffold` zu genau dieser Zelle auf (live: `y = -15` → `y = 74` in ~92 s).
-Erst dann ist `establish_base` erlaubt (`_at_surface`, Toleranz `BASE_SURFACE_TOL = 8`); der
+Erst dann ist `establish_base` erlaubt (`_at_surface`: die **eigene** Spalte der gelernten Oberfläche
+und Füße innerhalb `BASE_SURFACE_TOL = 2`; die frühere Toleranz 8 ohne Spaltenprüfung setzte run10 die
+Basis unterirdisch und keilte den Bot in einen gefluteten Schacht ein); der
 Basis-Scan `_scan_build_site` läuft ebenfalls nur an der Oberfläche. Sobald das Diamant-Kit steht,
 sucht `establish_base` einen ebenen,
 freien Platz für den Portalrahmen: zwei `view_blocks box`-Reads um den Bot — seine eigene Ebene und
@@ -134,7 +136,8 @@ zuerst — live im From-Zero-Lauf behoben. Natürlicher Obsidian liegt nur tief 
 nicht angegraben — ein Tiefbohrversuch endete in der **Wasser-Falle** (schwimmend ohne Grund, jedes
 folgende `collect_block` lief leer). Dafür sorgt jetzt der **Wasser-Escape-Reflex**: `in_water and
 not on_ground` macht `escape_water` zum einzigen Kandidaten und navigiert zur Basis bzw. auf den
-nächsten trockenen Boden zurück. Schlüssel der Kette bleibt der **Obsidian-Latch**: Obsidian muss vor
+nächsten trockenen Boden zurück. Ein **eingeklemmter** Bot (Server-Stop `repeated_movement_failure`)
+zählt als blockierte Umgebung, sodass die Unblock-Leiter greift statt einer Endlosschleife. Schlüssel der Kette bleibt der **Obsidian-Latch**: Obsidian muss vor
 dem Flint&Steel gebankt sein, damit `mine_obsidian` nach dem Bau (der die 10 Blöcke ausgibt) nicht
 erneut gräbt. Das Bett wird **nur nachts** gelegt — nur Schlafen setzt den Respawn-Punkt. An der
 Basis wird der generische Nachtschlaf vor dem angezündeten Portal **unterdrückt**: der Server legt

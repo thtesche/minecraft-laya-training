@@ -6,6 +6,7 @@ their precondition guards and argument binding are pinned here.
 """
 from __future__ import annotations
 
+import math
 import unittest
 
 from mlaya.actions import Action, candidates, inventory_relief, resolve, tech_tree_complete
@@ -1383,7 +1384,7 @@ class HomeBaseTest(unittest.TestCase):
         the bot there directly and record it, which is what `_at_surface` reads.
         """
         x, y, z = g.pos
-        g.surface = (int(x), int(y), int(z))
+        g.surface = (math.floor(x), math.floor(y), math.floor(z))
         return g
 
     def test_establish_base_walks_to_the_surface_ground(self) -> None:
@@ -1422,6 +1423,33 @@ class HomeBaseTest(unittest.TestCase):
         g.surface = (-47, 74, 4)
         self.assertIn("surface_up", candidates(g))
         self.assertNotIn("establish_base", candidates(g))
+
+    def test_no_surface_anchor_under_a_different_column(self) -> None:
+        # Live, run10: the surface cell is learned for the probed column. A bot that mined its way
+        # under a *different* column must not read as "at the surface" just because that other
+        # column's height is close -- that fired `establish_base` on a cave floor and the walk to
+        # it wedged the bot in a flooded shaft.
+        g = self._geared()
+        g.pos = (-56.45, 54.0, -0.5)  # cave floor, column (-57, -1), five below the cell below
+        g.surface = (-68, 59, 3)      # a y=59 surface learned in another column
+        self.assertIn("surface_up", candidates(g))
+        self.assertNotIn("establish_base", candidates(g))
+
+    def test_no_surface_anchor_five_below_its_own_column_surface(self) -> None:
+        # The same column, but the feet rest on a cave floor five blocks under the learned surface.
+        g = self._geared()
+        g.pos = (-67.49, 54.0, 3.33)  # column (-68, 3)
+        g.surface = (-68, 59, 3)
+        self.assertIn("surface_up", candidates(g))
+        self.assertNotIn("establish_base", candidates(g))
+
+    def test_one_block_dip_still_counts_as_the_surface(self) -> None:
+        # The margin that stays: a one-block scoop at the column's own surface still opens to sky.
+        g = self._geared()
+        g.pos = (-197.44, 63.0, -97.64)  # one below the learned y=64
+        g.surface = (-198, 64, -98)
+        self.assertIn("establish_base", candidates(g))
+        self.assertNotIn("surface_up", candidates(g))
 
     def test_surface_up_probes_a_column_before_it_climbs(self) -> None:
         # First the height-less probe (the server names the surface, or walks the bot up when the

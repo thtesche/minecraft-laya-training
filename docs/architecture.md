@@ -629,6 +629,16 @@ nur eine Ebene tiefer.
   Basis-zuerst-Regel war der Fehler, nicht das Modell.) Steht der Bot am Grund (Wassergraben, Teich,
   ein Guss, der ihn nicht flutet), greift der Reflex **nicht**. Getestet in
   `tests/test_actions.py::EscapeWaterTest`.
+  **Eingeklemmt (`repeated_movement_failure`):** Der Server meldet diesen Stop, wenn der Körper auf
+  einer erneut ausgegebenen Route **nicht** vom Fleck kommt — der Bot ist körperlich eingeschlossen.
+  Live run10: in einem 1 Block weiten, gefluteten Schacht antworteten `navigate`, `collect_block` und
+  `build_structure` alle so, und die erzwungene `escape_water`-Rettung lief **endlos** darauf. Der
+  Code gilt jetzt als `blocked_by_surroundings`, sodass die vorhandene Unblock-Leiter greift — Tasche
+  graben (`make_room`), sonst auf freie Fläche (`explore`) — statt einer Endlosschleife ohne
+  Laya-Wahl. (Der Server lehnte im selben Fall Graben/Bauen zusätzlich mit `Underwater stance
+  unavailable` ab, solange der Kopf im Wasser stand — ein serverseitiger Guard, `src/navigation/
+  diving.ts`; nur wenn der Kopf in Luft reicht, ist Arbeit erlaubt.) Getestet in
+  `tests/test_graph.py::BlockedBySurroundingsTest`.
 - **Homebase (implementiert):** Ein Anker auf der Oberfläche trägt Bett, Portalrahmen und Truhe.
   **Erst hochsteigen, dann ankern (`surface_up`):** Die einzige verlässliche Aussage „hier ist
   Oberfläche" ist die **Tiefe unter der Oberfläche** — nicht der Block über dem Kopf. Ein von der
@@ -637,7 +647,14 @@ nur eine Ebene tiefer.
   Halt", nicht „es ist Himmel"). **Live run9:** die Basis landete auf `y = -16` unter einer
   `y = 73`-Oberfläche, 89 Blöcke tief, weil der Bot zum Diamanten-Graben hinabgestiegen war und der
   Scan dort einen Höhlenboden fand. Deshalb ist `establish_base` an **`_at_surface`** gebunden: nur
-  wenn `gs.pos[1] >= gs.surface[1] − BASE_SURFACE_TOL` (8) gilt, wird angelegt. Solange die
+  wenn der Bot **in derselben Spalte** wie die gelernte Oberfläche steht **und** `|gs.pos[1] −
+  gs.surface[1]| <= BASE_SURFACE_TOL` (2) gilt, wird angelegt. Die Spaltenprüfung trägt: die Zelle
+  wurde für *eine* Spalte gelernt, ein Bot, der sich unter eine *andere* Spalte gräbt, darf nicht
+  allein wegen ähnlicher Höhe als „an der Oberfläche" gelten. **Live run10:** Füße auf einem
+  `y = 54`-Höhlenboden lagen innerhalb der alten Toleranz 8 einer in anderer Spalte gelernten
+  `y = 59`-Oberfläche, `establish_base` feuerte unterirdisch, und der Weg dorthin keilte den Bot in
+  einem gefluteten Schacht ein. Die Toleranz 2 fängt nur noch die einzelne Platte oder eine
+  einblockige Mulde an der *eigenen* Oberfläche auf. Solange die
   Oberfläche unbekannt ist oder der Bot zu tief steht, bieten die Kandidaten **`surface_up`** an:
   ein `navigate` **ohne `y`** fragt den Server nach der Oberfläche der Spalte — er läuft bei
   eindeutiger Spalte selbst nach oben und stoppt sonst mit `[NAVIGATION_HEIGHT_REQUIRED] …
