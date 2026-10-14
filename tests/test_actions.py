@@ -286,13 +286,15 @@ class NetherLullWaitTest(unittest.TestCase):
 
     @staticmethod
     def _idle() -> GameState:
-        # The Nether prep is already banked (bow, arrows, deep cobblestone stack), so the lull
-        # has no productive step left and the only sensible tick is holding at the base.
+        # The Nether prep is already banked (bow, arrows, deep cobblestone stack, and a furnace
+        # standing at the base), so the lull has no productive step left and the only sensible
+        # tick is holding at the base.
         g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=64, white_bed=1,
-                                      iron_ingot=1, cooked_beef=24, furnace=1,
+                                      iron_ingot=1, cooked_beef=24,
                                       bow=1, arrow=16)))
         g.food = 20.0
         g.chest_pos = (-198, -47, -98)
+        g.furnace_pos = (-198, -46, -99)
         return g
 
     def test_holding_at_the_base_beats_exploring(self) -> None:
@@ -1494,6 +1496,87 @@ class HomeBaseTest(unittest.TestCase):
         g.chest_pos = (-197, -46, -97)
         g.slots_used = 36
         self.assertEqual(inventory_relief(g, allow_stow=False).tool, "drop_item")
+
+
+class BaseFurnaceTest(unittest.TestCase):
+    """The furnace that stands at the base, so cooking does not tear a temporary one down.
+
+    `smelt_item` with `temporary_workstation` places a carried furnace and collects it again
+    before returning, so every `cook_food`/`smelt_gold` call in the lull set the furnace up and
+    broke it down again. Standing the carried furnace at the base once (`place_furnace`) and
+    naming its cell lets the same furnace be reused.
+    """
+
+    @staticmethod
+    def _lull(**inv) -> GameState:
+        return lit_portal(at_home(geared(**inv)))
+
+    def test_place_furnace_at_the_base(self) -> None:
+        g = self._lull(furnace=1, beef=2)
+        self.assertIn("place_furnace", candidates(g))
+        a = resolve("place_furnace", g)
+        self.assertEqual(a.tool, "place_block")
+        self.assertEqual(a.args["block_name"], "furnace")
+        # One block out from the base on the side opposite the chest, off the portal plane (z=bz).
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -99))
+
+    def test_place_furnace_waits_for_the_lull(self) -> None:
+        # Before the portal is lit the chain still wants the furnace for smelting away from the
+        # base, so it is not stood down permanently yet.
+        g = at_home(geared(furnace=1, beef=2))
+        self.assertNotIn("place_furnace", candidates(g))
+
+    def test_a_furnace_already_standing_is_not_placed_again(self) -> None:
+        g = self._lull(furnace=1, beef=2)
+        g.furnace_pos = (-197, -46, -99)
+        self.assertNotIn("place_furnace", candidates(g))
+        self.assertIsNone(resolve("place_furnace", g))
+
+    def test_place_furnace_dropped_when_the_ground_cannot_hold_it(self) -> None:
+        g = self._lull(furnace=1, beef=2)
+        g.furnace_blocked = True
+        self.assertNotIn("place_furnace", candidates(g))
+        self.assertIsNone(resolve("place_furnace", g))
+
+    def test_go_home_to_stand_the_furnace_at_the_base(self) -> None:
+        g = self._lull(furnace=1, beef=2)
+        g.pos = (-250.5, 64.0, -120.5)   # away from the base
+        self.assertIn("go_home", candidates(g))
+        a = resolve("go_home", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -98))
+
+    def test_cook_food_reuses_the_base_furnace(self) -> None:
+        g = self._lull(furnace=0, beef=3, coal=1)
+        g.furnace_pos = (-197, -46, -99)
+        a = resolve("cook_food", g)
+        self.assertEqual(a.tool, "smelt_item")
+        self.assertNotIn("temporary_workstation", a.args)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -99))
+
+    def test_cook_food_places_a_temporary_furnace_without_a_base_one(self) -> None:
+        a = resolve("cook_food", gs(inventory={"furnace": 1, "coal": 1, "beef": 2}))
+        self.assertTrue(a.args["temporary_workstation"])
+        self.assertNotIn("x", a.args)
+
+    def test_the_furnace_keeps_clear_of_a_placed_bed(self) -> None:
+        # A bed on the furnace cell would make the placement `[PLACE_TARGET_OCCUPIED]` and
+        # `make_room` would dig the respawn bed away, so the furnace stands nowhere there and
+        # cooking falls back to the temporary workstation.
+        g = self._lull(furnace=1, beef=2, acacia_planks=3)
+        g.resources = {**g.resources,
+                       "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -99, 2.0)]}
+        self.assertNotIn("place_furnace", candidates(g))
+        self.assertIsNone(resolve("place_furnace", g))
+        self.assertTrue(resolve("cook_food", g).args["temporary_workstation"])
+
+    def test_smelt_gold_reuses_the_base_furnace(self) -> None:
+        g = self._lull(furnace=0, raw_gold=2, coal=1)
+        g.furnace_pos = (-197, -46, -99)
+        a = resolve("smelt_gold", g)
+        self.assertEqual(a.tool, "smelt_item")
+        self.assertNotIn("temporary_workstation", a.args)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -99))
 
 
 class EscapeWaterTest(unittest.TestCase):

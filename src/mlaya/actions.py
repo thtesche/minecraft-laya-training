@@ -35,7 +35,7 @@ CRITERIA: dict[str, str] = {
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
     "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the portal is lit, stock the deeper Nether reserve",
-    "cook_food": "cook carried raw meat in the furnace so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
+    "cook_food": "cook carried raw meat in the furnace at the base (or the carried furnace, set up just for the batch) so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
     # Nether prep, stocked in the daytime lull after the portal is lit (see `_nether_prep_steps`).
     "craft_bow": "craft a bow from string and sticks; the server's combat layer fires it for ranged defence against ghasts and blazes",
     "craft_arrows": "craft arrows from flint, sticks and feathers so the carried bow has ammunition",
@@ -54,6 +54,7 @@ CRITERIA: dict[str, str] = {
     "go_home": "walk back to the home base to place the bed, the portal or store surplus there",
     "craft_chest": "craft a chest from eight planks to store surplus blocks at the base",
     "place_chest": "place the crafted chest at the home base",
+    "place_furnace": "place the furnace the bot carries at the home base, so cooking and smelting reuse it instead of setting up a temporary one every time",
     "stow_surplus": "deposit the surplus blocks of a full pack into the chest at the base",
     # Overworld -> Nether gate (the portal frame and the bed beside it).
     "craft_bucket": "craft a bucket from three iron ingots; a water bucket is how obsidian is made",
@@ -616,7 +617,7 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
             if table:
                 out.append("craft_gold_helmet")
         elif _has(inv, RAW_GOLD):
-            if _has(inv, "furnace") and _furnace_fuel(inv) is not None:
+            if (_has(inv, "furnace") or _furnace_ready(gs)) and _furnace_fuel(inv) is not None:
                 out.append("smelt_gold")
         elif _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
             out.append("mine_gold")
@@ -634,6 +635,49 @@ def _junk_carried(inv: dict[str, int]) -> list[str]:
 def _chest_ready(gs: GameState) -> bool:
     """A chest has been placed at the base (its coordinates are remembered)."""
     return gs.chest_pos is not None
+
+
+def _furnace_site(gs: GameState) -> tuple[int, int, int] | None:
+    """The cell the base furnace goes on, or None when it cannot stand there.
+
+    One block out from the base on the side opposite the chest, clear of the portal's frame
+    plane (which runs along z == bz). The one refusal is a placed bed on that exact cell: the
+    placement would answer `[PLACE_TARGET_OCCUPIED]` and `make_room` would dig the respawn bed
+    away. The bed's cells are scanned (`white_bed`), so the furnace simply stands nowhere there
+    and cooking falls back to the temporary workstation.
+    """
+    if gs.base is None:
+        return None
+    bx, by, bz = gs.base
+    cell = (bx, by + 1, bz - 1)
+    if any(hit.pos == cell for hit in gs.resources.get("white_bed", [])):
+        return None
+    return cell
+
+
+def _furnace_ready(gs: GameState) -> bool:
+    """A furnace stands at the base (its coordinates are remembered).
+
+    When it does, `smelt_item` gets the furnace's coordinates and never places a temporary
+    workstation, so the same furnace is reused instead of being set up and torn down on every
+    `cook_food`/`smelt_gold` call (live: the bot visibly tore the furnace down between batches).
+    """
+    return gs.furnace_pos is not None
+
+
+def _smelt_args(gs: GameState, item_name: str, count: int, fuel_name: str) -> dict:
+    """The `smelt_item` arguments: the base furnace's coordinates, or a temporary workstation.
+
+    With a furnace standing at the base the call names its exact cell and reuses it; otherwise
+    it falls back to the carried furnace placed and recovered for this one call.
+    """
+    args: dict = {"item_name": item_name, "count": count, "fuel_item_name": fuel_name}
+    if gs.furnace_pos is not None:
+        fx, fy, fz = gs.furnace_pos
+        args.update({"x": fx, "y": fy, "z": fz})
+    else:
+        args["temporary_workstation"] = True
+    return args
 
 
 def _obsidian_within_reach(gs: GameState) -> bool:
@@ -747,6 +791,11 @@ def _base_steps_ready(gs: GameState) -> bool:
         return True
     if (_portal_lit(gs) and _has_bed(inv) and not _bed_placed(gs)
             and gs.phase == "night"):
+        return True
+    # In the lull, a carried furnace belongs at the base: walking back lets `place_furnace`
+    # stand it there, after which cooking reuses it rather than tearing a temporary one down.
+    if (_nether_idle(gs) and not _furnace_ready(gs) and not gs.furnace_blocked
+            and _has(inv, "furnace") and _furnace_site(gs) is not None):
         return True
     if not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs):
         return True
@@ -910,7 +959,7 @@ def candidates(gs: GameState) -> list[str]:
     planks = _planks(inv)
     cobble = inv.get("cobblestone", 0)
     table = _has(inv, "crafting_table")
-    furnace = _has(inv, "furnace")
+    furnace = _has(inv, "furnace") or _furnace_ready(gs)
     coal = inv.get("coal", 0)
     raw_iron = inv.get("raw_iron", 0)
     iron = inv.get("iron_ingot", 0)
@@ -942,7 +991,14 @@ def candidates(gs: GameState) -> list[str]:
 
     if eating:
         out.append("eat_food")
-    if _has(inv, "furnace") and _first_cookable(inv) and not eating:
+    # A furnace that stands at the base is what stops `smelt_item` placing and tearing a
+    # temporary workstation down on every call. In the lull the carried furnace is stood at the
+    # base once (walking home first if the bot is away), after which cooking reuses its cell.
+    if (_nether_idle(gs) and gs.base is not None and not _furnace_ready(gs)
+            and not gs.furnace_blocked and _has(inv, "furnace")
+            and _furnace_site(gs) is not None):
+        out.append("place_furnace" if _at_base(gs) else "go_home")
+    if (_has(inv, "furnace") or _furnace_ready(gs)) and _first_cookable(inv) and not eating:
         # Cook raw meat so it feeds far more hunger. Outside the Nether lull only coal/charcoal
         # may be spent on it (as before, so it never steals wood from the chain); during the lull
         # any carried fuel does, so a bot with raw meat and wood still cooks.
@@ -1220,12 +1276,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": "furnace"}], "temporary_workstation": True},
                       "craft a furnace to smelt iron")
     if label == "smelt_iron":
-        if not _has(inv, "furnace") or inv.get("raw_iron", 0) < 1 or inv.get("coal", 0) < 1:
+        if (not (_has(inv, "furnace") or _furnace_ready(gs)) or inv.get("raw_iron", 0) < 1
+                or inv.get("coal", 0) < 1):
             return None
         count = min(inv.get("raw_iron", 0), 3)
-        return Action(label, "smelt_item",
-                      {"item_name": "raw_iron", "count": count, "fuel_item_name": "coal",
-                       "temporary_workstation": True},
+        return Action(label, "smelt_item", _smelt_args(gs, "raw_iron", count, "coal"),
                       "smelt raw iron into ingots")
     if label == "craft_iron_pickaxe":
         if inv.get("iron_ingot", 0) < 3 or not _has(inv, "crafting_table"):
@@ -1434,8 +1489,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "mine gold ore for the helmet that keeps piglins neutral")
     if label == "smelt_gold":
         fuel = _furnace_fuel(inv)
-        if (not _has(inv, "furnace") or inv.get(RAW_GOLD, 0) < 1 or fuel is None
-                or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+        if (not (_has(inv, "furnace") or _furnace_ready(gs)) or inv.get(RAW_GOLD, 0) < 1
+                or fuel is None or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
             return None
         fuel_name, capacity = fuel
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
@@ -1445,9 +1500,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                     max(0, GOLD_HELMET_INGOTS - inv.get(GOLD_INGOT, 0)))
         if count < 1:
             return None
-        return Action(label, "smelt_item",
-                      {"item_name": RAW_GOLD, "count": count, "fuel_item_name": fuel_name,
-                       "temporary_workstation": True},
+        return Action(label, "smelt_item", _smelt_args(gs, RAW_GOLD, count, fuel_name),
                       f"smelt raw gold into ingots using {fuel_name}")
     if label == "craft_gold_helmet":
         if (inv.get(GOLD_INGOT, 0) < GOLD_HELMET_INGOTS or not _has(inv, "crafting_table")
@@ -1471,15 +1524,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "cook_food":
         raw = _first_cookable(inv)
         fuel = _furnace_fuel(inv)
-        if not raw or not _has(inv, "furnace") or fuel is None:
+        if not raw or not (_has(inv, "furnace") or _furnace_ready(gs)) or fuel is None:
             return None
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
         if fuel[0] not in ("coal", "charcoal") and not _nether_idle(gs):
             return None
         fuel_name, capacity = fuel
         return Action(label, "smelt_item",
-                      {"item_name": raw, "count": min(inv.get(raw, 0), 3, capacity),
-                       "fuel_item_name": fuel_name, "temporary_workstation": True},
+                      _smelt_args(gs, raw, min(inv.get(raw, 0), 3, capacity), fuel_name),
                       f"cook {raw} into {COOKED[raw]} using {fuel_name}")
     if label == "eat_food":
         food = _first_edible(inv)
@@ -1562,6 +1614,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "place_block",
                       {"block_name": CHEST_ITEM, "x": bx, "y": by + 1, "z": bz + 1},
                       "place the chest at the home base")
+    if label == "place_furnace":
+        cell = _furnace_site(gs)
+        if (_furnace_ready(gs) or gs.furnace_blocked or not _has(inv, "furnace")
+                or cell is None):
+            return None
+        fx, fy, fz = cell
+        return Action(label, "place_block",
+                      {"block_name": "furnace", "x": fx, "y": fy, "z": fz},
+                      "place the carried furnace at the home base so cooking reuses it")
     if label == "stow_surplus":
         items = [{"item_name": n, "count": inv[n]} for n in _junk_carried(inv)]
         if not _chest_ready(gs) or not items:

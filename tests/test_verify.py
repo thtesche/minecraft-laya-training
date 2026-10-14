@@ -100,6 +100,10 @@ class HomeBaseProgressTest(unittest.TestCase):
         d = diff(gs(inventory={"chest": 1}), gs(inventory={}))
         self.assertTrue(progressed("place_chest", d))
 
+    def test_place_furnace_is_the_furnace_leaving_the_pack(self) -> None:
+        d = diff(gs(inventory={"furnace": 1}), gs(inventory={}))
+        self.assertTrue(progressed("place_furnace", d))
+
     def test_stow_and_drop_are_any_item_going_down(self) -> None:
         d = diff(gs(inventory={"tuff": 64, "granite": 32}), gs(inventory={"tuff": 0, "granite": 32}))
         self.assertTrue(progressed("stow_surplus", d))

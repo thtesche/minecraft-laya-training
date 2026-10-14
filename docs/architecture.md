@@ -674,6 +674,22 @@ nur eine Ebene tiefer.
   `_base_steps_ready` antwortet damit `True`, sodass `go_home` den Bot zurückführt; bei Ankunft
   (`_at_base`) wird das Flag gelöscht. `_scan_portal_opening` erkennt ein bereits leuchtendes Portal
   und legt dessen Blöcke nicht als „Fremdblock in der Öffnung" aus.
-  Getestet in `tests/test_actions.py::HomeBaseTest`, `tests/test_targets.py::BaseTargetTest`,
+  **Ofen an der Basis (live, Rückmeldung aus dem Lauf):** `smelt_item` mit `temporary_workstation`
+  stellt den getragenen Ofen *für den einen Aufruf* auf und sammelt ihn danach wieder ein — beim
+  Braten in der Lull (3 Stück pro Aufruf) riss der Bot den Ofen so zwischen den Chargen immer
+  wieder ab. Darum stellt `place_furnace` den getragenen Ofen einmal an der Basis ab (Zelle
+  `(bx, by+1, bz-1)`, neben der Truhe und frei von der Portal-Rahmenebene `z == bz`), merkt die
+  Koordinaten als `gs.furnace_pos` (`Agent._verify` notiert sie, `_adopt_homebase` übernimmt beim
+  Neustart einen Ofen in Ankernähe aus dem `furnace`-Scan in `CHAIN_NAMES`). `cook_food`,
+  `smelt_gold` und `smelt_iron` geben `smelt_item` dann diese Koordinaten und *ohne*
+  `temporary_workstation`, sodass derselbe Ofen stehen bleibt. Der Schritt läuft nur in der Lull
+  (`_nether_idle`) — vor dem Portal braucht die Kette den getragenen Ofen noch zum Schmieden
+  abseits der Basis —, und `_furnace_site` verweigert die Zelle, wenn dort bereits ein Bett steht
+  (der `[PLACE_TARGET_OCCUPIED]`-Unblock würde sonst das Respawn-Bett weggraben); kann der Boden
+  den Ofen nicht tragen (`[PLACE_NO_SUPPORT]`), fällt die Kette weg (`Agent._note_furnace` →
+  `gs.furnace_blocked`) und das Braten nutzt wieder den temporären Aufbau.
+  Getestet in `tests/test_actions.py::HomeBaseTest`, `tests/test_actions.py::BaseFurnaceTest`,
+  `tests/test_targets.py::BaseTargetTest`,
   `tests/test_graph.py::GuardUnblockTest`, `tests/test_graph.py::PortalBaseAdoptTest`,
+  `tests/test_graph.py::FurnaceSupportTest`,
   `tests/test_perception.py::PortalCornerParseTest` und `tests/test_verify.py::HomeBaseProgressTest`.

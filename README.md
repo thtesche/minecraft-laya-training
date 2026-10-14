@@ -160,7 +160,11 @@ noch das Nacht-Bett offen — der Bot fiel in reines `explore` (25 Idle-Ticks, 5
 das **Nether-Ziel `NETHER_FOOD_RESERVE = 64`** (eine volle Kelle, ~1 Inventarplatz) aufgefüllt
 (`_food_goal`; live hatte der Bot 17), und `cook_food` darf dann mit **jedem** Brennstoff braten
 (`_furnace_fuel`: Kohle zuerst, sonst Planken/Logs) — vorher verlangte es Kohle, und ohne Kohle blieb
-das rohe Fleisch liegen. Gegessen wird nach **Sättigung** (`FOOD_SATURATION`): Steak vor Brot vor rohem
+das rohe Fleisch liegen. Damit der Ofen dabei nicht dauernd abgerissen wird — `smelt_item` mit
+`temporary_workstation` stellt den getragenen Ofen pro Aufruf auf und sammelt ihn wieder ein —, stellt
+`place_furnace` ihn einmal an der Basis ab (Koordinaten als `gs.furnace_pos`, beim Neustart aus dem
+`furnace`-Scan übernommen) und `cook_food`/`smelt_gold` nutzen danach denselben Ofen. Gegessen wird nach
+**Sättigung** (`FOOD_SATURATION`): Steak vor Brot vor rohem
 Fleisch vor `rotten_flesh`. Goldene Karotten (die beste Nether-Nahrung) brauchen Karotten und Gold, die
 dieser Bot weder anbaut noch schürft — gebratenes Fleisch ist das Beste in Reichweite. Findet sich gar
 keine Arbeit, hält `wait` die Position an der Basis, statt wegzulaufen.

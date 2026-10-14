@@ -120,6 +120,8 @@ def progressed(label: str, d: dict) -> bool:
         return d["inventory_delta"].get("chest", 0) > 0
     if label == "place_chest":
         return d["inventory_delta"].get("chest", 0) < 0
+    if label == "place_furnace":
+        return d["inventory_delta"].get("furnace", 0) < 0
     if label in ("stow_surplus", "drop_junk"):
         return any(v < 0 for v in d["inventory_delta"].values())
     if label == "explore":

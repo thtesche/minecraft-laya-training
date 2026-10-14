@@ -32,11 +32,12 @@ GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
 # `lava` is where the carried water bucket is poured: obsidian is *made*, not dug (tunnelling to
 # the natural y=-55 deposit is the live trap that left the bot swimming in its own flooded
 # tunnel). `chest` lets a run that did not place the chest itself re-adopt one already standing
-# at the base. `gold_ore` is the Nether-prep dig (the gold helmet that keeps piglins neutral):
-# like the diamonds, a deposit deep under the surface counts through `resource_found` so the
-# `collect_block` tunnel is still offered. Kept as its own `view_blocks find` group: that call
-# takes at most eight names.
-CHAIN_NAMES = ("lava", "chest", "gold_ore")
+# at the base. `furnace` lets a run re-adopt the furnace it placed at the base (so cooking
+# reuses it instead of placing and tearing a temporary one down on every call). `gold_ore` is
+# the Nether-prep dig (the gold helmet that keeps piglins neutral): like the diamonds, a deposit
+# deep under the surface counts through `resource_found` so the `collect_block` tunnel is still
+# offered. Kept as its own `view_blocks find` group: that call takes at most eight names.
+CHAIN_NAMES = ("lava", "chest", "furnace", "gold_ore")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava",)
 RESOURCE_RADIUS = 64.0
@@ -221,6 +222,11 @@ class GameState:
     # The placed chest at the base, remembered from `place_chest` so `use_container` can name
     # its exact coordinates without a second block scan.
     chest_pos: tuple[int, int, int] | None = None
+    # The placed furnace at the base, remembered from `place_furnace` (or re-adopted from a scan
+    # after a restart) so `cook_food`/`smelt_gold` use the furnace that already stands there.
+    # `smelt_item` is given its exact coordinates and never places a temporary workstation, so
+    # the furnace is not set up and torn down on every cooking call.
+    furnace_pos: tuple[int, int, int] | None = None
     # True while the base was re-adopted from the world (a lit portal a previous run left) and the
     # bot has not reached it yet. It is what justifies walking home once (`go_home`) so a restart
     # finishes at the portal it built instead of drifting off to explore.
@@ -240,6 +246,10 @@ class GameState:
     # inventory relief drop surplus instead of retrying a placement that can never land (live,
     # Nether run: the answer came on every tick and the run never reached the portal).
     chest_blocked: bool = False
+    # A `place_furnace` the terrain refused for want of a supporting block (`[PLACE_NO_SUPPORT]`):
+    # like the chest, that is a property of the base's ground, so the loop gives the permanent
+    # furnace up and falls back to the temporary workstation `smelt_item` places itself.
+    furnace_blocked: bool = False
     # The cell a placement was refused at because a block stood in it (`[PLACE_TARGET_OCCUPIED]`):
     # `make_room` digs exactly that cell, since the block in it is the whole cause and a pocket
     # around the bot need not touch it (the chest cell sits beside the base, not the bot). Live,

@@ -265,6 +265,8 @@ class PourSkipTest(unittest.TestCase):
         agent._pour_skip = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent.furnace_pos = None
         agent._portal_blocked = []
         agent._blocked_cell = None
         agent.build_site = None
@@ -317,6 +319,8 @@ class DropHoleTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent.furnace_pos = None
         agent._portal_blocked = []
         agent._blocked_cell = None
         agent.build_site = None
@@ -365,6 +369,8 @@ class ChestSupportTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent.furnace_pos = None
         agent._portal_blocked = []
         agent._blocked_cell = None
         agent.build_site = None
@@ -394,6 +400,77 @@ class ChestSupportTest(unittest.TestCase):
         agent._drop_hole_blocked = False
         agent._chest_blocked = True
         self.assertTrue(agent._inject(gs()).chest_blocked)
+
+
+class FurnaceSupportTest(unittest.TestCase):
+    """The base furnace follows the chest: a ground that refuses it drops the chain.
+
+    `smelt_item` with a temporary workstation places the carried furnace and collects it again
+    before returning, so every cooking call in the lull set a furnace up and tore it down again.
+    Standing it at the base once and naming its cell fixes that; when the cell cannot hold it,
+    the chain is dropped and cooking falls back to the temporary workstation.
+    """
+
+    class _Action:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            self.tool = "place_block"
+            self.args = {"block_name": "furnace", "x": 1, "y": 2, "z": 3}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent.furnace_pos = None
+        agent.chest_pos = None
+        agent._portal_blocked = []
+        agent._blocked_cell = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
+        return agent
+
+    def test_remembers_the_unsupported_cell(self) -> None:
+        agent = self._agent()
+        agent._note_furnace(self._Action("place_furnace"), False,
+                            "[PLACE_NO_SUPPORT] No adjacent solid block can support placement "
+                            "into the target cell.")
+        self.assertTrue(agent._furnace_blocked)
+
+    def test_ignores_success_and_other_labels(self) -> None:
+        agent = self._agent()
+        agent._note_furnace(self._Action("place_furnace"), True, "[PLACE_NO_SUPPORT]")
+        agent._note_furnace(self._Action("place_chest"), False, "[PLACE_NO_SUPPORT]")
+        agent._note_furnace(self._Action("place_furnace"), False, "[PLACE_BLOCK_FAILED]")
+        self.assertFalse(agent._furnace_blocked)
+
+    def test_inject_hands_the_flag_and_position_to_the_state(self) -> None:
+        agent = self._agent()
+        agent.base = None
+        agent.chest_pos = None
+        agent.furnace_pos = (-197, -46, -99)
+        agent._pour_skip = set()
+        agent._drop_hole_blocked = False
+        agent._furnace_blocked = True
+        state = agent._inject(gs())
+        self.assertTrue(state.furnace_blocked)
+        self.assertEqual(state.furnace_pos, (-197, -46, -99))
+
+    def test_a_placed_furnace_is_remembered_from_the_scan(self) -> None:
+        # After a restart the loop has no memory of the furnace, but it is a real block beside
+        # the base: the scan re-adopts its cell, so cooking reuses it instead of a temporary one.
+        agent = self._agent()
+        agent.base = (-197, -47, -98)
+        g = gs(resources={"furnace": [BlockHit("furnace", "furnace", -197, -46, -99, 2.0)]})
+        agent._adopt_homebase(g)
+        self.assertEqual(agent.furnace_pos, (-197, -46, -99))
+
+    def test_a_far_furnace_is_not_adopted(self) -> None:
+        agent = self._agent()
+        agent.base = (-197, -47, -98)
+        g = gs(resources={"furnace": [BlockHit("furnace", "furnace", -150, -46, -99, 40.0)]})
+        agent._adopt_homebase(g)
+        self.assertIsNone(agent.furnace_pos)
 
 
 class GoalStopTest(unittest.TestCase):
@@ -467,6 +544,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)
         agent.base = (-197, -47, -98)
         agent.chest_pos = None
+        agent.furnace_pos = None
+        agent._furnace_blocked = False
         agent._portal_blocked = []
         agent._blocked_cell = None
         agent._base_adopted = False
@@ -511,6 +590,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._pour_skip = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent.furnace_pos = None
         agent.build_site = None
         self.assertEqual(agent._inject(gs()).portal_blocked, [(-195, -46, -98)])
 
@@ -552,6 +633,8 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.base = None
         agent.chest_pos = None
+        agent.furnace_pos = None
+        agent._furnace_blocked = False
         agent._base_adopted = False
         agent._portal_base_scanned = None
         agent._blocked_cell = None
@@ -599,6 +682,8 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._pour_skip = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent.furnace_pos = None
         agent.build_site = None
         agent._portal_blocked = []
         self.assertTrue(agent._inject(gs()).base_adopted)

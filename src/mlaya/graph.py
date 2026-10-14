@@ -133,6 +133,10 @@ class Agent:
         # placed chest there. Both are per-run only and injected into each GameState.
         self.base: tuple[int, int, int] | None = None
         self.chest_pos: tuple[int, int, int] | None = None
+        # The furnace stood at the base (`place_furnace`), remembered so `cook_food`/`smelt_gold`
+        # reuse its cell instead of placing a temporary workstation each call. Re-adopted from a
+        # scan after a restart, like the chest.
+        self.furnace_pos: tuple[int, int, int] | None = None
         # Whether `base` came from the world rather than from an `establish_base` this run: a lit
         # portal a previous run left standing (`_adopt_portal_base`). While the bot has not reached
         # it yet, `base_adopted` rides in the GameState and `go_home` walks it back, so a restart
@@ -160,6 +164,10 @@ class Agent:
         # fail again, so the chain is dropped and the relief falls back to `drop_junk` (live,
         # Nether run: the answer came on every tick and the run never reached the portal).
         self._chest_blocked = False
+        # A `place_furnace` the base's ground refused (`[PLACE_NO_SUPPORT]`): same as the chest,
+        # the cell beside the base cannot hold it. The chain is dropped so `cook_food` falls back
+        # to the temporary workstation `smelt_item` places itself.
+        self._furnace_blocked = False
         # The exact cell a placement was refused at because a block stood in it
         # (`[PLACE_TARGET_OCCUPIED]`): `make_room` digs that cell clear, since a pocket around
         # the bot need not even touch it (the chest cell sits beside the base, not the bot).
@@ -176,11 +184,13 @@ class Agent:
         self._adopt_homebase(gs)
         gs.base = self.base
         gs.chest_pos = self.chest_pos
+        gs.furnace_pos = self.furnace_pos
         gs.base_adopted = self._base_adopted
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.chest_blocked = self._chest_blocked
+        gs.furnace_blocked = self._furnace_blocked
         gs.blocked_cell = self._blocked_cell
         gs.portal_blocked = list(self._portal_blocked)
         return gs
@@ -296,6 +306,14 @@ class Agent:
                         and abs(hit.z - bz) <= ADOPT_CHEST_RADIUS
                         and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS):
                     self.chest_pos = hit.pos
+                    break
+        if self.furnace_pos is None and self.base is not None:
+            bx, by, bz = self.base
+            for hit in gs.resources.get("furnace", []):
+                if (abs(hit.x - bx) <= ADOPT_CHEST_RADIUS
+                        and abs(hit.z - bz) <= ADOPT_CHEST_RADIUS
+                        and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS):
+                    self.furnace_pos = hit.pos
                     break
 
     async def _perceive(self, state: AgentState) -> dict:
@@ -495,6 +513,18 @@ class Agent:
         if "PLACE_NO_SUPPORT" in (text or ""):
             self._chest_blocked = True
 
+    def _note_furnace(self, action, ok: bool, text: str | None) -> None:
+        """Remember that the base's ground cannot hold the furnace, so the chain is dropped.
+
+        Same `[PLACE_NO_SUPPORT]` answer as the chest: a property of the base site, not of the
+        attempt. Giving the permanent furnace up lets `cook_food` fall back to the temporary
+        workstation `smelt_item` places itself, which works anywhere and cannot stall the run.
+        """
+        if ok or action.label != "place_furnace":
+            return
+        if "PLACE_NO_SUPPORT" in (text or ""):
+            self._furnace_blocked = True
+
     def _note_place(self, action, ok: bool, text: str | None) -> None:
         """Remember the cell a placement was refused at, so the unblock step can dig it clear.
 
@@ -525,6 +555,7 @@ class Agent:
         self._note_pour(action, _ok, _text)
         self._note_drop(action, _ok, _text)
         self._note_chest(action, _ok, _text)
+        self._note_furnace(action, _ok, _text)
         self._note_place(action, _ok, _text)
         if action.label == "stow_surplus":
             # A failed deposit means the chest is full; stop offering it as the relief.
@@ -539,6 +570,9 @@ class Agent:
             elif action.label == "place_chest" and "x" in action.args:
                 self.chest_pos = (int(action.args["x"]), int(action.args["y"]),
                                   int(action.args["z"]))
+            elif action.label == "place_furnace" and "x" in action.args:
+                self.furnace_pos = (int(action.args["x"]), int(action.args["y"]),
+                                    int(action.args["z"]))
         after = await self._observe()
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
