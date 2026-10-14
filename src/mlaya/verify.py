@@ -49,6 +49,11 @@ INVENTORY_LABELS = {
     "mine_diamond", "craft_diamond_pickaxe", "craft_diamond_sword",
     "craft_diamond_chestplate", "craft_diamond_leggings", "craft_diamond_boots",
     "craft_diamond_helmet", "craft_shield",
+    # Gold and the Nether prep. Each nets an item the same way (raw_gold, gold_ingot, a bow, an
+    # arrow, a worn gold helmet, a feather), but they were missing here so `progressed` always
+    # answered False - live, `smelt_gold` finished (coal -1, gold_ingot +3) and read as no
+    # progress, and `mine_gold` gained 5 raw_gold that way too.
+    "mine_gold", "smelt_gold", "craft_bow", "craft_arrows", "craft_gold_helmet",
 }
 
 
@@ -66,6 +71,8 @@ def progressed(label: str, d: dict) -> bool:
         return "shield" in d.get("offhand_delta", [])  # the shield reaches the off-hand slot
     if label == "hunt_string":
         return d["inventory_delta"].get("string", 0) > 0
+    if label == "hunt_feather":
+        return d["inventory_delta"].get("feather", 0) > 0
     if label == "hunt_wool":
         return any(k.endswith("_wool") and v > 0 for k, v in d["inventory_delta"].items())
     if label == "hunt_food":

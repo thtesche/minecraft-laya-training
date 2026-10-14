@@ -108,5 +108,45 @@ class HomeBaseProgressTest(unittest.TestCase):
                                     diff(gs(inventory={"tuff": 64}), gs(inventory={"tuff": 64}))))
 
 
+class GoldAndNetherPrepProgressTest(unittest.TestCase):
+    """Gold and the Nether-prep steps each net an item, but they were absent from the
+    inventory set, so `progressed` answered False even when they worked. Live, `smelt_gold`
+    finished (coal -1, gold_ingot +3) and read as no progress."""
+
+    def test_mine_gold_is_the_raw_gold_gain(self) -> None:
+        d = diff(gs(inventory={}), gs(inventory={"raw_gold": 5}))
+        self.assertTrue(progressed("mine_gold", d))
+
+    def test_smelt_gold_is_the_gold_ingot_gain(self) -> None:
+        d = diff(gs(inventory={"raw_gold": 3, "coal": 1}),
+                 gs(inventory={"gold_ingot": 3, "coal": 0}))
+        self.assertTrue(progressed("smelt_gold", d))
+
+    def test_craft_bow_and_arrows_are_their_own_gain(self) -> None:
+        self.assertTrue(progressed("craft_bow",
+                                   diff(gs(inventory={"stick": 3}),
+                                        gs(inventory={"stick": 3, "bow": 1}))))
+        self.assertTrue(progressed("craft_arrows",
+                                   diff(gs(inventory={"flint": 1, "stick": 1}),
+                                        gs(inventory={"arrow": 4}))))
+
+    def test_craft_gold_helmet_is_the_piece_arriving(self) -> None:
+        carried = diff(gs(inventory={"gold_ingot": 5}),
+                       gs(inventory={"gold_ingot": 5, "golden_helmet": 1}))
+        self.assertTrue(progressed("craft_gold_helmet", carried))
+        # A server that auto-equips puts the helmet on the body, not in the pack.
+        worn = diff(gs(inventory={"gold_ingot": 5}),
+                    gs(inventory={"gold_ingot": 5},
+                       armor={"helmet": {"tier": "gold", "item": "golden_helmet"}}))
+        self.assertTrue(progressed("craft_gold_helmet", worn))
+
+    def test_hunt_feather_is_the_feather_gain(self) -> None:
+        self.assertTrue(progressed("hunt_feather",
+                                   diff(gs(inventory={}), gs(inventory={"feather": 2}))))
+        self.assertFalse(progressed("hunt_feather",
+                                    diff(gs(inventory={"feather": 2}),
+                                         gs(inventory={"feather": 2}))))
+
+
 if __name__ == "__main__":
     unittest.main()
