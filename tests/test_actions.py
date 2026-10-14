@@ -1004,6 +1004,30 @@ class NetherGateTest(unittest.TestCase):
         self.assertIsNone(resolve("fill_bucket", self._geared()))
         self.assertIsNone(resolve("fill_bucket", self._geared(water_bucket=1)))
 
+    def test_fill_bucket_still_offered_while_the_obsidian_is_short(self) -> None:
+        # The water is wanted exactly while obsidian is still being made.
+        self.assertIn("fill_bucket", candidates(self._geared(bucket=1, obsidian=4)))
+
+    def test_no_fill_or_craft_bucket_once_the_obsidian_is_banked(self) -> None:
+        # The bucket serves only `mine_obsidian`. With the ten blocks banked the water is
+        # finished, and offering the fill anyway stranded run9: an out-of-reach water column made
+        # `fill_bucket` fail, `go_home` answered, and the bot traded the two between the base and
+        # the water for 45 iterations while the portal stood ready to build. Neither the fill nor
+        # the craft that feeds it may be offered once the obsidian is complete.
+        g = self._geared(bucket=1, obsidian=10)
+        self.assertNotIn("fill_bucket", candidates(g))
+        self.assertNotIn("craft_bucket", candidates(g))
+
+    def test_fill_bucket_stops_once_the_flint_and_steel_is_crafted(self) -> None:
+        # The flint and steel is the latch that ends the obsidian epoch (it exists only to light
+        # the frame). After it an empty bucket must not pull the bot back to the water -- at a
+        # base whose water is out of reach that is the run9 ping-pong, and the only work left is
+        # to raise the frame.
+        g = self._at_home(self._geared(bucket=1, obsidian=10,
+                                       cobblestone=4, flint_and_steel=1))
+        self.assertNotIn("fill_bucket", candidates(g))
+        self.assertIn("build_portal", candidates(g))
+
     def test_mine_obsidian_pours_water_onto_lava(self) -> None:
         # Obsidian is *made*, not dug: with the bucket full and a usable lava cell within
         # pouring reach, the step empties the bucket into that cell.

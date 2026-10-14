@@ -1115,10 +1115,20 @@ def candidates(gs: GameState) -> list[str]:
         has_flint = _has(inv, FLINT_ITEM)
         has_fs = _has(inv, FLINT_STEEL_ITEM)
         obsidian = inv.get("obsidian", 0)
-        if not has_bucket and not has_water and table and iron >= BUCKET_IRON:
-            out.append("craft_bucket")
-        elif has_bucket and not has_water:
-            out.append("fill_bucket")
+        # The bucket is only ever for *making* obsidian: `mine_obsidian` pours the carried water
+        # onto lava and mines what forms, scooping a fresh bucket of water between blocks. Once
+        # the ten blocks are banked the water is finished, and offering the fill anyway strands
+        # the run: at a base whose water column sits out of reach the step fails
+        # (`[BUCKET_FAILED]`), the base steps send the bot home, and the two trade it between the
+        # base and the water for the rest of the run -- live, run9 spent 45 iterations on
+        # fill_bucket/gohome after the obsidian was banked, the portal ready to build throughout.
+        # Gate the chain on the obsidian still missing, exactly as `mine_obsidian` is gated, so
+        # the water request and the step that spends it can never drift apart.
+        if obsidian < PORTAL_OBSIDIAN and not has_fs:
+            if not has_bucket and not has_water and table and iron >= BUCKET_IRON:
+                out.append("craft_bucket")
+            elif has_bucket and not has_water:
+                out.append("fill_bucket")
         if not has_flint and not has_fs and gs.resource_distance("gravel") is not None:
             out.append("get_flint")
         # Obsidian is *made*, not dug: the step is offered while the bucket is full and a lava
