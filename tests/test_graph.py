@@ -395,6 +395,75 @@ class SurfaceNoteTest(unittest.TestCase):
         self.assertIsNone(agent.surface)
 
 
+class BaseAnchorRepairTest(unittest.TestCase):
+    """A home base whose own ground was dug out is re-pinned to the ground the server reports.
+
+    `go_home` navigates to `base.y + 1`; nothing re-checks the anchor against the live world once
+    `establish_base` records it. Live, run11: the bot quarried its own base to open air, so the
+    anchor kept the old surface height and every `go_home` answered
+    `[NAVIGATION_TARGET_UNSUPPORTED] ... The ground in that column is at y=70.` for 230 further
+    ticks. Re-pinning to that reported height heals it in one tick; a report that no longer moves
+    the anchor drops the base so a fresh flat site is scanned.
+    """
+
+    class _Action:
+        def __init__(self, label: str, args: dict) -> None:
+            self.label = label
+            self.args = args
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.base = (419, 73, 594)
+        agent.build_site = (419, 73, 594)
+        agent._build_site_scanned = (419.0, 594.0)
+        return agent
+
+    _UNSUPPORTED = ("[NAVIGATION_TARGET_UNSUPPORTED] No usable footing was observed within 1 "
+                    "blocks of 419, 74, 594. The ground in that column is at y=70. Choose an "
+                    "observed supported height, or pass build: true to scaffold to this point "
+                    "deliberately.")
+
+    def test_the_anchor_is_repinned_to_the_reported_ground(self) -> None:
+        agent = self._agent()
+        agent._note_base(self._Action("go_home", {"x": 419, "y": 74, "z": 594}), False,
+                         self._UNSUPPORTED)
+        self.assertEqual(agent.base, (419, 70, 594))
+        # The site is kept: only the height was wrong, so no re-scan is forced.
+        self.assertEqual(agent.build_site, (419, 73, 594))
+
+    def test_a_report_that_cannot_move_the_anchor_drops_the_base(self) -> None:
+        agent = self._agent()
+        agent.base = (419, 70, 594)
+        agent._note_base(self._Action("go_home", {"x": 419, "y": 71, "z": 594}), False,
+                         self._UNSUPPORTED)
+        self.assertIsNone(agent.base)
+        self.assertIsNone(agent.build_site)
+        self.assertIsNone(agent._build_site_scanned)
+
+    def test_a_refusal_at_another_column_leaves_the_base_alone(self) -> None:
+        agent = self._agent()
+        agent._note_base(self._Action("go_home", {"x": 413, "y": 58, "z": 601}), False,
+                         self._UNSUPPORTED)
+        self.assertEqual(agent.base, (419, 73, 594))
+
+    def test_ignores_success_other_codes_and_unparseable_text(self) -> None:
+        agent = self._agent()
+        agent._note_base(self._Action("go_home", {"x": 419, "y": 74, "z": 594}), True,
+                         self._UNSUPPORTED)
+        agent._note_base(self._Action("go_home", {"x": 419, "y": 74, "z": 594}), False,
+                         "[NAVIGATION_STOPPED] repeated_movement_failure")
+        agent._note_base(self._Action("go_home", {"x": 419, "y": 74, "z": 594}), False,
+                         "[NAVIGATION_TARGET_UNSUPPORTED] no height given")
+        self.assertEqual(agent.base, (419, 73, 594))
+
+    def test_no_base_yet_is_left_alone(self) -> None:
+        agent = self._agent()
+        agent.base = None
+        agent._note_base(self._Action("establish_base", {"x": 419, "y": 74, "z": 594}), False,
+                         self._UNSUPPORTED)
+        self.assertIsNone(agent.base)
+
+
 class DropHoleTest(unittest.TestCase):
     """A drop whose disposal pit the terrain refuses falls back to the open ground.
 

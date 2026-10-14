@@ -682,6 +682,22 @@ nur eine Ebene tiefer.
   als `GameState.base` fest; `go_home`
   läuft nur zurück, wenn wirklich Basisarbeit wartet (`_base_steps_ready`). `build_portal`/`place_bed`
   sind auf `_at_base` beschränkt, `_portal_site` ankert am Base-Block statt an den Füßen.
+  **Anker-Reparatur (`Agent._note_base`):** Der Anker wird einmal bei `establish_base` aus dem
+  Navigationsziel gesetzt (als Blockkoordinate: `args.y − 1`); nichts prüft ihn danach noch gegen die
+  lebende Welt. Gräbt der Bot seinen eigenen Basisboden weg (oder sprengt ein Creeper ihn, fällt Sand
+  herab), antwortet jedes `go_home` auf das nun haltlose Ziel `base.y + 1` mit
+  `[NAVIGATION_TARGET_UNSUPPORTED] No usable footing … The ground in that column is at y=N.` — **Live
+  run11:** nach `establish_base` hat der Bot seine Basis zu offener Luft abgebaut, und die nächsten
+  **230** `go_home`-Ticks antworteten dieselbe Verweigerung, ohne dass der Lauf vorankam (Laya wählte
+  `go_home` immer wieder, weil es einen getragenen Chest loswerden wollte und `_base_steps_ready`
+  dafür True blieb). Die Verweigerung nennt aber die Höhe, die der Server *tatsächlich* fand, also
+  wird der Anker einfach darauf umgepinnt — dieselbe „die Höhe aus der Server-Antwort zurücklesen"-
+  Bewegung wie `_note_surface` (`perception.parse_ground_height`). Bewegt die Antwort den Anker nicht
+  mehr (dieselbe Höhe, die er schon trägt), ist der Platz nicht in-place reparierbar, und die Basis
+  wird **verworfen** (`base`, `build_site`, `_build_site_scanned` = `None`), damit der Loop an einem
+  frischen `flat_build_site` neu ankert. Beide Pfade sind beschränkt: eine Tick zum Heilen, einer zum
+  Zurücksetzen, nie der unendliche Retry. `tests/test_graph.py::BaseAnchorRepairTest`,
+  `tests/test_perception.py::ParseGroundHeightTest`.
   **Öffnung vor dem Bau freiräumen:** Der Scan sichert die Lichtung nur für die Basis, die *er*
   gewählt hat. Eine übernommene Basis (`_adopt_homebase`) oder eine per `base_target` gewählte hatte
   diese Prüfung nie. Darum liest der Loop während des Bau-Fensters (Flint&Steel getragen, Portal

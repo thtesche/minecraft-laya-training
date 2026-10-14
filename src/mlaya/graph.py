@@ -529,6 +529,46 @@ class Agent:
         if y is not None:
             self.surface = (int(action.args["x"]), y, int(action.args["z"]))
 
+    def _note_base(self, action, ok: bool, text: str | None) -> None:
+        """Repair a home base whose anchor cell has lost its footing.
+
+        `go_home`, `wait`, `place_chest` and `place_furnace` all navigate to `base.y + 1`, so a
+        base whose own ground has been dug out answers `[NAVIGATION_TARGET_UNSUPPORTED]` on every
+        tick. The anchor is recorded once at `establish_base`; nothing re-checks it against the
+        live world, so a base the bot later quarries (or a creeper blows, or sand falls from) spins
+        the loop forever on a target that cannot be stood on. Live, run11: after `establish_base`
+        the bot excavated its own base to open air, and the next 230 `go_home` ticks all answered
+        the identical refusal while the run never advanced.
+
+        The refusal names the ground the server *did* find in that column, so the anchor is simply
+        re-pinned to it -- the same "read the height back out of the server's answer" move as
+        `_note_surface`. If the report no longer moves the anchor (the same height it already
+        holds), the site is not repairable in place, so the base is dropped and the loop anchors a
+        fresh one from a new `flat_build_site` scan. Both paths are bounded: one tick to heal, one
+        to reset, never the unbroken retry.
+        """
+        if ok or self.base is None:
+            return
+        if "NAVIGATION_TARGET_UNSUPPORTED" not in (text or ""):
+            return
+        args = getattr(action, "args", None) or {}
+        bx, by, bz = self.base
+        # Only a step aimed at the base anchor itself can repair or invalidate it; a refusal from
+        # any other destination is a different problem.
+        if args.get("x") != bx or args.get("z") != bz:
+            return
+        y = perception.parse_ground_height(text or "")
+        if y is None:
+            return
+        if y == by:
+            # The server reports the anchor's own height as still unsupported: the site is gone.
+            # Drop it so the next tick re-establishes a base on a fresh scan.
+            self.base = None
+            self.build_site = None
+            self._build_site_scanned = None
+            return
+        self.base = (bx, y, bz)
+
     def _note_drop(self, action, ok: bool, text: str | None) -> None:
         """Remember that no disposal pit can be dug where the bot stands, so the next drop does
         not ask for one.
@@ -596,6 +636,7 @@ class Agent:
         _text = getattr(res, "text", "")
         self._note_block(action.label, _ok, _text)
         self._note_pour(action, _ok, _text)
+        self._note_base(action, _ok, _text)
         self._note_drop(action, _ok, _text)
         self._note_chest(action, _ok, _text)
         self._note_furnace(action, _ok, _text)

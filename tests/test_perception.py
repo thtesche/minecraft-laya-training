@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.perception import (parse_box, parse_cells, parse_portal_corner,
-                              parse_resource_counts, parse_status, parse_surface_height,
-                              portal_interior)
+from mlaya.perception import (parse_box, parse_cells, parse_ground_height,
+                              parse_portal_corner, parse_resource_counts, parse_status,
+                              parse_surface_height, portal_interior)
 
 
 def _status(situation: dict) -> dict:
@@ -251,6 +251,30 @@ class ParseSurfaceHeightTest(unittest.TestCase):
         self.assertIsNone(parse_surface_height(""))
         self.assertIsNone(parse_surface_height(None))
         self.assertIsNone(parse_surface_height("standable feet heights: none."))
+
+
+class ParseGroundHeightTest(unittest.TestCase):
+    """`parse_ground_height` reads the ground a `[NAVIGATION_TARGET_UNSUPPORTED]` stop names.
+
+    A `navigate` whose target cell has no footing reports the height it *did* find in the column,
+    which is what a home base lost to its own digging has to be re-pinned to (`graph._note_base`).
+    """
+
+    def test_the_reported_ground_height_is_read(self) -> None:
+        text = ("[NAVIGATION_TARGET_UNSUPPORTED] No usable footing was observed within 1 blocks of "
+                "419, 74, 594. The ground in that column is at y=70. Choose an observed supported "
+                "height, or pass build: true to scaffold to this point deliberately.")
+        self.assertEqual(parse_ground_height(text), 70)
+
+    def test_a_negative_ground_height_reads(self) -> None:
+        text = "[NAVIGATION_TARGET_UNSUPPORTED] ... The ground in that column is at y=-16."
+        self.assertEqual(parse_ground_height(text), -16)
+
+    def test_another_failure_or_empty_text_is_none(self) -> None:
+        self.assertIsNone(parse_ground_height("[NAVIGATION_STOPPED] repeated_movement_failure"))
+        self.assertIsNone(parse_ground_height("[NAVIGATION_TARGET_UNSUPPORTED] no height given"))
+        self.assertIsNone(parse_ground_height(""))
+        self.assertIsNone(parse_ground_height(None))
 
 
 if __name__ == "__main__":

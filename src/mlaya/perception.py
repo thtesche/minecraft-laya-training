@@ -793,6 +793,21 @@ def parse_surface_height(text: str) -> int | None:
     return max(floors) if floors else None
 
 
+def parse_ground_height(text: str) -> int | None:
+    """A `[NAVIGATION_TARGET_UNSUPPORTED]` answer -> the column's real ground height, or None.
+
+    A `navigate` whose target cell has no footing refuses with
+    `[NAVIGATION_TARGET_UNSUPPORTED] No usable footing was observed within 1 blocks of <x>, <y>,
+    <z>. The ground in that column is at y=<ground>.` The refusal names the ground it *did* find,
+    which is exactly the height a base anchor lost to its own digging has to be repaired to (live,
+    run11: the bot quarried its home base to air, the anchor stayed at the old surface height, and
+    every `go_home` answered the same message for 230 ticks). Only that line yields a value; any
+    other failure, an unrelated navigation or an empty text returns None.
+    """
+    m = re.search(r"ground in that column is at y=\s*(-?\d+)", text or "")
+    return int(m.group(1)) if m else None
+
+
 async def scan_portal_corner(executor) -> tuple[int, int, int] | None:
     """One `view_blocks find` for a lit portal anywhere in the loaded chunks -> its corner.
 
