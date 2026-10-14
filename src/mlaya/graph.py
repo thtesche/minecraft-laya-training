@@ -10,7 +10,7 @@ from . import perception
 from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
-                      tech_tree_complete, _gear_ready)
+                      tech_tree_complete, _at_base, _gear_ready)
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
@@ -133,6 +133,14 @@ class Agent:
         # placed chest there. Both are per-run only and injected into each GameState.
         self.base: tuple[int, int, int] | None = None
         self.chest_pos: tuple[int, int, int] | None = None
+        # Whether `base` came from the world rather than from an `establish_base` this run: a lit
+        # portal a previous run left standing (`_adopt_portal_base`). While the bot has not reached
+        # it yet, `base_adopted` rides in the GameState and `go_home` walks it back, so a restart
+        # finishes at its own portal instead of drifting off to explore.
+        self._base_adopted = False
+        # Position of the last "is there a lit portal anywhere?" scan, so the extra read runs
+        # while the base is still unset but not on every tick (`_adopt_portal_base`).
+        self._portal_base_scanned: tuple[float, float] | None = None
         # Level ground the base scan proposed for the portal frame (`targets.flat_build_site`).
         # Per-run like `base`; `_build_site_scanned` remembers where the last box read was taken
         # so standing still does not pay for the same scan every tick.
@@ -168,6 +176,7 @@ class Agent:
         self._adopt_homebase(gs)
         gs.base = self.base
         gs.chest_pos = self.chest_pos
+        gs.base_adopted = self._base_adopted
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
         gs.drop_hole_blocked = self._drop_hole_blocked
@@ -206,10 +215,41 @@ class Agent:
 
     async def _observe(self):
         """One perception read, with the loop-owned facts and the base-site scan folded in."""
-        gs = self._inject(await perception.build(self.mcp))
+        gs = await perception.build(self.mcp)
+        await self._adopt_portal_base(gs)
+        gs = self._inject(gs)
         await self._scan_build_site(gs)
         await self._scan_portal_opening(gs)
+        if self._base_adopted and _at_base(gs):
+            # The re-adopted base has been reached: from here behave as if the run raised it.
+            self._base_adopted = False
         return gs
+
+    async def _adopt_portal_base(self, gs) -> None:
+        """Re-anchor the home base on a lit portal a previous run left standing, once.
+
+        `base` is per-run state, so a restart loses it - but the portal is a real block, and its
+        opening corner inverts `actions._portal_site`. Adopting it puts the frame plane back on
+        the standing obsidian so `_base_steps_ready` and `go_home` walk the bot back, instead of
+        `establish_base` raising a second portal (impossible anyway once the flint and steel is
+        crafted and the obsidian is spent). A fresh run finds no lit portal, so the base pick is
+        unchanged; the scan only runs while the base is still unset and moves with the bot.
+        """
+        if self.base is not None or not _gear_ready(gs) or gs.pos is None:
+            return
+        px, _, pz = gs.pos
+        at = self._portal_base_scanned
+        if at is not None and abs(at[0] - px) + abs(at[1] - pz) < 8.0:
+            return
+        self._portal_base_scanned = (px, pz)
+        try:
+            corner = await perception.scan_portal_corner(self.mcp)
+        except Exception:
+            return
+        if corner is None:
+            return
+        self.base = (corner[0] - 2, corner[1] - 1, corner[2])
+        self._base_adopted = True
 
     async def _scan_portal_opening(self, gs) -> None:
         """Read the portal opening while a frame build is pending, so a stray block is dug.
@@ -229,6 +269,11 @@ class Agent:
             names = perception.parse_cells(
                 await perception.scan_frame_volume(self.mcp, self.base))
         except Exception:
+            return
+        if any(name == perception.PORTAL_BLOCK for name in names.values()):
+            # A base re-adopted from a standing portal (`_adopt_portal_base`): the opening already
+            # holds the lit portal's own blocks, which are not a stray block to dig.
+            self._portal_blocked = []
             return
         self._portal_blocked = [cell for cell in perception.portal_interior(self.base)
                                 if not _clear(names.get(cell))]

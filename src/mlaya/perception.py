@@ -10,13 +10,21 @@ from typing import Any
 # read_recent_events -> response.data.result.events[] (type/observedAt/summary/...)
 # view_blocks -> response.data.result.blocks.find[] = {name, found, listed:[{x,y,z,name,distance,...}]}
 
+# A lit portal block: the one kind a previous run's finished portal leaves standing, and the
+# anchor a restart re-adopts its home base from (`parse_portal_corner`). A ruined portal has no
+# `nether_portal` block (only obsidian, unlit), so a hit here is our own lit gate.
+PORTAL_BLOCK = "nether_portal"
 # Resources probed each tick to keep the progression decisions grounded in the world.
 # The last three are the overworld -> Nether gate: the obsidian frame and the lit portal
 # block say how far that chain has come, and a placed bed beside it is the run's end state.
 # Eight is the most `view_blocks find` accepts, so this group sits exactly at the limit
 # (the standable-ground group is scanned in a second call).
 RESOURCE_NAMES = ("logs", "stone", "iron_ore", "coal_ore", "diamond_ore",
-                  "obsidian", "nether_portal", "white_bed")
+                  "obsidian", PORTAL_BLOCK, "white_bed")
+# Hits requested when the loop looks for a lit portal anywhere loaded (`scan_portal_corner`).
+# The opening is six cells and the radius filter is bypassed, so a dozen is ample to catch a
+# portal well past `RESOURCE_RADIUS` while still bounding the read.
+PORTAL_SCAN_LIMIT = 12
 # Ground blocks probed for the M4 parameter layer: a `view_blocks` hit whose `above` is
 # `air` is real standing ground -- the reliable way to choose a `navigate` target.
 GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
@@ -213,6 +221,10 @@ class GameState:
     # The placed chest at the base, remembered from `place_chest` so `use_container` can name
     # its exact coordinates without a second block scan.
     chest_pos: tuple[int, int, int] | None = None
+    # True while the base was re-adopted from the world (a lit portal a previous run left) and the
+    # bot has not reached it yet. It is what justifies walking home once (`go_home`) so a restart
+    # finishes at the portal it built instead of drifting off to explore.
+    base_adopted: bool = False
     # Lava cells whose pour the server already refused (`[BUCKET_NO_FACE]`): no solid block
     # beside them faces the bot, so retrying there can only fail again. The loop records them
     # and the obsidian step passes them over, which is what moves the search from a stopped-up
@@ -289,6 +301,7 @@ class GameState:
             "drops": self.drops,
             "base": self.base,
             "chest_pos": self.chest_pos,
+            "base_adopted": self.base_adopted,
             "events": self.events,
             "unread": self.unread,
             "notifications": self.notifications,
@@ -715,6 +728,48 @@ async def scan_frame_volume(executor, base: tuple[int, int, int]) -> dict:
         "read the portal opening for stray blocks before the frame is built",
     )
     return coerce(res.data, res.text)
+
+
+def parse_portal_corner(data: dict) -> tuple[int, int, int] | None:
+    """view_blocks find (nether_portal) -> the opening's corner (min x, min y, min z), or None.
+
+    Deliberately *not* radius-limited: `parse_resources` keeps only hits inside `RESOURCE_RADIUS`,
+    but a portal a previous run built can stand further off, and it is the one block that lets a
+    restart re-anchor its home base. The frame is a west-east plane (`actions._portal_site`) whose
+    2x3 opening starts two blocks east of, and one above, the base anchor at the frame's z, so the
+    lowest, westernmost portal cell inverts the site: base = corner - (2, 1, 0).
+    """
+    blocks = get(data, "response", "data", "result", "blocks", default={}) or {}
+    groups = blocks.get("find") if isinstance(blocks, dict) else None
+    cells: list[tuple[int, int, int]] = []
+    for group in groups or []:
+        if not isinstance(group, dict) or group.get("name") != PORTAL_BLOCK:
+            continue
+        for e in group.get("listed") or []:
+            if not isinstance(e, dict):
+                continue
+            try:
+                cells.append((int(e["x"]), int(e["y"]), int(e["z"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+    if not cells:
+        return None
+    return (min(c[0] for c in cells), min(c[1] for c in cells), min(c[2] for c in cells))
+
+
+async def scan_portal_corner(executor) -> tuple[int, int, int] | None:
+    """One `view_blocks find` for a lit portal anywhere in the loaded chunks -> its corner.
+
+    Used while the loop has no base yet: a fresh run finds nothing and `establish_base` proceeds
+    as before, while a restart finds the portal it left standing and adopts the base from it
+    (`graph._adopt_portal_base`).
+    """
+    res = await executor.read(
+        "view_blocks",
+        {"find": {"block_names": [PORTAL_BLOCK], "limit": PORTAL_SCAN_LIMIT}},
+        "find a lit portal a previous run left standing",
+    )
+    return parse_portal_corner(coerce(res.data, res.text))
 
 
 def _age_seconds(now_iso: Any, then_iso: Any) -> float | None:

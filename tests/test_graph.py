@@ -268,6 +268,8 @@ class PourSkipTest(unittest.TestCase):
         agent._portal_blocked = []
         agent._blocked_cell = None
         agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
         return agent
 
     def test_remembers_the_refused_cell(self) -> None:
@@ -318,6 +320,8 @@ class DropHoleTest(unittest.TestCase):
         agent._portal_blocked = []
         agent._blocked_cell = None
         agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
         return agent
 
     def test_remembers_the_unavailable_pit(self) -> None:
@@ -364,6 +368,8 @@ class ChestSupportTest(unittest.TestCase):
         agent._portal_blocked = []
         agent._blocked_cell = None
         agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
         return agent
 
     def test_remembers_the_unsupported_cell(self) -> None:
@@ -463,6 +469,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent.chest_pos = None
         agent._portal_blocked = []
         agent._blocked_cell = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
         agent.mcp = self._Mcp(cells)
         return agent
 
@@ -505,6 +513,95 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._chest_blocked = False
         agent.build_site = None
         self.assertEqual(agent._inject(gs()).portal_blocked, [(-195, -46, -98)])
+
+
+class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
+    """A restart re-anchors the home base on the lit portal a previous run left standing.
+
+    `base` is per-run state, but the portal is a real block; its opening corner inverts
+    `_portal_site`, so the adopted base puts the frame plane back on the standing obsidian and
+    `go_home` walks the bot to it. Without this the loop drifts off to `explore`, and it cannot
+    rebuild a portal either (with flint and steel crafted and the obsidian spent, `mine_obsidian`
+    is latched off)."""
+
+    class _Read:
+        def __init__(self, data):
+            self.data = data
+            self.text = None
+
+    class _Mcp:
+        def __init__(self, data):
+            self.data = data
+            self.calls: list = []
+
+        async def read(self, tool, args, why):
+            self.calls.append((tool, args))
+            return PortalBaseAdoptTest._Read(self.data)
+
+    # A lit portal at x=-154..-153, y=63..65, z=257, read at ~76 m - beyond RESOURCE_RADIUS.
+    _FIND = {"response": {"data": {"result": {"blocks": {"find": [
+        {"name": "nether_portal", "found": 6, "listed": [
+            {"x": -154, "y": 63, "z": 257, "name": "nether_portal", "distance": 76.0},
+            {"x": -153, "y": 65, "z": 257, "name": "nether_portal", "distance": 76.4},
+        ]},
+    ]}}}}}
+    _NONE = {"response": {"data": {"result": {"blocks": {"find": [
+        {"name": "nether_portal", "found": 0, "listed": []}]}}}}}
+
+    def _agent(self, data) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.base = None
+        agent.chest_pos = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
+        agent._blocked_cell = None
+        agent.mcp = self._Mcp(data)
+        return agent
+
+    @staticmethod
+    def _geared(**inv) -> GameState:
+        return gs(pos=(-178.5, 68.0, 329.5),
+                  tools={"pickaxe": "diamond", "sword": "diamond"},
+                  inventory={"crafting_table": 1, **inv},
+                  armor={slot: {"item": f"diamond_{slot}"}
+                         for slot in ("helmet", "chestplate", "leggings", "boots")},
+                  offhand="shield")
+
+    async def test_adopts_the_base_from_a_portal_past_the_scan(self) -> None:
+        agent = self._agent(self._FIND)
+        await agent._adopt_portal_base(self._geared())
+        self.assertEqual(agent.base, (-156, 62, 257))   # corner - (2, 1, 0)
+        self.assertTrue(agent._base_adopted)
+        self.assertEqual(agent.mcp.calls[0][0], "view_blocks")
+
+    async def test_no_lit_portal_leaves_the_base_unset(self) -> None:
+        agent = self._agent(self._NONE)
+        await agent._adopt_portal_base(self._geared())
+        self.assertIsNone(agent.base)
+        self.assertFalse(agent._base_adopted)
+
+    async def test_skips_once_a_base_is_set(self) -> None:
+        agent = self._agent(self._FIND)
+        agent.base = (-1, 2, 3)
+        await agent._adopt_portal_base(self._geared())
+        self.assertEqual(agent.base, (-1, 2, 3))
+        self.assertEqual(agent.mcp.calls, [])
+
+    async def test_skips_before_the_diamond_kit(self) -> None:
+        agent = self._agent(self._FIND)
+        await agent._adopt_portal_base(gs(pos=(0.0, 64.0, 0.0)))
+        self.assertIsNone(agent.base)
+        self.assertEqual(agent.mcp.calls, [])
+
+    def test_inject_hands_the_adopted_flag_to_the_state(self) -> None:
+        agent = self._agent(self._FIND)
+        agent._base_adopted = True
+        agent._pour_skip = set()
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent.build_site = None
+        agent._portal_blocked = []
+        self.assertTrue(agent._inject(gs()).base_adopted)
 
 
 if __name__ == "__main__":

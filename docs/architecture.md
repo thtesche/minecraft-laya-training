@@ -660,5 +660,20 @@ nur eine Ebene tiefer.
   (`ADOPT_BED_RADIUS` = 12 m) als Anker und eine **Truhe** in Ankernähe (`ADOPT_CHEST_RADIUS` = 4)
   als `chest_pos` — so läuft ein Neustart an derselben Homebase weiter, statt eine zweite zu bauen
   (die Truhe steht dafür in `perception.CHAIN_NAMES` im `view_blocks`-Scan).
+  **Anker aus dem stehenden Portal (live, Fortsetzen von run7c):** Das Bett-Overnehmen hat einen
+  blinden Fleck — das Bett kann weit weg vom Portal stehen (hier: unterirdisch bei y=28), und `base`
+  ist pro Lauf nur im Speicher. Nach einem Neustart stand der Bot 76 m vom eigenen, bereits
+  leuchtenden Portal, außerhalb der 64-m-Ressourcenreichweite, sodass `_portal_lit` *falsch* war:
+  `establish_base` hätte eine zweite Basis (und damit ein zweites Portal) gebaut — was nicht mehr
+  geht, denn mit `flint_and_steel` im Gepäck ist `mine_obsidian` gesperrt und der Obsidian ist
+  verbraucht. `Agent._adopt_portal_base` liest darum — solange `base` noch leer ist und das Kit
+  steht — einmalig ein `nether_portal` **jenseits** von `RESOURCE_RADIUS`
+  (`perception.scan_portal_corner`/`parse_portal_corner`, bewusst *ohne* Radiusfilter) und setzt
+  `base = Ecke − (2, 1, 0)`: Die Öffnungsecke invertiert `_portal_site`, sodass die Rahmenebene
+  wieder auf dem stehenden Obsidian liegt. `gs.base_adopted` fährt in den Zustand und
+  `_base_steps_ready` antwortet damit `True`, sodass `go_home` den Bot zurückführt; bei Ankunft
+  (`_at_base`) wird das Flag gelöscht. `_scan_portal_opening` erkennt ein bereits leuchtendes Portal
+  und legt dessen Blöcke nicht als „Fremdblock in der Öffnung" aus.
   Getestet in `tests/test_actions.py::HomeBaseTest`, `tests/test_targets.py::BaseTargetTest`,
-  `tests/test_graph.py::GuardUnblockTest` und `tests/test_verify.py::HomeBaseProgressTest`.
+  `tests/test_graph.py::GuardUnblockTest`, `tests/test_graph.py::PortalBaseAdoptTest`,
+  `tests/test_perception.py::PortalCornerParseTest` und `tests/test_verify.py::HomeBaseProgressTest`.

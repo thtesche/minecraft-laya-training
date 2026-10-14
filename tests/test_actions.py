@@ -1386,6 +1386,22 @@ class HomeBaseTest(unittest.TestCase):
         self.assertNotIn("go_home", candidates(g))
         self.assertIsNone(resolve("go_home", g))
 
+    def test_go_home_to_a_base_re_adopted_from_a_portal(self) -> None:
+        # A restart re-anchors the base on the lit portal it left standing
+        # (`graph._adopt_portal_base`) and walks back to it, even with no other base work pending:
+        # otherwise the run can never reach the portal its end state needs.
+        g = self._geared()
+        g.base = (-197, -47, -98)
+        g.pos = (-100.5, 64.0, -60.5)
+        g.base_adopted = True
+        self.assertIn("go_home", candidates(g))
+        a = resolve("go_home", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -98))
+        # Once the bot stands at the base, `_at_base` takes over and this offering stops.
+        g.pos = (-196.5, -46.0, -98.5)
+        self.assertNotIn("go_home", candidates(g))
+
     def test_craft_chest_from_eight_planks(self) -> None:
         g = self._geared(oak_planks=8)
         g.base = (-197, -47, -98)

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.perception import (parse_box, parse_cells, parse_resource_counts, parse_status,
-                              portal_interior)
+from mlaya.perception import (parse_box, parse_cells, parse_portal_corner,
+                              parse_resource_counts, parse_status, portal_interior)
 
 
 def _status(situation: dict) -> dict:
@@ -26,6 +26,40 @@ class ResourceCountParseTest(unittest.TestCase):
 
     def test_missing_find_block_is_empty(self) -> None:
         self.assertEqual(parse_resource_counts({}), {})
+
+
+class PortalCornerParseTest(unittest.TestCase):
+    """`parse_portal_corner` reads a lit portal's opening corner *past* `RESOURCE_RADIUS`, which
+    `parse_resources` deliberately drops. That corner inverts `actions._portal_site`, so a restart
+    can re-anchor its base on the portal a previous run left standing (`graph._adopt_portal_base`)
+    - the 64 m scan alone never sees a portal the bot has wandered away from."""
+
+    # One 2x3 opening at z=257, x=-154..-153, y=63..65 - the portal's own cells, listed well
+    # outside the scan radius (`distance` above 64).
+    _DATA = {"response": {"data": {"result": {"blocks": {"find": [
+        {"name": "nether_portal", "found": 6, "listed": [
+            {"x": -154, "y": 63, "z": 257, "name": "nether_portal", "distance": 76.0},
+            {"x": -154, "y": 64, "z": 257, "name": "nether_portal", "distance": 76.2},
+            {"x": -154, "y": 65, "z": 257, "name": "nether_portal", "distance": 76.4},
+            {"x": -153, "y": 63, "z": 257, "name": "nether_portal", "distance": 76.1},
+            {"x": -153, "y": 64, "z": 257, "name": "nether_portal", "distance": 76.3},
+            {"x": -153, "y": 65, "z": 257, "name": "nether_portal", "distance": 76.5},
+        ]},
+        {"name": "white_bed", "found": 2, "listed": [
+            {"x": -165, "y": 28, "z": 262, "name": "white_bed", "distance": 78.3},
+        ]},
+    ]}}}}}
+
+    def test_reads_the_low_western_corner_past_the_scan(self) -> None:
+        self.assertEqual(parse_portal_corner(self._DATA), (-154, 63, 257))
+
+    def test_no_portal_hits_is_none(self) -> None:
+        self.assertIsNone(parse_portal_corner({}))
+        self.assertIsNone(parse_portal_corner({"response": {"data": {"result": {"blocks": {
+            "find": [{"name": "nether_portal", "found": 0, "listed": []}]}}}}}))
+        self.assertIsNone(parse_portal_corner({"response": {"data": {"result": {"blocks": {
+            "find": [{"name": "diamond_ore", "found": 3, "listed": [
+                {"x": 0, "y": 8, "z": 0, "name": "diamond_ore", "distance": 10.0}]}]}}}}}))
 
 
 class BoxParseTest(unittest.TestCase):

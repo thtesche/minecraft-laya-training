@@ -735,6 +735,11 @@ def _base_steps_ready(gs: GameState) -> bool:
     idle stroll.
     """
     inv = gs.inventory
+    # A base re-adopted from a lit portal a previous run left standing is not reached yet: walk
+    # back to it once, so the run finishes at its own gate instead of drifting off to explore.
+    # Cleared on arrival (`graph._observe`), so it cannot pull the bot off its work later.
+    if gs.base_adopted:
+        return True
     can_build = (inv.get("obsidian", 0) >= PORTAL_OBSIDIAN
                  or (inv.get("obsidian", 0) >= 1 and _portal_frame_started(gs)))
     if (_has(inv, FLINT_STEEL_ITEM) and can_build
