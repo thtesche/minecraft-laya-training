@@ -272,6 +272,7 @@ class PourSkipTest(unittest.TestCase):
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
+        agent.surface = None
         return agent
 
     def test_remembers_the_refused_cell(self) -> None:
@@ -300,6 +301,91 @@ class PourSkipTest(unittest.TestCase):
         self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
 
 
+class BuildSiteSurfaceGateTest(unittest.IsolatedAsyncioTestCase):
+    """`_scan_build_site` only proposes a base site on open surface ground.
+
+    A scan taken on a cave floor proposes the floor itself: `flat_build_site` cannot tell that the
+    `air` over a mined tunnel is not open sky, which is how run9 anchored its base 89 m down. The
+    scan therefore waits until `surface_up` has brought the bot out.
+    """
+
+    @staticmethod
+    def _geared(**kw) -> GameState:
+        g = gs(inventory={"crafting_table": 1, **kw.pop("inventory", {})}, **kw)
+        g.tools = {"pickaxe": "diamond", "sword": "diamond"}
+        g.armor = {s: {"item": f"diamond_{s}"}
+                   for s in ("helmet", "chestplate", "leggings", "boots")}
+        g.offhand = "shield"
+        return g
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.base = None
+        agent.build_site = None
+        agent._build_site_scanned = None
+        agent.mcp = object()  # any real read would touch this and blow up
+        return agent
+
+    async def test_no_scan_before_the_surface_is_known(self) -> None:
+        agent = self._agent()
+        await agent._scan_build_site(self._geared(pos=(-47.5, -15.0, 4.6)))
+        self.assertIsNone(agent._build_site_scanned)
+
+    async def test_no_scan_on_a_deep_cave_floor(self) -> None:
+        agent = self._agent()
+        g = self._geared(pos=(-47.5, -15.0, 4.6))
+        g.surface = (-47, 74, 4)
+        await agent._scan_build_site(g)
+        self.assertIsNone(agent._build_site_scanned)
+
+
+class SurfaceNoteTest(unittest.TestCase):
+    """`_note_surface` learns the surface cell `surface_up` needs to stand on.
+
+    A height-less `navigate` is the only surface probe the client has: an unambiguous column
+    resolves and walks the bot out, an ambiguous one stops with `[NAVIGATION_HEIGHT_REQUIRED]` and
+    names the surface. `_at_surface` then gates `establish_base` -- a mined tunnel's `air` overhead
+    cannot be told from sky (live, run9: the base landed at y=-16 under a y=73 surface).
+    """
+
+    class _Action:
+        def __init__(self, label: str, args: dict) -> None:
+            self.label = label
+            self.args = args
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.surface = None
+        return agent
+
+    def test_a_resolved_probe_records_the_cell_it_walked_to(self) -> None:
+        agent = self._agent()
+        agent._note_surface(self._Action("surface_up", {"x": -47, "z": 4}), True, "", (-46.55, 74.0, 3.63))
+        self.assertEqual(agent.surface, (-47, 74, 3))
+
+    def test_an_ambiguous_probe_records_the_answered_height(self) -> None:
+        agent = self._agent()
+        text = ("[NAVIGATION_STOPPED] [NAVIGATION_HEIGHT_REQUIRED] Column -47, 4 has highest "
+                "block podzol at y=73; observed standable feet heights: 74, -15, -54.")
+        agent._note_surface(self._Action("surface_up", {"x": -47, "z": 4}), False, text, None)
+        self.assertEqual(agent.surface, (-47, 74, 4))
+
+    def test_a_failed_climb_keeps_the_cell_for_a_retry(self) -> None:
+        # The climb carries a height; a failure on the way (a bad path, a timeout) must not throw
+        # the known surface away -- the next tick retries the same climb.
+        agent = self._agent()
+        agent.surface = (-47, 74, 4)
+        agent._note_surface(self._Action("surface_up", {"x": -47, "y": 74, "z": 4}), False,
+                            "[NAVIGATION_STOPPED] could not reach", None)
+        self.assertEqual(agent.surface, (-47, 74, 4))
+
+    def test_other_labels_are_left_alone(self) -> None:
+        agent = self._agent()
+        agent._note_surface(self._Action("establish_base", {"x": -47, "z": 4}), True, "",
+                            (-47.0, 74.0, 4.0))
+        self.assertIsNone(agent.surface)
+
+
 class DropHoleTest(unittest.TestCase):
     """A drop whose disposal pit the terrain refuses falls back to the open ground.
 
@@ -326,6 +412,7 @@ class DropHoleTest(unittest.TestCase):
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
+        agent.surface = None
         return agent
 
     def test_remembers_the_unavailable_pit(self) -> None:
@@ -376,6 +463,7 @@ class ChestSupportTest(unittest.TestCase):
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
+        agent.surface = None
         return agent
 
     def test_remembers_the_unsupported_cell(self) -> None:
@@ -428,6 +516,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
+        agent.surface = None
         return agent
 
     def test_remembers_the_unsupported_cell(self) -> None:
@@ -550,6 +639,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._blocked_cell = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
+        agent.surface = None
         agent.mcp = self._Mcp(cells)
         return agent
 
@@ -637,6 +727,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._furnace_blocked = False
         agent._base_adopted = False
         agent._portal_base_scanned = None
+        agent.surface = None
         agent._blocked_cell = None
         agent.mcp = self._Mcp(data)
         return agent

@@ -1375,9 +1375,21 @@ class HomeBaseTest(unittest.TestCase):
         g.pos = (base[0] + 0.5, base[1] + 1.0, base[2] + 0.5)
         return g
 
+    @staticmethod
+    def _on_surface(g: GameState) -> GameState:
+        """Mark the bot as standing on open surface ground, so `establish_base` is offered.
+
+        A real run learns this cell from `surface_up` (a height-less `navigate`); the tests stand
+        the bot there directly and record it, which is what `_at_surface` reads.
+        """
+        x, y, z = g.pos
+        g.surface = (int(x), int(y), int(z))
+        return g
+
     def test_establish_base_walks_to_the_surface_ground(self) -> None:
         g = self._geared()
         g.pos = (-197.44, 64.0, -97.64)
+        self._on_surface(g)
         g.resources = {"grass_block": [BlockHit("grass_block", "grass_block",
                                                 -196, 70, -98, 5.0, above="air", below="dirt")]}
         self.assertIn("establish_base", candidates(g))
@@ -1389,9 +1401,53 @@ class HomeBaseTest(unittest.TestCase):
     def test_establish_base_needs_a_surface_target(self) -> None:
         g = self._geared()
         g.pos = (-197.44, 64.0, -97.64)
+        self._on_surface(g)
         g.resources = {}
         self.assertIn("establish_base", candidates(g))
         self.assertIsNone(resolve("establish_base", g))
+
+    def test_surface_up_is_offered_until_the_surface_is_known(self) -> None:
+        # No surface learned yet: the run climbs out before it may anchor.
+        g = self._geared()
+        g.pos = (-197.44, 64.0, -97.64)
+        self.assertIn("surface_up", candidates(g))
+        self.assertNotIn("establish_base", candidates(g))
+
+    def test_surface_up_is_offered_on_a_deep_cave_floor(self) -> None:
+        # The base belongs under open sky. A mined tunnel's `air` reads the same as sky, so the
+        # only test is how far below the probed surface the bot stands (live, run9: base y=-16
+        # under a y=73 surface).
+        g = self._geared()
+        g.pos = (-47.5, -15.0, 4.6)
+        g.surface = (-47, 74, 4)
+        self.assertIn("surface_up", candidates(g))
+        self.assertNotIn("establish_base", candidates(g))
+
+    def test_surface_up_probes_a_column_before_it_climbs(self) -> None:
+        # First the height-less probe (the server names the surface, or walks the bot up when the
+        # column is unambiguous) ...
+        g = self._geared()
+        g.pos = (-47.5, -15.0, 4.6)
+        a = resolve("surface_up", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["z"]), (-48, 4))
+        self.assertNotIn("y", a.args)
+        # ... then the climb itself, carrying the height the probe named.
+        g.surface = (-48, 74, 4)
+        a = resolve("surface_up", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-48, 74, 4))
+        self.assertTrue(a.args["dig"] and a.args["scaffold"])
+
+    def test_surface_up_re_probes_after_a_move_to_a_new_column(self) -> None:
+        # The surface of a new column can be tens of blocks higher or lower, so a stale height is
+        # never reused: the probe runs again.
+        g = self._geared()
+        g.pos = (-20.5, -12.0, 30.5)
+        g.surface = (-48, 74, 4)
+        a = resolve("surface_up", g)
+        self.assertEqual((a.args["x"], a.args["z"]), (-21, 30))
+        self.assertNotIn("y", a.args)
 
     def test_no_base_work_once_the_base_is_set(self) -> None:
         self.assertNotIn("establish_base", candidates(self._home(self._geared())))

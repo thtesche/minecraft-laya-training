@@ -3,7 +3,8 @@ from __future__ import annotations
 import unittest
 
 from mlaya.perception import (parse_box, parse_cells, parse_portal_corner,
-                              parse_resource_counts, parse_status, portal_interior)
+                              parse_resource_counts, parse_status, parse_surface_height,
+                              portal_interior)
 
 
 def _status(situation: dict) -> dict:
@@ -225,6 +226,31 @@ class HostileParseTest(unittest.TestCase):
         gs = parse_status(st)
         self.assertEqual(gs.hostiles, [("creeper", 1, None)])
         self.assertIn("creeper x1", gs.narrative())
+
+
+class ParseSurfaceHeightTest(unittest.TestCase):
+    """`parse_surface_height` reads the surface feet cell from a `navigate` height-required stop.
+
+    A height-less `navigate` resolves an unambiguous column by itself but refuses to guess between
+    floors: it stops with the floors it found, highest first. That is the one surface signal the
+    client has -- `view_blocks` carries no heightmap -- and it is what `surface_up` climbs back to.
+    """
+
+    def test_the_surface_is_the_highest_listed_floor(self) -> None:
+        text = ("[NAVIGATION_STOPPED] Pathfinder stopped: [NAVIGATION_HEIGHT_REQUIRED] Column -47, "
+                "4 has highest block podzol at y=73; observed standable feet heights: 74, -15, "
+                "-54. Supply y to choose a floor.")
+        self.assertEqual(parse_surface_height(text), 74)
+
+    def test_a_single_floor_still_reads(self) -> None:
+        text = "[NAVIGATION_HEIGHT_REQUIRED] Column 0, 0 ... standable feet heights: 64."
+        self.assertEqual(parse_surface_height(text), 64)
+
+    def test_a_real_navigation_or_other_text_is_none(self) -> None:
+        self.assertIsNone(parse_surface_height("[BUCKET_FAILED] the use of bucket did not take"))
+        self.assertIsNone(parse_surface_height(""))
+        self.assertIsNone(parse_surface_height(None))
+        self.assertIsNone(parse_surface_height("standable feet heights: none."))
 
 
 if __name__ == "__main__":

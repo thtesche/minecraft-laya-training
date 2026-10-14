@@ -71,7 +71,7 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     (-> craft_diamond_sword) -> craft_diamond_<slot> (Brustplatte/Hose/Schuhe/Helm)
     -> equip_armor; Bett-Kette (hunt_wool/hunt_string ->
     craft_bed -> sleep in der Nacht) und eat_food bei Hunger; Homebase
-    (establish_base -> go_home, craft_chest/place_chest/stow_surplus) und
+    (surface_up -> establish_base -> go_home, craft_chest/place_chest/stow_surplus) und
     Nether-Kette (craft_bucket -> fill_bucket -> mine_obsidian -> get_flint ->
     craft_flint_and_steel -> clear_portal -> build_portal -> light_portal -> place_bed); explore
     nur als letzter Fallback (wenn nichts Produktives möglich ist).
@@ -630,7 +630,27 @@ nur eine Ebene tiefer.
   ein Guss, der ihn nicht flutet), greift der Reflex **nicht**. Getestet in
   `tests/test_actions.py::EscapeWaterTest`.
 - **Homebase (implementiert):** Ein Anker auf der Oberfläche trägt Bett, Portalrahmen und Truhe.
-  `establish_base` (sobald das Kit steht) läuft zuerst auf einen **ebenen, freien** Platz: zwei
+  **Erst hochsteigen, dann ankern (`surface_up`):** Die einzige verlässliche Aussage „hier ist
+  Oberfläche" ist die **Tiefe unter der Oberfläche** — nicht der Block über dem Kopf. Ein von der
+  Bot gegrabener Tunnel hinterlässt `air`, nicht `cave_air`, und ist damit von offenem Himmel durch
+  *keinen* `view_blocks`-Wert zu unterscheiden (`_OPEN_SKY` wie `above == "air"` messen nur „es gibt
+  Halt", nicht „es ist Himmel"). **Live run9:** die Basis landete auf `y = -16` unter einer
+  `y = 73`-Oberfläche, 89 Blöcke tief, weil der Bot zum Diamanten-Graben hinabgestiegen war und der
+  Scan dort einen Höhlenboden fand. Deshalb ist `establish_base` an **`_at_surface`** gebunden: nur
+  wenn `gs.pos[1] >= gs.surface[1] − BASE_SURFACE_TOL` (8) gilt, wird angelegt. Solange die
+  Oberfläche unbekannt ist oder der Bot zu tief steht, bieten die Kandidaten **`surface_up`** an:
+  ein `navigate` **ohne `y`** fragt den Server nach der Oberfläche der Spalte — er läuft bei
+  eindeutiger Spalte selbst nach oben und stoppt sonst mit `[NAVIGATION_HEIGHT_REQUIRED] …
+  highest block … at y=N` (`perception.parse_surface_height` nimmt die höchste der gelisteten
+  Standhöhen). `Agent._note_surface` liest die Antwort in `self.surface = (x, feet_y, z)`; der
+  nächste Tick steigt mit `dig`/`scaffold` zu genau dieser Zelle auf (live gemessen: von `y = -15`
+  nach `y = 74` in ~92 s, 12 Cobblestone Gerüst). Wechselt die Spalte, wird neu geprüft (eine andere
+  Spalte kann zig Blöcke höher/tiefer liegen); ein gescheiterter *Aufstieg* lässt die Zelle stehen
+  und wird einfach wiederholt. `Agent._scan_build_site` scannt ebenfalls nur noch bei `_at_surface`,
+  sonst schlüge er den Höhlenboden selbst vor. Live: `fill_bucket`↔`go_home` pendelte 45
+  Iterationen, weil der Eimer auch nach dem Obsidian-Banken gefüllt werden sollte (Fix: die
+  Eimer-Kette ist an `obsidian < PORTAL_OBSIDIAN and not has_fs` gebunden, wie `mine_obsidian`).
+  `establish_base` läuft dann auf einen **ebenen, freien** Platz: zwei
   `view_blocks box`-Reads um den Bot — seine Ebene und vier darüber — (`Agent._scan_build_site` →
   `perception.scan_ground` → `targets.flat_build_site`) verlangen eine durchgehende Bodenreihe auf
   gleicher Höhe mit **offener Himmelsluft** (`_OPEN_SKY`) darüber **und festem Grund eine Ebene
@@ -640,12 +660,7 @@ nur eine Ebene tiefer.
   `[PORTAL_NO_FRAME]`). Damit passt der Rahmen aufs Gelände (live lief der alte Pick
   — die *niedrigste* standbare Zelle — in eine Mulde, und 15 von 20 Rahmenzellen steckten in Stein). Ist kein Platz in
   Scan-Reichweite, greift wie zuvor `targets.base_target` (nur `GROUND_NAMES`, auf/oberhalb der
-  Bot-Ebene, nächste zuerst). **Beide Wege verlangen offenen Himmel:** `flat_build_site` prüft das
-  Rahmenvolumen gegen `_OPEN_SKY` (ohne `cave_air`/`void_air`) und `base_target` gegen
-  `BlockHit.standable` (`above == "air"`), sodass ein **unterirdischer Anker ausgeschlossen** ist —
-  vorher zählte `_REPLACEABLE` auch `cave_air`, und der Scan setzte die Basis auf einen
-  Höhlenboden (**live run8:** Anker bei `y = -9`, tief unter Tage; die Basis-Kriterien sagen aber
-  „auf offenen Oberflächenboden laufen"). `_REPLACEABLE` (inkl. `cave_air`) bleibt nur für die
+  Bot-Ebene, nächste zuerst). `_REPLACEABLE` (inkl. `cave_air`) bleibt für die
   Öffnungs-Prüfung `_clear`, wo eingeschlossene Luft korrekt ist. `establish_base` legt den Anker
   als `GameState.base` fest; `go_home`
   läuft nur zurück, wenn wirklich Basisarbeit wartet (`_base_steps_ready`). `build_portal`/`place_bed`

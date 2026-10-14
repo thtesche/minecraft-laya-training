@@ -51,6 +51,7 @@ CRITERIA: dict[str, str] = {
     "wait": "hold position at the home base until night falls; the only work left is the bed, which cannot be placed in daylight",
     "make_room": "dig the block a placement was refused at, or a small pocket, so a carried workstation or bed fits",
     # Home base: one surface anchor the bed, the portal and the chests all stand at.
+    "surface_up": "climb back out to open surface ground; the home base, the bed and the portal all belong under open sky, never on a cave floor",
     "establish_base": "walk up to open surface ground and set up the home base there",
     "go_home": "walk back to the home base to place the bed, the portal or store surplus there",
     "craft_chest": "craft a chest from eight planks to store surplus blocks at the base",
@@ -149,6 +150,11 @@ CHEST_PLANKS = 8
 # How close the bot must be to the base to lay blocks out there: feet within this many blocks
 # of the anchor in x/z (one more vertically, so a step up or down still counts).
 BASE_RADIUS = 4.0
+# How far below the surface cell it last learned the bot may still stand and count as "on the
+# surface" for the base. The base belongs under open sky, and a mined tunnel's `air` reads the
+# same as sky, so the depth below the probed surface is the only reliable test: a shallow scoop
+# within this margin still opens to the sky, while a cave floor tens of blocks down does not.
+BASE_SURFACE_TOL = 8
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
@@ -772,6 +778,20 @@ def _at_base(gs: GameState) -> bool:
             and abs(y - (by + 1)) <= BASE_RADIUS + 1)
 
 
+def _at_surface(gs: GameState) -> bool:
+    """Whether the bot stands at open surface ground, high enough to anchor the base.
+
+    `gs.surface` is the surface cell the loop last learned for the bot's column (`x, feet_y, z`).
+    A cave floor sits far below it, while a mined tunnel's `air` overhead is indistinguishable
+    from sky, so the base gate is this depth test rather than any `view_blocks` reading: the bot
+    is at the surface when its feet are within `BASE_SURFACE_TOL` of that cell. Unknown surface,
+    or none, is never "at the surface" -- the climb has to prove it first.
+    """
+    if gs.surface is None or gs.pos is None:
+        return False
+    return gs.pos[1] >= gs.surface[1] - BASE_SURFACE_TOL
+
+
 def _base_steps_ready(gs: GameState) -> bool:
     """Whether some base step is ready to run once the bot is back at the base.
 
@@ -1097,7 +1117,11 @@ def candidates(gs: GameState) -> list[str]:
     # bot is there; `go_home` walks it back when base work is waiting.
     if _gear_ready(gs):
         if gs.base is None:
-            out.append("establish_base")
+            # The base, the bed and the portal all belong under open sky. A bot that mined its
+            # way down stands on a cave floor whose mined `air` reads exactly like sky, so it
+            # climbs back out first: `surface_up` probes the surface and walks up to it, and only
+            # then is `establish_base` offered.
+            out.append("establish_base" if _at_surface(gs) else "surface_up")
         elif not _at_base(gs) and _base_steps_ready(gs):
             out.append("go_home")
 
@@ -1587,8 +1611,25 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                  for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
         return Action(label, "build_structure", {"blocks": cells},
                       "dig a small pocket around the bot for the carried workstation or bed")
+    if label == "surface_up":
+        if gs.base is not None or not _gear_ready(gs) or gs.pos is None or _at_surface(gs):
+            return None
+        mx, mz = math.floor(gs.pos[0]), math.floor(gs.pos[2])
+        # A `navigate` without a height asks the server for a column's surface. It walks the bot
+        # up to open sky when the answer is unambiguous, and otherwise stops with
+        # `[NAVIGATION_HEIGHT_REQUIRED]`, naming the surface it found. That answer is read back
+        # in `graph._verify`, so the climb itself runs on the next tick -- once with the height,
+        # which the pathfinder needs. Re-probe whenever the bot has moved to a new column: the
+        # surface of a different column can be tens of blocks higher or lower.
+        if gs.surface is None or (mx, mz) != (gs.surface[0], gs.surface[2]):
+            return Action(label, "navigate", {"x": mx, "z": mz},
+                          "ask the server for this column's surface height")
+        sx, sy, sz = gs.surface
+        return Action(label, "navigate",
+                      {"x": sx, "y": sy, "z": sz, "dig": True, "scaffold": True},
+                      "climb back onto open surface ground before the base is anchored")
     if label == "establish_base":
-        if gs.base is not None or not _gear_ready(gs):
+        if gs.base is not None or not _gear_ready(gs) or not _at_surface(gs):
             return None
         # Prefer the level, clear site the base scan found (`flat_build_site`): the portal
         # frame only fits on ground that is flat along its whole bottom row. Fall back to the

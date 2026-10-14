@@ -108,9 +108,9 @@ def progressed(label: str, d: dict) -> bool:
         return bool(d.get("portal_lit"))
     if label == "place_bed":
         return bool(d.get("bed_placed"))
-    # Home base. Walking home shows as movement; the chest shows as the item entering or
-    # leaving the pack; stowing/dropping shows as any carried item going down.
-    if label in ("establish_base", "go_home"):
+    # Home base. Walking home (or up to the surface) shows as movement; the chest shows as the
+    # item entering or leaving the pack; stowing/dropping shows as any carried item going down.
+    if label in ("surface_up", "establish_base", "go_home"):
         return (d["pos_delta"] or 0) > 2
     if label == "escape_water":
         # The rescue worked if it actually moved the body out of the water; landing back on

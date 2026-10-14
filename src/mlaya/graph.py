@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import Any, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -10,7 +11,7 @@ from . import perception
 from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
-                      tech_tree_complete, _at_base, _gear_ready)
+                      tech_tree_complete, _at_base, _at_surface, _gear_ready)
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
@@ -150,6 +151,11 @@ class Agent:
         # so standing still does not pay for the same scan every tick.
         self.build_site: tuple[int, int, int] | None = None
         self._build_site_scanned: tuple[float, float] | None = None
+        # The surface cell `(x, feet_y, z)` the loop last learned for the bot's column, or None
+        # while unknown. `surface_up` asks the server for it (a `navigate` without a height) and
+        # `_verify` reads the answer back into here; it is what keeps `establish_base` off a cave
+        # floor, since a mined tunnel's `air` reads exactly like open sky. Per-run, like `base`.
+        self.surface: tuple[int, int, int] | None = None
         # Lava cells a pour already failed on with `[BUCKET_NO_FACE]`. That answer is
         # structural -- no solid block beside that cell faces the bot -- so retrying it can
         # only fail again; remembering it lets the next tick pour elsewhere (live: the
@@ -183,6 +189,7 @@ class Agent:
         """Carry the loop-owned facts perception cannot see into the GameState."""
         self._adopt_homebase(gs)
         gs.base = self.base
+        gs.surface = self.surface
         gs.chest_pos = self.chest_pos
         gs.furnace_pos = self.furnace_pos
         gs.base_adopted = self._base_adopted
@@ -201,13 +208,19 @@ class Agent:
         The portal frame only fits where its whole bottom row stands on level ground, so the
         base scan reads two boxes around the bot -- its own level and four above
         (`perception.scan_ground` + `targets.flat_build_site`). Skipped once a site is found or
-        a base is adopted, and before the diamond kit exists (the base is not raised yet);
+        a base is adopted, before the diamond kit exists (the base is not raised yet) and while
+        the bot is still below the surface (`_at_surface` -- a cave floor is not a base site);
         re-run only after the bot has moved a few blocks, so it does not pay for the reads
         every tick.
         """
         if self.base is not None or self.build_site is not None or gs.pos is None:
             return
         if not _gear_ready(gs):
+            return
+        if not _at_surface(gs):
+            # No surface learned yet, or the bot is still on a cave floor: a scan here would
+            # propose the cave floor itself, whose mined `air` overhead reads exactly like sky
+            # (`flat_build_site` cannot tell). Wait until `surface_up` has brought the bot out.
             return
         px, _, pz = gs.pos
         at = self._build_site_scanned
@@ -486,6 +499,30 @@ class Agent:
         if all(isinstance(v, int) for v in pos):
             self._pour_skip.add(pos)
 
+    def _note_surface(self, action, ok: bool, text: str | None,
+                      pos: tuple[float, float, float] | None) -> None:
+        """Learn the surface cell from a `surface_up` probe or climb.
+
+        A height-less `navigate` to an ambiguous column stops with
+        `[NAVIGATION_HEIGHT_REQUIRED]` and names the surface (`perception.parse_surface_height`);
+        an unambiguous one walks the bot to open sky, so its own new feet cell is the surface.
+        Either answer feeds `_at_surface`, which is what lets `establish_base` run -- the base
+        may only be anchored on open-sky ground, and a mined tunnel's `air` overhead cannot be
+        told from sky by any `view_blocks` reading (live, run9: the base landed at y=-16 under a
+        y=73 surface). A failed *climb* (the request did carry a height) keeps the cell as it
+        was, so the next tick simply retries it.
+        """
+        if action.label != "surface_up":
+            return
+        if ok and pos is not None:
+            self.surface = (math.floor(pos[0]), math.floor(pos[1]), math.floor(pos[2]))
+            return
+        if "y" in (action.args or {}):
+            return
+        y = perception.parse_surface_height(text or "")
+        if y is not None:
+            self.surface = (int(action.args["x"]), y, int(action.args["z"]))
+
     def _note_drop(self, action, ok: bool, text: str | None) -> None:
         """Remember that no disposal pit can be dug where the bot stands, so the next drop does
         not ask for one.
@@ -574,6 +611,10 @@ class Agent:
                 self.furnace_pos = (int(action.args["x"]), int(action.args["y"]),
                                     int(action.args["z"]))
         after = await self._observe()
+        # `surface_up` answers itself through the position it lands on (a resolved probe) or
+        # through the height the server names when it refuses to guess (an ambiguous column);
+        # both are read here, after the observation, and gate `establish_base` next tick.
+        self._note_surface(action, _ok, _text, after.pos)
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
         progressed = vmod.progressed(action.label, delta)

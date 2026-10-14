@@ -97,7 +97,17 @@ Eisen-Grund: 3 Barren für die (Ersatz-)Eisenhacke, danach genau **1** für den 
 sobald beides steht. Der Craft wartet auf die Eisen-Spitzhacke, damit das Schild nicht die ersten
 Barren stiehlt.
 
-**Homebase & Nether-Portal:** Sobald das Diamant-Kit steht, sucht `establish_base` einen ebenen,
+**Homebase & Nether-Portal:** Die Basis steht unter **offenem Himmel**. Ein selbst gegrabener
+Tunnel hinterlässt `air`, nicht `cave_air`, und ist darum von echtem Himmel durch *keinen*
+`view_blocks`-Wert zu unterscheiden (run9 verankerte die Basis so bei `y = -16` unter einer
+`y = 73`-Oberfläche). Verlässlich ist nur die **Tiefe unter der Oberfläche**: solange die
+Oberfläche unbekannt ist oder der Bot zu tief steht, bieten die Kandidaten `surface_up` an — ein
+`navigate` **ohne `y`** fragt den Server nach der Oberfläche der Spalte (er läuft bei eindeutiger
+Spalte selbst hoch, sonst stoppt er mit `[NAVIGATION_HEIGHT_REQUIRED] … at y=N`), und der nächste
+Tick steigt mit `dig`/`scaffold` zu genau dieser Zelle auf (live: `y = -15` → `y = 74` in ~92 s).
+Erst dann ist `establish_base` erlaubt (`_at_surface`, Toleranz `BASE_SURFACE_TOL = 8`); der
+Basis-Scan `_scan_build_site` läuft ebenfalls nur an der Oberfläche. Sobald das Diamant-Kit steht,
+sucht `establish_base` einen ebenen,
 freien Platz für den Portalrahmen: zwei `view_blocks box`-Reads um den Bot — seine eigene Ebene und
 vier darüber, damit auch ebenes Gelände über einer Mulde gefunden wird — (`perception.scan_ground`
 → `targets.flat_build_site`) verlangen eine durchgehende Bodenreihe auf gleicher Höhe mit Luft

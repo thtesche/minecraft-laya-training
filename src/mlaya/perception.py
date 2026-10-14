@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -268,6 +269,14 @@ class GameState:
     # back to the nearest standable ground. A frame raised on a slope leaves its cells holding
     # stone, which the build server will not dig (live: 15 of 20 frame cells stayed stone).
     build_site: tuple[int, int, int] | None = None
+    # The surface cell `(x, feet_y, z)` the loop last learned for the bot's column, or `None`
+    # while it is unknown. A height-less `navigate` answers it (`[NAVIGATION_HEIGHT_REQUIRED]`
+    # names the highest block, so the feet cell is one above); the loop owns it per run and
+    # injects it, exactly like `base`. It is what tells a bot standing on the ground from one
+    # standing on a cave floor: a mined tunnel's `air` reads the same as open sky, so the depth
+    # below this cell -- not the block above the head -- is the surface test `establish_base`
+    # needs (live, run9: the base landed at y=-16 under a y=73 surface).
+    surface: tuple[int, int, int] | None = None
     # Cells of the portal opening (`portal_interior`) that hold a stray block, read from one
     # `view_blocks cells` scan while a frame build is pending. The opening sits *above* the
     # support layer and must end up air: a block left there is built around and `activate_portal`
@@ -765,6 +774,23 @@ def parse_portal_corner(data: dict) -> tuple[int, int, int] | None:
     if not cells:
         return None
     return (min(c[0] for c in cells), min(c[1] for c in cells), min(c[2] for c in cells))
+
+
+def parse_surface_height(text: str) -> int | None:
+    """A `navigate` height-required answer -> the column's surface feet height, or None.
+
+    A `navigate` without a height resolves an unambiguous outdoor column by itself, but refuses
+    to guess between floors when one column carries several: it stops with
+    `[NAVIGATION_HEIGHT_REQUIRED] ... observed standable feet heights: 74, -15, -54`. The floors
+    are listed highest first, so the largest one is the open surface; that is the cell the bot
+    has to climb back to before the base is anchored. Anything else (a real navigation, a
+    different failure, an empty text) has no such line and returns None.
+    """
+    m = re.search(r"standable feet heights:\s*([^.]*)", text or "")
+    if not m:
+        return None
+    floors = [int(v) for v in re.findall(r"-?\d+", m.group(1))]
+    return max(floors) if floors else None
 
 
 async def scan_portal_corner(executor) -> tuple[int, int, int] | None:
