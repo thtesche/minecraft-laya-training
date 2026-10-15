@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from typing import Any, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -65,6 +66,34 @@ RECOVER_FINAL_CODES = ("NO_MATCHING_ITEMS", "NO_RECORDED_DEATH",
 # unblock there is not terrain but pack space (stow at the base, else drop), so it routes through
 # a separate relief step.
 INVENTORY_CODES = ("INVENTORY_FULL",)
+
+# How many identical refusals in a row (same label, same tool-result code, no `progressed`) a
+# step may answer before the loop withholds it from the offer for `STUCK_COOLDOWN` ticks. A
+# single-candidate step the server refuses forever burns the whole run: live, run16 answered
+# `mine_obsidian` -> `[NAVIGATION_TARGET_UNSUPPORTED]` on 215 ticks while it was the only
+# candidate, so the last fallback (`explore`/`wait`) never got its turn to move the bot; run11
+# (`go_home`, 230 ticks) and run14 (`recover_drops`, 117 ticks) stalled the same way and each
+# needed a bespoke latch. This is the generic net under those. The label returns on its own, so a
+# refusal that was merely transient is not lost, and the exploring done in between can change the
+# world that caused it.
+STUCK_REPEATS = 4
+STUCK_COOLDOWN = 15
+
+_CODE_RE = re.compile(r"\[([A-Z][A-Z_]+)\]")
+
+
+def _fail_code(text: str | None) -> str | None:
+    """The tool-result code that identifies a refusal, for the stuck-offer guard.
+
+    A bracketed server code (`[NAVIGATION_TARGET_UNSUPPORTED]`, `[NO_MATCHING_ITEMS]`, ...) names
+    the failure exactly; when the answer carries none, its first line stands in, so a plain
+    repeated answer is still recognised as the same failure.
+    """
+    match = _CODE_RE.search(text or "")
+    if match:
+        return match.group(1)
+    first = (text or "").strip().splitlines()
+    return first[0][:80] if first and first[0] else None
 
 
 def blocked_by_surroundings(text: str | None) -> bool:
@@ -180,6 +209,19 @@ class Agent:
         # only fail again; remembering it lets the next tick pour elsewhere (live: the
         # surface pond holds one usable cell and the obsidian would never be made there).
         self._pour_skip: set[tuple[int, int, int]] = set()
+        # Stances a `mine_obsidian` walk was refused at (`[NAVIGATION_TARGET_UNSUPPORTED]`): the
+        # cell beside that lava has no footing (live, run16: the stance sat over a deep lava lake
+        # and the same walk was answered on 215 ticks). The next tick stands on another neighbour
+        # of the same source, and once every stance of a source is refused the step moves to the
+        # next source (`_lava_pour_target`), exactly as `pour_skip` does for a refused pour.
+        self._stance_skip: set[tuple[int, int, int]] = set()
+        # The stuck-offer guard: the label, refusal code and count of the current run of identical
+        # failures, and the ticks left in the cooling-off window that withholds it (see
+        # `STUCK_REPEATS`/`STUCK_COOLDOWN` and `_track_stuck`).
+        self._stuck_label: str | None = None
+        self._stuck_code: str | None = None
+        self._stuck_reps = 0
+        self._stuck_off = 0
         # Death cells whose recovery walk already reached them and found nothing
         # (`[NO_MATCHING_ITEMS]` and the other final codes): `_can_recover` stops offering the
         # walk there, so the bot does not stand at an emptied death site until the window runs
@@ -222,6 +264,8 @@ class Agent:
         gs.base_adopted = self._base_adopted
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
+        gs.stance_skip = frozenset(self._stance_skip)
+        gs.stuck_label = self._stuck_label if self._stuck_off > 0 else None
         gs.recover_written_off = frozenset(self._recover_written_off)
         # One decision off the feet in water, counted here so `candidates` can hold the rescue
         # back for its first moments (live, run15).
@@ -531,6 +575,64 @@ class Agent:
         if all(isinstance(v, int) for v in pos):
             self._pour_skip.add(pos)
 
+    def _note_stance(self, action, ok: bool, text: str | None) -> None:
+        """Remember a pour stance the server refused, so it is never walked to again.
+
+        `[NAVIGATION_TARGET_UNSUPPORTED]` on the `mine_obsidian` walk says the server found no
+        footing at that cell: the cell over the lava's neighbour is air, or the lake below is too
+        deep to stand on (live, run16: one stance over a deep lava lake answered the identical
+        refusal on 215 ticks and the run never made a single obsidian). It is a property of the
+        stance cell, not of the attempt, so the step reads the set back out of the GameState
+        (`stance_skip`), stands on another neighbour, and once every stance of that source is
+        refused `_lava_pour_target` passes over the source itself -- the move `pour_skip` makes
+        for a refused pour.
+        """
+        if ok or action.label != "mine_obsidian" or action.tool != "navigate":
+            return
+        if "NAVIGATION_TARGET_UNSUPPORTED" not in (text or ""):
+            return
+        args = action.args or {}
+        pos = (args.get("x"), args.get("y"), args.get("z"))
+        if all(isinstance(v, int) for v in pos):
+            self._stance_skip.add(pos)
+
+    def _track_stuck(self, label: str, ok: bool, text: str | None,
+                     progressed: bool) -> None:
+        """Withhold a label that keeps answering the identical refusal without progress.
+
+        See `STUCK_REPEATS`/`STUCK_COOLDOWN`. Any success, any `progressed` tick, or a *different*
+        refusal code starts the run of identical ones over, so only a genuine standstill is
+        caught. The window is a countdown, not a lock: the label returns on its own, which keeps
+        the offer honest and lets the loop retry it after it has moved somewhere new.
+        """
+        if self._stuck_off > 0:
+            self._stuck_off -= 1
+            if self._stuck_off == 0:
+                label_was = self._stuck_label
+                self._stuck_label = self._stuck_code = None
+                self._stuck_reps = 0
+                self.log.append({"stage": "policy", "reason": "stuck_offer_restored",
+                                 "label": label_was})
+            return
+        if ok or progressed:
+            self._stuck_label = self._stuck_code = None
+            self._stuck_reps = 0
+            return
+        code = _fail_code(text)
+        if code is None:
+            return
+        if label == self._stuck_label and code == self._stuck_code:
+            self._stuck_reps += 1
+        else:
+            self._stuck_label = label
+            self._stuck_code = code
+            self._stuck_reps = 1
+        if self._stuck_reps >= STUCK_REPEATS:
+            self._stuck_off = STUCK_COOLDOWN
+            self._stuck_reps = 0
+            self.log.append({"stage": "policy", "reason": "stuck_offer_dropped",
+                             "label": label, "code": code, "ticks": STUCK_COOLDOWN})
+
     def _note_surface(self, action, ok: bool, text: str | None,
                       pos: tuple[float, float, float] | None) -> None:
         """Learn the surface cell from a `surface_up` probe or climb.
@@ -681,6 +783,7 @@ class Agent:
         _text = getattr(res, "text", "")
         self._note_block(action.label, _ok, _text)
         self._note_pour(action, _ok, _text)
+        self._note_stance(action, _ok, _text)
         self._note_base(action, _ok, _text)
         self._note_drop(action, _ok, _text)
         self._note_chest(action, _ok, _text)
@@ -711,6 +814,7 @@ class Agent:
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
         progressed = vmod.progressed(action.label, delta)
+        self._track_stuck(action.label, _ok, _text, progressed)
         record = {
             "stage": "action",
             "iteration": state.get("iteration", 0),

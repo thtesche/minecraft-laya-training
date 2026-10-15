@@ -1340,6 +1340,51 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.tool, "navigate")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-261, 65, -56))
 
+    def test_mine_obsidian_skips_a_refused_stance(self) -> None:
+        # Live, run16: the stance the walk picked sat over a deep lava lake, so the server
+        # answered `[NAVIGATION_TARGET_UNSUPPORTED]` ("No ground was found within 64 blocks below
+        # it") on 215 ticks. That is a property of the stance cell, so the next tick stands on
+        # another neighbour of the same source instead of walking there again.
+        g = self._geared(water_bucket=1)
+        g.pos = (0.0, 64.0, 0.0)  # out of pouring reach, so a stance is chosen
+        g.stance_skip = frozenset({(-269, 65, -56)})
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -270, 64, -56, 3.0, above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
+        ]}
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-270, 65, -55))
+
+    def test_mine_obsidian_passes_over_a_source_with_every_stance_refused(self) -> None:
+        # Every stance of the near source is unusable, so the step moves to the next source --
+        # the same move `pour_skip` makes for a refused pour.
+        g = self._geared(water_bucket=1)
+        g.pos = (0.0, 64.0, 0.0)
+        g.stance_skip = frozenset({(-269, 65, -56), (-271, 65, -56), (-270, 65, -55)})
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -270, 64, -56, 3.0, above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
+            BlockHit("lava", "lava", -260, 64, -56, 10.0, above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -260, 64, -57, 10.5, above="stone", below="stone", level=0),
+        ]}
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-259, 65, -56))
+
+    def test_a_source_with_every_stance_refused_is_passed_over(self) -> None:
+        # No second source and the only one's stances are all unusable: the step stands down
+        # instead of walking to a stance the server refuses forever.
+        g = self._geared(water_bucket=1)
+        g.pos = (0.0, 64.0, 0.0)
+        g.stance_skip = frozenset({(-269, 65, -56), (-271, 65, -56), (-270, 65, -55)})
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -270, 64, -56, 3.0, above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
+        ]}
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
+
     def test_mine_obsidian_mines_what_the_pour_formed(self) -> None:
         # Obsidian the last pour formed lies at the bot's feet: mine it, even with no water left.
         g = self._geared(obsidian=4)

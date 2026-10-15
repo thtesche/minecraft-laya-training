@@ -868,8 +868,29 @@ def _lava_pour_target(gs: GameState) -> BlockHit | None:
                 or h.below in (None, "lava") or h.below in AIR_NAMES):
             continue
         if any((h.x + dx, h.y, h.z + dz) in sources for dx, _, dz in _LATERAL):
+            # A source whose every walkable stance the server already refused has no footing to
+            # pour from (see `_pour_stance`), so the search moves to the next source -- the same
+            # move `pour_skip` makes for a refused pour. A cell within pouring reach is poured at
+            # directly, so it is not passed over.
+            if not _within_reach(gs, h, POUR_REACH):
+                options = _stance_options(gs, h)
+                if options and all(o in gs.stance_skip for o in options):
+                    continue
             return h
     return None
+
+
+def _stance_options(gs: GameState, target: BlockHit) -> list[tuple[int, int, int]]:
+    """The cells to stand in to pour into `target`: *on top of* a lateral neighbour.
+
+    The bucket clicks a solid block *beside* the pour target, so only a lateral neighbour can be
+    the stance the bot pours from. Lava neighbours are skipped: the bot may not stand there, and
+    there is nothing to stand on either.
+    """
+    lava = {h.pos for h in (gs.resources.get("lava") or [])}
+    return [(target.x + dx, target.y + 1, target.z + dz)
+            for dx, _, dz in _LATERAL
+            if (target.x + dx, target.y, target.z + dz) not in lava]
 
 
 def _pour_stance(gs: GameState, target: BlockHit) -> tuple[int, int, int] | None:
@@ -880,13 +901,11 @@ def _pour_stance(gs: GameState, target: BlockHit) -> tuple[int, int, int] | None
     liquid ("breaking this block would open the route into liquid"), so the pathfinder stopped a
     cell short and diagonally -- where the reference block's face points past the bot and every
     pour answers `[BUCKET_NO_FACE]`. Standing on top of the neighbour is reachable, and that is
-    the stance the live lake pour formed obsidian from. Lava neighbours are skipped: the bot may
-    not stand there, and there is nothing to stand on either.
+    the stance the live lake pour formed obsidian from. Stances the server already refused
+    (`gs.stance_skip`, `[NAVIGATION_TARGET_UNSUPPORTED]`: no footing there) are passed over, so a
+    stance over a deep lava lake is not walked to twice (live, run16: 215 identical refusals).
     """
-    lava = {h.pos for h in (gs.resources.get("lava") or [])}
-    options = [(target.x + dx, target.y + 1, target.z + dz)
-               for dx, _, dz in _LATERAL
-               if (target.x + dx, target.y, target.z + dz) not in lava]
+    options = [p for p in _stance_options(gs, target) if p not in gs.stance_skip]
     if not options:
         return None
     if gs.pos is None:
@@ -1444,6 +1463,14 @@ def candidates(gs: GameState) -> list[str]:
     # The same label can arrive twice (the light `mine_stone` above and the deep lull stack in
     # `_nether_prep_steps`); keep the first occurrence so the priority order is stable.
     out = list(dict.fromkeys(out))
+
+    # A label the loop is withholding (`Agent._track_stuck`): it kept answering the identical
+    # refusal without progress, so it is taken out of the offer for a cooling-off window and the
+    # fallback below gets its turn. Without this a single-candidate step the server refuses
+    # forever owns every tick and the fallback never fires (live, run16: `mine_obsidian` ->
+    # `[NAVIGATION_TARGET_UNSUPPORTED]` on 215 ticks as the only candidate).
+    if gs.stuck_label:
+        out = [label for label in out if label != gs.stuck_label]
 
     # The explicit last fallback when nothing productive is available. In the lull after the
     # portal is lit the only work left is the night bed, and wandering off just burned five

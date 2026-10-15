@@ -16,7 +16,8 @@ import unittest
 from mlaya.actions import Action, candidates, resolve
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import Agent, blocked_by_surroundings, unblock_action
+from mlaya.graph import (Agent, STUCK_COOLDOWN, STUCK_REPEATS, blocked_by_surroundings,
+                         unblock_action)
 from mlaya.perception import BlockHit, GameState
 
 
@@ -87,6 +88,11 @@ class WaterTicksTest(unittest.TestCase):
         agent.build_site = None
         agent._base_adopted = False
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
@@ -156,6 +162,11 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._unblock_done = False
         agent._blocked_cell = None
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         return agent
@@ -328,6 +339,11 @@ class PourSkipTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
@@ -367,6 +383,196 @@ class PourSkipTest(unittest.TestCase):
         self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
 
 
+def _pond_state(**inv):
+    """A geared bot far from a two-cell lava pond, the shape a `mine_obsidian` walk is aimed at.
+
+    Out of pouring reach (`pos` is the origin), so the step has to pick a *stance* beside the
+    pond instead of pouring where it stands.
+    """
+    g = gs(pos=(0.0, 64.0, 0.0), tools={"pickaxe": "diamond", "sword": "diamond"},
+           inventory={"crafting_table": 1, "water_bucket": 1, **inv})
+    g.armor = {slot: {"item": f"diamond_{slot}"}
+               for slot in ("helmet", "chestplate", "leggings", "boots")}
+    g.offhand = "shield"
+    g.resources = {"lava": [
+        BlockHit("lava", "lava", -270, 64, -56, 3.0, above="air", below="stone", level=2),
+        BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
+    ]}
+    return g
+
+
+class StanceSkipTest(unittest.TestCase):
+    """A `mine_obsidian` walk the server refuses for want of footing is not walked again.
+
+    Live, run16: the stance the step picked sat over a deep lava lake, so the server answered
+    `[NAVIGATION_TARGET_UNSUPPORTED]` ("No ground was found within 64 blocks below it") on 215
+    ticks and the run never made a single obsidian. That answer is a property of the stance cell,
+    so the loop stands on another neighbour of the same source, and once every stance of a source
+    is refused the step passes over the source itself -- the move `pour_skip` makes for a pour.
+    """
+
+    class _Action:
+        def __init__(self, label: str, tool: str, args: dict | None = None) -> None:
+            self.label = label
+            self.tool = tool
+            self.args = args or {}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
+        agent._recover_written_off = set()
+        agent._water_ticks = 0
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._blocked_cell = None
+        agent._portal_blocked = []
+        agent.furnace_pos = None
+        agent.chest_pos = None
+        agent.base = None
+        agent.surface = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
+        agent.log = []
+        return agent
+
+    def test_remembers_the_refused_stance(self) -> None:
+        agent = self._agent()
+        agent._note_stance(
+            self._Action("mine_obsidian", "navigate", {"x": -187, "y": -36, "z": 18}),
+            False,
+            "[NAVIGATION_TARGET_UNSUPPORTED] No usable footing was observed within 1 blocks of "
+            "-187, -36, 18. No ground was found within 64 blocks below it.")
+        self.assertEqual(agent._stance_skip, {(-187, -36, 18)})
+
+    def test_ignores_success_other_labels_tools_and_codes(self) -> None:
+        agent = self._agent()
+        stance = {"x": 1, "y": 2, "z": 3}
+        refusal = "[NAVIGATION_TARGET_UNSUPPORTED] no footing"
+        agent._note_stance(self._Action("mine_obsidian", "navigate", stance), True, refusal)
+        agent._note_stance(self._Action("go_home", "navigate", stance), False, refusal)
+        agent._note_stance(self._Action("mine_obsidian", "collect_block", stance), False, refusal)
+        agent._note_stance(self._Action("mine_obsidian", "navigate", stance), False,
+                           "[NAVIGATION_STOPPED] repeated_movement_failure")
+        self.assertEqual(agent._stance_skip, set())
+
+    def test_inject_hands_the_set_to_the_state(self) -> None:
+        agent = self._agent()
+        agent._stance_skip = {(-187, -36, 18)}
+        self.assertEqual(agent._inject(gs()).stance_skip, frozenset({(-187, -36, 18)}))
+
+    def test_the_next_tick_walks_to_another_stance(self) -> None:
+        # End to end: the refused walk writes the stance off, `_inject` carries it, and the same
+        # label now aims at a different neighbour of the source instead of the refused cell.
+        agent = self._agent()
+        agent._note_stance(
+            self._Action("mine_obsidian", "navigate", {"x": -269, "y": 65, "z": -56}),
+            False, "[NAVIGATION_TARGET_UNSUPPORTED] no footing")
+        action = resolve("mine_obsidian", agent._inject(_pond_state()))
+        self.assertEqual(action.tool, "navigate")
+        self.assertEqual((action.args["x"], action.args["y"], action.args["z"]),
+                         (-270, 65, -55))
+
+
+class StuckOfferTest(unittest.TestCase):
+    """A label that keeps answering the identical refusal is withheld, so the fallback moves.
+
+    Live, run16: `mine_obsidian` was the *only* candidate and the server refused it identically
+    on 215 ticks; because the offer stayed non-empty, the last fallback (`explore`/`wait`) never
+    had a turn and the run burned to the iteration limit. The guard catches the repeated refusal
+    generically (run11's `go_home` and run14's `recover_drops` stalled the same way, each needing
+    a bespoke latch) and hands the tick to the fallback.
+    """
+
+    REFUSAL = ("[NAVIGATION_TARGET_UNSUPPORTED] No usable footing was observed within 1 blocks "
+               "of -187, -36, 18.")
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._recover_written_off = set()
+        agent._water_ticks = 0
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._blocked_cell = None
+        agent._portal_blocked = []
+        agent.furnace_pos = None
+        agent.chest_pos = None
+        agent.base = None
+        agent.surface = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
+        agent.log = []
+        return agent
+
+    def test_withholds_the_label_after_repeated_identical_refusals(self) -> None:
+        agent = self._agent()
+        for _ in range(STUCK_REPEATS):
+            agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
+        self.assertEqual(agent._stuck_off, STUCK_COOLDOWN)
+        self.assertEqual([r["reason"] for r in agent.log], ["stuck_offer_dropped"])
+
+    def test_progress_and_success_reset_the_run(self) -> None:
+        agent = self._agent()
+        agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
+        agent._track_stuck("mine_obsidian", False, self.REFUSAL, True)  # the world moved on
+        agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
+        self.assertEqual(agent._stuck_reps, 1)
+
+    def test_a_different_code_restarts_the_run(self) -> None:
+        agent = self._agent()
+        agent._track_stuck("mine_obsidian", False, "[CODE_A] x", False)
+        agent._track_stuck("mine_obsidian", False, "[CODE_B] x", False)
+        self.assertEqual((agent._stuck_label, agent._stuck_code, agent._stuck_reps),
+                         ("mine_obsidian", "CODE_B", 1))
+
+    def test_a_different_label_restarts_the_run(self) -> None:
+        agent = self._agent()
+        agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
+        agent._track_stuck("get_wood", False, self.REFUSAL, False)
+        self.assertEqual((agent._stuck_label, agent._stuck_reps), ("get_wood", 1))
+
+    def test_the_window_expires_and_the_label_returns(self) -> None:
+        agent = self._agent()
+        for _ in range(STUCK_REPEATS):
+            agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
+        for _ in range(STUCK_COOLDOWN):
+            agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
+        self.assertEqual(agent._stuck_off, 0)
+        self.assertIsNone(agent._stuck_label)
+
+    def test_inject_withholds_only_during_the_window(self) -> None:
+        agent = self._agent()
+        agent._stuck_label = "mine_obsidian"
+        agent._stuck_off = 3
+        self.assertEqual(agent._inject(gs()).stuck_label, "mine_obsidian")
+        agent._stuck_off = 0
+        self.assertIsNone(agent._inject(gs()).stuck_label)
+
+    def test_candidates_drop_the_withheld_label_and_the_fallback_takes_over(self) -> None:
+        # The run16 shape: `mine_obsidian` is the only candidate, so withholding it is what lets
+        # the fallback own the tick instead of the run burning to the limit on the same call. The
+        # empty base steps and full stone stack keep every other label out of the offer.
+        g = _pond_state(cobblestone=20, furnace=1, water_bucket=1)
+        g.base = (0, 63, 0)
+        self.assertEqual(candidates(g), ["mine_obsidian"])
+        g.stuck_label = "mine_obsidian"
+        self.assertEqual(candidates(g), ["explore"])
+
+
 class RecoverWriteOffTest(unittest.TestCase):
     """A recovery walk that reaches the death site and finds nothing is not retried.
 
@@ -384,6 +590,11 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._recover_written_off = set()
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -645,6 +856,11 @@ class DropHoleTest(unittest.TestCase):
         agent.base = None
         agent.chest_pos = None
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._recover_written_off = set()
         agent._drop_hole_blocked = True
         self.assertTrue(agent._inject(gs()).drop_hole_blocked)
@@ -697,6 +913,11 @@ class ChestSupportTest(unittest.TestCase):
         agent.base = None
         agent.chest_pos = None
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = True
@@ -752,6 +973,11 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.chest_pos = None
         agent.furnace_pos = (-197, -46, -99)
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._furnace_blocked = True
@@ -892,6 +1118,11 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent = self._agent(self._cells())
         agent._portal_blocked = [(-195, -46, -98)]
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
@@ -986,6 +1217,11 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent = self._agent(self._FIND)
         agent._base_adopted = True
         agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_label = None
+        agent._stuck_code = None
+        agent._stuck_reps = 0
+        agent._stuck_off = 0
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
