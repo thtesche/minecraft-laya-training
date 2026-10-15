@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.actions import Action
+from mlaya.actions import Action, candidates, resolve
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import Agent, blocked_by_surroundings, unblock_action
@@ -110,6 +110,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._unblock_done = False
         agent._blocked_cell = None
         agent._pour_skip = set()
+        agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         return agent
 
@@ -281,6 +282,7 @@ class PourSkipTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._pour_skip = set()
+        agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -317,6 +319,82 @@ class PourSkipTest(unittest.TestCase):
         agent.chest_pos = None
         agent._pour_skip = {(-129, 66, -30)}
         self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
+
+
+class RecoverWriteOffTest(unittest.TestCase):
+    """A recovery walk that reaches the death site and finds nothing is not retried.
+
+    Live, run14: `pick_up_items(recover_death_items)` answered `[NO_MATCHING_ITEMS]` at the site
+    on every tick while `recover_drops` owned the tick for the whole 300 s window; the bot stood
+    there for 40 + 77 ticks, over half the run, instead of resuming the tech tree. The answer is
+    definitive (the 16 m scan around the site found nothing), so the site is written off.
+    """
+
+    class _Action:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._recover_written_off = set()
+        agent._pour_skip = set()
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._blocked_cell = None
+        agent._portal_blocked = []
+        agent.base = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent.surface = None
+        return agent
+
+    def test_a_site_found_empty_is_written_off(self) -> None:
+        agent = self._agent()
+        agent._note_recover(gs(death_pos=(41.45, -22.0, -113.5)),
+                            self._Action("recover_drops"), False,
+                            "[NO_MATCHING_ITEMS] No matching loaded dropped items were observed.")
+        self.assertEqual(agent._recover_written_off, {(41, -22, -114)})
+
+    def test_a_missing_death_record_is_written_off(self) -> None:
+        agent = self._agent()
+        agent._note_recover(gs(death_pos=(1.0, 2.0, 3.0)),
+                            self._Action("recover_drops"), False,
+                            "[NO_RECORDED_DEATH] No retained death is available.")
+        self.assertEqual(agent._recover_written_off, {(1, 2, 3)})
+
+    def test_ignores_success_other_labels_and_other_failures(self) -> None:
+        agent = self._agent()
+        death = gs(death_pos=(1.0, 2.0, 3.0))
+        # A successful walk (the gear was picked up) must not be written off.
+        agent._note_recover(death, self._Action("recover_drops"), True, "[NO_MATCHING_ITEMS]")
+        # Only the recovery label; a gather failure with a matching-looking text is ignored.
+        agent._note_recover(death, self._Action("get_wood"), False, "[NO_MATCHING_ITEMS]")
+        # A transient failure the walk can retry is not final.
+        agent._note_recover(death, self._Action("recover_drops"), False,
+                            "[RECOVERY_SITE_UNREACHABLE] no route")
+        # No death pos to key on: nothing to write off.
+        agent._note_recover(gs(), self._Action("recover_drops"), False, "[NO_MATCHING_ITEMS]")
+        self.assertEqual(agent._recover_written_off, set())
+
+    def test_inject_hands_the_set_to_the_state(self) -> None:
+        agent = self._agent()
+        agent._recover_written_off = {(1, 2, 3)}
+        self.assertEqual(agent._inject(gs()).recover_written_off, frozenset({(1, 2, 3)}))
+
+    def test_the_next_tick_stops_offering_the_walk(self) -> None:
+        # End to end: the failed walk writes the site off, `_inject` carries it, and the same
+        # death is no longer offered (the whole point -- the tech tree resumes instead).
+        agent = self._agent()
+        g = gs(pos=(41.0, -22.0, -113.0), death_pos=(41.45, -22.0, -113.5),
+               last_death_age_s=12.0, dimension="overworld", death_dim="overworld")
+        agent._note_recover(g, self._Action("recover_drops"), False,
+                            "[NO_MATCHING_ITEMS] No matching loaded dropped items were observed.")
+        injected = agent._inject(g)
+        self.assertNotIn("recover_drops", candidates(injected))
+        self.assertIsNone(resolve("recover_drops", injected))
 
 
 class BuildSiteSurfaceGateTest(unittest.IsolatedAsyncioTestCase):
@@ -521,6 +599,7 @@ class DropHoleTest(unittest.TestCase):
         agent.base = None
         agent.chest_pos = None
         agent._pour_skip = set()
+        agent._recover_written_off = set()
         agent._drop_hole_blocked = True
         self.assertTrue(agent._inject(gs()).drop_hole_blocked)
 
@@ -572,6 +651,7 @@ class ChestSupportTest(unittest.TestCase):
         agent.base = None
         agent.chest_pos = None
         agent._pour_skip = set()
+        agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = True
         self.assertTrue(agent._inject(gs()).chest_blocked)
@@ -626,6 +706,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.chest_pos = None
         agent.furnace_pos = (-197, -46, -99)
         agent._pour_skip = set()
+        agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._furnace_blocked = True
         state = agent._inject(gs())
@@ -765,6 +846,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent = self._agent(self._cells())
         agent._portal_blocked = [(-195, -46, -98)]
         agent._pour_skip = set()
+        agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -858,6 +940,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent = self._agent(self._FIND)
         agent._base_adopted = True
         agent._pour_skip = set()
+        agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
         agent._furnace_blocked = False

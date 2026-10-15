@@ -283,6 +283,11 @@ class GameState:
     # answers `[PORTAL_NO_FRAME]` on every tick (live, Nether run: a bed the generic sleep laid
     # "beside the bot" landed in the opening). `clear_portal` digs these cells before the build.
     portal_blocked: list[tuple[int, int, int]] = field(default_factory=list)
+    # Death cells (`actions._cell`) a recovery walk already reached and found empty
+    # (`[NO_MATCHING_ITEMS]` and the other final codes). `_can_recover` refuses to offer the walk
+    # there again, so a bot whose gear is gone does not stand at the death site for the whole
+    # window while the tech tree waits (live, run14: two such loops, 117 ticks in all).
+    recover_written_off: frozenset = frozenset()
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)

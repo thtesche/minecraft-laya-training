@@ -1110,9 +1110,18 @@ def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 
 
+def _cell(pos: tuple[float, float, float]) -> tuple[int, int, int]:
+    """The block cell a float position names, for keying loop-owned per-cell facts."""
+    return (int(math.floor(pos[0])), int(math.floor(pos[1])), int(math.floor(pos[2])))
+
+
 def _can_recover(gs: GameState) -> bool:
     """A fresh death close by: the dropped gear is still loaded and worth a walk back."""
     if gs.death_pos is None or gs.last_death_age_s is None or gs.pos is None:
+        return False
+    # A site already walked and found empty is written off (see `Agent._note_recover`): the drop
+    # is gone, so the walk can never pay off and offering it again only stalls the loop.
+    if _cell(gs.death_pos) in gs.recover_written_off:
         return False
     if gs.last_death_age_s > RECOVER_WINDOW_S:
         return False

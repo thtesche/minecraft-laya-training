@@ -120,6 +120,23 @@ class RecoverDropsTest(unittest.TestCase):
                last_death_age_s=30.0, dimension="overworld", death_dim="overworld")
         self.assertIsNotNone(resolve("recover_drops", g))
 
+    def test_a_written_off_site_is_not_offered_again(self) -> None:
+        # A recovery walk that reached the site and found nothing writes off that cell
+        # (`graph.Agent._note_recover`). Offering it again would only stand the bot at the
+        # emptied site for the rest of the window (live, run14).
+        g = gs(pos=(0.0, 64.0, 0.0), death_pos=(6.0, 62.0, 0.0),
+               last_death_age_s=30.0, dimension="overworld", death_dim="overworld",
+               recover_written_off=frozenset({(6, 62, 0)}))
+        self.assertIsNone(resolve("recover_drops", g))
+        self.assertNotIn("recover_drops", candidates(g))
+
+    def test_a_different_site_is_still_offered(self) -> None:
+        # A later death elsewhere is a new cell, not written off, and is still walked.
+        g = gs(pos=(0.0, 64.0, 0.0), death_pos=(6.0, 62.0, 0.0),
+               last_death_age_s=30.0, dimension="overworld", death_dim="overworld",
+               recover_written_off=frozenset({(50, 20, 50)}))
+        self.assertIsNotNone(resolve("recover_drops", g))
+
 
 class ReplaceToolTest(unittest.TestCase):
     def _worn(self, left: float = 15.0, item: str = "stone_pickaxe",

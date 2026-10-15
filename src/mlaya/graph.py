@@ -11,7 +11,7 @@ from . import perception
 from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
-                      tech_tree_complete, _at_base, _at_surface, _gear_ready)
+                      tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready)
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
@@ -54,6 +54,13 @@ ADOPT_CHEST_RADIUS = 4
 BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED", "BED_PLACEMENT_FAILED", "PLACE_BLOCK_FAILED",
                  "PLACE_TARGET_OCCUPIED", "repeated_movement_failure",
                  "NO_REACHABLE_MATCHING_TARGETS")
+# Tool-result codes from a death-recovery walk (`pick_up_items` with `recover_death_items`) that
+# mean the dropped stack will never be recovered: the server reached the site and its 16 m scan
+# found nothing (`NO_MATCHING_ITEMS`), or it has no usable death record at all. Retrying in place
+# is what stalls the loop -- `recover_drops` owns the tick for the whole recovery window -- so the
+# site is written off and the tech tree resumes (see `Agent._note_recover`).
+RECOVER_FINAL_CODES = ("NO_MATCHING_ITEMS", "NO_RECORDED_DEATH",
+                       "DEATH_DIMENSION_MISMATCH", "DEATH_RECORD_STALE")
 # A gathering action is refused with `[INVENTORY_FULL]` once all 36 carried slots are taken; the
 # unblock there is not terrain but pack space (stow at the base, else drop), so it routes through
 # a separate relief step.
@@ -173,6 +180,11 @@ class Agent:
         # only fail again; remembering it lets the next tick pour elsewhere (live: the
         # surface pond holds one usable cell and the obsidian would never be made there).
         self._pour_skip: set[tuple[int, int, int]] = set()
+        # Death cells whose recovery walk already reached them and found nothing
+        # (`[NO_MATCHING_ITEMS]` and the other final codes): `_can_recover` stops offering the
+        # walk there, so the bot does not stand at an emptied death site until the window runs
+        # out (live, run14: two loops, 117 ticks in all, after the kit was already lost).
+        self._recover_written_off: set[tuple[int, int, int]] = set()
         # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): from
         # then on the relief drops the surplus on the open ground instead. That still frees the
         # slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall on it.
@@ -207,6 +219,7 @@ class Agent:
         gs.base_adopted = self._base_adopted
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
+        gs.recover_written_off = frozenset(self._recover_written_off)
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.chest_blocked = self._chest_blocked
         gs.furnace_blocked = self._furnace_blocked
@@ -632,6 +645,25 @@ class Agent:
             # `_unblock_done`), so the cell no longer needs digging.
             self._blocked_cell = None
 
+    def _note_recover(self, gs, action, ok: bool, text: str | None) -> None:
+        """Write off a death site once a recovery there reports the drops are gone.
+
+        `pick_up_items(recover_death_items)` answers `[NO_MATCHING_ITEMS]` when it reaches the
+        death site and its 16 m scan finds nothing left to pick up (the stack despawned, burnt,
+        or never existed): a definitive answer, not a transient one, since the walk already
+        happened. `_can_recover` keeps offering the walk for the whole window regardless, so the
+        reaction owns every tick and the bot stands at the site until the window expires -- and a
+        fresh death resets the window. Live, run14: 40 + 77 ticks burned in two such loops, over
+        half the run, and the second only ended when the 300 s window ran out. Remembering the
+        cell drops the offer at once; a later death elsewhere is a different cell, still walked.
+        """
+        if ok or action.label != "recover_drops":
+            return
+        if not any(code in (text or "") for code in RECOVER_FINAL_CODES):
+            return
+        if gs.death_pos is not None:
+            self._recover_written_off.add(_cell(gs.death_pos))
+
     async def _verify(self, state: AgentState) -> dict:
         before = state["before"]
         action = state["action"]
@@ -647,6 +679,7 @@ class Agent:
         self._note_chest(action, _ok, _text)
         self._note_furnace(action, _ok, _text)
         self._note_place(action, _ok, _text)
+        self._note_recover(before, action, _ok, _text)
         if action.label == "stow_surplus":
             # A failed deposit means the chest is full; stop offering it as the relief.
             self._stow_blocked = not _ok
