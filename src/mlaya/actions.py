@@ -238,6 +238,12 @@ MINING_HEADROOM = 80
 # despawn, the range one long trek out. Live, a 230 m death was written off as a total loss.
 RECOVER_WINDOW_S = 300.0
 RECOVER_RANGE = 320.0
+# A death this far below the bot has to be dug down to. By hand that is several times slower than
+# with a pickaxe, so the dropped stack can despawn while the bot digs toward it (live, run12: the
+# bot respawned on the surface, hand-dug toward a death ~60 blocks down, lost the race and then
+# looped on `get_wood`). Recovery is only offered for such a death once a pickaxe is carried;
+# until then the normal chain (gather wood, craft one) runs first and recovery is offered again.
+RECOVER_DIG_DEPTH = 4
 
 
 @dataclass
@@ -966,7 +972,17 @@ def _can_recover(gs: GameState) -> bool:
         return False
     if gs.death_dim and gs.dimension and gs.death_dim != gs.dimension:
         return False
-    return _dist(gs.pos, gs.death_pos) <= RECOVER_RANGE
+    if _dist(gs.pos, gs.death_pos) > RECOVER_RANGE:
+        return False
+    # A death well below the bot has to be dug down to. By hand that is several times slower
+    # than with a pickaxe, so the dropped stack can despawn mid-walk (live, run12: the bot
+    # respawned on the surface, hand-dug toward a death ~60 blocks down, lost the race and then
+    # looped on `get_wood`). Require a pickaxe first; until it is crafted the normal chain
+    # (gather wood, craft one) runs, and recovery is offered the moment it exists again.
+    if (gs.death_pos[1] < gs.pos[1] - RECOVER_DIG_DEPTH
+            and _pick_tier(gs.inventory, gs.tools) < 1):
+        return False
+    return True
 
 
 def _diamond_ore_available(gs: GameState) -> bool:

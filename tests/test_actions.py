@@ -89,6 +89,27 @@ class RecoverDropsTest(unittest.TestCase):
                last_death_age_s=30.0, dimension="overworld", death_dim="overworld")
         self.assertIsNone(resolve("recover_drops", g))
 
+    def test_deep_death_waits_for_a_pickaxe(self) -> None:
+        # A death well below the bot means digging down; by hand that loses the despawn race
+        # (live, run12), so recovery waits for a pickaxe. The bot carries none here.
+        g = gs(pos=(0.0, 64.0, 0.0), death_pos=(0.0, 0.0, 0.0),
+               last_death_age_s=30.0, dimension="overworld", death_dim="overworld")
+        self.assertIsNone(resolve("recover_drops", g))
+        self.assertNotIn("recover_drops", candidates(g))
+
+    def test_deep_death_offered_once_a_pickaxe_is_carried(self) -> None:
+        g = gs(pos=(0.0, 64.0, 0.0), death_pos=(0.0, 0.0, 0.0),
+               last_death_age_s=30.0, dimension="overworld", death_dim="overworld",
+               tools={"pickaxe": "wooden"})
+        self.assertIsNotNone(resolve("recover_drops", g))
+        self.assertIn("recover_drops", candidates(g))
+
+    def test_shallow_death_needs_no_pickaxe(self) -> None:
+        # A death on roughly the bot's own level is a walk, not a dig, so it is offered unarmed.
+        g = gs(pos=(0.0, 64.0, 0.0), death_pos=(6.0, 62.0, 0.0),
+               last_death_age_s=30.0, dimension="overworld", death_dim="overworld")
+        self.assertIsNotNone(resolve("recover_drops", g))
+
 
 class ReplaceToolTest(unittest.TestCase):
     def _worn(self, left: float = 15.0, item: str = "stone_pickaxe",
