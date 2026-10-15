@@ -67,7 +67,9 @@ später das Kopf-Fine-Tuning (M3) verbessert.
     resolve(label, gs): Label -> echtes MCP-Tool + Argumente
     Kaskade: get_wood -> craft_pickaxe -> craft_table -> mine_stone ->
     craft_stone_pickaxe -> craft_furnace -> mine_iron -> mine_coal ->
-    smelt_iron -> craft_iron_pickaxe -> mine_diamond -> craft_diamond_pickaxe
+    smelt_iron -> craft_iron_pickaxe -> craft_shield -> equip_shield ->
+    craft_iron_sword -> craft_iron_<slot> -> equip_armor (Eisen-Kampfkit, VOR dem
+    Diamantgang) -> mine_diamond -> craft_diamond_pickaxe
     (-> craft_diamond_sword) -> craft_diamond_<slot> (Brustplatte/Hose/Schuhe/Helm)
     -> equip_armor; Bett-Kette (hunt_wool/hunt_string ->
     craft_bed -> sleep in der Nacht) und eat_food bei Hunger; Homebase
@@ -148,7 +150,9 @@ Wichtige Umsetzungsdetails:
   Rüstung braucht **keine Stöcke**, nur den Werktisch.
 - `mine_iron`/`mine_coal`/`mine_diamond` werden nur angeboten, wenn im Umkreis tatsächlich Erz
   geladen ist (sonst fällt die Kaskade auf `explore` zurück). `mine_diamond` braucht zusätzlich
-  Tier ≥ Eisen. Die Diamant-Ziele kommen aus **einer** Quelle, `_next_diamond_item(gs)`
+  Tier ≥ Eisen **und das fertige Eisen-Kampfkit** (`_combat_ready`: Eisenschwert + alle vier
+  Eisenteile getragen + Schild in der Off-Hand — s. Abschnitt „Kampfkit"). Die Diamant-Ziele kommen
+  aus **einer** Quelle, `_next_diamond_item(gs)`
   (Spitzhacke 3 → Schwert 2, erst wenn die Diamant-Spitzhacke steht → Rüstung in der Reihenfolge
   `DIAMOND_ARMOR` = Brustplatte 8, Hose 7, Schuhe 4, Helm 5, also **Schutz pro Diamant** zuerst).
   Es ist immer nur **das nächste fehlende Teil** aktiv: `mine_diamond` mit
@@ -168,12 +172,24 @@ Wichtige Umsetzungsdetails:
   Werktisch). Er blockt nur in der **Off-Hand**, ein Craft landet aber nur im Rucksack — erst ein
   `equip` mit `destination: "off-hand"` legt ihn dorthin. Der Server meldet den Off-Hand-Stack mit
   `location: "off-hand"`; `GameState.offhand` liest das (die Rüstungs-Slots tun dasselbe), und
-  `verify.diff`/`progressed` verbuchen `offhand_delta`. **Eisen-Verbrauch:** Weil sonst nichts mehr
-  Eisen brauchte (Diamant-Spitze steht), hätte die Schleife nie wieder Eisen geschürft und das
-  Schild nie erreicht (live: `candidates` war nur `['explore']` neben `iron_ore at 4m`).
-  `_iron_goal` ist jetzt die einzige Quelle: 3 Barren für die (Ersatz-)Eisenhacke, danach **1** für
-  den Schild, **0** sobald beides steht. `candidates` **und** `resolve` teilen sie; der Craft ist
-  zudem hinter die Eisen-Spitzhacke gated, damit er die ersten drei Barren nicht stiehlt.
+  `verify.diff`/`progressed` verbuchen `offhand_delta`.
+- **Eisen-Kampfkit (vor dem Diamantgang):** `craft_iron_sword` (2 Barren + Stock, 3×3) und
+  `craft_iron_<slot>` (Brustplatte 8, Hose 7, Schuhe 4, Helm 5 — `IRON_ARMOR`, wie beim
+  Diamantsatz **Schutz pro Barren** zuerst; immer nur das nächste fehlende Teil über
+  `_next_iron_armor_item`), dann `equip_armor`. `equip_armor` legt Eisen **und** Diamant an und
+  tauscht nur gegen ein **besseres** Teil (`_armor_to_wear`), sonst würde das vom Diamantstück
+  verdrängte Eisenteil im Rucksack sofort wieder darübergelegt. `mine_diamond` ist hinter
+  `_combat_ready` gated (Eisenschwert **oder besser**, Schild, alle vier Slots mit Eisen **oder
+  besser** belegt). **Grund (live, run12):** Der Bot tauchte nur mit einer Eisenspitzhacke zu den
+  Diamanten (y<16), traf Zombie und Creeper und starb; der Lauf zum Todesort verlor das Rennen gegen
+  den Item-Despawn. Die Eisenstufe ist die einzige Schwert-/Rüstungsstufe vor Diamant, die der Baum
+  baut. **Eisen-Verbrauch:** `_iron_goal` ist die einzige Quelle für „wie viel Eisen noch". Sie ist
+  `3` für die (Ersatz-)Hacke, sonst `_combat_iron_missing` (Schild 1 + Schwert 2 + fehlende
+  Rüstungsteile), und mit fertigem Diamantkit zusätzlich `_portal_iron_goal` (Eimer, Feuerzeug).
+  `mine_iron` **und** `smelt_iron` (Barren < Ziel) teilen sie; `mine_iron` ist pro Aktion auf
+  `IRON_MINE_BATCH = 8` gedeckelt, damit ein Rüstungsziel nicht ein einziger unbegrenzter Abbau
+  wird. Alle Eisen-Crafts sind hinter die Eisen-Spitzhacke gated, damit sie die ersten drei Barren
+  nicht stehlen.
 - `explore` ist bewusst der **letzte Fallback** und nur dann in `candidates`, wenn kein
   produktiver Schritt möglich ist — sonst verwässert es die (zero-shot verrauschte) Wahl. Ausnahme:
   in der Lull nach dem Anzünden des Portals (s. Essen/Auto-Stop) steht an seiner Stelle `wait` —
@@ -202,6 +218,13 @@ Wichtige Umsetzungsdetails:
   **Ergänzung:** Der Unblock feuert nur, wenn wirklich ein Label blockiert ist
   (`_blocked_label is not None`). Eine reine Gefahr-Deferral trägt `action_label=None` und darf die
   Leiter nicht re-arman — sonst schöbe ein unblockbarer Tick einen sinnlosen `make_room` nach.
+  **Ergänzung (run12):** `BLOCKED_CODES` enthält auch `NO_REACHABLE_MATCHING_TARGETS` — der Server
+  meldet das, wenn er die Zielblöcke *gefunden*, aber keinen *erreichbar* hat (`contract.ts`:
+  „Every loaded X block was found but none could be reached", z. B. ein Baum, den er wegen
+  Liquid-Isolation verweigert). In Place wiederholt sich das endlos (live: der Bot stand unter 56
+  Bäumen und antwortete jeden Tick mit `get_wood` darauf); die Unblock-Leiter (Pocket, dann
+  offenes Gelände) ist genau die Änderung, die so eine Verweigerung braucht. Gepinnt in
+  `tests/test_graph.py::BlockedBySurroundingsTest`.
 - **Beobachtung:** Ein 2×2-Craft (`craft_pickaxe`) hat die getragene Werkbank einmal in die Welt
   gesetzt statt sie zu behalten. Die Kette heilt sich selbst, weil `craft_table` erneut angeboten
   wird, solange keine Werkbank getragen wird.
@@ -365,9 +388,14 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
     lässt). → `craft_item` mit `temporary_workstation`.
   - **`collect_drops`** — frisches „target died"-Event (`gs.drops > 0`, Alter ≤
     `EVENT_REACT_WINDOW_S = 120` s) → `pick_up_items {radius: 16}`.
-  - **`recover_drops`** — Tod ≤ `RECOVER_WINDOW_S = 90` s, gleiche Dimension, ≤ `RECOVER_RANGE =
-    120` m → `pick_up_items {recover_death_items: true}` (der Server läuft selbst zur
-    Todesposition zurück). Nach jedem Tod setzt der Graph die Policy neu (`_reapply_after_death`).
+  - **`recover_drops`** — Tod ≤ `RECOVER_WINDOW_S = 300` s, gleiche Dimension, ≤ `RECOVER_RANGE =
+    320` m → `pick_up_items {recover_death_items: true}` (der Server läuft selbst zur
+    Todesposition zurück). Zusätzlich braucht ein **tiefer** Tod (`death_y < bot_y −
+    RECOVER_DIG_DEPTH = 4`) eine **Spitzhacke** (`_can_recover`): der Weg zurück muss sich
+    hinuntergraben, und mit der Hand verliert der Bot das Rennen gegen den Despawn (live, run12:
+    von der Oberfläche handgegraben zu einem Tod ~60 Blöcke tiefer, verloren, danach Endlos-loop
+    auf `get_wood`). Bis die Hacke gecraftet ist, läuft die normale Kette (Holz → Hacke) zuerst.
+    Nach jedem Tod setzt der Graph die Policy neu (`_reapply_after_death`).
 - **State:** `GameState.tool_meta` (Klasse → `{tier,item,left,max}`), `death_pos`, `death_dim`,
   `drops`; `narrative()` hängt „low durability: …", „… mob(s) the reflex killed dropped items
   nearby" und „gear … can still be recovered" an. `verify.progressed` prüft `replace_tool` (neue

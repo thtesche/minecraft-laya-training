@@ -86,16 +86,30 @@ in einen Rüstungsslot verschiebt. `situation.tools.armour` listet **mitgeführt
 (ob an oder nicht); der **getragene** Satz kommt aus der Inventar-`location`
 (`head`/`torso`/`legs`/`feet`).
 
-**Schild:** Der Schild (6 Planken + 1 Eisenbarren, 3×3 → Werktisch) ist eine eigene kleine Tier:
-`craft_shield` → `equip_shield`. Er blockt nur **in der Off-Hand**, und ein gecrafteter Schild
-bleibt — wie die Rüstung — zunächst im Rucksack; erst ein `equip` mit `destination: "off-hand"`
-legt ihn dorthin. `view_status` meldet den Off-Hand-Gegenstand als Inventar-Stack mit
-`location: "off-hand"`; `GameState.offhand` liest das, und `verify.diff` zählt `offhand_delta`
-als Fortschritt von `equip_shield`. Weil sonst nichts mehr Eisen brauchte (die Diamant-Spitzhacke
-steht), hätte der Loop nie wieder Eisen geschürft — `_iron_goal` macht das Schild zum
-Eisen-Grund: 3 Barren für die (Ersatz-)Eisenhacke, danach genau **1** für den Schild, und **0**,
-sobald beides steht. Der Craft wartet auf die Eisen-Spitzhacke, damit das Schild nicht die ersten
-Barren stiehlt.
+**Schild & Eisen-Kampfkit:** Der Schild (6 Planken + 1 Eisenbarren, 3×3 → Werktisch) ist eine
+eigene kleine Tier: `craft_shield` → `equip_shield`. Er blockt nur **in der Off-Hand**, und ein
+gecrafteter Schild bleibt — wie die Rüstung — zunächst im Rucksack; erst ein `equip` mit
+`destination: "off-hand"` legt ihn dorthin. `view_status` meldet den Off-Hand-Gegenstand als
+Inventar-Stack mit `location: "off-hand"`; `GameState.offhand` liest das, und `verify.diff` zählt
+`offhand_delta` als Fortschritt von `equip_shield`. **Live-Befund (run12):** Der Bot tauchte nur mit
+einer Eisenspitzhacke zu den Diamanten, traf Zombie und Creeper und starb; der anschließende Lauf zum
+Todesort verlor das Rennen gegen den Item-Despawn. Darum jetzt ein **Eisen-Kampfkit** vor dem ersten
+Diamantgang: `craft_iron_sword` + `craft_iron_<slot>` (Brustplatte 8, Hose 7, Schuhe 4, Helm 5,
+**Schutz pro Barren** zuerst, immer nur das nächste fehlende Teil) → `equip_armor`, und `mine_diamond`
+ist hinter `_combat_ready` gated (Eisenschwert oder besser, Schild, alle vier Slots mit Eisen oder
+besser belegt). `equip_armor` legt Eisen **und** Diamant an und tauscht nie gegen ein schlechteres
+Teil. `_iron_goal` ist die eine Eisen-Quelle: 3 Barren für die (Ersatz-)Hacke, sonst Schild 1 +
+Schwert 2 + fehlende Rüstungsteile; `mine_iron`/`smelt_iron` teilen sie, `mine_iron` ist pro Aktion
+auf `IRON_MINE_BATCH = 8` gedeckelt. Alle Eisen-Crafts warten auf die Eisen-Spitzhacke, damit sie
+nicht die ersten Barren stehlen.
+
+**Tiefe Todesfälle (run12):** `recover_drops` wartet jetzt auf eine **Spitzhacke**, wenn der Tod
+deutlich unter dem Bot liegt (`RECOVER_DIG_DEPTH = 4`): der Rückweg muss sich hinuntergraben, und mit
+der Hand verliert der Bot das Rennen gegen den 5-Minuten-Despawn (live: von der Oberfläche
+handgegraben zu einem Tod ~60 Blöcke tiefer → verloren → Endlos-Schleife auf `get_wood`). Außerdem
+zählt `[NO_REACHABLE_MATCHING_TARGETS]` (Server fand Zielblöcke, erreichte aber keinen — z. B. ein
+Baum, den er wegen Liquid-Isolation verweigert) jetzt zu `BLOCKED_CODES`: statt in Place zu hämmern,
+gräbt der Unblock ein Pocket und weicht dann auf offenes Gelände aus.
 
 **Homebase & Nether-Portal:** Die Basis steht unter **offenem Himmel**. Ein selbst gegrabener
 Tunnel hinterlässt `air`, nicht `cave_air`, und ist darum von echtem Himmel durch *keinen*

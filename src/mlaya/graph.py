@@ -46,8 +46,14 @@ ADOPT_CHEST_RADIUS = 4
 # `escape_water` rescue spun on it forever with no Laya choice and no way out). Treating it as a
 # surroundings block lets the same unblock ladder fire -- dig a pocket, then walk to open ground
 # -- instead of an infinite forced loop.
+# `NO_REACHABLE_MATCHING_TARGETS` is a gather that found its blocks but could reach none of them
+# (`contract.ts`: "Every loaded X block was found but none could be reached"), e.g. a tree the
+# server refuses to mine for liquid isolation. Retrying in place loops forever (live, run12: the
+# bot stood among 56 trees and answered `get_wood` with it every tick); the unblock ladder digs a
+# pocket and then walks to open ground, which is exactly the change such a refusal needs.
 BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED", "BED_PLACEMENT_FAILED", "PLACE_BLOCK_FAILED",
-                 "PLACE_TARGET_OCCUPIED", "repeated_movement_failure")
+                 "PLACE_TARGET_OCCUPIED", "repeated_movement_failure",
+                 "NO_REACHABLE_MATCHING_TARGETS")
 # A gathering action is refused with `[INVENTORY_FULL]` once all 36 carried slots are taken; the
 # unblock there is not terrain but pack space (stow at the base, else drop), so it routes through
 # a separate relief step.

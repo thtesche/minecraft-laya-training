@@ -60,6 +60,15 @@ class BlockedBySurroundingsTest(unittest.TestCase):
             "[NAVIGATION_STOPPED] Pathfinder stopped: repeated_movement_failure: "
             "Server confirmation deadline elapsed."))
 
+    def test_detects_gather_with_no_reachable_target(self) -> None:
+        # Live, run12: the bot stood among 56 trees and answered `get_wood` with this every tick
+        # (liquid isolation refused every block). The unblock ladder digs a pocket and then walks
+        # to open ground, which is the change such a refusal needs.
+        self.assertTrue(blocked_by_surroundings(
+            "[NO_REACHABLE_MATCHING_TARGETS] Every loaded logs block was found but none could be "
+            "reached. Last routing stop: liquid isolation needs a permitted building block or an "
+            "empty bucket"))
+
 
 class UnblockActionTest(unittest.TestCase):
     def test_first_attempt_digs_a_pocket_in_place(self) -> None:
