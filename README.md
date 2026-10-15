@@ -204,11 +204,14 @@ sammelt Federn), einen **Goldhelm** (`mine_gold` → `smelt_gold` → `craft_gol
 goldene Rüstung hält Piglins neutral, getragen erst im Nether) und einen **tiefen Bruchstein-Vorrat**
 (`NETHER_COBBLE = 64`). Der Bogen ist die eigentliche Lücke: der **Server-Kampf feuert ihn selbst**
 (`combat.bow`), der Bot muss ihn nur tragen. `tech_tree_complete` verlangt jetzt zusätzlich, dass
-kein Prep-Schritt mehr offen ist — der Lauf bereitet sich also fertig vor, statt mit dem Bett in der
-ersten Nacht zu enden. Jeder Schritt fällt aus der Liste, sobald er nicht mehr weiterkommt (kein
-Spawn, kein Erz geladen), ein unerreichbares Item blockiert den Lauf also nie. Der Tiefen-Grab nach
-Gold ist nachts nicht im Angebot (`_nether_prep_steps` filtert ihn), bleibt aber für den Auto-Stop
-offen.
+kein Prep-Schritt mehr offen ist **und die Essens-Reserve gebankt ist** (`_food_reserve_met` → die
+64 Nether-Einheiten aus `_food_goal`; live run13 endete der Lauf sonst mit nur 4× cooked_mutton) —
+der Lauf bereitet sich also fertig vor, statt mit dem Bett in der ersten Nacht zu enden. Jeder
+Schritt fällt aus der Liste, sobald er nicht mehr weiterkommt (kein Spawn, kein Erz geladen), und
+die Essens-Forderung fällt weg, sobald kein Tier und kein Zombie in Reichweite ist (Tagesjagd-
+Reichweite 64 m bzw. Zombie 24 m) — ein unerreichbares Item blockiert den Lauf also nie. Der
+Tiefen-Grab nach Gold ist nachts nicht im Angebot (`_nether_prep_steps` filtert ihn), bleibt aber
+für den Auto-Stop offen.
 
 **Sicherheits-Gates Nether:** `sleep`, `place_bed` und `fill_bucket` sind über `_overworld(gs)` auf
 die Oberwelt beschränkt — ein Bett im Nether explodiert, Wasser verdunstet dort.

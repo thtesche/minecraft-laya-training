@@ -236,6 +236,9 @@ NETHER_COBBLE = 64
 # night and was killed twice, losing a fresh iron pickaxe.
 FOOD_HUNT_RANGE_DAY = 64.0
 FOOD_HUNT_RANGE_NIGHT = 16.0
+# A zombie hunted for its rotten flesh has to be this close (shared with `_safe_zombie_hunt`,
+# which also uses it as the source test for the completion gate).
+ZOMBIE_HUNT_RANGE = 24.0
 # Quarries that fight back, so `collect_mob_drop` must run in the hunt stage.
 HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
                  "witch", "blaze", "piglin", "zombified_piglin"}
@@ -394,7 +397,7 @@ def _safe_zombie_hunt(gs: GameState) -> bool:
     neighbourhood — a pack is how a hunt turns into a death.
     """
     nearest = gs.mob_nearest("zombie")
-    if nearest is None or nearest > 24 or (gs.health or 0) < 18:
+    if nearest is None or nearest > ZOMBIE_HUNT_RANGE or (gs.health or 0) < 18:
         return False
     hostiles = [(n, d) for n, k, _, d in gs.mobs
                 if k == "hostile" and d is not None and d <= 16]
@@ -622,6 +625,35 @@ def _food_goal(gs: GameState) -> int:
     """How many edible items to keep banked: the ordinary floor, or the deeper Nether target
     stocked during the lull so the next trip starts with a full supply."""
     return NETHER_FOOD_RESERVE if _nether_idle(gs) else FOOD_RESERVE
+
+
+def _food_source_in_reach(gs: GameState) -> bool:
+    """Whether food the daylight hunt could actually walk to is present: a passive animal within
+    the daylight reach, or a zombie within melee reach for its rotten flesh.
+
+    Distance-bounded, unlike the Nether prep steps' "is it loaded anywhere?" test, because a hunt
+    must *close the distance* while a mine can tunnel to a merely loaded deposit: keying the
+    completion gate off a mob anywhere could hold the run open with nothing it can do (the lull
+    then offers only `wait`, and the run stalls). The *daylight* range is used regardless of the
+    current phase, so the gate does not read the shorter night range as "no source ever": the run
+    sleeps the night and hunts by day, and that `sleep` is what keeps the gate from idling.
+    """
+    return (_nearest_food_mob(gs, FOOD_HUNT_RANGE_DAY) is not None
+            or (gs.mob_nearest("zombie") or float("inf")) <= ZOMBIE_HUNT_RANGE)
+
+
+def _food_reserve_met(gs: GameState) -> bool:
+    """Whether the banked food reserve is met, or out of reach.
+
+    The gate holds the run for `_food_goal` - the deep `NETHER_FOOD_RESERVE` in the post-portal
+    lull - but lets the requirement drop out once no source is in reach, the same "unreachable
+    material drops out" rule the Nether prep steps follow. So a stocked pack is now part of "the
+    overworld is done": if the gate holds, a hunt is offered in the same reach (or the night's
+    `sleep` is), so it never stalls; and a world with no animal near can never leave the run
+    unable to end.
+    """
+    return (_edible_count(gs.inventory) >= _food_goal(gs)
+            or not _food_source_in_reach(gs))
 
 
 def _overworld(gs: GameState) -> bool:
@@ -1059,17 +1091,19 @@ def tech_tree_complete(gs: GameState) -> bool:
     armour pieces actually *worn* - not merely carried, since it is `equip_armor` that puts them
     on - and the shield in the off-hand. Then the overworld -> Nether gate itself: the portal is
     lit and a bed stands beside it to respawn at (the bed is only laid at night, so `sleep`
-    actually ran and the respawn point is set). Finally the Nether prep must be finished: the
-    run keeps stocking the lull (`_all_nether_prep_steps`) until a bow with arrows, a gold helmet
-    and a deep cobblestone stack are banked, so the trip starts prepared rather than stopping
-    the moment the bed is laid. A prep step whose material has no source simply drops out of
-    the list, so an unreachable item never leaves the run unable to end.
+    actually ran and the respawn point is set). Then the Nether prep must be finished: the run
+    keeps stocking the lull (`_all_nether_prep_steps`) until a bow with arrows, a gold helmet and
+    a deep cobblestone stack are banked, *and* the food reserve is banked (`_food_reserve_met`,
+    the deep `NETHER_FOOD_RESERVE`), so the trip starts prepared rather than stopping the moment
+    the bed is laid. A prep step whose material has no source simply drops out of the list - and
+    so does the food reserve once no source is in reach - so an unreachable item never leaves
+    the run unable to end.
 
     Requiring the armour to be worn (not just present) is what lets the loop finish
     `equip_armor` first instead of stopping with the set still in the pack.
     """
     return (_gear_ready(gs) and _portal_lit(gs) and _bed_placed(gs)
-            and not _all_nether_prep_steps(gs))
+            and not _all_nether_prep_steps(gs) and _food_reserve_met(gs))
 
 
 def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:

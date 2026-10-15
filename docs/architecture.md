@@ -342,6 +342,11 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   volle Kelle; live hatte der Bot 17 Esswaren). Die übliche Faustregel für den Nether sind **64–128
   Einheiten** hochersättigenden Essens, weil Hunger beim Sprinten und Kämpfen schneller fällt und der
   Tod das ganze Inventar kostet; eine Kelle gebratenes Fleisch ist nur ein Inventarplatz, also billig.
+  **Die Reserve ist Teil des Auto-Stops:** `tech_tree_complete` verlangt jetzt `_food_reserve_met`
+  (die 64 Einheiten aus `_food_goal`), und die Forderung fällt — wie ein Prep-Schritt — weg, sobald
+  kein Tier und kein Zombie **in Reichweite** ist (`_food_source_in_reach`: passives Tier in
+  Tagesjagd-Reichweite 64 m bzw. Zombie ≤ 24 m), damit eine Welt ohne Nahrung den Lauf nie
+  blockiert. Live endete run13 sonst mit nur 4× `cooked_mutton`.
   `cook_food` darf in der Lull mit **jedem** Brennstoff arbeiten (`_furnace_fuel`: Kohle/Holzkohle
   zuerst, sonst Planken/Logs — ein Holz brät genau einen Gegenstand). Gegessen wird nach **Sättigung**
   (`FOOD_SATURATION`): gebratenes Fleisch vor Brot vor rohem Fleisch vor `rotten_flesh`. Goldene
@@ -616,11 +621,16 @@ nur eine Ebene tiefer.
   sobald das ganze Diamant-Kit steht — Diamant-Spitzhacke + Diamantschwert, **alle vier**
   Diamant-Rüstungsteile **getragen** (`_worn`, nicht nur im Inventar — sonst würde der Lauf enden,
   bevor `equip_armor` greift) und der Schild in der Off-Hand — **und** das Overworld-Ziel steht: das
-  Portal ist angezündet und ein Bett daneben platziert. `[loop] stop_when_complete` (Default `true`)
-  lässt `verify`/`defer` den Lauf dann mit `stop: "goal"` beenden statt das Iterationsbudget
-  abzuarbeiten; sonst endet er mit `stop: "limit"`. `run --ignore-goal` schaltet die
-  Abbruchbedingung für einen Lauf ab (Datensatz-Sammlung über das Ziel hinaus). Getestet in
-  `tests/test_actions.py::TechTreeCompleteTest` und `tests/test_graph.py::GoalStopTest`.
+  Portal ist angezündet, ein Bett daneben platziert, **kein Nether-Prep-Schritt mehr offen**
+  (`_all_nether_prep_steps`: Bogen+Pfeile, Goldhelm, tiefer Bruchstein) **und die Essens-Reserve
+  gebankt** (`_food_reserve_met`, die 64 Einheiten aus `_food_goal`). Prep-Schritte wie die
+  Essens-Forderung fallen weg, sobald ihr Rohstoff nicht erreichbar ist (kein Spawn, kein Erz, kein
+  Tier/Zombie in Reichweite), ein unerreichbares Item blockiert den Lauf also nie. `[loop]
+  stop_when_complete` (Default `true`) lässt `verify`/`defer` den Lauf dann mit `stop: "goal"`
+  beenden statt das Iterationsbudget abzuarbeiten; sonst endet er mit `stop: "limit"`.
+  `run --ignore-goal` schaltet die Abbruchbedingung für einen Lauf ab (Datensatz-Sammlung über das
+  Ziel hinaus). Getestet in `tests/test_actions.py::TechTreeCompleteTest` und
+  `tests/test_graph.py::GoalStopTest`.
 - **Nether-Kette (implementiert):** Neun Labels in `actions.py` führen vom fertigen Diamant-Kit zum
   offenen Portal: `craft_bucket` (3 Eisenbarren) → `fill_bucket` → `mine_obsidian` → `get_flint`
   (aus Gravel) → `craft_flint_and_steel` (2×2, **kein** Werktisch) → `clear_portal` (störende Blöcke

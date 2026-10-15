@@ -1044,6 +1044,45 @@ class TechTreeCompleteTest(unittest.TestCase):
         g = self._complete(inventory={"diamond_sword": 1, "cobblestone": 64})
         self.assertTrue(tech_tree_complete(g))
 
+    def test_the_food_reserve_is_required(self) -> None:
+        # An animal stands in reach, but the deep Nether food reserve is not banked yet - the
+        # gate holds the run instead of ending it on a nearly empty pack (live run13 stopped
+        # with 4 cooked mutton).
+        g = self._complete(mobs=[("cow", "animal", 3, 12.0)], inventory={
+            "diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64,
+            "cooked_beef": 8})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_a_banked_food_reserve_completes(self) -> None:
+        g = self._complete(mobs=[("cow", "animal", 3, 12.0)], inventory={
+            "diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64,
+            "cooked_beef": 64})
+        self.assertTrue(tech_tree_complete(g))
+
+    def test_a_lone_zombie_counts_as_a_food_source(self) -> None:
+        # Rotten flesh is the reliable local bank, so a zombie alone keeps the gate holding.
+        g = self._complete(mobs=[("zombie", "hostile", 1, 10.0)], inventory={
+            "diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64,
+            "cooked_beef": 8})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_a_source_beyond_reach_drops_the_reserve_requirement(self) -> None:
+        # A mob merely *loaded* (here a cow past the daylight hunt range, and a zombie past melee
+        # range) cannot hold the gate open: the hunt could not reach either, so the requirement
+        # drops out like an unreachable prep step rather than stalling the run on a distant mob.
+        g = self._complete(mobs=[("cow", "animal", 3, 100.0), ("zombie", "hostile", 1, 40.0)],
+                           inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
+                                      "cobblestone": 64, "cooked_beef": 8})
+        self.assertTrue(tech_tree_complete(g))
+
+    def test_no_food_source_drops_the_reserve_requirement(self) -> None:
+        # No animal and no zombie anywhere: the requirement drops out like an unreachable prep
+        # step, so a world without food can still let the run end rather than stall.
+        g = self._complete(inventory={
+            "diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64,
+            "cooked_beef": 2})
+        self.assertTrue(tech_tree_complete(g))
+
 
 class NetherGateTest(unittest.TestCase):
     """The overworld -> Nether gate: a bucket of water makes the obsidian, gravel supplies the

@@ -12,10 +12,11 @@ in `README.md`) gilt: lieber ordentlich vorbereitet als schnell hinein und alles
 
 Die Vorbereitung läuft in **derselben Tages-Lull** wie das Essen (siehe `_nether_idle`) und ist
 jetzt Teil des **Auto-Stops**: `tech_tree_complete` verlangt zusätzlich, dass kein Vorbereitungs-
-Schritt mehr offen ist (`_all_nether_prep_steps`). Damit bereitet sich der Lauf fertig vor,
-statt mit dem Bett in der ersten Nacht zu enden. Jeder Schritt fällt aus der Liste, sobald er
-nicht mehr weiterkommt (kein Spawn, kein Erz) — ein unerreichbares Item blockiert den Lauf also
-nie.
+Schritt mehr offen ist (`_all_nether_prep_steps`) **und die Essens-Reserve gebankt ist**
+(`_food_reserve_met` → die `NETHER_FOOD_RESERVE = 64` aus `_food_goal`, s. u.). Damit bereitet sich
+der Lauf fertig vor, statt mit dem Bett in der ersten Nacht zu enden. Jeder Schritt fällt aus der
+Liste, sobald er nicht mehr weiterkommt (kein Spawn, kein Erz), und die Essens-Forderung fällt weg,
+sobald kein Tier und kein Zombie in Reichweite ist — ein unerreichbares Item blockiert den Lauf also nie.
 
 Der Nether ist ein anderes Spiel als die Oberwelt:
 
