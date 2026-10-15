@@ -9,7 +9,7 @@ from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
 
 # Labels Laya may choose among; each maps to a real mine-ai MCP tool.
 CRITERIA: dict[str, str] = {
-    "escape_water": "swim clear of the water and climb back onto dry ground; with no footing under the bot nothing else can work",
+    "escape_water": "swim clear of the water and climb back onto dry ground; the body has no footing, so this owns the tick once the bot has spent a decision off its feet",
     "eat_food": "eat a carried food item to restore hunger",
     "get_wood": "chop a tree and collect logs; the bot has no wood yet, so this comes first",
     "craft_pickaxe": "craft a wooden pickaxe from the logs the bot carries; this is the next step",
@@ -152,6 +152,14 @@ FLINT_GRAVEL = 16
 OBSIDIAN_REACH = 6.0
 # How near the bot must be to a lava cell before the bucket can be emptied into it.
 POUR_REACH = 4.5
+
+# Decisions a bot may spend off its feet in water before `escape_water` owns the tick. The rescue
+# exists because work that needs the feet planted cannot run from a floating stance, not because a
+# floating body can run nothing at all: the server navigates a swim now, so a goal that crosses
+# water must get to finish (live, run15: the goal walked east into a flooded flat and the rescue
+# walked it straight back -- 155 rescue walks against 30 diamond digs, 157 cancellations, no
+# diamonds).
+WATER_RESCUE_AFTER = 2
 
 # Low-value carried blocks no recipe here wants. When the pack fills up a gathering action is
 # refused with `[INVENTORY_FULL]`, so the loop sheds these to make room. Deliberately excludes
@@ -1193,7 +1201,13 @@ def candidates(gs: GameState) -> list[str]:
     # breaks the shared pathfinder -- `collect_block` then thrashed for minutes without moving a
     # block -- while `navigate` still works from a floating stance. Nothing else can run until
     # the bot has ground under it again, so the rescue owns the tick outright (no Laya choice).
-    if gs.in_water and not gs.on_ground:
+    # But "nothing else can run" is only true of work that needs the feet planted. A body that is
+    # merely between two banks is swimming, which the server navigates on its own, so owning the
+    # tick on sight tore the bot out of every crossing the moment an action came back (live,
+    # run15). The rescue therefore waits `WATER_RESCUE_AFTER` decisions off the feet, which
+    # leaves a goal that crosses water the room to finish, and still takes over a bot that has
+    # been adrift for longer than any crossing needs.
+    if gs.in_water and not gs.on_ground and gs.water_ticks >= WATER_RESCUE_AFTER:
         return ["escape_water"]
 
     # --- event-driven reactions (M2d) ---

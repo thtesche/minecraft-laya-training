@@ -677,7 +677,13 @@ nur eine Ebene tiefer.
   Getestet in `tests/test_actions.py::NetherGateTest` und `tests/test_verify.py`.
 - **Wasser-Escape-Reflex (implementiert):** `candidates` prüft `gs.in_water and not gs.on_ground` als
   Allererstes (noch vor den M2d-Reaktionen) und gibt dann **nur** `["escape_water"]` zurück — hier
-  wählt Laya nicht, der Zustand ist ein Rescue. `resolve("escape_water")` navigiert **zuerst zum
+  wählt Laya nicht, der Zustand ist ein Rescue. Der Loop führt dafür `gs.water_ticks` (`Agent._inject`)
+  und hält die Rettung `WATER_RESCUE_AFTER` = 2 Entscheidungen zurück: „ohne Grund kann nichts laufen"
+  gilt nur für Arbeit, die **Füße auf dem Boden** braucht — ein Körper zwischen zwei Ufern
+  **schwimmt**, und das navigiert der Server selbst. Griff die Rettung beim ersten Wasserkontakt,
+  riss sie den Bot aus jeder Überquerung, sobald eine Aktion zurückkam (**live run15**: das Ziel lief
+  nach Osten in eine geflutete Seegras-Fläche, die Rettung lief es zurück — 155 Rettungswege gegen
+  30 Diamant-Gräben, 157 Atem-Abbrüche, 0 Diamanten). `resolve("escape_water")` navigiert **zuerst zum
   nächsten trockenen, standbaren Boden** (`targets.nearest_ground`, jeder Ebene — die trockene Zelle,
   die ein schwimmender Körper wirklich erreicht, darf *unter* der Wasserlinie liegen) mit
   `dig`/`scaffold`; die Homebase ist **nur der Notnagel**, wenn kein Boden in Scan-Reichweite liegt.
@@ -687,7 +693,7 @@ nur eine Ebene tiefer.
   unterirdischen Basis navigierte — 70 m senkrecht hinab, 300 m entfernt — statt zur nahen Küste; die
   Basis-zuerst-Regel war der Fehler, nicht das Modell.) Steht der Bot am Grund (Wassergraben, Teich,
   ein Guss, der ihn nicht flutet), greift der Reflex **nicht**. Getestet in
-  `tests/test_actions.py::EscapeWaterTest`.
+  `tests/test_actions.py::EscapeWaterTest` und `tests/test_graph.py::WaterTicksTest`.
   **Eingeklemmt (`repeated_movement_failure`):** Der Server meldet diesen Stop, wenn der Körper auf
   einer erneut ausgegebenen Route **nicht** vom Fleck kommt — der Bot ist körperlich eingeschlossen.
   Live run10: in einem 1 Block weiten, gefluteten Schacht antworteten `navigate`, `collect_block` und
@@ -698,6 +704,15 @@ nur eine Ebene tiefer.
   unavailable` ab, solange der Kopf im Wasser stand — ein serverseitiger Guard, `src/navigation/
   diving.ts`; nur wenn der Kopf in Luft reicht, ist Arbeit erlaubt.) Getestet in
   `tests/test_graph.py::BlockedBySurroundingsTest`.
+  **Dive-Backstop (live behoben, run15):** Der Zweig, der ohne Sicht-Korridor sofort `300` Ticks
+  Atem meldete („sofort retten"), traf auch einen Körper, der im Flachwasser **auf Grund stand** bzw.
+  dessen Atem ohnehin **voll** war. `surface()` bricht bei vollem Balken sofort ab
+  (`air_full`, keine Bewegung), aber die Owned-Dive-Fortsetzung gibt die laufende Aktion trotzdem
+  zurück — die „Rettung" sagte also nur ab. Genau so entstand der Livelock: Seegras-Zellen sind kein
+  Quellwasser, `openWaterSurface` fand keinen Korridor, `backstop()` meldete 300 gegen 300 Ticks Atem
+  — 157 Atem-Abbrüche. `Diving.backstop()` prüft jetzt wie `beforeWork` auf **standbaren Grund**
+  (`isSafeSupport`) und lässt einen **vollen** Balken in Ruhe; die Rettung feuert nur noch, wenn
+  Atem wirklich verbraucht ist. Getestet in `src/navigation/diving.test.ts`.
 - **Homebase (implementiert):** Ein Anker auf der Oberfläche trägt Bett, Portalrahmen und Truhe.
   **Erst hochsteigen, dann ankern (`surface_up`):** Die einzige verlässliche Aussage „hier ist
   Oberfläche" ist die **Tiefe unter der Oberfläche** — nicht der Block über dem Kopf. Ein von der

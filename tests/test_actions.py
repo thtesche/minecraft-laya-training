@@ -9,7 +9,8 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import Action, candidates, inventory_relief, resolve, tech_tree_complete
+from mlaya.actions import (Action, candidates, inventory_relief, resolve, tech_tree_complete,
+                           WATER_RESCUE_AFTER)
 from mlaya.perception import BlockHit, GameState
 
 
@@ -1892,12 +1893,26 @@ class EscapeWaterTest(unittest.TestCase):
     Live failure: the obsidian dig left the bot treading water off the ground and every
     following `collect_block` thrashed in place for minutes, while `navigate` still walked it
     clear. The rescue is forced into `candidates` rather than offered, because without footing
-    no other label can make progress.
+    no other label can make progress -- but only once the bot has spent
+    `WATER_RESCUE_AFTER` decisions adrift, since the server swims and a crossing must be allowed
+    to finish (live, run15).
     """
 
     def test_no_footing_in_water_owns_the_tick(self) -> None:
-        g = gs(in_water=True, on_ground=False)
+        g = gs(in_water=True, on_ground=False, water_ticks=WATER_RESCUE_AFTER)
         self.assertEqual(candidates(g), ["escape_water"])
+
+    def test_the_first_decision_off_the_feet_is_left_to_the_goal(self) -> None:
+        # The server navigates a swim, so a bot between two banks is working, not trapped: the
+        # rescue must not tear it out of a crossing the moment an action comes back (run15).
+        g = geared(iron_pickaxe=1, iron_sword=1)
+        g.in_water, g.on_ground, g.water_ticks = True, False, WATER_RESCUE_AFTER - 1
+        g.resources = {**g.resources,
+                       "diamond_ore": [BlockHit("diamond_ore", "diamond_ore", 50, 7, -16, 55.0,
+                                                above="diorite", below="diorite")]}
+        labels = candidates(g)
+        self.assertNotEqual(labels, ["escape_water"])
+        self.assertIn("mine_diamond", labels)
 
     def test_a_grounded_bot_in_water_is_not_rescued(self) -> None:
         # Wading with the feet on the bottom (a water source, a pour that did not flood the bot)

@@ -185,6 +185,9 @@ class Agent:
         # walk there, so the bot does not stand at an emptied death site until the window runs
         # out (live, run14: two loops, 117 ticks in all, after the kit was already lost).
         self._recover_written_off: set[tuple[int, int, int]] = set()
+        # Decisions spent off the feet in water (`GameState.water_ticks`): the rescue waits out
+        # the first ones so a crossing the server can swim is not torn up on sight (live, run15).
+        self._water_ticks = 0
         # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): from
         # then on the relief drops the surplus on the open ground instead. That still frees the
         # slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall on it.
@@ -220,6 +223,10 @@ class Agent:
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
         gs.recover_written_off = frozenset(self._recover_written_off)
+        # One decision off the feet in water, counted here so `candidates` can hold the rescue
+        # back for its first moments (live, run15).
+        self._water_ticks = self._water_ticks + 1 if (gs.in_water and not gs.on_ground) else 0
+        gs.water_ticks = self._water_ticks
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.chest_blocked = self._chest_blocked
         gs.furnace_blocked = self._furnace_blocked

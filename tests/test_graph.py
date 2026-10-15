@@ -70,6 +70,52 @@ class BlockedBySurroundingsTest(unittest.TestCase):
             "empty bucket"))
 
 
+class WaterTicksTest(unittest.TestCase):
+    """The loop counts the decisions the bot spends off its feet in water (`Agent._inject`).
+
+    `escape_water` owns the tick only from `WATER_RESCUE_AFTER` on, so the counter has to rise
+    while the bot floats and fall the moment it has ground again (live, run15: the goal crossed a
+    flooded flat and the rescue, which owned the tick on sight, walked it straight back).
+    """
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.base = None
+        agent.surface = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._pour_skip = set()
+        agent._recover_written_off = set()
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._blocked_cell = None
+        agent._portal_blocked = []
+        agent._water_ticks = 0
+        return agent
+
+    def test_counts_the_decisions_off_the_feet(self) -> None:
+        agent = self._agent()
+        g = gs(in_water=True, on_ground=False)
+        for expected in (1, 2, 3):
+            agent._inject(g)
+            self.assertEqual(g.water_ticks, expected)
+
+    def test_ground_underwater_and_dry_land_both_reset_it(self) -> None:
+        agent = self._agent()
+        g = gs(in_water=True, on_ground=False)
+        agent._inject(g)
+        self.assertEqual(g.water_ticks, 1)
+        for back in (gs(in_water=True, on_ground=True), gs(in_water=False, on_ground=True),
+                     gs(in_water=False, on_ground=False)):
+            agent._inject(back)
+            self.assertEqual(back.water_ticks, 0)
+        agent._inject(g)
+        self.assertEqual(g.water_ticks, 1)  # and it starts again from one
+
+
 class UnblockActionTest(unittest.TestCase):
     def test_first_attempt_digs_a_pocket_in_place(self) -> None:
         a = unblock_action(gs(pos=(-277.5, 87.0, -51.6)))

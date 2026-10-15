@@ -288,6 +288,11 @@ class GameState:
     # there again, so a bot whose gear is gone does not stand at the death site for the whole
     # window while the tech tree waits (live, run14: two such loops, 117 ticks in all).
     recover_written_off: frozenset = frozenset()
+    # Decisions the bot has spent off its feet in water, counted by the loop (`Agent._inject`).
+    # `escape_water` owns the tick only once this reaches `actions.WATER_RESCUE_AFTER`, so a goal
+    # that crosses water the server can swim is not torn up the moment an action comes back
+    # (live, run15).
+    water_ticks: int = 0
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)

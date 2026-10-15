@@ -165,9 +165,13 @@ Blöcke ab. Als „offen" über der Guss-Zelle zählt auch `cave_air` (`percepti
 Lavaseen sind von Höhlenluft statt `air` überdeckt, und die Guss-Prüfung verwarf solche Zellen
 zuerst — live im From-Zero-Lauf behoben. Natürlicher Obsidian liegt nur tief unter denselben Lavaseen (`y ≈ -55`) und wird bewusst
 nicht angegraben — ein Tiefbohrversuch endete in der **Wasser-Falle** (schwimmend ohne Grund, jedes
-folgende `collect_block` lief leer). Dafür sorgt jetzt der **Wasser-Escape-Reflex**: `in_water and
-not on_ground` macht `escape_water` zum einzigen Kandidaten und navigiert zur Basis bzw. auf den
-nächsten trockenen Boden zurück. Ein **eingeklemmter** Bot (Server-Stop `repeated_movement_failure`)
+folgende `collect_block` lief leer). Dafür sorgt der **Wasser-Escape-Reflex**: `in_water and
+not on_ground` macht `escape_water` nach `WATER_RESCUE_AFTER` (= 2) Entscheidungen ohne Grund zum
+einzigen Kandidaten und navigiert auf den nächsten trockenen Boden zurück (die Basis nur als
+Notnagel). Die ersten Entscheidungen bleiben dem Ziel überlassen: der Server navigiert einen
+Schwimmzug selbst, und eine Überquerung, die der Bot im Wasser abbricht, wurde sonst sofort wieder
+zurückgerissen (**live run15**: 155 Rettungswege gegen 30 Diamant-Gräben, 157 Atem-Abbrüche,
+0 Diamanten). Ein **eingeklemmter** Bot (Server-Stop `repeated_movement_failure`)
 zählt als blockierte Umgebung, sodass die Unblock-Leiter greift statt einer Endlosschleife. Schlüssel der Kette bleibt der **Obsidian-Latch**: Obsidian muss vor
 dem Flint&Steel gebankt sein, damit `mine_obsidian` nach dem Bau (der die 10 Blöcke ausgibt) nicht
 erneut gräbt. Das Bett wird **nur nachts** gelegt — nur Schlafen setzt den Respawn-Punkt. An der
