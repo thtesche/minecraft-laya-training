@@ -59,7 +59,7 @@ später das Kopf-Fine-Tuning (M3) verbessert.
 [3] Brain (S1)    (src/mlaya/brain.py)
     Laya-Router, EIN predict()-Pass:
       in_danger  (binäres Gate)      -> defer an die Survival-Policy; `danger_matters` begrenzt ihn
-                                       (Hostile ≤ 8 m oder Health < 15, sonst arbeitet der Loop weiter)
+                                       (Hostile ≤ 4 m Kontakt oder Health < 15, sonst arbeitet der Loop weiter)
       danger     (score, nur Logging)
       intent     (choice)            -> unter den gefilterten Kandidaten
 [4] Actions       (src/mlaya/actions.py)
@@ -499,18 +499,23 @@ nachtrainieren (Kopf-Fine-Tuning) und den Checkpoint über `LAYA_EXTRA_MODELS` r
   brauchbares Intent, aber ein ehrliches Gate-Positiv. Getestet in
   `tests/test_dataset.py::BuildRowsTest::test_a_refused_danger_tick_becomes_a_yes_row`.
 
-- **Danger-Band zur Laufzeit (2026-10-13):** Das Gate antwortet aus dem Narrativ, das nur „hostile
-  mobs within 16 blocks" sagen kann — es sieht die Distanz nicht und liest einen bloß geladenen Mob
-  als Gefahr. `yes` defert **bedingungslos**, die Server-Policy hatte aber nichts zu tun (hp/hunger
-  voll, kein Kontakt): run7b stand auf Diamanttiefe Tick um Tick still. Zwei Fixes greifen: (1)
-  `perception.parse_status` liest die Hostile-Distanz jetzt **direkt** aus `nearby.hostiles` (vorher
-  aus `nearest.distance`, wo sie fehlt → jede Distanz war `None`, das Narrativ ohne „at Xm"); (2)
-  `brain.danger_matters` begrenzt das Gate: ein `yes` übergibt den Tick **nur**, wenn ein Hostile ≤
-  `DANGER_DEFER_M = 8` m ist oder Health < `DANGER_DEFER_HEALTH = 15`. Das ist eine **weitere**
-  Schwelle als der Trainings-Boden (`DANGER_CLOSE_M = 4` / `DANGER_LOW_HEALTH = 8`, der die
-  *Wahrheit* labelt); die Laufzeit braucht Vorlauf vor dem Kontakt. Seit 2026-10-14 spiegelt der
-  Builder dieselben Band-Schwellen als **Obergrenze** (`DANGER_SAFE_M` / `DANGER_SAFE_HEALTH`,
-  direkt aus `brain` importiert), damit ein `yes` für einen fernen Mob nicht eintrainiert wird.
+- **Danger-Band zur Laufzeit (2026-10-13, verschärft 2026-10-15):** Das Gate antwortet aus dem
+  Narrativ, das nur „hostile mobs within 16 blocks" sagen kann — es sieht die Distanz nicht und liest
+  einen bloß geladenen Mob als Gefahr. `yes` defert **bedingungslos**, die Server-Policy hatte aber
+  nichts zu tun (hp/hunger voll, kein Kontakt): run7b stand auf Diamanttiefe Tick um Tick still. Zwei
+  Fixes greifen: (1) `perception.parse_status` liest die Hostile-Distanz jetzt **direkt** aus
+  `nearby.hostiles` (vorher aus `nearest.distance`, wo sie fehlt → jede Distanz war `None`, das
+  Narrativ ohne „at Xm"); (2) `brain.danger_matters` begrenzt das Gate: ein `yes` übergibt den Tick
+  **nur**, wenn ein Hostile ≤ `DANGER_DEFER_M` m ist oder Health < `DANGER_DEFER_HEALTH = 15`.
+  `DANGER_DEFER_M` war 8 m („weitere Schwelle als der Trainings-Boden"), doch run13 zeigte den
+  Preis: ein Skelett/Creeper, der 5–8 m hielt (in Schussweite, nie im Kontakt), defertierte ~60
+  Ticks lang, während die Policy idle war — der Loop fror in einer Höhle. Die Schwelle ist daher
+  jetzt **Kontaktreichweite** (`DANGER_DEFER_M = 4`), gleich dem Trainings-Boden `DANGER_CLOSE_M`;
+  die Server-Reflexe schützen den Kontakt ohnehin unabhängig, der Loop muss nur bei echter
+  Körpergefahr (Kontakt oder niedrige HP) beiseitetreten. Der Builder hält seine **Obergrenze**
+  (`DANGER_SAFE_M = 8` / `DANGER_SAFE_HEALTH = 15`) bewusst **weiter** als die Laufzeit (eigene
+  Konstante statt des früheren Imports), damit im unentschiedenen Band zwischen Untergrenze (≤ 4 m)
+  und Obergrenze (> 8 m) die geloggte Gate-Antwort stehen bleibt, statt `no` zu erzwingen.
   Die `DANGER_Q`-Kriterien wurden zudem geschärft („within a few blocks and closing in"). Getestet
   in `tests/test_brain.py` und `tests/test_perception.py`.
 

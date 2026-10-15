@@ -23,9 +23,9 @@ tick at 0.3 health with a spider in range still answered `no`), so trusting that
 train the error in.
 
 A *ceiling* bounds the label from above: a state that proves itself safe - health comfortably
-high and the nearest hostile known to be beyond the runtime band - is a `no` even where the
-gate answered `yes`. Without it a logged `yes` for a merely loaded mob is kept, training in the
-very over-trigger the runtime band absorbs (`brain.danger_matters`): live run7b answered `yes`
+high and the nearest hostile known to be beyond the ceiling - is a `no` even where the gate
+answered `yes`. Without it a logged `yes` for a merely loaded mob is kept, training in the very
+over-trigger the loop's danger band absorbs (`brain.danger_matters`): live run7b answered `yes`
 at 9-24 m with health 20. Only a state that proves its own safety trips the ceiling; where the
 nearest hostile is unknown (an empty `hostiles` list cannot tell "no mob" from "not recorded")
 the logged answer still stands.
@@ -47,18 +47,20 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .actions import CRITERIA
-# The danger ceiling reuses the runtime band's thresholds, so the label says exactly what the
-# loop acts on (see brain.danger_matters).
-from .brain import (DANGER_Q, INTENT_QID, DANGER_QID, intent_question,
-                    DANGER_DEFER_M as DANGER_SAFE_M,
-                    DANGER_DEFER_HEALTH as DANGER_SAFE_HEALTH)
+from .brain import DANGER_Q, INTENT_QID, DANGER_QID, intent_question
 
-# Heuristic `in_danger` label, used only when a state carries no logged Laya answer.
-# Mirrors the criteria text: a hostile close enough to be hitting the bot, or health low
-# enough that the next hit is fatal. Floor and ceiling (DANGER_SAFE_M / DANGER_SAFE_HEALTH,
-# imported above) bound the label; between them the logged gate answer stands.
+# Heuristic `in_danger` label, used only when a state carries no logged Laya answer. Mirrors the
+# criteria text: a hostile close enough to be hitting the bot, or health low enough that the next
+# hit is fatal.
 DANGER_CLOSE_M = 4.0
 DANGER_LOW_HEALTH = 8.0
+# The *ceiling* the floor above pairs with: a state this safe is labelled `no` even if the gate
+# answered `yes`. Deliberately wider than the loop's defer radius (`brain.DANGER_DEFER_M`, contact
+# range since run13): the loop must not stand aside for a merely mid-range mob, but in that same
+# ambiguous band the label should still let the gate's own answer stand rather than force `no`.
+# Between the floor and this ceiling the logged answer wins.
+DANGER_SAFE_M = 8.0
+DANGER_SAFE_HEALTH = 15.0
 
 
 def _read_records(log_path: Path) -> list[dict]:

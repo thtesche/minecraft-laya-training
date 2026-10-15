@@ -34,11 +34,15 @@ DANGER_SCORE = {
 # loaded mob as danger. Live (run7b) a zombie 9-15 m away in a cave kept it answering `yes`,
 # and `yes` defers the tick unconditionally: the server policy had nothing to do (health and
 # hunger full, no contact) while the bot stood still at diamond depth tick after tick. The band
-# below is the runtime guard - a wider sibling of the dataset's danger floor (`DANGER_CLOSE_M`
-# / `DANGER_LOW_HEALTH`, which label the *truth*) - so a `yes` only yields the tick when the
-# body is genuinely at risk and the loop keeps working otherwise. The server reflexes still
-# guard contact independently of this gate.
-DANGER_DEFER_M = 8.0
+# below is the runtime guard: a `yes` only yields the tick when the body is genuinely at risk,
+# so the loop keeps working otherwise. The server reflexes still guard contact independently of
+# this gate, so the loop only has to stand aside in *contact* range, or when health is low.
+#
+# run13 widened this to 8 m and paid for it: a skeleton/creeper hovering 5-8 m - close enough to
+# shoot, never closing to a hit - deferred ~60 ticks while the policy idled and the loop froze in
+# a cave. So the defer radius is *contact* range, matching the dataset's own danger floor
+# (`DANGER_CLOSE_M`); only the labelling ceiling stays wider (see `dataset.DANGER_SAFE_M`).
+DANGER_DEFER_M = 4.0
 DANGER_DEFER_HEALTH = 15.0
 DANGER_BAND_NOTE = "danger band: no mob in range -> keep working"
 

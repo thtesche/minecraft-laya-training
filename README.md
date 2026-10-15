@@ -296,9 +296,13 @@ Gate-Wahl; Imitation kann deren Fehler nicht beheben) und verbessert die Kalibri
 **Gefahr-Zeilen:** Ein `in_danger = yes`-Tick endet als **`defer`** (keine Aktion) — genau dort
 steckt der echte `yes`-Fall. Der Builder nimmt solche Defer-Ticks jetzt als reine `in_danger`-Zeile
 mit. Umgekehrt kappt eine **Obergrenze** ein `yes` für einen bloß geladenen Mob: ein Zustand mit
-Health ≥ 15 und dem nächsten Hostile bekannt jenseits 8 m wird als `no` gelabelt — dieselben
-Schwellen wie das Laufzeit-Band `brain.danger_matters`. Solange noch kein `yes`-Fall im Log liegt,
-mit `--no-danger` bauen, sonst zieht das Training den geteilten `choice`-Kopf auf „immer no".
+Health ≥ 15 und dem nächsten Hostile bekannt jenseits 8 m (`DANGER_SAFE_M`) wird als `no` gelabelt.
+Diese Obergrenze ist **absichtlich weiter** als das Laufzeit-Band `brain.danger_matters` (seit run13
+nur noch Kontaktreichweite `DANGER_DEFER_M = 4 m`): der Loop darf für einen mittelentfernten Mob
+nicht stillstehen, im selben unentschiedenen Band zwischen Untergrenze (≤ 4 m) und Obergrenze (> 8 m)
+soll aber die geloggte Gate-Antwort stehen bleiben, statt `no` zu erzwingen. Solange noch kein
+`yes`-Fall im Log liegt, mit `--no-danger` bauen, sonst zieht das Training den geteilten
+`choice`-Kopf auf „immer no".
 
 ## M4: Parameter-Layer (Zielwahl)
 

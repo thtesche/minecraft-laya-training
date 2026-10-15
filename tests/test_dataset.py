@@ -190,8 +190,9 @@ class DangerLabelTest(unittest.TestCase):
         self.assertEqual(ds.danger_label(state, answers), "yes")
 
     def test_logged_yes_survives_a_hostile_inside_the_band(self):
-        # Inside the runtime band (<= DANGER_SAFE_M, boundary included) the gate's `yes` still
-        # changes behaviour, so it is kept.
+        # In the ambiguous band between the floor (`DANGER_CLOSE_M`) and the ceiling
+        # (`DANGER_SAFE_M`, boundary included) the state cannot decide, so the gate's `yes` is
+        # kept.
         answers = {DANGER_QID: {"choice": "yes"}}
         for d in (4.5, 6.0, 8.0):
             state = {"health": 20.0, "hostiles": [["zombie", 1, d]]}

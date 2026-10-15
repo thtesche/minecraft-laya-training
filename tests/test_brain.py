@@ -50,6 +50,16 @@ class DangerBandTest(unittest.TestCase):
         self.assertTrue(decision.deferred)
         self.assertIsNone(decision.action_label)
 
+    def test_a_mid_range_mob_keeps_working(self) -> None:
+        # run13 froze ~60 ticks on a skeleton/creeper hovering 5-8 m: in shooting range, never
+        # closing to a hit, so the survival policy idled while the loop stood aside. Only contact
+        # range may hand the tick over now, so a mob at 6 m keeps the loop working.
+        decision = _brain(_gate_yes()).decide(
+            "narrative", ["mine_diamond", "hunt_food"], _gs(20.0, 6.0))
+        self.assertFalse(decision.deferred)
+        self.assertEqual(decision.action_label, "mine_diamond")
+        self.assertEqual(decision.note, DANGER_BAND_NOTE)
+
     def test_low_health_hands_the_tick_to_the_policy(self) -> None:
         decision = _brain(_gate_yes()).decide(
             "narrative", ["mine_diamond", "hunt_food"], _gs(DANGER_DEFER_HEALTH - 0.1, 14.0))
