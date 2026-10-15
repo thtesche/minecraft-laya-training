@@ -111,6 +111,23 @@ zählt `[NO_REACHABLE_MATCHING_TARGETS]` (Server fand Zielblöcke, erreichte abe
 Baum, den er wegen Liquid-Isolation verweigert) jetzt zu `BLOCKED_CODES`: statt in Place zu hämmern,
 gräbt der Unblock ein Pocket und weicht dann auf offenes Gelände aus.
 
+**Zwei Löcher nach dem ersten Tod (run14):** run14 stand nach dem Lehrbuch-Aufbau (volles
+Diamant-Kit bei it66) vor zwei Fehlern, die beide dasselbe Muster haben — ein Zustand, den niemand
+mehr verlässt. **(1) `recover_drops` gab nie auf:** Der Server antwortet `[NO_MATCHING_ITEMS]`, wenn
+er die Todesstelle erreicht und sein 16-m-Scan nichts mehr findet (Drops despawned/verbrannt) — eine
+**definitive** Antwort. `_can_recover` bot den Weg trotzdem das ganze 300-s-Fenster über an, die
+Reaktion hielt jeden Tick den Körper und der Bot blieb an der leeren Stelle stehen (live 40 + 77
+Ticks, über die Hälfte des Laufs; der zweite Block endete erst, als das Fenster ablief). `_note_recover`
+schreibt die Todeszelle jetzt beim ersten finalen Code ab (`RECOVER_FINAL_CODES`; das transiente
+`RECOVERY_SITE_UNREACHABLE` **nicht**), und `_can_recover` lehnt sie ab — ein späterer Tod woanders
+ist eine neue Zelle und wird weiter gelaufen. **(2) Heilungs-Totzone 14–17:** Natürliche
+Regeneration verlangt Hunger ≥ 18, aber `eat_food` griff nur bei Hunger < 14 — ein Bot mit Hunger 17
+und 2,7 HP aß nie und heilte nie (live 17 Ticks, dann vom Mob getötet). `eat_food` greift jetzt auch
+bei einer Wunde unter der Regen-Schwelle (`health < 20 and food < 18`), isst aber nur **verletzt**,
+damit ein gesunder Bot seine Reserve schont. Gepinnt in `tests/test_actions.py` und
+`tests/test_graph.py`. Der dritte Befund (der `craft_shield`-Tick war der einzige Kandidat, während
+der Server-Reflex am Fleck kämpfte) ist nicht angefasst.
+
 **Homebase & Nether-Portal:** Die Basis steht unter **offenem Himmel**. Ein selbst gegrabener
 Tunnel hinterlässt `air`, nicht `cave_air`, und ist darum von echtem Himmel durch *keinen*
 `view_blocks`-Wert zu unterscheiden (run9 verankerte die Basis so bei `y = -16` unter einer

@@ -335,6 +335,11 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
   **und** nicht gerade gegessen wird („feed to 20 first, then bank"); die Aktion ist mit
   `allow_without_shield: true` markiert. Gegessen wird über den Server-Reflex (roh erlaubt), `eat_food`
   bleibt der manuelle Nachschlag.
+  **Zwei Schwellen (run14, live):** `eat_food` greift bei Hunger < `EAT_HUNGER = 14` (die alte
+  Überlebensschwelle) **oder** bei einer Wunde, die nicht heilen kann: natürliche Regeneration
+  verlangt Hunger ≥ `REGEN_HUNGER = 18`, also aß ein Bot zwischen 14 und 17 weder noch heilte er und
+  blutete einfach aus (live: 17 Ticks bei 2,7 HP und Hunger 17, dann vom Mob getötet). Gefressen wird
+  nur bei `health < HEALTH_MAX = 20`, damit ein unverletzter Bot mit Hunger 17 seine Reserve schont.
   **Lull-Nachschlag (`_nether_idle`, live gefunden):** Sobald das Diamant-Kit steht **und** das Portal
   brennt, ist nur noch das Nacht-Bett offen — der Bot fiel tagsüber in reines `explore` (live im
   From-Zero-Lauf: 25 Idle-Ticks, davon 5 × `[NAVIGATION_STOPPED]`-Timeouts). Diese Lull wird jetzt zur
@@ -401,6 +406,17 @@ Respawn-Punkt), und die ungelesenen Notifications tatsächlich lesen und in den 
     von der Oberfläche handgegraben zu einem Tod ~60 Blöcke tiefer, verloren, danach Endlos-loop
     auf `get_wood`). Bis die Hacke gecraftet ist, läuft die normale Kette (Holz → Hacke) zuerst.
     Nach jedem Tod setzt der Graph die Policy neu (`_reapply_after_death`).
+    **Schreibabbruch (run14, live):** Der Server antwortet `[NO_MATCHING_ITEMS]`, wenn er die
+    Todesstelle erreicht und sein 16-m-Scan nichts mehr findet (die Drops sind despawned/verbrannt)
+    — eine **definitive** Antwort, keine transiente. `_can_recover` bot den Weg trotzdem das ganze
+    Fenster über an, sodass die Reaktion jeden Tick den Körper hielt und der Bot an der leeren
+    Stelle stehen blieb, bis das Fenster ablief (und ein neuer Tod es zurücksetzte): live 40 + 77
+    Ticks in zwei solchen Schleifen, über die Hälfte des Laufs, nachdem das Diamant-Kit ohnehin
+    verloren war. `Agent._note_recover` merkt sich daher die Todeszelle (`actions._cell`), sobald
+    ein finaler Code kommt (`RECOVER_FINAL_CODES` = `NO_MATCHING_ITEMS`, `NO_RECORDED_DEATH`,
+    `DEATH_DIMENSION_MISMATCH`, `DEATH_RECORD_STALE`; nicht aber das transiente
+    `RECOVERY_SITE_UNREACHABLE`), `GameState.recover_written_off` trägt sie und `_can_recover`
+    lehnt diese Zelle ab. Ein späterer Tod woanders ist eine neue Zelle und wird weiter gelaufen.
 - **State:** `GameState.tool_meta` (Klasse → `{tier,item,left,max}`), `death_pos`, `death_dim`,
   `drops`; `narrative()` hängt „low durability: …", „… mob(s) the reflex killed dropped items
   nearby" und „gear … can still be recovered" an. `verify.progressed` prüft `replace_tool` (neue

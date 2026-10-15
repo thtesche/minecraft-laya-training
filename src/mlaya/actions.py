@@ -208,6 +208,14 @@ FOOD_SATURATION = {
 FOOD_RESERVE = 16
 NETHER_FOOD_RESERVE = 64
 
+# Hunger floors for eating. `EAT_HUNGER` is the survival floor the reflex has always used; the
+# bot eats below it to keep hunger off empty. `REGEN_HUNGER` is Minecraft's natural-regeneration
+# threshold: health only regenerates while food is at least 18, so a wounded bot whose food sits
+# in the 14-17 gap eats nothing and heals nothing until it is hit again. Hunger is 0-20.
+HEALTH_MAX = 20.0
+EAT_HUNGER = 14.0
+REGEN_HUNGER = 18.0
+
 # --- Nether prep (the daytime lull after the portal) ---
 # Beyond the deep food reserve, the expedition wants a ranged answer, a piglin pass and building
 # material. All of it is stocked in the same lull, so the run reaches the gate fully prepared:
@@ -1171,7 +1179,14 @@ def candidates(gs: GameState) -> list[str]:
     iron = inv.get("iron_ingot", 0)
     diamond = inv.get("diamond", 0)
 
-    eating = gs.food is not None and gs.food < 14 and bool(_first_edible(inv))
+    # Eat when hungry (the survival floor) or when a wound cannot heal: natural regeneration
+    # needs food >= 18, so a bot parked at 14-17 neither eats (the old floor was 14) nor
+    # regenerates, and simply bleeds out to the next hit (live, run14: 17 ticks at 2.7 HP and
+    # food 17, then a mob finished it). Feeding to the regeneration threshold is what heals.
+    starving = gs.food is not None and gs.food < EAT_HUNGER
+    wounded = (gs.health is not None and gs.health < HEALTH_MAX
+               and gs.food is not None and gs.food < REGEN_HUNGER)
+    eating = (starving or wounded) and bool(_first_edible(inv))
 
     # --- no footing in water (rescue) ---
     # Live failure: the obsidian dig left the bot treading water off the ground. Off-ground

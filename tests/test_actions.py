@@ -327,6 +327,24 @@ class FoodChainTest(unittest.TestCase):
         c = resolve("eat_food", gs(inventory={"rotten_flesh": 2, "apple": 1}))
         self.assertEqual(c.args["food_name"], "apple")
 
+    def test_a_wounded_bot_eats_to_reach_the_regeneration_threshold(self) -> None:
+        # Food 17 is above the old hunger floor (14) but below the regeneration threshold (18):
+        # the bot can neither eat nor heal, and bleeds out (live, run14: 2.7 HP at food 17 for
+        # 17 ticks, then a mob finished it). A wound now makes it eat up to the regen band.
+        g = gs(health=2.7, food=17.0, inventory={"rotten_flesh": 20})
+        self.assertIn("eat_food", candidates(g))
+
+    def test_a_full_health_bot_does_not_waste_food_banking(self) -> None:
+        # The extra eat is only for a wound that cannot heal; at full health with food 17 there
+        # is nothing to regenerate, so the food is kept.
+        g = gs(health=20.0, food=17.0, inventory={"rotten_flesh": 20})
+        self.assertNotIn("eat_food", candidates(g))
+
+    def test_starving_still_eats_below_the_hunger_floor(self) -> None:
+        # The old hunger floor is unchanged: hungry and unwounded, the bot still eats.
+        g = gs(health=20.0, food=13.0, inventory={"rotten_flesh": 20})
+        self.assertIn("eat_food", candidates(g))
+
 
 class NetherLullWaitTest(unittest.TestCase):
     """The daytime lull after the portal is lit: the only work left is the night bed, so the bot
