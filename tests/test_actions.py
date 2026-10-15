@@ -34,6 +34,16 @@ def geared(**inv) -> GameState:
     return g
 
 
+def combat_ready(g: GameState) -> GameState:
+    """Mirror the pre-diamond combat kit (iron sword carried, full iron armour worn, shield in
+    the off-hand) so `_combat_ready` holds and `mine_diamond` is allowed."""
+    g.inventory = {**g.inventory, "iron_sword": 1}
+    g.armor = {slot: {"item": f"iron_{slot}"}
+               for slot in ("helmet", "chestplate", "leggings", "boots")}
+    g.offhand = "shield"
+    return g
+
+
 def at_home(g: GameState, base: tuple = (-197, -47, -98)) -> GameState:
     """Stand the bot on the home base, so the base-only steps are eligible (`_at_base`)."""
     g.base = base
@@ -601,12 +611,22 @@ class IronOreRuleTest(unittest.TestCase):
         self.assertIn("mine_iron", candidates(g))
 
     def test_a_fresh_iron_pickaxe_stops_mining_iron(self) -> None:
-        # Nothing wants iron once the pickaxe is fresh and the shield is already worn (the shield
-        # is the only other iron sink; see ShieldTest.test_missing_shield_pulls_one_iron).
+        # Nothing wants iron once the pickaxe is fresh and the whole combat kit (sword, armour,
+        # shield) is in place; before the kit exists the iron is what builds it.
         g = gs(tools={"pickaxe": "iron"}, offhand="shield",
+               inventory={"iron_sword": 1},
+               armor={slot: {"item": f"iron_{slot}"}
+                      for slot in ("helmet", "chestplate", "leggings", "boots")},
                tool_meta=self._meta(200.0, "iron_pickaxe", "iron", 250.0),
                resources=_ore("iron_ore"))
         self.assertNotIn("mine_iron", candidates(g))
+
+    def test_a_missing_combat_piece_still_pulls_iron(self) -> None:
+        # The pre-diamond kit is the reason to keep digging iron after the pickaxe exists.
+        g = gs(tools={"pickaxe": "iron"}, offhand="shield",
+               tool_meta=self._meta(200.0, "iron_pickaxe", "iron", 250.0),
+               resources=_ore("iron_ore"))
+        self.assertIn("mine_iron", candidates(g))
 
     def test_stone_is_not_guarded(self) -> None:
         # A spent wooden pickaxe must still be allowed to gather the cobble a stone replacement
@@ -622,15 +642,18 @@ class DiamondChainTest(unittest.TestCase):
         # candidate nor the binding may fire below iron (golden is tier 1, not "better").
         near = _ore("diamond_ore")
         for tier in ("wooden", "golden", "stone"):
-            self.assertIsNone(resolve("mine_diamond", gs(tools={"pickaxe": tier}, resources=near)))
-            self.assertNotIn("mine_diamond",
-                             candidates(gs(tools={"pickaxe": tier}, resources=near)))
-        a = resolve("mine_diamond", gs(tools={"pickaxe": "iron"}, resources=near))
+            self.assertIsNone(
+                resolve("mine_diamond", combat_ready(gs(tools={"pickaxe": tier}, resources=near))))
+            self.assertNotIn(
+                "mine_diamond",
+                candidates(combat_ready(gs(tools={"pickaxe": tier}, resources=near))))
+        a = resolve("mine_diamond", combat_ready(gs(tools={"pickaxe": "iron"}, resources=near)))
         self.assertEqual(a.tool, "collect_block")
         self.assertEqual(a.args, {"block_name": "diamond_ore", "count": 3})
 
     def test_mine_diamond_counts_remaining(self) -> None:
-        g = gs(tools={"pickaxe": "iron"}, inventory={"diamond": 1}, resources=_ore("diamond_ore"))
+        g = combat_ready(gs(tools={"pickaxe": "iron"}, inventory={"diamond": 1},
+                            resources=_ore("diamond_ore")))
         self.assertEqual(resolve("mine_diamond", g).args["count"], 2)
 
     def test_craft_diamond_pickaxe(self) -> None:
@@ -659,8 +682,19 @@ class DiamondChainTest(unittest.TestCase):
 
     def test_candidates_offer_mine_diamond_only_with_ore(self) -> None:
         self.assertIn("mine_diamond",
-                      candidates(gs(tools={"pickaxe": "iron"}, resources=_ore("diamond_ore"))))
-        self.assertNotIn("mine_diamond", candidates(gs(tools={"pickaxe": "iron"})))
+                      candidates(combat_ready(gs(tools={"pickaxe": "iron"},
+                                                  resources=_ore("diamond_ore")))))
+        self.assertNotIn("mine_diamond",
+                         candidates(combat_ready(gs(tools={"pickaxe": "iron"}))))
+
+    def test_mine_diamond_waits_for_the_combat_kit(self) -> None:
+        # The dive for the diamonds is what killed the unarmed bot (live, run12): no `mine_diamond`
+        # until an iron sword, a full iron armour set and the shield are in place.
+        g = gs(tools={"pickaxe": "iron"}, resources=_ore("diamond_ore"))
+        self.assertNotIn("mine_diamond", candidates(g))
+        self.assertIsNone(resolve("mine_diamond", g))
+        self.assertIn("mine_diamond", candidates(combat_ready(gs(
+            tools={"pickaxe": "iron"}, resources=_ore("diamond_ore")))))
 
     def test_deep_unscanned_diamond_ore_still_offers_the_dig(self) -> None:
         # The resource scan is radius-limited (RESOURCE_RADIUS), so diamond ore more than 64 m
@@ -669,17 +703,19 @@ class DiamondChainTest(unittest.TestCase):
         # it, so the dig must stay on offer - otherwise a lost diamond armour piece (the live
         # case: the boots were destroyed and the whole kit sat at 33/36 slots) could never be
         # rebuilt and `_gear_ready` would never close.
-        deep = gs(tools={"pickaxe": "diamond"},
-                  inventory={"diamond_sword": 1, "diamond_chestplate": 1,
-                             "diamond_leggings": 1, "diamond_helmet": 1, "diamond": 1},
-                  resource_found={"diamond_ore": 15479})
+        deep = combat_ready(gs(tools={"pickaxe": "diamond"},
+                               inventory={"diamond_sword": 1, "diamond_chestplate": 1,
+                                          "diamond_leggings": 1, "diamond_helmet": 1,
+                                          "diamond": 1},
+                               resource_found={"diamond_ore": 15479}))
         self.assertIn("mine_diamond", candidates(deep))
         self.assertEqual(resolve("mine_diamond", deep).args["count"], 3)
 
     def test_no_dig_offer_without_any_diamond_ore_loaded(self) -> None:
         self.assertNotIn("mine_diamond",
-                         candidates(gs(tools={"pickaxe": "diamond"},
-                                       resource_found={"iron_ore": 900, "coal_ore": 400})))
+                         candidates(combat_ready(gs(tools={"pickaxe": "diamond"},
+                                                    resource_found={"iron_ore": 900,
+                                                                    "coal_ore": 400}))))
 
     def test_no_diamond_dig_on_a_pickaxe_that_needs_a_backup(self) -> None:
         # Breaking mid-dig would destroy the ore with the swapped-in lower tier, so do not
@@ -687,11 +723,11 @@ class DiamondChainTest(unittest.TestCase):
         def meta(left):
             return {"pickaxe": {"tier": "iron", "item": "iron_pickaxe",
                                 "left": left, "max": 250.0}}
-        worn = gs(tools={"pickaxe": "iron"}, tool_meta=meta(70.0),
-                  resources=_ore("diamond_ore"))
+        worn = combat_ready(gs(tools={"pickaxe": "iron"}, tool_meta=meta(70.0),
+                               resources=_ore("diamond_ore")))
         self.assertNotIn("mine_diamond", candidates(worn))
-        fresh = gs(tools={"pickaxe": "iron"}, tool_meta=meta(200.0),
-                   resources=_ore("diamond_ore"))
+        fresh = combat_ready(gs(tools={"pickaxe": "iron"}, tool_meta=meta(200.0),
+                                resources=_ore("diamond_ore")))
         self.assertIn("mine_diamond", candidates(fresh))
 
     def test_candidates_no_diamond_sword_before_pickaxe(self) -> None:
@@ -702,21 +738,22 @@ class DiamondChainTest(unittest.TestCase):
     def test_candidates_mine_diamond_with_diamond_pickaxe_for_the_sword(self) -> None:
         # Regression: bounding mine_diamond at the diamond tier deadlocked the sword, since
         # the diamond pickaxe could no longer mine the two diamonds the sword still needs.
-        g = gs(tools={"pickaxe": "diamond"}, resources=_ore("diamond_ore"))
+        g = combat_ready(gs(tools={"pickaxe": "diamond"}, resources=_ore("diamond_ore")))
         self.assertIn("mine_diamond", candidates(g))
         self.assertEqual(resolve("mine_diamond", g).args["count"], 2)
 
     def test_candidates_mine_diamond_for_armour_after_the_sword(self) -> None:
         # After the pickaxe and the sword the diamond goal is the armour set, chestplate first
         # (eight diamonds), so mining continues; it stops once every piece is built.
-        g = gs(tools={"pickaxe": "diamond"}, inventory={"diamond_sword": 1},
-               resources=_ore("diamond_ore"))
+        g = combat_ready(gs(tools={"pickaxe": "diamond"}, inventory={"diamond_sword": 1},
+                            resources=_ore("diamond_ore")))
         self.assertIn("mine_diamond", candidates(g))
         self.assertEqual(resolve("mine_diamond", g).args["count"], 8)
-        done = gs(tools={"pickaxe": "diamond"},
-                  inventory={"diamond_sword": 1, "diamond_chestplate": 1,
-                             "diamond_leggings": 1, "diamond_boots": 1, "diamond_helmet": 1},
-                  resources=_ore("diamond_ore"))
+        done = combat_ready(gs(tools={"pickaxe": "diamond"},
+                               inventory={"diamond_sword": 1, "diamond_chestplate": 1,
+                                          "diamond_leggings": 1, "diamond_boots": 1,
+                                          "diamond_helmet": 1},
+                               resources=_ore("diamond_ore")))
         self.assertNotIn("mine_diamond", candidates(done))
 
     def test_candidates_offer_diamond_sword_after_two_diamonds(self) -> None:
@@ -758,8 +795,9 @@ class DiamondArmorTest(unittest.TestCase):
         self.assertNotIn("craft_diamond_chestplate", cands)
 
     def test_mine_count_targets_the_next_piece_only(self) -> None:
-        g = gs(tools={"pickaxe": "diamond"}, inventory={"diamond_sword": 1, "diamond": 3},
-               resources=_ore("diamond_ore"))
+        g = combat_ready(gs(tools={"pickaxe": "diamond"},
+                            inventory={"diamond_sword": 1, "diamond": 3},
+                            resources=_ore("diamond_ore")))
         self.assertEqual(resolve("mine_diamond", g).args["count"], 5)  # chestplate costs 8
 
     def test_equip_armor_wears_the_crafted_pieces(self) -> None:
@@ -848,19 +886,85 @@ class ShieldTest(unittest.TestCase):
         self.assertNotIn("equip_shield", candidates(self._ready()))
         self.assertIsNone(resolve("equip_shield", self._ready()))
 
-    def test_missing_shield_pulls_one_iron(self) -> None:
-        # Nothing else needs iron once the pickaxe exists, so the shield is the reason to dig:
-        # one ingot is enough (live, the loop was offering only `explore` next to an iron vein).
+    def test_missing_combat_pieces_pull_iron(self) -> None:
+        # The kit (shield, sword, armour) is the reason to dig iron once the pickaxe exists; the
+        # mine is capped to one batch, so a 27-ingot goal is not a single unbounded dig.
         g = gs(tools={"pickaxe": "diamond"},
                inventory={"crafting_table": 1, "oak_planks": 6}, resources=_ore("iron_ore"))
         self.assertIn("mine_iron", candidates(g))
-        self.assertEqual(resolve("mine_iron", g).args["count"], 1)
+        self.assertEqual(resolve("mine_iron", g).args["count"], 8)
 
-    def test_shield_done_does_not_quarry_iron(self) -> None:
-        g = gs(tools={"pickaxe": "diamond"}, inventory={"crafting_table": 1},
+    def test_complete_combat_kit_does_not_quarry_iron(self) -> None:
+        g = gs(tools={"pickaxe": "diamond"},
+               inventory={"crafting_table": 1, "iron_sword": 1},
+               armor={slot: {"item": f"iron_{slot}"}
+                      for slot in ("helmet", "chestplate", "leggings", "boots")},
                offhand="shield", resources=_ore("iron_ore"))
         self.assertNotIn("mine_iron", candidates(g))
         self.assertIsNone(resolve("mine_iron", g))
+
+
+class CombatKitTest(unittest.TestCase):
+    """The pre-diamond combat kit: an iron sword and a full iron armour set, crafted after the
+    iron pickaxe and before the first diamond dive (`mine_diamond` is gated on `_combat_ready`)."""
+
+    def _ready(self, **inv):
+        base = {"crafting_table": 1, "iron_ingot": 8, "stick": 2}
+        base.update(inv)
+        return gs(tools={"pickaxe": "iron"}, inventory=base)
+
+    def test_iron_sword_needs_the_pickaxe_and_two_ingots(self) -> None:
+        g = self._ready()
+        self.assertIn("craft_iron_sword", candidates(g))
+        a = resolve("craft_iron_sword", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "iron_sword"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_iron_sword_waits_for_the_iron_pickaxe(self) -> None:
+        g = gs(tools={"pickaxe": "stone"},
+               inventory={"crafting_table": 1, "iron_ingot": 8, "stick": 2})
+        self.assertNotIn("craft_iron_sword", candidates(g))
+        self.assertIsNone(resolve("craft_iron_sword", g))
+
+    def test_carried_sword_is_not_rebuilt(self) -> None:
+        g = self._ready(iron_sword=1)
+        self.assertNotIn("craft_iron_sword", candidates(g))
+
+    def test_armour_is_built_most_protection_first(self) -> None:
+        g = self._ready(iron_ingot=24)
+        self.assertIn("craft_iron_chestplate", candidates(g))
+        self.assertNotIn("craft_iron_leggings", candidates(g))
+
+    def test_next_piece_after_the_chestplate(self) -> None:
+        g = self._ready(iron_ingot=24, iron_chestplate=1)
+        self.assertIn("craft_iron_leggings", candidates(g))
+        self.assertNotIn("craft_iron_chestplate", candidates(g))
+
+    def test_armour_needs_the_ingots(self) -> None:
+        g = self._ready(iron_ingot=7)  # the leggings' cost, but the chestplate is next
+        self.assertNotIn("craft_iron_chestplate", candidates(g))
+
+    def test_equip_wears_the_crafted_iron_piece(self) -> None:
+        g = self._ready(iron_chestplate=1)
+        self.assertEqual(resolve("equip_armor", g).args["items"],
+                         [{"item_name": "iron_chestplate"}])
+
+    def test_equip_never_downgrades_worn_diamond(self) -> None:
+        # The diamond set is crafted on top of the iron one; the displaced iron piece must not be
+        # traded back over the diamond it is sitting under.
+        g = self._ready(iron_chestplate=1, iron_helmet=1)
+        g.armor = {"chestplate": {"item": "diamond_chestplate"}}
+        self.assertEqual(resolve("equip_armor", g).args["items"],
+                         [{"item_name": "iron_helmet"}])
+
+    def test_partial_kit_still_blocks_the_diamond_dive(self) -> None:
+        g = gs(tools={"pickaxe": "iron"}, inventory={"iron_sword": 1},
+               resources=_ore("diamond_ore"))
+        g.offhand = "shield"
+        g.armor = {slot: {"item": f"iron_{slot}"}
+                   for slot in ("chestplate", "leggings", "boots")}  # no helmet yet
+        self.assertNotIn("mine_diamond", candidates(g))
 
 
 class TechTreeCompleteTest(unittest.TestCase):

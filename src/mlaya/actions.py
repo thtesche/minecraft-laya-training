@@ -24,9 +24,14 @@ CRITERIA: dict[str, str] = {
     "mine_diamond": "mine diamond ore with an iron or better pickaxe to gather diamonds for diamond tools and armour",
     "craft_diamond_pickaxe": "craft a diamond pickaxe from three diamonds and sticks; the best pickaxe the bot can make",
     "craft_diamond_sword": "craft a diamond sword from two diamonds and a stick, once the diamond pickaxe exists",
-    "equip_armor": "wear the diamond armour pieces the bot crafted, so their protection is active",
+    "equip_armor": "wear the armour pieces the bot crafted (iron first, then diamond), so their protection is active",
     "craft_shield": "craft a shield from six planks and one iron ingot; it blocks attacks while held in the off-hand",
     "equip_shield": "put the crafted shield into the off-hand slot, where it actually blocks attacks",
+    "craft_iron_sword": "craft an iron sword from two iron ingots and a stick; the pre-diamond weapon",
+    "craft_iron_chestplate": "craft an iron chestplate from eight iron ingots; the most protection per ingot",
+    "craft_iron_leggings": "craft iron leggings from seven iron ingots",
+    "craft_iron_boots": "craft iron boots from four iron ingots",
+    "craft_iron_helmet": "craft an iron helmet from five iron ingots",
     "craft_diamond_chestplate": "craft a diamond chestplate from eight diamonds; the most protection per diamond",
     "craft_diamond_leggings": "craft diamond leggings from seven diamonds",
     "craft_diamond_boots": "craft diamond boots from four diamonds",
@@ -110,6 +115,19 @@ DIAMOND_ARMOR_COST = dict(DIAMOND_ARMOR)
 SHIELD_ITEM = "shield"
 SHIELD_PLANKS = 6
 SHIELD_IRON = 1
+
+# Pre-diamond combat kit. The loop used to dive to y<16 for diamonds with only an iron pickaxe;
+# live (run12) that naked dive met a zombie and a creeper and died, and the recovery walk could
+# not outrun the dropped stack's despawn. Before the first dive the bot now carries an iron
+# sword and wears a full iron armour set, with the shield in the off-hand - iron is the only
+# pre-diamond sword/armour the tree has. The pieces are ordered most protection per ingot first,
+# exactly like the diamond set, so a partial set is already as useful as it can be.
+IRON_SWORD_INGOTS = 2
+IRON_ARMOR = (("chestplate", 8), ("leggings", 7), ("boots", 4), ("helmet", 5))
+IRON_ARMOR_COST = dict(IRON_ARMOR)
+# One `mine_iron` is a single `collect_block`, so the goal of a whole iron kit must not become one
+# unbounded dig: cap the per-action count and let the loop re-offer the step for the rest.
+IRON_MINE_BATCH = 8
 
 # Overworld -> Nether gate. A portal frame is ten obsidian with four cobblestone corners; the
 # server's `build_structure portal_frame` builds exactly that from a carried stack, so the
@@ -495,6 +513,46 @@ def _armor_present(gs: GameState, slot: str) -> bool:
     return _worn(gs, item) or _has(gs.inventory, item)
 
 
+def _armor_rank(item: str | None) -> int:
+    """The material tier of an armour item name (`iron_chestplate` -> 3), 0 when absent."""
+    if not item:
+        return 0
+    return TIER.get(item.split("_", 1)[0], 0)
+
+
+def _armor_slot_covered(gs: GameState, slot: str) -> bool:
+    """Armour on that slot at iron tier or better, worn or still carried.
+
+    The pre-diamond kit is iron, but a diamond piece already on the slot counts too - the point
+    is that the slot is protected, not which tier protects it.
+    """
+    for tier in ("iron", "diamond", "netherite"):
+        item = f"{tier}_{slot}"
+        if _worn(gs, item) or _has(gs.inventory, item):
+            return True
+    return False
+
+
+def _armor_to_wear(gs: GameState) -> list[str]:
+    """Carried armour whose slot is bare or holds a weaker piece, best tier per slot.
+
+    The diamond set is crafted on top of the iron one, so a diamond chestplate worn while the
+    iron one sits back in the pack must not be traded away: only a *better* piece is worn, and
+    the iron piece it displaced is skipped rather than re-equipped on every tick.
+    """
+    inv = gs.inventory
+    out: list[str] = []
+    for slot, _ in IRON_ARMOR:
+        worn = (gs.armor.get(slot) or {}).get("item")
+        for tier in ("netherite", "diamond", "iron"):
+            item = f"{tier}_{slot}"
+            if _has(inv, item):
+                if TIER.get(tier, 0) > _armor_rank(worn):
+                    out.append(item)
+                break
+    return out
+
+
 def _offhand(gs: GameState, item: str) -> bool:
     """Whether `item` currently sits in the off-hand slot (there it leaves the inventory)."""
     return gs.offhand == item
@@ -503,6 +561,29 @@ def _offhand(gs: GameState, item: str) -> bool:
 def _has_shield(gs: GameState) -> bool:
     """A shield counts as done whether it is in the off-hand or still waiting in the inventory."""
     return _offhand(gs, SHIELD_ITEM) or _has(gs.inventory, SHIELD_ITEM)
+
+
+def _has_iron_sword(gs: GameState) -> bool:
+    """An iron sword or better, worn (the `sword` tool slot) or still carried."""
+    if TIER.get(str(gs.tools.get("sword", "")).lower(), 0) >= IRON_PICK_TIER:
+        return True
+    return any(_has(gs.inventory, f"{tier}_sword")
+               for tier in ("iron", "diamond", "netherite"))
+
+
+def _combat_ready(gs: GameState) -> bool:
+    """The pre-diamond safety kit: a sword, a shield and armour on every slot.
+
+    `mine_diamond` is gated on this, so the bot never dives to y<16 for diamonds unarmed and
+    unarmoured again (live, run12: a naked dive died to a zombie and a creeper, and the dropped
+    gear was lost to the despawn). The pieces are iron, which is the only pre-diamond sword and
+    armour the tree crafts.
+    """
+    if not _has_iron_sword(gs):
+        return False
+    if not _has_shield(gs):
+        return False
+    return all(_armor_slot_covered(gs, slot) for slot, _ in IRON_ARMOR)
 
 
 def _gear_ready(gs: GameState) -> bool:
@@ -859,6 +940,23 @@ def _portal_iron_goal(gs: GameState) -> int:
     return 0
 
 
+def _combat_iron_missing(gs: GameState) -> int:
+    """Ingots still to bank for the pre-diamond kit: the shield, the sword and each missing piece.
+
+    Counts only what is not built yet, so the goal falls as the pieces are crafted and no ingot
+    is quarried twice.
+    """
+    need = 0
+    if not _has_shield(gs):
+        need += SHIELD_IRON
+    if not _has_iron_sword(gs):
+        need += IRON_SWORD_INGOTS
+    for slot, cost in IRON_ARMOR:
+        if not _armor_slot_covered(gs, slot):
+            need += cost
+    return need
+
+
 def _iron_goal(gs: GameState) -> int:
     """Ingots (or raw iron) still wanted: three build an iron pickaxe, or its fresh spare.
 
@@ -870,8 +968,10 @@ def _iron_goal(gs: GameState) -> int:
     inv = gs.inventory
     tier = _pick_tier(inv, gs.tools)
     goal = 3 if (tier < IRON_PICK_TIER or _pickaxe_due_for_spare(gs)) else 0
-    if tier >= IRON_PICK_TIER and not _has_shield(gs):
-        goal = max(goal, SHIELD_IRON)
+    if tier >= IRON_PICK_TIER:
+        # The pre-diamond kit (shield, iron sword, iron armour) is the reason to keep digging
+        # iron after the pickaxe exists; `_combat_iron_missing` is 0 once it is complete.
+        goal = max(goal, _combat_iron_missing(gs))
     # `_gear_ready` (not just "has a shield") is the gate, so banking the bucket's three
     # ingots waits until the diamond kit is complete - matching where `craft_bucket` appears.
     if _gear_ready(gs) and not _portal_lit(gs):
@@ -927,6 +1027,18 @@ def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:
     for slot, cost in DIAMOND_ARMOR:
         if not _armor_present(gs, slot):
             return f"diamond_{slot}", cost
+    return None
+
+
+def _next_iron_armor_item(gs: GameState) -> tuple[str, int] | None:
+    """The next iron armour piece to build and its ingot cost, most protection first.
+
+    The mirror of `_next_diamond_item` for the pre-diamond kit, so the craft gate and the iron
+    goal share one source.
+    """
+    for slot, cost in IRON_ARMOR:
+        if not _armor_slot_covered(gs, slot):
+            return f"iron_{slot}", cost
     return None
 
 
@@ -1091,7 +1203,7 @@ def candidates(gs: GameState) -> list[str]:
         out.append("craft_stone_pickaxe")
     if tier >= 1 and table and not furnace and cobble >= 8:
         out.append("craft_furnace")
-    if furnace and raw_iron >= 1 and coal >= 1 and iron < 3:
+    if furnace and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs):
         out.append("smelt_iron")
     if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
         out.append("craft_iron_pickaxe")
@@ -1121,22 +1233,35 @@ def candidates(gs: GameState) -> list[str]:
         out.append("craft_shield")
     if _has(inv, SHIELD_ITEM) and not _offhand(gs, SHIELD_ITEM):
         out.append("equip_shield")
+    # The rest of the pre-diamond combat kit: an iron sword and a full iron armour set, so the
+    # dive to the diamonds is not the unarmed, unarmoured trip that got the bot killed (live,
+    # run12). Gated behind the iron pickaxe, like the shield, so it never spends the first
+    # ingots that pickaxe needs; the armour is built one piece at a time, most protection first.
+    if (table and tier >= IRON_PICK_TIER and not _has_iron_sword(gs)
+            and iron >= IRON_SWORD_INGOTS and _can_sticks(inv, logs, planks)):
+        out.append("craft_iron_sword")
+    iron_armor_nxt = _next_iron_armor_item(gs)
+    if (table and tier >= IRON_PICK_TIER and iron_armor_nxt is not None
+            and iron >= iron_armor_nxt[1]):
+        out.append("craft_" + iron_armor_nxt[0])
     # A crafted armour piece sits in the inventory until it is worn; `equip` slots armour even
     # without a destination, so one batch puts the whole set on. Wear it before crafting more.
-    if any(_has(inv, f"diamond_{slot}") and not _worn(gs, f"diamond_{slot}")
-           for slot, _ in DIAMOND_ARMOR):
+    if _armor_to_wear(gs):
         out.append("equip_armor")
     # Diamond milestones, one at a time: pickaxe (three diamonds), then the sword (two, and only
     # once the pickaxe exists - bounding that away deadlocked the sword), then the armour set
     # (24, most protection per diamond first). `_next_diamond_item` names the next piece and its
     # cost, so the dig count and the craft gate share one source.
+    # The dig itself waits for the combat kit (`_combat_ready`): the diamonds are what the
+    # whole trip is for, and it is the trip that killed the unarmed bot.
     # `_can_mine` refuses a dig on an almost-broken pickaxe: breaking mid-action has the server
     # finish the ore with the swapped-in lower tier, destroying it without a drop.
     nxt = _next_diamond_item(gs)
     if nxt is not None:
         item, cost = nxt
         if diamond < cost:
-            if _can_mine(gs, "diamond_ore") and _diamond_ore_available(gs):
+            if (_combat_ready(gs) and _can_mine(gs, "diamond_ore")
+                    and _diamond_ore_available(gs)):
                 out.append("mine_diamond")
         elif _diamond_craft_ready(gs, item):
             out.append("craft_" + item)
@@ -1300,7 +1425,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         if inv.get("raw_iron", 0) + inv.get("iron_ingot", 0) >= _iron_goal(gs):
             return None
-        count = max(1, _iron_goal(gs) - inv.get("raw_iron", 0))
+        count = max(1, min(_iron_goal(gs) - inv.get("raw_iron", 0), IRON_MINE_BATCH))
         return Action(label, "collect_block", {"block_name": "iron_ore", "count": count},
                       "mine iron ore for iron tools")
     if label == "mine_coal":
@@ -1310,6 +1435,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "mine coal for furnace fuel")
     if label == "mine_diamond":
         if not _can_mine(gs, "diamond_ore"):
+            return None
+        if not _combat_ready(gs):
             return None
         nxt = _next_diamond_item(gs)
         if nxt is None:  # pickaxe, sword and the whole armour set are done
@@ -1361,6 +1488,24 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": SHIELD_ITEM}], "temporary_workstation": True},
                       "craft a shield from planks and an iron ingot")
+    if label == "craft_iron_sword":
+        if (inv.get("iron_ingot", 0) < IRON_SWORD_INGOTS or not _has(inv, "crafting_table")
+                or tier < IRON_PICK_TIER or _has_iron_sword(gs)
+                or not _can_sticks(inv, _logs(inv), _planks(inv))):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": "iron_sword"}], "temporary_workstation": True},
+                      "craft an iron sword from two ingots and a stick")
+    iron_slot = label[len("craft_iron_"):] if label.startswith("craft_iron_") else None
+    if iron_slot in IRON_ARMOR_COST:
+        cost = IRON_ARMOR_COST[iron_slot]
+        if (inv.get("iron_ingot", 0) < cost or not _has(inv, "crafting_table")
+                or tier < IRON_PICK_TIER):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": f"iron_{iron_slot}"}],
+                       "temporary_workstation": True},
+                      f"craft an iron {iron_slot} from {cost} ingots")
     if label == "craft_bow":
         if (_has(inv, BOW_ITEM) or not _has(inv, "crafting_table")
                 or inv.get("string", 0) < BOW_STRING
@@ -1400,12 +1545,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": "diamond_sword"}], "temporary_workstation": True},
                       "craft a diamond sword from two diamonds and a stick")
     if label == "equip_armor":
-        items = [{"item_name": f"diamond_{slot}"} for slot, _ in DIAMOND_ARMOR
-                 if _has(inv, f"diamond_{slot}") and not _worn(gs, f"diamond_{slot}")]
+        items = [{"item_name": item} for item in _armor_to_wear(gs)]
         if not items:
             return None
         return Action(label, "equip", {"items": items},
-                      "wear the crafted diamond armour so its protection is active")
+                      "wear the crafted armour so its protection is active")
     armor_slot = label[len("craft_diamond_"):] if label.startswith("craft_diamond_") else None
     if armor_slot in DIAMOND_ARMOR_COST:
         cost = DIAMOND_ARMOR_COST[armor_slot]
