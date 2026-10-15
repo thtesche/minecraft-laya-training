@@ -1,137 +1,137 @@
-# Nether-Vorbereitung (Post-Portal-Schritt)
+# Nether preparation (post-portal step)
 
-Status: **Phase 1 + 2 implementiert** (Bogen + Pfeile, Bruchstein-Vorrat, Goldhelm; Sicherheits-
-Gates). Phase 3 (der eigentliche Nether-Besuch) ist noch offen. Details unten.
+Status: **phases 1 + 2 implemented** (bow + arrows, cobblestone reserve, gold helmet; safety
+gates). Phase 3 (the actual Nether visit) is still open. Details below.
 
-## Idee
+## Idea
 
-Zwischen „Portal brennt" (`light_portal`) und „Bot betritt den Nether" fehlt eine
-**Vorbereitungsstufe**: der Bot soll erst dann durch das Tor gehen, wenn Rüstung, Werkzeug,
-Nahrung und Baumaterial wirklich stimmen. Genau wie beim Essen (siehe `NETHER_FOOD_RESERVE = 64`
-in `README.md`) gilt: lieber ordentlich vorbereitet als schnell hinein und alles verlieren.
+Between "the portal burns" (`light_portal`) and "the bot enters the Nether" a
+**preparation stage** is missing: the bot should only step through the gate once armour, tools,
+food and building material really are right. Just as with eating (see `NETHER_FOOD_RESERVE = 64`
+in `README.md`): better properly prepared than quickly in and losing everything.
 
-Die Vorbereitung läuft in **derselben Tages-Lull** wie das Essen (siehe `_nether_idle`) und ist
-jetzt Teil des **Auto-Stops**: `tech_tree_complete` verlangt zusätzlich, dass kein Vorbereitungs-
-Schritt mehr offen ist (`_all_nether_prep_steps`) **und die Essens-Reserve gebankt ist**
-(`_food_reserve_met` → die `NETHER_FOOD_RESERVE = 64` aus `_food_goal`, s. u.). Damit bereitet sich
-der Lauf fertig vor, statt mit dem Bett in der ersten Nacht zu enden. Jeder Schritt fällt aus der
-Liste, sobald er nicht mehr weiterkommt (kein Spawn, kein Erz), und die Essens-Forderung fällt weg,
-sobald kein Tier und kein Zombie in Reichweite ist — ein unerreichbares Item blockiert den Lauf also nie.
+Preparation runs in **the same daytime lull** as eating (see `_nether_idle`) and is
+now part of the **auto-stop**: `tech_tree_complete` additionally requires that no preparation
+step is still open (`_all_nether_prep_steps`) **and the food reserve is banked**
+(`_food_reserve_met` → the `NETHER_FOOD_RESERVE = 64` from `_food_goal`, see below). That way
+the run prepares itself fully instead of ending with the bed on the first night. Each step drops out of the
+list as soon as it gets no further (no spawn, no ore), and the food demand drops away as
+soon as no animal and no zombie is in reach — so an unreachable item never blocks the run.
 
-Der Nether ist ein anderes Spiel als die Oberwelt:
+The Nether is a different game from the overworld:
 
-- **Hunger fällt schneller** (Sprinten, Kämpfe), und der **Tod kostet das ganze Inventar** —
-  deshalb der große Essensvorrat.
-- **Ghasts zerstören Blöcke**, auch den Portalrahmen → Feuerzeug zum Neu-Anzünden, Bruchstein
-  als Schutz.
-- **Wasser verdunstet**, **Betten explodieren**, **Uhren/Kompass spinnen**.
+- **Hunger falls faster** (sprinting, fights), and **death costs the whole inventory** —
+  hence the large food reserve.
+- **Ghasts destroy blocks**, the portal frame too → flint and steel to relight, cobblestone
+  as protection.
+- **Water evaporates**, **beds explode**, **clocks/compasses spin**.
 
-Der Schritt hat zwei Hälften: **(A) Inventar vorbereiten** (vor dem Durchgang) und **(B) nach der
-Ankunft** (Schutzraum, Rückweg). Dieser Entwurf deckt beides ab, priorisiert aber die
-Inventar-Vorbereitung, weil sie an der bestehenden Kette hängt.
+The step has two halves: **(A) prepare the inventory** (before the passage) and **(B) after
+arrival** (shelter, way back). This design covers both, but prioritises the inventory
+preparation, because it hangs off the existing chain.
 
-## (A) Optimales Nether-Inventar — Abgleich mit dem, was der Bot kann
+## (A) Optimal Nether inventory — reconciled with what the bot can do
 
-Legende: ✅ vorhanden · 🟡 machbar (Vorschlag) · ⛔ außerhalb der Reichweite dieses Bots.
+Legend: ✅ present · 🟡 feasible (proposal) · ⛔ outside this bot's reach.
 
-| Empfehlung (Hotbar) | Bot-Stand | Bewertung |
+| Recommendation (hotbar) | Bot state | Assessment |
 |---|---|---|
-| Schwert (Diamant) | ✅ `craft_diamond_sword` (getragen) | erledigt |
-| Spitzhacke | ✅ `craft_diamond_pickaxe` (getragen) | erledigt |
-| Schild | ✅ `craft_shield` + `equip_shield` (Offhand) | erledigt |
-| Nahrung (Steak) | ✅ 64 × gebratenes Fleisch (`NETHER_FOOD_RESERVE`) | erledigt |
-| Baublöcke (Bruchstein) | ✅ `NETHER_COBBLE = 64` im Lull | erledigt |
-| Bogen + Pfeile | ✅ `craft_bow` + `craft_arrows` (≥ 16) | erledigt — Server feuert |
-| Axt / Elytra | – / ⛔ | Axt unnötig (kein Holzhacken im Nether), Elytra = End |
-| Feuerschutztrank / Wassereimer | ⛔ | Henne-Ei bzw. verdunstet — siehe unten |
-| Feuerwerk | ⛔ | braucht Elytra + Gunpowder |
+| Sword (diamond) | ✅ `craft_diamond_sword` (worn) | done |
+| Pickaxe | ✅ `craft_diamond_pickaxe` (worn) | done |
+| Shield | ✅ `craft_shield` + `equip_shield` (offhand) | done |
+| Food (steak) | ✅ 64 × cooked meat (`NETHER_FOOD_RESERVE`) | done |
+| Building blocks (cobblestone) | ✅ `NETHER_COBBLE = 64` in the lull | done |
+| Bow + arrows | ✅ `craft_bow` + `craft_arrows` (≥ 16) | done — server fires |
+| Axe / elytra | – / ⛔ | axe unnecessary (no wood cutting in the Nether), elytra = End |
+| Fire resistance potion / water bucket | ⛔ | chicken-and-egg or evaporates — see below |
+| Firework | ⛔ | needs elytra + gunpowder |
 
-| Empfehlung (Offhand/Inventar) | Bot-Stand | Bewertung |
+| Recommendation (offhand/inventory) | Bot state | Assessment |
 |---|---|---|
-| Goldrüstung gegen Piglins | ✅ `mine_gold` → `smelt_gold` → `craft_gold_helmet` (bereit) | erledigt (Tragen erst im Nether) |
-| Feuerzeug (Portal neu anzünden) | ✅ `craft_flint_and_steel` (getragen) | erledigt |
-| Totem der Unsterblichkeit | ⛔ | Evoker/Raid |
-| Shulker-Kiste | ⛔ | End-Stadt |
-| Volle Rüstung (Diamant) | ✅ alle 4 Teile getragen | erledigt (Verzauberung ⛔) |
+| Golden armour against piglins | ✅ `mine_gold` → `smelt_gold` → `craft_gold_helmet` (ready) | done (worn only in the Nether) |
+| Flint and steel (to relight the portal) | ✅ `craft_flint_and_steel` (carried) | done |
+| Totem of undying | ⛔ | evoker/raid |
+| Shulker box | ⛔ | End city |
+| Full armour (diamond) | ✅ all 4 pieces worn | done (enchanting ⛔) |
 
-### Der Bogen ist die eigentliche Lücke
+### The bow is the actual gap
 
-Der **Server-Kampf feuert den Bogen schon selbst** (`survival.BASE_CHANGES["combat"]["bow"] = True`);
-der Bot muss ihn also nur *haben* und **Pfeile** dabei haben. Damit ist das keine neue
-Kampf-KI, sondern reine Beschaffung — genau wie beim Essen:
+The **server combat already fires the bow itself** (`survival.BASE_CHANGES["combat"]["bow"] = True`);
+the bot therefore only has to *have* it and carry **arrows**. That makes this no new
+combat AI, but pure procurement — just like eating:
 
-- **Bogen** = 3 Stöcke + 3 Fäden. Fäden liefert die Spinnenjagd (`hunt_string`, Ziel im Lull 3).
-- **Pfeile** = Flint + Stock + Feder. Flint (`get_flint`, nach dem Feuerzeug wieder geöffnet) und
-  Federn (`hunt_feather`, Hühner) sind Teil der Ketten.
+- **Bow** = 3 sticks + 3 string. String comes from hunting spiders (`hunt_string`, target in the lull 3).
+- **Arrows** = flint + stick + feather. Flint (`get_flint`, reopened after the flint and steel) and
+  feathers (`hunt_feather`, chickens) are part of the chains.
 
-Der Server-Scaffold kennt außerdem schon `netherrack`/`basalt` (`scaffold_blocks`), das
-Nether-Gelände ist also im Serverreflex vorgesehen.
+The server scaffold already knows `netherrack`/`basalt` (`scaffold_blocks`), so the
+Nether terrain is already provided for in the server reflex.
 
-### Warum Feuerschutz & Wassereimer nicht gehen
+### Why fire resistance & water bucket do not work
 
-- **Wassereimer** verdunstet im Nether — ein Vorrat daran ist sinnlos.
-- **Feuerschutztrank** braucht einen Braustand und **Blaze Powder aus dem Nether** — das ist ein
-  **Henne-Ei**: den Trank kann es erst *nach* dem ersten Nether-Besuch geben. Also kein Pre-Nether-
-  Item; er wird frühestens nach der ersten Blaze-Rute relevant.
-- **Verzauberung** (Feuerschutz/Protection) bräuchte Verzauberungstisch + Lapis + XP — der Bot
-  verzaubert nie.
+- **Water bucket** evaporates in the Nether — a reserve of it is pointless.
+- **Fire resistance potion** needs a brewing stand and **blaze powder from the Nether** — that is a
+  **chicken-and-egg**: the potion can only exist *after* the first Nether visit. So not a pre-Nether
+  item; it becomes relevant at the earliest after the first blaze route.
+- **Enchanting** (fire protection/protection) would need an enchanting table + lapis + XP — the bot
+  never enchants.
 
-## (B) Nach der Ankunft
+## (B) After arrival
 
-1. **Schutzraum** aus Bruchstein um das Ankunftsportal (Hülle, das Portal als Tür), damit Ghasts
-   den Rahmen nicht zerschießen. Bruchstein hat Blast-Resistance 6 und hält Ghast-Feuerbällen stand.
-2. **Rückweg** offenhalten (Portal zuerst anzünden/absichern).
-3. **Sicherheits-Gate im Nether** (siehe unten).
+1. **Shelter** of cobblestone around the arrival portal (a shell, the portal as the door), so that ghasts
+   do not shoot the frame apart. Cobblestone has blast resistance 6 and withstands ghast fireballs.
+2. Keep the **way back** open (light/secure the portal first).
+3. **Safety gate in the Nether** (see below).
 
-## Sicherheits-Gates (mit dem Schritt umgesetzt)
+## Safety gates (implemented with the step)
 
-- **Nie im Nether schlafen / Bett legen.** Betten explodieren dort. `sleep`, `place_bed` (und
-  `fill_bucket`, da Wasser verdunstet) sind über `_overworld(gs)` auf die Oberwelt beschränkt
-  (`gs.dimension`; `apply_policy` wendet die Server-Policy bei Dimensionswechsel automatisch neu an).
-- **Nahrung und Bruchstein** vor dem Durchgang prüfen (Mindestvorrat), damit der Bot nicht „aus
-  Versehen" mit halbem Inventar hineinläuft.
-- **Gold-Grab nur am Tag:** der Tiefen-Grab nach Gold ist nachts nicht im Angebot (der Lauf
-  schläft dann), bleibt aber für den Auto-Stop offen — sonst würde die Nacht den Lauf zu früh beenden.
+- **Never sleep / place a bed in the Nether.** Beds explode there. `sleep`, `place_bed` (and
+  `fill_bucket`, since water evaporates) are restricted to the overworld via `_overworld(gs)`
+  (`gs.dimension`; `apply_policy` automatically reapplies the server policy on a dimension change).
+- **Check food and cobblestone** before the passage (minimum reserve), so that the bot does not "by
+  accident" walk in with half an inventory.
+- **Gold dig only during the day:** the deep dig for gold is not on offer at night (the run
+  sleeps then), but stays open for the auto-stop — otherwise the night would end the run too early.
 
-## Umsetzung in Stufen
+## Implementation in stages
 
-**Phase 0 — erledigt (Referenz):** Diamant-Kit, Schild, Feuerzeug, 64 Essen, Bruchstein.
+**Phase 0 — done (reference):** diamond kit, shield, flint and steel, 64 food, cobblestone.
 
-**Phase 1 — erledigt:** 
-- **Bogen + Pfeile** (`craft_bow`, `craft_arrows`, `hunt_feather`): Bogen = 3 Fäden (Spinnen,
-  `hunt_string`) + 3 Stöcke; Pfeile = Flint (`get_flint`, nach dem Feuerzeug wieder geöffnet) +
-  Stock + Feder (Hühner). Ziel: Bogen vorhanden ∧ ≥ 16 Pfeile (`NETHER_ARROWS`). Der Server feuert
-  den Bogen selbst (`combat.bow`).
-- **Bruchstein-Mindestvorrat** im Lull auf 64 angehoben (`NETHER_COBBLE`); die leichte Schwelle 12
-  gilt weiter außerhalb des Lulls. Vor dem Durchgang trägt der Bot einen Ersatz-Spitzhacken-Reflex
+**Phase 1 — done:**
+- **Bow + arrows** (`craft_bow`, `craft_arrows`, `hunt_feather`): bow = 3 string (spiders,
+  `hunt_string`) + 3 sticks; arrows = flint (`get_flint`, reopened after the flint and steel) +
+  stick + feather (chickens). Goal: bow present ∧ ≥ 16 arrows (`NETHER_ARROWS`). The server fires
+  the bow itself (`combat.bow`).
+- **Cobblestone minimum reserve** raised to 64 in the lull (`NETHER_COBBLE`); the light threshold 12
+  continues to apply outside the lull. Before the passage the bot carries a spare-pickaxe reflex
   (`replace_tool`).
 
-**Phase 2 — erledigt (Goldhelm, bereitgetragen):** 
-- **Goldhelm** (`mine_gold` → `smelt_gold` → `craft_gold_helmet`), ein Stück goldene Rüstung hält
-  Piglins neutral. Golderz wird wie Diamant über `resource_found` gefunden (`gold_ore` in
-  `perception.CHAIN_NAMES`) und per `collect_block`-Tunnel abgebaut; Eisen-Spitzhacke genügt.
-- Der Helm wird **im Gepäck** bereitgehalten; getragen wird er erst beim Durchgang (Phase 3), weil
-  er denselben Slot wie der Diamanthelm belegt — entschieden: **Goldhelm ersetzt den Diamanthelm**
-  (`_swap_to_gold_helmet` beim Betreten, siehe unten).
+**Phase 2 — done (gold helmet, carried ready):**
+- **Gold helmet** (`mine_gold` → `smelt_gold` → `craft_gold_helmet`), one piece of golden armour keeps
+  piglins neutral. Gold ore is found like diamond via `resource_found` (`gold_ore` in
+  `perception.CHAIN_NAMES`) and mined via a `collect_block` tunnel; an iron pickaxe suffices.
+- The helmet is kept **in the pack** ready; it is only worn on the passage (phase 3), because
+  it occupies the same slot as the diamond helmet — decided: **the gold helmet replaces the diamond helmet**
+  (`_swap_to_gold_helmet` on entry, see below).
 
-**Phase 3 — offen (der eigentliche Nether-Besuch):**
-- **`enter_portal`**: hinein navigieren (`dimension → nether`).
-- **Rüstungs-Tausch beim Betreten:** Diamanthelm ab, Goldhelm auf (`_swap_to_gold_helmet`), damit
-  Piglins neutral bleiben. Der Diamanthelm bleibt im Gepäck für den Rückweg.
-- **Schutzraum** bauen, **Rückweg** sichern, dann die erste Nether-Ressource (Blaze/Neterrack) als
-  Ziel der darauffolgenden Kette.
+**Phase 3 — open (the actual Nether visit):**
+- **`enter_portal`**: navigate in (`dimension → nether`).
+- **Armour swap on entry:** diamond helmet off, gold helmet on (`_swap_to_gold_helmet`), so that
+  piglins stay neutral. The diamond helmet stays in the pack for the way back.
+- Build the **shelter**, secure the **way back**, then the first Nether resource (blaze/netherrack) as
+  the goal of the following chain.
 
-## Entschieden: Goldhelm ersetzt den Diamanthelm
+## Decided: the gold helmet replaces the diamond helmet
 
-Ein Stück goldene Rüstung hält Piglins neutral, aber der Bot trägt einen **vollen Diamant-Satz** —
-der Goldhelm belegt denselben Slot wie der Diamanthelm. **Entscheidung (mit dem Nutzer abgestimmt):
-beim Betreten des Nether wird der Diamanthelm abgelegt und der Goldhelm getragen** (Piglin-
-Neutralität ist den etwas geringeren Kopfschutz wert). Der Diamanthelm bleibt im Gepäck und kommt
-auf dem Rückweg in die Oberwelt wieder auf (Phase 3, `_swap_to_gold_helmet`). Bis dahin trägt der
-Bot den Diamanthelm und führt den Goldhelm nur mit.
+One piece of golden armour keeps piglins neutral, but the bot wears a **full diamond set** —
+the gold helmet occupies the same slot as the diamond helmet. **Decision (agreed with the user):
+on entering the Nether the diamond helmet is taken off and the gold helmet worn** (piglin
+neutrality is worth the somewhat lower head protection). The diamond helmet stays in the pack and goes
+back on on the way back to the overworld (phase 3, `_swap_to_gold_helmet`). Until then the bot
+wears the diamond helmet and only carries the gold helmet.
 
-## Außerhalb der Reichweite (bewusst nicht gebaut)
+## Out of reach (deliberately not built)
 
-Elytra + Feuerwerk (End/Gunpowder), Totem (Evoker/Raid), Shulker-Kiste (End), Feuerschutztrank
-(Nether — Henne-Ei), Verzauberung (Tisch/Lapis/XP), goldene Karotten (Anbau + Gold),
-Armbrust (wie Bogen, aber aufwändiger — Bogen reicht).
+Elytra + firework (End/gunpowder), totem (evoker/raid), shulker box (End), fire resistance potion
+(Nether — chicken-and-egg), enchanting (table/lapis/XP), golden carrots (farming + gold),
+crossbow (like a bow, but more involved — a bow suffices).
