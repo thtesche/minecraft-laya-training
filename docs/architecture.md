@@ -845,7 +845,10 @@ just one level deeper.
   re-dug the same shaft.
   A **chest** (8 planks, 3×3) holds surplus: `craft_chest` → `place_chest` (coordinates are
   remembered) → `stow_surplus` (`use_container deposit`) at ≥33/36 slots; `drop_junk` is only the
-  stopgap without a chest. An `[INVENTORY_FULL]` refusal triggers its own relief level
+  stopgap without a chest. `drop_junk` sheds the low-value `JUNK_ITEMS` list plus, since `df3ca56`,
+  any single item carried above `HOARD_CAP` (64): a pack packed with one cheap block (live, run21:
+  ~306 cobblestone, no chest) can still make room, while `HOARD_KEEP` keeps a floor under the
+  banked cobblestone reserve (`NETHER_COBBLE`). An `[INVENTORY_FULL]` refusal triggers its own relief level
   (`blocked_by_inventory` → `inventory_relief`: chest, otherwise throw; a full chest switches
   `allow_stow` off). Base/chest are **per run** and are injected by the loop into every `GameState`.
   If the chest cannot stand at the spot — the server answers `[PLACE_NO_SUPPORT]` when no

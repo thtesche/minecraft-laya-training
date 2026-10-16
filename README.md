@@ -195,7 +195,10 @@ or an earlier run — is taken up (`take_bed`) and laid again at the base, so th
 sit in the base's own dig shafts (live, run18: the run17 bed at y=55 tripped every `mine_gold`
 tunnel with a "no observed settled arrival" on its half-block top).
 Surplus is handled by a **chest** (`craft_chest` from 8 planks → `place_chest` → `stow_surplus`) from
-33/36 slots; `drop_junk` only throws as a **last resort** when there is no chest or it is full. An
+33/36 slots; `drop_junk` only throws as a **last resort** when there is no chest or it is full. It
+throws the low-value junk list plus any single item carried above a general **cap of 64**
+(`HOARD_CAP`) — so a pack filled with one cheap block (live, run21: ~306 cobblestone and no chest)
+can still make room — while `HOARD_KEEP` keeps a floor under the banked cobblestone reserve. An
 `[INVENTORY_FULL]` refusal triggers a relief stage of its own (`inventory_relief`). Base and chest
 count **per run** and are injected into every `GameState` by the loop; if a
 bed (and a chest) is already in reach at start, they are adopted so that a restart at
