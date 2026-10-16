@@ -253,8 +253,15 @@ class FoodChainTest(unittest.TestCase):
         self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
 
     def test_day_hunt_gives_up_beyond_range(self) -> None:
-        g = gs(mobs=[("cow", "animal", 5, 80.0)], phase="day")
+        # The day reach is 128, wide enough to cover what the loaded-area food gate
+        # (`_food_source_in_reach`) sees so a loaded animal is never a gate no hunt would walk to.
+        # A walk of 130 m is still given up.
+        g = gs(mobs=[("cow", "animal", 5, 130.0)], phase="day")
         self.assertIsNone(resolve("hunt_food", g))
+
+    def test_day_hunt_boundary(self) -> None:
+        self.assertIsNotNone(resolve("hunt_food", gs(mobs=[("cow", "animal", 1, 128.0)], phase="day")))
+        self.assertIsNone(resolve("hunt_food", gs(mobs=[("cow", "animal", 1, 128.1)], phase="day")))
 
     def test_night_hunt_boundary(self) -> None:
         self.assertIsNotNone(resolve("hunt_food", gs(mobs=[("pig", "animal", 1, 16.0)], phase="night")))
@@ -318,6 +325,18 @@ class FoodChainTest(unittest.TestCase):
         g.mobs = [("cow", "animal", 5, 10.0)]
         self.assertIsNone(resolve("hunt_food", g))
 
+    def test_the_day_hunt_reaches_a_loaded_animal(self) -> None:
+        # The day reach (128) covers what the loaded-area food gate can see, so a run is never
+        # held open by an animal no hunt would walk to. After dark the bot only tops up from what
+        # is at hand (16), the range that keeps it from roaming into a night ambush.
+        g = lit_portal(at_home(geared(beef=8, cooked_beef=0, cobblestone=12,
+                                      flint_and_steel=1, white_bed=1, furnace=1)))
+        g.mobs = [("cow", "animal", 3, 100.0)]
+        g.phase = "day"
+        self.assertIsNotNone(resolve("hunt_food", g))
+        g.phase = "night"
+        self.assertIsNone(resolve("hunt_food", g))
+
     def test_eat_prefers_the_most_nutritious_food(self) -> None:
         # Cooked meat outlasts everything else and is spent first; among what is left, bread
         # (6.0) beats raw meat (1.8) and rotten flesh (0.8), so the worst food is a last resort.
@@ -379,6 +398,20 @@ class NetherLullWaitTest(unittest.TestCase):
         g.food = 20.0
         self.assertIn("explore", candidates(g))
         self.assertNotIn("wait", candidates(g))
+
+    def test_an_open_reserve_with_no_reach_goes_exploring(self) -> None:
+        # The loaded-area gate sees an animal past the hunt reach, so the reserve is still open
+        # and holding at the base would never fill it: the bot roams until the animal is inside
+        # the hunt reach and `hunt_food` can take over (live, run19: 18 of 64 banked while the
+        # nearest animals sat 65-134 m off, and the run read itself as done).
+        g = self._idle()
+        g.mobs = [("cow", "animal", 3, 300.0)]
+        self.assertEqual(candidates(g), ["explore"])
+
+    def test_an_open_reserve_in_reach_still_hunts(self) -> None:
+        g = self._idle()
+        g.mobs = [("cow", "animal", 3, 100.0)]
+        self.assertEqual(candidates(g), ["hunt_food"])
 
     def test_wait_needs_the_lit_portal(self) -> None:
         g = at_home(geared(flint_and_steel=1, cobblestone=12, white_bed=1, cooked_beef=24))
@@ -1060,6 +1093,22 @@ class TechTreeCompleteTest(unittest.TestCase):
         g = self._complete(resources={"nether_portal": self._gate()["nether_portal"]})
         self.assertFalse(tech_tree_complete(g))
 
+    def test_a_bed_at_the_base_completes(self) -> None:
+        # The bed the gate asks for sits at the base (the box `_at_base` allows the bot itself).
+        g = self._complete(base=(-270, 64, -57))
+        self.assertTrue(tech_tree_complete(g))
+
+    def test_a_bed_away_from_the_base_is_not_done(self) -> None:
+        # A leftover bed from an earlier run satisfies `_bed_placed` but lies off the base, so the
+        # run keeps working until `take_bed`/`place_bed` bring it home (live, run19: the run17 bed
+        # sat at y=55 inside the base's gold shaft, ten below the base, and read as "done").
+        g = self._complete(
+            base=(-270, 64, -57),
+            resources={**self._gate(),
+                       "white_bed": [BlockHit("white_bed", "white_bed", -269, 55, -56, 9.0)]},
+        )
+        self.assertFalse(tech_tree_complete(g))
+
     def test_the_deep_cobble_stack_is_required(self) -> None:
         # Portal, bed and the whole kit stand, but the Nether shield stack is not banked.
         g = self._complete(inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
@@ -1102,11 +1151,20 @@ class TechTreeCompleteTest(unittest.TestCase):
             "cooked_beef": 8})
         self.assertFalse(tech_tree_complete(g))
 
-    def test_a_source_beyond_reach_drops_the_reserve_requirement(self) -> None:
-        # A mob merely *loaded* (here a cow past the daylight hunt range, and a zombie past melee
-        # range) cannot hold the gate open: the hunt could not reach either, so the requirement
-        # drops out like an unreachable prep step rather than stalling the run on a distant mob.
-        g = self._complete(mobs=[("cow", "animal", 3, 100.0), ("zombie", "hostile", 1, 40.0)],
+    def test_a_loaded_source_keeps_the_reserve_required(self) -> None:
+        # Loaded-area, not walking-reach: a source the bot can walk to holds the gate wherever the
+        # bot currently stands. Bound by the daylight *hunt* range instead, a hole in the ground
+        # read a food-rich world as "no food ever" (live, run19: the run stopped at the goal with
+        # an animal 33 m away but no base within the reach, and the pack at 18 of 64).
+        g = self._complete(mobs=[("cow", "animal", 3, 100.0)],
+                           inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
+                                      "cobblestone": 64, "cooked_beef": 8})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_a_lone_distant_zombie_drops_the_reserve_requirement(self) -> None:
+        # Rotten flesh is only banked from a safe, close fight, so a zombie past melee reach is
+        # not a source the run will walk to; with no animal loaded either, the requirement drops.
+        g = self._complete(mobs=[("zombie", "hostile", 1, 40.0)],
                            inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
                                       "cobblestone": 64, "cooked_beef": 8})
         self.assertTrue(tech_tree_complete(g))

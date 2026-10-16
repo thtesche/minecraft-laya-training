@@ -328,7 +328,7 @@ a **food acquisition** that fits "actually survive".
   back to `base` in the `finally`. `mlaya.cli policy [--apply] [--preset base|hunt]`.
 - **Eating** in `actions.py`: `hunt_food` acquires the **minimum stock** (`FOOD_RESERVE = 16`;
   nether goal 64, see lull) — next passive mob (`FOOD_MOBS = cow/pig/chicken/sheep/rabbit`) **within
-  a daylight-dependent range** (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`:
+  a daylight-dependent range** (`FOOD_HUNT_RANGE_DAY = 128` / `FOOD_HUNT_RANGE_NIGHT = 16`:
   at night only what is already near) or, as a fallback, a **single zombie** (`rotten_flesh`,
   gated: ≤2 hostiles ≤16 m and all zombies, health ≥18). `cook_food` fries raw meat
   (`smelt_item` in the carried furnace). `hunt_food` is offered as long as the stock is < `_food_goal`
@@ -349,9 +349,16 @@ a **food acquisition** that fits "actually survive".
   costs the whole inventory; a shulker of fried meat is only one inventory slot, so cheap.
   **The reserve is part of the auto-stop:** `tech_tree_complete` now requires `_food_reserve_met`
   (the 64 units from `_food_goal`), and the requirement drops — like a prep step — as soon as
-  no mob and no zombie is **in reach** (`_food_source_in_reach`: passive mob in
-  day-hunt range 64 m or zombie ≤ 24 m), so that a world without food never
-  blocks the run. Live, run13 would otherwise have ended with only 4× `cooked_mutton`.
+  no food animal is in the **loaded area** the server scans and no zombie is within melee
+  reach (`_food_source_in_reach`: any scanned passive mob, or zombie ≤ 24 m), so that a world
+  without food never blocks the run. Loaded-area, not walking-reach: the older bound used the
+  daylight hunt range from wherever the bot happened to stand, so a hole in the ground read a
+  food-rich world as "no food ever" and let the gate drop there (live, run19: the run stopped at
+  the goal after one tick with the pack at 18 of 64, the animal 33 m away but no base within the
+  reach). The day hunt range widened to 128 m so the gate and the hunt agree — an animal the
+  gate can see is one the hunt will walk to — and the lull's fallback `explore`s instead of
+  holding at the base while the reserve is still open. Live, run13 would otherwise have ended
+  with only 4× `cooked_mutton`.
   `cook_food` may work with **any** fuel in the lull (`_furnace_fuel`: coal/charcoal
   first, else planks/logs — one log fries exactly one item). It eats by **saturation**
   (`FOOD_SATURATION`): fried meat before bread before raw meat before `rotten_flesh`. Golden
@@ -637,11 +644,14 @@ just one level deeper.
   once the full diamond kit stands — diamond pickaxe + diamond sword, **all four**
   diamond armour pieces **worn** (`_worn`, not just in the inventory — otherwise the run would end
   before `equip_armor` takes effect) and the shield in the off-hand — **and** the overworld goal stands: the
-  portal is lit, a bed placed beside it, **no Nether prep step left open**
+  portal is lit, a bed placed **at the base** beside it (`_bed_placed` *and* `not _bed_off_base`: a
+  leftover bed merely *loaded* satisfies the first clause, so the run keeps working until
+  `take_bed`/`place_bed` bring it home), **no Nether prep step left open**
   (`_all_nether_prep_steps`: bow+arrows, gold helmet, deep cobblestone) **and the food reserve
   banked** (`_food_reserve_met`, the 64 units from `_food_goal`). Prep steps like the
   food demand drop away as soon as their raw material is unreachable (no spawn, no ore, no
-  animal/zombie in reach), so an unreachable item never blocks the run. `[loop]
+  food animal in the loaded area and no zombie in melee reach), so an unreachable item never
+  blocks the run. `[loop]
   stop_when_complete` (default `true`) lets `verify`/`defer` end the run with `stop: "goal"`
   instead of working through the iteration budget; otherwise it ends with `stop: "limit"`.
   `run --ignore-goal` disables the stop condition for a run (dataset collection beyond the
@@ -806,7 +816,10 @@ just one level deeper.
   exactly the leftover `take_bed` then had to fetch. A bed standing **away from the base** — the
   respawn bed of an earlier base, or of an earlier run in the same world — is taken up in the lull
   (`take_bed` → `collect_block {block_name: "white_bed", count: 1}`, only once the portal is lit)
-  and laid again at the base by `place_bed`, so the gate bed ends up where it belongs. Live, run18:
+  and laid again at the base by `place_bed`, so the gate bed ends up where it belongs. The
+  auto-stop insists on it too: `tech_tree_complete` adds `not _bed_off_base`, so the run cannot
+  end with the gate bed still sitting in an earlier run's shaft (live, run19: the goal read
+  complete with the run17 bed at y=55). Live, run18:
   the run17 bed sat at y=55 inside the shaft the new surface base dug for gold, and every
   `collect_block` stumbled on its half-block top (feet 55.56, no settled arrival) while `mine_gold`
   re-dug the same shaft.

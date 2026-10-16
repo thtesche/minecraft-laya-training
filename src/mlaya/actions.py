@@ -250,8 +250,11 @@ NETHER_COBBLE = 64
 # Food hunting is the one gather that walks to a moving target, so it is bounded by
 # daylight: a long walk to a distant animal is cheap in daylight, but after dark the bot
 # only tops up from animals already at hand. The old unguarded hunt roamed ~180 m at
-# night and was killed twice, losing a fresh iron pickaxe.
-FOOD_HUNT_RANGE_DAY = 64.0
+# night and was killed twice, losing a fresh iron pickaxe. The day reach is wide (128) so
+# it covers what the loaded-area food gate (`_food_source_in_reach`) can see: at 64 the two
+# disagreed, and a base whose nearest animal sat 65-134 m off held the completion gate open
+# with no hunt the bot would actually walk to (live, run19: `wait` at the base forever).
+FOOD_HUNT_RANGE_DAY = 128.0
 FOOD_HUNT_RANGE_NIGHT = 16.0
 # A zombie hunted for its rotten flesh has to be this close (shared with `_safe_zombie_hunt`,
 # which also uses it as the source test for the completion gate).
@@ -671,17 +674,25 @@ def _food_goal(gs: GameState) -> int:
 
 
 def _food_source_in_reach(gs: GameState) -> bool:
-    """Whether food the daylight hunt could actually walk to is present: a passive animal within
-    the daylight reach, or a zombie within melee reach for its rotten flesh.
+    """Whether a food source the run could still fetch stands in the loaded area: a passive animal
+    anywhere the server's nearby scan reports, or a zombie within melee reach for its rotten flesh.
 
-    Distance-bounded, unlike the Nether prep steps' "is it loaded anywhere?" test, because a hunt
-    must *close the distance* while a mine can tunnel to a merely loaded deposit: keying the
-    completion gate off a mob anywhere could hold the run open with nothing it can do (the lull
-    then offers only `wait`, and the run stalls). The *daylight* range is used regardless of the
-    current phase, so the gate does not read the shorter night range as "no source ever": the run
-    sleeps the night and hunts by day, and that `sleep` is what keeps the gate from idling.
+    Loaded-area, not walking-reach. The older test bounded the animal search by the daylight hunt
+    range measured from wherever the bot happened to stand, so a hole in the ground read a
+    food-rich world as "no food ever" and let the completion gate drop the reserve there: live,
+    run19 ended `{"iterations": 1, "stop": "goal"}` because `go_home` had carried the bot 62
+    blocks to a spot with no animal within the daylight reach, stopping the run with the pack at
+    18 of the 64 the gate asks for (and the leftover bed still underground). The scan the server
+    already returns *is* the loaded area, so asking it whether any animal is there answers the
+    question the gate means - "is there food in this world to fetch?" - independent of the hole
+    the bot stands in. A listed animal the daylight hunt cannot path to holds the gate until the
+    run's iteration limit instead of ending it on a half-stocked pack, which is the safer failure
+    for a run whose whole point is the full kit.
+
+    The zombie test stays melee-bounded: rotten flesh is only banked from a safe, close fight
+    (`_safe_zombie_hunt`), so a distant zombie is not a source the run will walk to.
     """
-    return (_nearest_food_mob(gs, FOOD_HUNT_RANGE_DAY) is not None
+    return (_nearest_food_mob(gs) is not None
             or (gs.mob_nearest("zombie") or float("inf")) <= ZOMBIE_HUNT_RANGE)
 
 
@@ -1175,19 +1186,22 @@ def tech_tree_complete(gs: GameState) -> bool:
     The prerequisite gear (`_gear_ready`): a diamond pickaxe, a diamond sword, all four diamond
     armour pieces actually *worn* - not merely carried, since it is `equip_armor` that puts them
     on - and the shield in the off-hand. Then the overworld -> Nether gate itself: the portal is
-    lit and a bed stands beside it to respawn at (the bed is only laid at night, so `sleep`
-    actually ran and the respawn point is set). Then the Nether prep must be finished: the run
-    keeps stocking the lull (`_all_nether_prep_steps`) until a bow with arrows, a gold helmet and
-    a deep cobblestone stack are banked, *and* the food reserve is banked (`_food_reserve_met`,
-    the deep `NETHER_FOOD_RESERVE`), so the trip starts prepared rather than stopping the moment
-    the bed is laid. A prep step whose material has no source simply drops out of the list - and
-    so does the food reserve once no source is in reach - so an unreachable item never leaves
-    the run unable to end.
+    lit and a bed stands *at the base* beside it to respawn at (a bed merely loaded is not
+    enough: a leftover bed from an earlier run satisfies `_bed_placed` while `_bed_off_base`
+    still reports it, so the run keeps working until `take_bed`/`place_bed` bring it home). The
+    bed is only laid at night, so `sleep` actually ran and the respawn point is set. Then the
+    Nether prep must be finished: the run keeps stocking the lull (`_all_nether_prep_steps`)
+    until a bow with arrows, a gold helmet and a deep cobblestone stack are banked, *and* the
+    food reserve is banked (`_food_reserve_met`, the deep `NETHER_FOOD_RESERVE`), so the trip
+    starts prepared rather than stopping the moment the bed is laid. A prep step whose material
+    has no source simply drops out of the list - and so does the food reserve once no source is
+    in the loaded area - so an unreachable item never leaves the run unable to end.
 
     Requiring the armour to be worn (not just present) is what lets the loop finish
     `equip_armor` first instead of stopping with the set still in the pack.
     """
     return (_gear_ready(gs) and _portal_lit(gs) and _bed_placed(gs)
+            and not _bed_off_base(gs)
             and not _all_nether_prep_steps(gs) and _food_reserve_met(gs))
 
 
@@ -1536,9 +1550,13 @@ def candidates(gs: GameState) -> list[str]:
     # The explicit last fallback when nothing productive is available. In the lull after the
     # portal is lit the only work left is the night bed, and wandering off just burned five
     # pathfinder timeouts and left the bot away from the base at dusk (live, from-zero run), so
-    # hold at the base and wait it out rather than explore.
+    # hold at the base and wait it out rather than explore. That hold is only right once the food
+    # reserve is banked: with it still open the bot must go and find the animal the gate sees
+    # (`_food_source_in_reach` reached past the hunt range), otherwise it waits at the base while
+    # the run can never end. `explore` roams until a source is inside the hunt reach.
     if not out:
-        out.append("wait" if _at_base(gs) and _nether_idle(gs) else "explore")
+        hold = _at_base(gs) and _nether_idle(gs) and _food_reserve_met(gs)
+        out.append("wait" if hold else "explore")
     return out
 
 
