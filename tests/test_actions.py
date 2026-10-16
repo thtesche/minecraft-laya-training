@@ -1168,6 +1168,13 @@ class NetherGateTest(unittest.TestCase):
         g.pos = (base[0] + 0.5, base[1] + 1.0, base[2] + 0.5)
         return g
 
+    def _lit_gate_with_bed(self, bed: BlockHit) -> GameState:
+        """Stand the geared bot at the base with the portal lit and one bed standing at `bed`."""
+        g = self._at_home(self._geared())
+        g.resources = {"nether_portal": self._blocks("nether_portal")["nether_portal"],
+                       "white_bed": [bed]}
+        return g
+
     def test_craft_bucket_from_three_iron(self) -> None:
         a = resolve("craft_bucket", self._geared(iron_ingot=3))
         self.assertEqual(a.tool, "craft_item")
@@ -1637,6 +1644,57 @@ class NetherGateTest(unittest.TestCase):
         g.pos = (-250.5, 64.0, -120.5)
         g.phase = "night"
         self.assertIn("sleep", candidates(g))
+
+    def test_sleep_waits_at_the_base_once_the_portal_is_lit(self) -> None:
+        # Post-portal the gate bed belongs at the base: sleeping off-base would lay a carried
+        # bed wherever the bot happened to be and pin the respawn point away from the gate -
+        # exactly the leftover `take_bed` then had to fetch back.
+        g = self._geared(white_bed=1)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)
+        g.phase = "night"
+        g.resources = self._blocks("nether_portal")
+        self.assertNotIn("sleep", candidates(g))
+        self.assertIsNone(resolve("sleep", g))
+
+    def test_take_bed_when_it_stands_away_from_the_base(self) -> None:
+        # A bed left below the base is a leftover from an earlier base: it is taken up so the
+        # base can lay it beside the portal. Live, run18: the run17 bed sat at y=55 inside the
+        # shaft the surface base dug for gold, and `mine_gold` kept stumbling on its half-block
+        # top (feet 55.56, no settled arrival) instead of reaching the ore.
+        g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -196, -57, -98, 11.0))
+        self.assertIn("take_bed", candidates(g))
+        a = resolve("take_bed", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "white_bed", "count": 1})
+
+    def test_take_bed_is_not_offered_when_the_bed_stands_at_the_base(self) -> None:
+        g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -196, -46, -98, 2.0))
+        self.assertNotIn("take_bed", candidates(g))
+        self.assertIsNone(resolve("take_bed", g))
+
+    def test_take_bed_leaves_a_bed_laid_at_the_base_alone(self) -> None:
+        # `_at_base` allows the bot's feet `BASE_RADIUS + 1` above the anchor, and the bed
+        # `place_bed` lays sits where the bot stood. A tighter box would fetch it straight back
+        # and the two steps would trade the bed every tick.
+        g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -197, -42, -98, 3.0))
+        self.assertNotIn("take_bed", candidates(g))
+
+    def test_take_bed_waits_until_the_portal_is_lit(self) -> None:
+        g = self._geared()
+        g.base = (-197, -47, -98)
+        g.pos = (-196.5, -46.0, -98.5)
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -196, -57, -98, 11.0)]}
+        self.assertNotIn("take_bed", candidates(g))
+        self.assertIsNone(resolve("take_bed", g))
+
+    def test_take_bed_waits_for_a_carried_bed_to_be_laid(self) -> None:
+        # A bed already carried belongs at the base through `place_bed`; the standing leftover
+        # is not fetched on top of it, which would leave two beds and re-offer every tick.
+        g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -196, -57, -98, 11.0))
+        g.inventory["white_bed"] = 1
+        self.assertNotIn("take_bed", candidates(g))
+        self.assertIsNone(resolve("take_bed", g))
 
 
 class HomeBaseTest(unittest.TestCase):

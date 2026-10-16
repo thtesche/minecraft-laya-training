@@ -73,6 +73,7 @@ CRITERIA: dict[str, str] = {
     "build_portal": "build the nether portal frame from the ten banked obsidian and four cobblestone corners",
     "light_portal": "strike the built portal frame with the carried flint and steel to light it",
     "place_bed": "place the carried bed beside the lit portal so the respawn point sits at the gate",
+    "take_bed": "take the standing respawn bed back up when it lies away from the base, so it can be laid beside the portal",
     "drop_junk": "drop low-value blocks from the full pack so a gathering action has room again",
 }
 
@@ -627,6 +628,32 @@ def _portal_lit(gs: GameState) -> bool:
 def _bed_placed(gs: GameState) -> bool:
     """A bed block stands nearby - the bed the run places next to the portal."""
     return gs.resource_distance("white_bed") is not None
+
+
+def _bed_off_base(gs: GameState) -> bool:
+    """A bed stands nearby, but not at the base.
+
+    The base bed belongs beside the lit portal, so a bed lying anywhere else is a leftover - the
+    respawn bed of an earlier base, or of an earlier run in the same world, that the new base did
+    not bring along. Live, run18: the run17 bed sat at y=55 inside the shaft the surface base dug
+    for gold, and every `collect_block` stumbled on its half-block top (feet 55.56, no settled
+    arrival) while `mine_gold` re-dug the same shaft. `take_bed` picks it up and `place_bed` lays
+    it at the base again.
+
+    The box is the one `_at_base` allows the bot itself, so a bed `place_bed` laid where the bot
+    stood reads as at the base; a tighter box would make place and take trade the bed every tick.
+    The shaft bed is clear of it (live, run18: base y=64, bed y=55, ten below the feet level).
+    """
+    if gs.base is None:
+        return False
+    hits = gs.resources.get("white_bed") or []
+    if not hits:
+        return False
+    bx, by, bz = gs.base
+    return not any(abs(hit.pos[0] - (bx + 0.5)) <= BASE_RADIUS
+                   and abs(hit.pos[1] - (by + 1)) <= BASE_RADIUS + 1
+                   and abs(hit.pos[2] - (bz + 0.5)) <= BASE_RADIUS
+                   for hit in hits)
 
 
 def _nether_idle(gs: GameState) -> bool:
@@ -1293,15 +1320,25 @@ def candidates(gs: GameState) -> list[str]:
     string = inv.get("string", 0)
     bed = _bed_available(gs)
     # Night + a bed (carried or already standing): sleeping skips to morning and pins the
-    # respawn point. But *not* at the home base before the portal is lit: the server lays the
-    # bed "beside the bot", and at the base that spot is the portal's own interior, which the
-    # later frame build then cannot clear (`remove_wrong_blocks` answers "movement policy
-    # prohibits breaking this block" for a bed). Live, the bed landed in the opening and
-    # `light_portal` answered `[PORTAL_NO_FRAME]` on every tick. `place_bed` owns the base bed
-    # and only runs once the portal is lit.
+    # respawn point. `_at_base` is required exactly when the portal is lit. Before that, *not*
+    # at the home base: the server lays the bed "beside the bot", and at the base that spot is
+    # the portal's own interior, which the later frame build then cannot clear
+    # (`remove_wrong_blocks` answers "movement policy prohibits breaking this block" for a bed).
+    # Live, the bed landed in the opening and `light_portal` answered `[PORTAL_NO_FRAME]` on
+    # every tick. After the portal is lit the gate bed belongs at the base, so sleeping anywhere
+    # else would pin the respawn point away from the gate - and a carried bed laid wherever the
+    # bot happened to be is exactly the leftover `take_bed` then had to fetch back.
+    # `place_bed` owns the base bed and only runs once the portal is lit.
     if (gs.phase == "night" and not gs.sleeping and bed and _overworld(gs)
-            and not (_at_base(gs) and not _portal_lit(gs))):
+            and _at_base(gs) == _portal_lit(gs)):
         out.append("sleep")
+
+    # A bed standing away from the base is a leftover the new base did not bring along. Take it
+    # up in the lull and lay it again beside the portal: the respawn point belongs at the gate,
+    # and a bed left in the base's own dig shaft is what `mine_gold` keeps stumbling on. Offered
+    # with the prep, so the bed is cleared before the dig starts rather than mid-tunnel.
+    if _nether_idle(gs) and _overworld(gs) and not _has_bed(inv) and _bed_off_base(gs):
+        out.append("take_bed")
 
     # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
     need_wood = (tier == 0 or not table
@@ -1772,6 +1809,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         return Action(label, "activate_portal", {"x": hit.x, "y": hit.y, "z": hit.z},
                       "light the built portal frame with the carried flint and steel")
+    if label == "take_bed":
+        if (_has_bed(inv) or not _nether_idle(gs) or not _overworld(gs)
+                or not _bed_off_base(gs)):
+            return None
+        return Action(label, "collect_block",
+                      {"block_name": "white_bed", "count": 1},
+                      "take the standing respawn bed back up so it can be laid at the base")
     if label == "place_bed":
         if (not _has_bed(inv) or not _portal_lit(gs) or _bed_placed(gs)
                 or not _at_base(gs) or gs.phase != "night" or not _overworld(gs)):
@@ -1780,7 +1824,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "place the carried bed beside the lit portal and set the respawn point")
     if label == "sleep":
         if (gs.phase != "night" or gs.sleeping or not _bed_available(gs)
-                or not _overworld(gs) or (_at_base(gs) and not _portal_lit(gs))):
+                or not _overworld(gs) or (_at_base(gs) != _portal_lit(gs))):
             return None
         return Action(label, "sleep", {},
                       "sleep through the night and set the respawn point")

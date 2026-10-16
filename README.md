@@ -178,7 +178,11 @@ placed **only at night** — only sleeping sets the respawn point. At the
 base the generic night sleep is **suppressed** in front of the lit portal: the server places
 the bed "next to the bot", and there that would be the portal interior; the frame build cannot
 remove a bed, so live `light_portal` hung at `[PORTAL_NO_FRAME]` every tick. The base bed
-is therefore placed by `place_bed` after the portal burns.
+is therefore placed by `place_bed` after the portal burns. From that point `sleep` is also
+restricted to the base, and a bed found standing **away** from it — a leftover from an earlier base
+or an earlier run — is taken up (`take_bed`) and laid again at the base, so the gate bed does not
+sit in the base's own dig shafts (live, run18: the run17 bed at y=55 tripped every `mine_gold`
+tunnel with a "no observed settled arrival" on its half-block top).
 Surplus is handled by a **chest** (`craft_chest` from 8 planks → `place_chest` → `stow_surplus`) from
 33/36 slots; `drop_junk` only throws as a **last resort** when there is no chest or it is full. An
 `[INVENTORY_FULL]` refusal triggers a relief stage of its own (`inventory_relief`). Base and chest

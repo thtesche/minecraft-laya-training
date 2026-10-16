@@ -800,7 +800,16 @@ just one level deeper.
   clear a bed there (`remove_wrong_blocks` answers "movement policy prohibits breaking this block"). Live
   the bed landed in the opening and `light_portal` answered in every tick with
   `[PORTAL_NO_FRAME]`. The base bed is `place_bed`'s job and waits for the *lit*
-  portal; away from the base the night sleep stays unchanged.
+  portal; away from the base the night sleep stays unchanged **until the portal burns**. After that
+  `sleep` is restricted to the base (`_at_base` *iff* `_portal_lit`): anywhere else it would pin the
+  respawn point away from the gate, and a carried bed laid wherever the bot happened to stand is
+  exactly the leftover `take_bed` then had to fetch. A bed standing **away from the base** — the
+  respawn bed of an earlier base, or of an earlier run in the same world — is taken up in the lull
+  (`take_bed` → `collect_block {block_name: "white_bed", count: 1}`, only once the portal is lit)
+  and laid again at the base by `place_bed`, so the gate bed ends up where it belongs. Live, run18:
+  the run17 bed sat at y=55 inside the shaft the new surface base dug for gold, and every
+  `collect_block` stumbled on its half-block top (feet 55.56, no settled arrival) while `mine_gold`
+  re-dug the same shaft.
   A **chest** (8 planks, 3×3) holds surplus: `craft_chest` → `place_chest` (coordinates are
   remembered) → `stow_surplus` (`use_container deposit`) at ≥33/36 slots; `drop_junk` is only the
   stopgap without a chest. An `[INVENTORY_FULL]` refusal triggers its own relief level
