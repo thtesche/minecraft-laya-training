@@ -2092,8 +2092,16 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         items += _hoard_surplus(inv)
         if not items:
             return None
+        in_hole = not gs.drop_hole_blocked
+        # When dropping at the base fails repeatedly, avoid digging a pit that cannot be made;
+        # just drop on the ground so the blocked gather can proceed.
+        try:
+            if getattr(gs, "drop_hole_blocked", False):
+                in_hole = False
+        except Exception:
+            pass
         return Action(label, "drop_item",
-                      {"items": items[:12], "in_a_hole": not gs.drop_hole_blocked},
+                      {"items": items[:12], "in_a_hole": in_hole},
                       "drop low-value blocks so the full pack has room again")
     if label == "wait":
         # Hold at the base: navigate to the anchor, which is at most a step away, so the tick
