@@ -1079,6 +1079,29 @@ def _portal_frame_started(gs: GameState) -> bool:
     return False
 
 
+def _frame_started_at_base(gs: GameState) -> bool:
+    """Whether our own frame already stands in the base's portal plane.
+
+    `_portal_frame_started` answers against the plane the *base* pins; with no base yet that
+    plane is only the bot's own feet, where the answer means nothing, so it stays false here.
+    """
+    return gs.base is not None and _portal_frame_started(gs)
+
+
+def _frame_needs_obsidian(gs: GameState, inv: dict) -> bool:
+    """Whether the obsidian chain still wants to bank blocks for a frame that is not standing.
+
+    The chain used to close the moment `flint_and_steel` existed (`not has_fs`), on the
+    assumption that the igniter is only ever crafted *after* the ten blocks are banked. A
+    restart breaks that: an igniter carried back into a world whose frame is short -- or whose
+    base was re-anchored away from the obsidian already placed -- left `mine_obsidian` switched
+    off for the rest of the run, with no way to raise the frame. The frame plane itself tells
+    "our frame is up" apart from "we still owe obsidian" where the igniter cannot, so the chain
+    gates on that instead: mine while no frame stands at the base and the pack is short.
+    """
+    return not _frame_started_at_base(gs) and inv.get("obsidian", 0) < PORTAL_OBSIDIAN
+
+
 def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:
     """The next diamond thing worth building, and what it costs in diamonds.
 
@@ -1373,10 +1396,12 @@ def candidates(gs: GameState) -> list[str]:
 
     # --- Overworld -> Nether gate ---
     # Gated on the whole diamond kit (`_gear_ready`) so a fresh run finishes the tier first.
-    # The order banks the obsidian *before* the flint and steel is crafted: that craft is the
-    # latch that stops `mine_obsidian` re-mining after `build_portal` has spent the ten blocks.
-    # Without it there is no way to tell our fresh frame from the natural obsidian that lines
-    # the very lava the bot walks to, so the carried count alone cannot decide it.
+    # The obsidian step stands while no frame has been raised at the base: the obsidian already
+    # in the frame plane is the latch that stops `mine_obsidian` re-mining after `build_portal`
+    # has spent the ten blocks. It is the *frame* that tells our fresh build apart from the
+    # natural obsidian that lines the very lava the bot walks to, so the carried count alone
+    # never has to decide it -- and a pack left short by a restart can still mine what it needs
+    # even with the igniter already in hand.
     # `build_portal` and `place_bed` run only at the base (`_at_base`), so the gate stands at
     # one fixed spot the respawn point can be pinned to.
     if _gear_ready(gs) and not _portal_lit(gs):
@@ -1386,15 +1411,14 @@ def candidates(gs: GameState) -> list[str]:
         has_fs = _has(inv, FLINT_STEEL_ITEM)
         obsidian = inv.get("obsidian", 0)
         # The bucket is only ever for *making* obsidian: `mine_obsidian` pours the carried water
-        # onto lava and mines what forms, scooping a fresh bucket of water between blocks. Once
-        # the ten blocks are banked the water is finished, and offering the fill anyway strands
-        # the run: at a base whose water column sits out of reach the step fails
-        # (`[BUCKET_FAILED]`), the base steps send the bot home, and the two trade it between the
-        # base and the water for the rest of the run -- live, run9 spent 45 iterations on
-        # fill_bucket/gohome after the obsidian was banked, the portal ready to build throughout.
-        # Gate the chain on the obsidian still missing, exactly as `mine_obsidian` is gated, so
-        # the water request and the step that spends it can never drift apart.
-        if obsidian < PORTAL_OBSIDIAN and not has_fs:
+        # onto lava and mines what forms, scooping a fresh bucket of water between blocks. The
+        # water is wanted exactly while a frame is still to be banked, so the chain (and the
+        # step that spends the water) closes together: at a base whose water column sits out of
+        # reach, offering the fill anyway strands the run -- the step fails (`[BUCKET_FAILED]`),
+        # the base steps send the bot home, and the two trade it between the base and the water
+        # for the rest of the run. Live, run9 spent 45 iterations on fill_bucket/gohome after the
+        # obsidian was banked, the portal ready to build throughout.
+        if _frame_needs_obsidian(gs, inv):
             if not has_bucket and not has_water and table and iron >= BUCKET_IRON:
                 out.append("craft_bucket")
             elif has_bucket and not has_water:
@@ -1405,7 +1429,7 @@ def candidates(gs: GameState) -> list[str]:
         # source can actually be poured on, or while freshly formed obsidian lies within reach
         # (to mine it). The reach test on the mine side keeps the dig shallow - the natural
         # deposit under the same lava caves is tens of blocks down and never comes that close.
-        if (obsidian < PORTAL_OBSIDIAN and not has_fs and _can_mine(gs, "obsidian")
+        if (_frame_needs_obsidian(gs, inv) and _can_mine(gs, "obsidian")
                 and ((has_water and _lava_pour_target(gs) is not None)
                      or _obsidian_within_reach(gs))):
             out.append("mine_obsidian")
@@ -1671,7 +1695,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "use_bucket", {"action": "fill", "liquid": "water"},
                       "fill the carried bucket with water to pour onto lava")
     if label == "mine_obsidian":
-        if (not _can_mine(gs, "obsidian") or _has(inv, FLINT_STEEL_ITEM)
+        if (not _can_mine(gs, "obsidian") or _frame_started_at_base(gs)
                 or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN):
             return None
         # Phase 1: obsidian already lies within reach (what the last pour formed) - mine it.

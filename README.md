@@ -173,8 +173,7 @@ last resort). The first decisions are left to the goal: the server navigates a
 swim leg itself, and a crossing the bot aborts in the water was otherwise pulled straight back
 (**live run15**: 155 rescues against 30 diamond digs, 157 breath aborts,
 0 diamonds). A **wedged** bot (server stop `repeated_movement_failure`)
-counts as blocked surroundings, so the unblock ladder kicks in instead of an endless loop. The key to the chain remains the **obsidian latch**: obsidian must be banked before
-the flint & steel, so that `mine_obsidian` does not dig again after the build (which yields the 10 blocks). The bed is
+counts as blocked surroundings, so the unblock ladder kicks in instead of an endless loop. The key to the chain remains the **obsidian latch**, but it is now the **frame** rather than the igniter: `mine_obsidian` stands while no obsidian has been raised in the base's portal plane (`_frame_started_at_base`), so it does not dig again after the build (which yields the 10 blocks) — and, unlike the old `not has_fs` latch, it still mines when a restart carries the flint & steel into a world whose pack is short or whose base was re-anchored away from the old frame. The bed is
 placed **only at night** — only sleeping sets the respawn point. At the
 base the generic night sleep is **suppressed** in front of the lit portal: the server places
 the bed "next to the bot", and there that would be the portal interior; the frame build cannot

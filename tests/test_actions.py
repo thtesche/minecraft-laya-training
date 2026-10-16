@@ -1124,9 +1124,10 @@ class NetherGateTest(unittest.TestCase):
     """The overworld -> Nether gate: a bucket of water makes the obsidian, gravel supplies the
     flint, the flint and steel lights the frame, and a bed is placed beside the lit portal.
 
-    The chain is gated on the whole diamond kit (`_gear_ready`) and ordered so the obsidian is
-    banked before the flint and steel is crafted - that craft is the latch that stops
-    `mine_obsidian` from re-mining after `build_portal` has spent the ten blocks.
+    The chain is gated on the whole diamond kit (`_gear_ready`). The obsidian step stands while
+    no frame has been raised at the base (`_frame_started_at_base`): the obsidian already placed
+    is the latch that stops `mine_obsidian` re-mining after `build_portal` has spent the ten
+    blocks, and it keeps working when the pack is short and the igniter is already carried.
     """
 
     @staticmethod
@@ -1227,6 +1228,26 @@ class NetherGateTest(unittest.TestCase):
         g = self._at_home(self._geared(bucket=1, obsidian=10,
                                        cobblestone=4, flint_and_steel=1))
         self.assertNotIn("fill_bucket", candidates(g))
+        self.assertIn("build_portal", candidates(g))
+
+    def test_fill_bucket_returns_with_flint_and_steel_while_the_frame_is_short(self) -> None:
+        # A restart can carry the igniter into a world whose frame is not up (a short pack, or a
+        # base re-anchored away from the obsidian already placed). The igniter is not the latch
+        # any more: while no frame stands at the base the water chain reopens, so the missing
+        # obsidian can still be made.
+        g = self._geared(bucket=1, obsidian=4, flint_and_steel=1)
+        self.assertIn("fill_bucket", candidates(g))
+
+    def test_no_fill_or_mine_once_the_frame_stands(self) -> None:
+        # The frame itself is the latch: an obsidian block in the base's plane means the build
+        # has begun, so the water and the mine step stand down and `build_portal` resumes with
+        # the blocks still carried.
+        g = self._at_home(self._geared(bucket=1, obsidian=4,
+                                       cobblestone=4, flint_and_steel=1))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        self.assertNotIn("fill_bucket", candidates(g))
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
         self.assertIn("build_portal", candidates(g))
 
     def test_mine_obsidian_pours_water_onto_lava(self) -> None:
@@ -1395,6 +1416,27 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.tool, "collect_block")
         self.assertEqual(a.args, {"block_name": "obsidian", "count": 6})
 
+    def test_mine_obsidian_returns_with_flint_and_steel_while_the_frame_is_short(self) -> None:
+        # Live, run17: an igniter carried into a world whose frame was never finished left
+        # `mine_obsidian` switched off for good -- the obsidian chain keyed on the igniter, not
+        # on the frame. With six blocks parked within reach (a partial frame the bot still
+        # stands beside) it now mines them back and banks the ten.
+        g = self._geared(obsidian=4, flint_and_steel=1)
+        g.pos = (-270.0, 64.0, -56.0)
+        g.resources = self._blocks("obsidian")
+        self.assertIn("mine_obsidian", candidates(g))
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "obsidian", "count": 6})
+
+    def test_mine_obsidian_still_needs_a_frame_or_a_way_to_make_one(self) -> None:
+        # The igniter only reopens the chain; it does not conjure a target. With no lava to pour
+        # on and no obsidian within reach the step stays out, exactly as for a fresh pack.
+        g = self._geared(obsidian=4, flint_and_steel=1)
+        g.pos = (0.0, 64.0, 0.0)
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
+
     def test_mine_obsidian_ignores_deep_natural_obsidian(self) -> None:
         # The natural deposit sits tens of blocks down under the same lava caves. With the bucket
         # full but no lava in range, the step refuses rather than tunnelling down to it (the live
@@ -1430,8 +1472,8 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.args, {"items": [{"item_name": "flint_and_steel"}]})
 
     def test_flint_and_steel_waits_for_the_obsidian(self) -> None:
-        # The craft is the latch that keeps the obsidian from being mined twice; it may only
-        # fire once the ten blocks are banked.
+        # The igniter belongs to a banked pack: it is crafted once the ten blocks exist, just
+        # before the build, rather than spending the iron early with nothing yet to light.
         g = self._geared(flint=1, iron_ingot=1)
         self.assertNotIn("craft_flint_and_steel", candidates(g))
         self.assertIsNone(resolve("craft_flint_and_steel", g))

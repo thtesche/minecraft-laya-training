@@ -665,10 +665,16 @@ just one level deeper.
   Natural obsidian lies only deep (`y ≈ -55`) under the same lava lakes and never falls under
   `OBSIDIAN_REACH`; digging down there is the **water trap** (see reflex below). The step is only
   offered when "bucket full **and** lava in reach" or "obsidian in reach".
-  **Obsidian latch (key design):** obsidian must be banked **before** flint and steel — exactly
-  this craft is the lock that keeps `mine_obsidian` from re-mining after the build (which yields
-  the 10 blocks), because a pure "resource present" check would otherwise
-  mask the fresh frame. So that a **partially** built frame does not run into a dead end,
+  **Obsidian latch (key design):** the chain closes on the **frame**, not the igniter. It used
+  to require obsidian to be banked **before** flint and steel — that craft was the lock that kept
+  `mine_obsidian` from re-mining after the build (which yields the 10 blocks), because a pure
+  "resource present" check would otherwise mask the fresh frame. But a restart can carry the
+  igniter into a world whose pack is short, and then the igniter latch locked the chain out
+  completely (live, run17: 4 obsidian + flint and steel, no way to raise the frame). So the lock
+  is now `_frame_started_at_base`: `mine_obsidian` (and the water chain that feeds it) stands
+  while **no** obsidian lies in the base's plane (`_portal_frame_started`, with a base set), which
+  tells our fresh frame apart from natural obsidian where the igniter count cannot. So that a
+  **partially** built frame does not run into a dead end,
   `_portal_frame_started` checks the fixed frame plane (`_portal_site` ± neighbours) for obsidian: if any lies
   there, `build_portal` may **continue** with the rest in the inventory (after a partial build the
   remaining quantity is exactly the still-missing cells), and `light_portal` only fires when obsidian really
@@ -740,7 +746,8 @@ just one level deeper.
   and is simply repeated. `Agent._scan_build_site` also now scans only at `_at_surface`,
   otherwise it would propose the cave floor itself. Live: `fill_bucket`↔`go_home` oscillated 45
   iterations, because the bucket was to be filled even after banking the obsidian (fix: the
-  bucket chain is bound to `obsidian < PORTAL_OBSIDIAN and not has_fs`, like `mine_obsidian`).
+  bucket chain is bound to the frame still missing, like `mine_obsidian` — see the obsidian
+  latch above).
   `establish_base` then runs onto a **level, free** spot: two
   `view_blocks box` reads around the bot — its level and four above — (`Agent._scan_build_site` →
   `perception.scan_ground` → `targets.flat_build_site`) demand a continuous floor row at the
@@ -823,9 +830,11 @@ just one level deeper.
   blind spot — the bed can stand far from the portal (here: underground at y=28), and `base`
   is per run only in memory. After a restart the bot stood 76 m from its own, already
   glowing portal, outside the 64 m resource reach, so `_portal_lit` was *false*:
-  `establish_base` would have built a second base (and thus a second portal) — which no longer
-  works, because with `flint_and_steel` in the pack `mine_obsidian` is locked and the obsidian is
-  used up. `Agent._adopt_portal_base` therefore reads — as long as `base` is still empty and the kit
+  `establish_base` would have built a second base (and thus a second portal). When this was
+  first found that was impossible only because `flint_and_steel` locked `mine_obsidian` and the
+  obsidian was used up; now that the obsidian latch keys on the frame instead (see above), a
+  duplicate portal is reachable rather than impossible, so adoption matters as much as ever.
+  `Agent._adopt_portal_base` reads — as long as `base` is still empty and the kit
   stands — once a `nether_portal` **beyond** `RESOURCE_RADIUS`
   (`perception.scan_portal_corner`/`parse_portal_corner`, deliberately *without* a radius filter) and sets
   `base = corner − (2, 1, 0)`: The opening corner inverts `_portal_site`, so that the frame plane
