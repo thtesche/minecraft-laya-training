@@ -29,6 +29,18 @@ PORTAL_SCAN_LIMIT = 12
 # Ground blocks probed for the M4 parameter layer: a `view_blocks` hit whose `above` is
 # `air` is real standing ground -- the reliable way to choose a `navigate` target.
 GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
+# The water rescue reads its own, wider cast. A pour on a cave lava pool leaves the bot standing
+# on cobblestone, and a `find` for the four soil names above never lists that ledge: live run20,
+# the escape cell sat 0.6 m away while the rescue aimed at grass 37 m off / 34 blocks up, so every
+# `navigate` stalled for 20 s and the loop burned ~15 ticks before it broke free by luck. Only the
+# rescue pool widens -- `gs.resources` keeps the soil-only view `explore` and `base_target` were
+# built on. `view_blocks find` takes eight names, so the cast is the soil names plus the four
+# rocks a miner digs through.
+RESCUE_ROCK_NAMES = ("stone", "cobblestone", "deepslate", "andesite")
+RESCUE_GROUND_NAMES = GROUND_NAMES + RESCUE_ROCK_NAMES
+# The cell above a rescue foothold may be enclosed: a bot in a cave stands under `cave_air`,
+# not open sky. `BlockHit.standable` stays open-sky only.
+RESCUE_ABOVE = ("air", "cave_air")
 # The blocks the Nether / home-base chain has to find precisely rather than read off a count.
 # `lava` is where the carried water bucket is poured: obsidian is *made*, not dug (tunnelling to
 # the natural y=-55 deposit is the live trap that left the bot swimming in its own flooded
@@ -174,6 +186,17 @@ class BlockHit:
     @property
     def standable(self) -> bool:
         return self.above == "air"
+
+    @property
+    def rescue_standable(self) -> bool:
+        """A foothold a swimmer can pull onto, roofed or not.
+
+        `standable` demands open sky (`above == "air"`), which `explore` and `base_target` rely
+        on. A bot that poured water on a cave lava pool stands under `cave_air`, so a rescue that
+        accepted only `air` saw no ledge beside it at all (live, run20). `targets.nearest_ground`
+        still takes such a roofed cell only at the bot's own waterline, never far above or below.
+        """
+        return self.above in RESCUE_ABOVE
 
     def as_dict(self) -> dict:
         return {"name": self.name, "x": self.x, "y": self.y, "z": self.z,
@@ -897,7 +920,7 @@ async def build(executor) -> GameState:
     gs.rescue_ground = {}
     for names, limit, why in ((RESOURCE_NAMES, RESOURCE_LIMIT,
                                "scan nearby resources for the next step"),
-                              (GROUND_NAMES, GROUND_LIMIT,
+                              (RESCUE_GROUND_NAMES, GROUND_LIMIT,
                                "scan standable ground for navigate targets"),
                               (CHAIN_NAMES, CHAIN_LIMIT,
                                "scan the lava to pour on and a chest at the base")):
@@ -908,12 +931,16 @@ async def build(executor) -> GameState:
                 why,
             )
             payload = coerce(blocks.data, blocks.text)
-            gs.resources.update(parse_resources(payload, limit))
-            if names == GROUND_NAMES:
+            parsed = parse_resources(payload, limit)
+            if names == RESCUE_GROUND_NAMES:
                 # The water rescue is the one read that wants the ground past 64 m (live,
                 # run19b: the shore sat at 65.1 m and the 64 m scan left only a cave floor
-                # to aim at). Same payload, wider bound, kept in its own pool.
+                # to aim at) and the rock a cave pour leaves underfoot (live, run20). Same
+                # payload, wider bound, kept in its own pool -- `resources` keeps the
+                # soil-only view `explore` and `base_target` were built on.
                 gs.rescue_ground = parse_resources(payload, limit, RESCUE_RADIUS)
+                parsed = {q: hits for q, hits in parsed.items() if q in GROUND_NAMES}
+            gs.resources.update(parsed)
             gs.resource_found.update(parse_resource_counts(payload))
         except Exception:
             pass

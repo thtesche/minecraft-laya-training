@@ -206,6 +206,32 @@ class NearestGroundTest(unittest.TestCase):
                                                        -117, 62, -88, 65.1)]}
         self.assertEqual(nearest_ground(gs).pos, (-117, 62, -88))
 
+    def test_a_roofed_ledge_at_the_bot_level_beats_far_open_grass(self) -> None:
+        # Live run20, to the block: the bot poured its water bucket on a cave lava pool and stood
+        # in the 1x1 water cell at (105,32,-18). The escape, cobblestone at (105,32,-17) with
+        # `cave_air` overhead, sat 0.3 m off -- but the ground scan asked for the four soil names
+        # only and `standable` demanded open sky, so the rescue aimed at grass 37 m off / 34 blocks
+        # up instead and the pathfinder stalled 20 s a tick, ~15 ticks running.
+        gs = GameState()
+        gs.pos = (105.5, 32.05, -17.3)
+        gs.rescue_ground = {
+            "cobblestone": [hit("cobblestone", "cobblestone", 105, 32, -17, 0.6,
+                                above="cave_air")],
+            "grass_block": [hit("grass_block", "grass_block", 94, 67, -24, 37.7)],
+        }
+        self.assertEqual(nearest_ground(gs).pos, (105, 32, -17))
+
+    def test_a_far_roofed_floor_does_not_beat_open_sky(self) -> None:
+        # The run19b dive must stay out: a roofed cell counts only at the waterline, so a cave
+        # floor far below the swimming body is still not a target a swim completes.
+        gs = GameState()
+        gs.pos = (0.0, 63.0, 0.0)
+        gs.rescue_ground = {
+            "stone": [hit("stone", "stone", 1, 40, 0, 23.0, above="cave_air")],
+            "grass_block": [hit("grass_block", "grass_block", 20, 63, 0, 20.0)],
+        }
+        self.assertEqual(nearest_ground(gs).pos, (20, 63, 0))
+
     def test_a_deep_floor_is_still_taken_without_a_shore(self) -> None:
         # The preference must not drop the target a world actually offers: with no waterline
         # cell the nearest any-level cell stands, exactly as before the band.

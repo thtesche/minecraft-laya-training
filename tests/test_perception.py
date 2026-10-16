@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.perception import (RESCUE_RADIUS, parse_box, parse_cells, parse_ground_height,
+from mlaya.perception import (GROUND_NAMES, RESCUE_GROUND_NAMES, RESCUE_RADIUS, BlockHit,
+                              parse_box, parse_cells, parse_ground_height,
                               parse_portal_corner, parse_resource_counts, parse_resources,
                               parse_status, parse_surface_height, portal_interior)
 
@@ -49,6 +50,34 @@ class ResourceParseRadiusTest(unittest.TestCase):
     def test_the_rescue_radius_keeps_the_shore(self) -> None:
         kept = parse_resources(self._DATA, radius=RESCUE_RADIUS)
         self.assertEqual([h.distance for h in kept["grass_block"]], [65.1, 66.0])
+
+
+class RescueGroundCastTest(unittest.TestCase):
+    """The water rescue reads its own, wider ground cast, and accepts a roofed foothold.
+
+    Live run20: the bot poured its water bucket on a cave lava pool and stood in the 1x1 water
+    cell at (105,32,-18). The escape cell, cobblestone at (105,32,-17) with `cave_air` overhead,
+    sat 0.3 m off -- but the ground scan asked for the four soil names only, and `standable`
+    demanded open sky, so `nearest_ground` aimed at grass 37 m off / 34 blocks up and the
+    pathfinder stalled 20 s a tick, ~15 ticks running.
+    """
+
+    def test_the_cast_keeps_the_four_soil_names(self) -> None:
+        self.assertTrue(set(GROUND_NAMES).issubset(RESCUE_GROUND_NAMES))
+
+    def test_the_cast_covers_the_rock_a_cave_pour_leaves(self) -> None:
+        for name in ("stone", "cobblestone"):
+            self.assertIn(name, RESCUE_GROUND_NAMES)
+
+    def test_the_cast_fits_one_view_blocks_find_call(self) -> None:
+        # `view_blocks find` takes at most eight names per call, and the ground scan is one call.
+        self.assertLessEqual(len(RESCUE_GROUND_NAMES), 8)
+
+    def test_a_roofed_cell_is_a_rescue_foothold_but_not_open_ground(self) -> None:
+        roofed = BlockHit(query="cobblestone", name="cobblestone", x=0, y=0, z=0,
+                          distance=0.3, above="cave_air")
+        self.assertTrue(roofed.rescue_standable)
+        self.assertFalse(roofed.standable)
 
 
 class PortalCornerParseTest(unittest.TestCase):

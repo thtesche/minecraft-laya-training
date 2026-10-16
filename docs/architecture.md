@@ -712,9 +712,17 @@ just one level deeper.
   bounded by, so the aim fell through to the base. `nearest_ground` now prefers a cell within
   `RESCUE_Y_BAND` of the bot's level out of a ground pool read to `RESCUE_RADIUS`
   (`perception`, `gs.rescue_ground`: the same `view_blocks` payload, a wider bound — every other
-  group keeps its 64 m read), with the nearest any-level cell as the fallback, so a world with only
-  a low dry ledge behaves as before. The homebase is **only the stopgap** when no ground lies within
-  scan range.
+  group keeps its 64 m read), with the nearest open-sky cell at any level as the fallback, so a
+  world with only a low dry ledge behaves as before. That pool also carries the rescue's **own,
+  wider cast** (`RESCUE_GROUND_NAMES`: the four soil names plus `stone`, `cobblestone`,
+  `deepslate`, `andesite` — the rock a cave pour leaves underfoot; `gs.resources` keeps the
+  soil-only view `explore` and `base_target` were built on), and a cell **at the bot's own
+  waterline may be roofed** (`cave_air` above, `BlockHit.rescue_standable`): a bot that pours its
+  bucket on a cave lava pool stands on cobblestone, and a rescue reading the soil names only saw no
+  ledge beside it at all — **live run20**, the escape cell sat 0.6 m off while the aim fell on
+  grass 37 m away / 34 blocks up, and every path stalled 20 s a tick for ~15 ticks. A roofed cell
+  is taken **only** at the waterline, so the far cave-floor dive stays out. The homebase is
+  **only the stopgap** when no ground lies within scan range.
   Reason: without ground under the feet the shared pathfinder breaks — a `collect_block` ran live
   370 blocks wide and a net 0.18 m — while `navigate` keeps working from the swimming posture.
   (**Live run8:** the bot drowned ten times or more because the reflex stubbornly navigated to the
