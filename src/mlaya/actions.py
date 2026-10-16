@@ -167,7 +167,8 @@ WATER_RESCUE_AFTER = 2
 # anything a recipe consumes: cobblestone (portal corners, furnace), planks/logs/sticks, wool,
 # string, coal, iron, flint, gravel, obsidian and food.
 JUNK_ITEMS = ("tuff", "calcite", "diorite", "andesite", "granite", "cobbled_deepslate",
-              "deepslate", "dirt", "leather", "bone", "raw_copper", "glow_ink_sac")
+              "deepslate", "dirt", "leather", "bone", "raw_copper", "glow_ink_sac",
+              "egg", "rotten_flesh", "mossy_stone_brick_slab", "sand", "dripstone_block")
 
 # Home base. The run keeps one anchor on the surface; the bed, the portal frame and the chest
 # all stand there, and the bot walks back to it to deploy them. Eight planks make a chest, which
@@ -261,6 +262,12 @@ FOOD_HUNT_RANGE_NIGHT = 16.0
 # which also uses it as the source test for the completion gate).
 ZOMBIE_HUNT_RANGE = 24.0
 # Quarries that fight back, so `collect_mob_drop` must run in the hunt stage.
+# Blocks carried far past any plausible need: the run keeps at most this many of each item type
+# when shedding surplus (general cap). The hoard keep is explicit for cobblestone so the banked
+# Nether stack (`NETHER_COBBLE`) is never dropped.
+HOARD_KEEP = {"cobblestone": NETHER_COBBLE}
+HOARD_CAP = 64
+
 HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
                  "witch", "blaze", "piglin", "zombified_piglin"}
 
@@ -821,6 +828,23 @@ def _junk_carried(inv: dict[str, int]) -> list[str]:
     return [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]
 
 
+def _hoard_surplus(inv: dict[str, int]) -> list[dict[str, int]]:
+    """Stacks carried far past their keep/cap; drop_item supports optional count."""
+    out: list[dict[str, int]] = []
+    for name, keep in HOARD_KEEP.items():
+        cnt = inv.get(name, 0)
+        if cnt > keep:
+            out.append({"item_name": name, "count": cnt - keep})
+    for name, cnt in inv.items():
+        if cnt > HOARD_CAP and name not in HOARD_KEEP:
+            out.append({"item_name": name, "count": cnt - HOARD_CAP})
+    return out
+
+
+def _sheddable(inv: dict[str, int]) -> bool:
+    return bool(_junk_carried(inv) or _hoard_surplus(inv))
+
+
 def _chest_ready(gs: GameState) -> bool:
     """A chest has been placed at the base (its coordinates are remembered)."""
     return gs.chest_pos is not None
@@ -1053,7 +1077,7 @@ def _base_steps_ready(gs: GameState) -> bool:
         return True
     if not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs):
         return True
-    if _chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _junk_carried(inv):
+    if _chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(inv):
         return True
     return False
 
@@ -1540,7 +1564,7 @@ def candidates(gs: GameState) -> list[str]:
             out.append("place_chest")
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
             out.append("craft_chest")
-    if gs.slots_used >= INVENTORY_NEAR_FULL and _junk_carried(inv):
+    if gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(inv):
         if gs.base is not None and _chest_ready(gs) and _at_base(gs):
             out.append("stow_surplus")
         elif gs.base is None or not _chest_ready(gs):
@@ -2056,6 +2080,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "place the carried furnace at the home base so cooking reuses it")
     if label == "stow_surplus":
         items = [{"item_name": n, "count": inv[n]} for n in _junk_carried(inv)]
+        items += _hoard_surplus(inv)
         if not _chest_ready(gs) or not items:
             return None
         cx, cy, cz = gs.chest_pos
@@ -2064,6 +2089,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "deposit the surplus blocks into the chest at the base")
     if label == "drop_junk":
         items = [{"item_name": n} for n in _junk_carried(inv)]
+        items += _hoard_surplus(inv)
         if not items:
             return None
         return Action(label, "drop_item",
