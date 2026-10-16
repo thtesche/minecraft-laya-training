@@ -5,7 +5,7 @@ import unittest
 
 from mlaya.actions import resolve
 from mlaya.perception import BlockHit, GameState
-from mlaya.targets import (Target, _compass, base_target, boxed_in, flat_build_site,
+from mlaya.targets import (Target, _compass, base_target, bed_frame_site, boxed_in, flat_build_site,
                            frontier_heading, ground_targets, nearest_ground)
 
 
@@ -302,6 +302,67 @@ class FlatBuildSiteTest(unittest.TestCase):
 
     def test_no_grid_no_site(self) -> None:
         self.assertIsNone(flat_build_site({}, (0.0, 64.0, 0.0)))
+
+
+class BedFrameSiteTest(unittest.TestCase):
+    """The site a standing bed anchors is checked before it becomes the home base.
+
+    `_adopt_homebase` re-anchors the base on a bed a restart left (or an early `sleep` laid), and
+    that path skips `establish_base`'s `flat_build_site` clearance. A bed on a cave floor then pins
+    the base where the frame cannot be raised (live, run17: the base sat nine blocks under the
+    surface and the frame's top and west cells stayed stone, so `light_portal` answered
+    `[PORTAL_NO_FRAME]` on 150 ticks).
+    """
+
+    @staticmethod
+    def _grid(bx_range, bz_range, ground: int = 63, top: int = 72) -> dict:
+        grid = {}
+        for x in bx_range:
+            for z in bz_range:
+                for y in range(ground + 1, top):
+                    grid[(x, y, z)] = "air"
+                grid[(x, ground, z)] = "grass_block"
+                grid[(x, ground - 1, z)] = "dirt"
+        return grid
+
+    @staticmethod
+    def _bed(x: int, y: int, z: int) -> BlockHit:
+        return BlockHit(query="white_bed", name="white_bed", x=x, y=y, z=z, distance=1.0)
+
+    def test_a_clear_surface_site_is_accepted_with_the_bed_on_the_anchor(self) -> None:
+        # base anchor = the bed's ground cell; the frame stands east of the bed, so the bed on the
+        # anchor column must not disqualify it.
+        grid = self._grid(range(0, 9), range(-2, 3))
+        self.assertTrue(bed_frame_site(grid, self._bed(0, 64, 0)))
+
+    def test_a_bed_underground_is_refused(self) -> None:
+        # The run17 shape: the ground is fine, but a stone roof sits right above the bed, so the
+        # frame's own cells would hold stone -- `cave_air`/stone overhead is not open sky.
+        grid = self._grid(range(0, 9), range(-2, 3))
+        for x in range(0, 9):
+            for z in range(-2, 3):
+                for y in range(64, 72):
+                    grid[(x, y, z)] = "stone"
+        self.assertFalse(bed_frame_site(grid, self._bed(0, 64, 0)))
+
+    def test_a_slope_beside_the_bed_is_refused(self) -> None:
+        grid = self._grid(range(0, 9), range(-2, 3))
+        grid[(4, 64, 0)] = "stone"  # a frame bottom-row cell the build server will not dig
+        self.assertFalse(bed_frame_site(grid, self._bed(0, 64, 0)))
+
+    def test_a_hole_under_the_frame_row_is_refused(self) -> None:
+        grid = self._grid(range(0, 9), range(-2, 3))
+        grid[(2, 62, 0)] = "air"  # nothing for the bottom-row obsidian to sit on
+        self.assertFalse(bed_frame_site(grid, self._bed(0, 64, 0)))
+
+    def test_a_bed_reaching_into_the_frame_interior_is_refused(self) -> None:
+        # A bed laid north-south puts its head in the frame's own column; that cell is not open sky.
+        grid = self._grid(range(0, 9), range(-2, 3))
+        grid[(1, 64, 0)] = "white_bed"
+        self.assertFalse(bed_frame_site(grid, self._bed(0, 64, 0)))
+
+    def test_no_grid_is_refused(self) -> None:
+        self.assertFalse(bed_frame_site({}, self._bed(0, 64, 0)))
 
 
 if __name__ == "__main__":

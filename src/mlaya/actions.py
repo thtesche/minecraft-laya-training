@@ -1464,13 +1464,13 @@ def candidates(gs: GameState) -> list[str]:
     # `_nether_prep_steps`); keep the first occurrence so the priority order is stable.
     out = list(dict.fromkeys(out))
 
-    # A label the loop is withholding (`Agent._track_stuck`): it kept answering the identical
+    # The labels the loop is withholding (`Agent._track_stuck`): each kept answering the identical
     # refusal without progress, so it is taken out of the offer for a cooling-off window and the
     # fallback below gets its turn. Without this a single-candidate step the server refuses
     # forever owns every tick and the fallback never fires (live, run16: `mine_obsidian` ->
     # `[NAVIGATION_TARGET_UNSUPPORTED]` on 215 ticks as the only candidate).
-    if gs.stuck_label:
-        out = [label for label in out if label != gs.stuck_label]
+    if gs.stuck_labels:
+        out = [label for label in out if label not in gs.stuck_labels]
 
     # The explicit last fallback when nothing productive is available. In the lull after the
     # portal is lit the only work left is the night bed, and wandering off just burned five

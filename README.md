@@ -185,7 +185,10 @@ Surplus is handled by a **chest** (`craft_chest` from 8 planks → `place_chest`
 `[INVENTORY_FULL]` refusal triggers a relief stage of its own (`inventory_relief`). Base and chest
 count **per run** and are injected into every `GameState` by the loop; if a
 bed (and a chest) is already in reach at start, they are adopted so that a restart at
-the same homebase continues instead of building a second one. If the chest cannot stand at the chosen spot — the
+the same homebase continues instead of building a second one — but a bed is adopted only once the
+loop has proven its ground can carry the frame (`_scan_bed_site` → `targets.bed_frame_site`): a bed
+laid underground or on a slope is refused, so the run anchors a usable base instead of pinning the
+frame where its cells stay stone (live, run17). If the chest cannot stand at the chosen spot — the
 server answers `[PLACE_NO_SUPPORT]` when no solid block borders the cell (live, the base
 stood on a narrow edge and the run hung on `place_chest` every tick instead of building the portal) — the loop drops the chest chain: the relief then simply throws the surplus
 on the ground (`drop_junk`), which frees the same slots and cannot fail. If, on the other hand, the

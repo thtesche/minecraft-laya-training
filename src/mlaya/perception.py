@@ -298,11 +298,11 @@ class GameState:
     # that crosses water the server can swim is not torn up the moment an action comes back
     # (live, run15).
     water_ticks: int = 0
-    # A label the loop is currently withholding from `candidates` because it kept answering the
-    # identical refusal without progress (`Agent._track_stuck`, see `graph.STUCK_REPEATS`). While
-    # it is set, `candidates` drops that label so the last fallback (`explore`/`wait`) owns the
+    # The labels the loop is currently withholding from `candidates` because each kept answering
+    # the identical refusal without progress (`Agent._track_stuck`, see `graph.STUCK_REPEATS`).
+    # While one is listed, `candidates` drops it so the last fallback (`explore`/`wait`) owns the
     # tick and the bot moves somewhere new instead of burning the run on the same call.
-    stuck_label: str | None = None
+    stuck_labels: frozenset = frozenset()
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)

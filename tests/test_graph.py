@@ -89,10 +89,11 @@ class WaterTicksTest(unittest.TestCase):
         agent._base_adopted = False
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
@@ -163,10 +164,11 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._blocked_cell = None
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         return agent
@@ -340,10 +342,11 @@ class PourSkipTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
@@ -421,10 +424,11 @@ class StanceSkipTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._water_ticks = 0
         agent._drop_hole_blocked = False
@@ -495,10 +499,11 @@ class StuckOfferTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._recover_written_off = set()
@@ -522,7 +527,7 @@ class StuckOfferTest(unittest.TestCase):
         agent = self._agent()
         for _ in range(STUCK_REPEATS):
             agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
-        self.assertEqual(agent._stuck_off, STUCK_COOLDOWN)
+        self.assertEqual(agent._stuck_off.get("mine_obsidian"), STUCK_COOLDOWN)
         self.assertEqual([r["reason"] for r in agent.log], ["stuck_offer_dropped"])
 
     def test_progress_and_success_reset_the_run(self) -> None:
@@ -530,20 +535,32 @@ class StuckOfferTest(unittest.TestCase):
         agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
         agent._track_stuck("mine_obsidian", False, self.REFUSAL, True)  # the world moved on
         agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
-        self.assertEqual(agent._stuck_reps, 1)
+        self.assertEqual(agent._stuck_reps.get("mine_obsidian"), 1)
 
     def test_a_different_code_restarts_the_run(self) -> None:
         agent = self._agent()
         agent._track_stuck("mine_obsidian", False, "[CODE_A] x", False)
         agent._track_stuck("mine_obsidian", False, "[CODE_B] x", False)
-        self.assertEqual((agent._stuck_label, agent._stuck_code, agent._stuck_reps),
-                         ("mine_obsidian", "CODE_B", 1))
+        self.assertEqual((agent._stuck_code.get("mine_obsidian"),
+                          agent._stuck_reps.get("mine_obsidian")), ("CODE_B", 1))
 
-    def test_a_different_label_restarts_the_run(self) -> None:
+    def test_each_label_keeps_its_own_run(self) -> None:
         agent = self._agent()
         agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
         agent._track_stuck("get_wood", False, self.REFUSAL, False)
-        self.assertEqual((agent._stuck_label, agent._stuck_reps), ("get_wood", 1))
+        self.assertEqual(agent._stuck_reps, {"mine_obsidian": 1, "get_wood": 1})
+
+    def test_a_withheld_label_does_not_hide_another_refusing_beside_it(self) -> None:
+        # run17: while `build_portal` sat out its window the loop returned early for the whole
+        # window, so `light_portal` refusing identically on every tick it got was never counted,
+        # never withheld, and burned 150 ticks. Each label is now counted on its own.
+        agent = self._agent()
+        for _ in range(STUCK_REPEATS):
+            agent._track_stuck("build_portal", False, self.REFUSAL, False)
+        self.assertIn("build_portal", agent._stuck_off)
+        for _ in range(STUCK_REPEATS):
+            agent._track_stuck("light_portal", False, self.REFUSAL, False)
+        self.assertIn("light_portal", agent._stuck_off)
 
     def test_the_window_expires_and_the_label_returns(self) -> None:
         agent = self._agent()
@@ -551,16 +568,15 @@ class StuckOfferTest(unittest.TestCase):
             agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
         for _ in range(STUCK_COOLDOWN):
             agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
-        self.assertEqual(agent._stuck_off, 0)
-        self.assertIsNone(agent._stuck_label)
+        self.assertEqual(agent._stuck_off, {})
+        self.assertEqual([r["reason"] for r in agent.log][-1], "stuck_offer_restored")
 
     def test_inject_withholds_only_during_the_window(self) -> None:
         agent = self._agent()
-        agent._stuck_label = "mine_obsidian"
-        agent._stuck_off = 3
-        self.assertEqual(agent._inject(gs()).stuck_label, "mine_obsidian")
-        agent._stuck_off = 0
-        self.assertIsNone(agent._inject(gs()).stuck_label)
+        agent._stuck_off = {"mine_obsidian": 3}
+        self.assertEqual(agent._inject(gs()).stuck_labels, frozenset({"mine_obsidian"}))
+        agent._stuck_off = {}
+        self.assertEqual(agent._inject(gs()).stuck_labels, frozenset())
 
     def test_candidates_drop_the_withheld_label_and_the_fallback_takes_over(self) -> None:
         # The run16 shape: `mine_obsidian` is the only candidate, so withholding it is what lets
@@ -569,7 +585,7 @@ class StuckOfferTest(unittest.TestCase):
         g = _pond_state(cobblestone=20, furnace=1, water_bucket=1)
         g.base = (0, 63, 0)
         self.assertEqual(candidates(g), ["mine_obsidian"])
-        g.stuck_label = "mine_obsidian"
+        g.stuck_labels = frozenset({"mine_obsidian"})
         self.assertEqual(candidates(g), ["explore"])
 
 
@@ -591,10 +607,11 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -857,10 +874,11 @@ class DropHoleTest(unittest.TestCase):
         agent.chest_pos = None
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._drop_hole_blocked = True
         self.assertTrue(agent._inject(gs()).drop_hole_blocked)
@@ -914,10 +932,11 @@ class ChestSupportTest(unittest.TestCase):
         agent.chest_pos = None
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = True
@@ -974,10 +993,11 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.furnace_pos = (-197, -46, -99)
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._furnace_blocked = True
@@ -1119,10 +1139,11 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._portal_blocked = [(-195, -46, -98)]
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
@@ -1218,10 +1239,11 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._base_adopted = True
         agent._pour_skip = set()
         agent._stance_skip = set()
-        agent._stuck_label = None
-        agent._stuck_code = None
-        agent._stuck_reps = 0
-        agent._stuck_off = 0
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._chest_blocked = False
@@ -1230,6 +1252,111 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent.build_site = None
         agent._portal_blocked = []
         self.assertTrue(agent._inject(gs()).base_adopted)
+
+
+class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
+    """A standing bed becomes the base only once the loop has proven its ground carries the frame.
+
+    Live, run17: the bot slept underground during the iron phase and `_adopt_homebase` took that
+    bed as the base with no clearance check, so the frame was raised into a stone roof -- the top
+    and western cells stayed stone and `light_portal` answered `[PORTAL_NO_FRAME]` on 150 ticks.
+    The scan now reads the ground around the bed, exactly as `_scan_build_site` does for the bot,
+    and only a bed whose site fits the frame is adopted.
+    """
+
+    class _Read:
+        def __init__(self, data):
+            self.data = data
+            self.text = None
+
+    class _Mcp:
+        """A `view_blocks box` reader over a fixed sparse grid (missing cells read as air)."""
+
+        def __init__(self, grid):
+            self.grid = grid
+            self.calls: list = []
+
+        async def read(self, tool, args, why):
+            self.calls.append((tool, args))
+            box = args["box"]
+            cx, cy, cz = box["x"], box["y"], box["z"]
+            hw, hh = box["half_width"], box["half_height"]
+            layers = []
+            for y in range(cy - hh, cy + hh + 1):
+                rows = []
+                for z in range(cz - hw, cz + hw + 1):
+                    rows.append({"z": z, "blocks": [
+                        self.grid.get((x, y, z), "air")
+                        for x in range(cx - hw, cx + hw + 1)]})
+                layers.append({"y": y, "rows": rows})
+            data = {"response": {"data": {"result": {"blocks": {"box": {
+                "center": {"x": cx, "y": cy, "z": cz}, "halfWidth": hw,
+                "layers": layers}}}}}}
+            return BedSiteScanTest._Read(data)
+
+    @staticmethod
+    def _grid(ground: int = 63, roof: bool = False) -> dict:
+        grid = {}
+        for x in range(-6, 10):
+            for z in range(-4, 5):
+                for y in range(ground + 1, 72):
+                    grid[(x, y, z)] = "stone" if roof else "air"
+                grid[(x, ground, z)] = "grass_block"
+                grid[(x, ground - 1, z)] = "dirt"
+        grid[(0, ground + 1, 0)] = "white_bed"      # the bed the run laid
+        return grid
+
+    def _agent(self, grid) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.base = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent.mcp = self._Mcp(grid)
+        return agent
+
+    @staticmethod
+    def _near_bed(**kw) -> GameState:
+        return gs(pos=(0.5, 64.0, 0.5), resources={
+            "white_bed": [BlockHit("white_bed", "white_bed", 0, 64, 0, 1.0)]}, **kw)
+
+    async def test_a_clear_bed_site_is_recorded_and_adopted(self) -> None:
+        agent = self._agent(self._grid())
+        g = self._near_bed()
+        await agent._scan_bed_site(g)
+        self.assertEqual(agent._bed_base, (0, 63, 0))
+        self.assertEqual(agent.mcp.calls[0][0], "view_blocks")
+        agent._adopt_homebase(g)
+        self.assertEqual(agent.base, (0, 63, 0))
+
+    async def test_an_underground_bed_records_no_base(self) -> None:
+        agent = self._agent(self._grid(roof=True))
+        g = self._near_bed()
+        await agent._scan_bed_site(g)
+        self.assertIsNone(agent._bed_base)
+        agent._adopt_homebase(g)
+        self.assertIsNone(agent.base)  # left for `establish_base` to anchor a usable site
+
+    async def test_the_read_is_paid_once_per_bed(self) -> None:
+        agent = self._agent(self._grid())
+        g = self._near_bed()
+        await agent._scan_bed_site(g)
+        calls = len(agent.mcp.calls)
+        await agent._scan_bed_site(g)
+        self.assertEqual(len(agent.mcp.calls), calls)
+
+    async def test_skips_without_a_bed_in_reach(self) -> None:
+        agent = self._agent(self._grid())
+        await agent._scan_bed_site(gs(pos=(0.5, 64.0, 0.5)))
+        self.assertIsNone(agent._bed_base)
+        self.assertEqual(agent.mcp.calls, [])
+
+    async def test_skips_once_a_base_is_set(self) -> None:
+        agent = self._agent(self._grid())
+        agent.base = (-1, 2, 3)
+        await agent._scan_bed_site(self._near_bed())
+        self.assertEqual(agent.mcp.calls, [])
 
 
 if __name__ == "__main__":

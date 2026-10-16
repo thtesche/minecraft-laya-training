@@ -16,7 +16,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
-from .targets import flat_build_site, ground_targets, _clear
+from .targets import bed_frame_site, flat_build_site, ground_targets, _clear
 
 # Safe default when a chosen label cannot be resolved (should be rare; candidates are filtered).
 FALLBACK_LABEL = "get_wood"
@@ -199,6 +199,11 @@ class Agent:
         # so standing still does not pay for the same scan every tick.
         self.build_site: tuple[int, int, int] | None = None
         self._build_site_scanned: tuple[float, float] | None = None
+        # The base a standing bed anchors, but only once `_scan_bed_site` has proven its ground
+        # fits the frame (`targets.bed_frame_site`). `_bed_base_scanned` remembers which bed cell
+        # that read was taken for, so the two box reads are paid once per bed, not every tick.
+        self._bed_base: tuple[int, int, int] | None = None
+        self._bed_base_scanned: tuple[int, int, int] | None = None
         # The surface cell `(x, feet_y, z)` the loop last learned for the bot's column, or None
         # while unknown. `surface_up` asks the server for it (a `navigate` without a height) and
         # `_verify` reads the answer back into here; it is what keeps `establish_base` off a cave
@@ -215,13 +220,16 @@ class Agent:
         # of the same source, and once every stance of a source is refused the step moves to the
         # next source (`_lava_pour_target`), exactly as `pour_skip` does for a refused pour.
         self._stance_skip: set[tuple[int, int, int]] = set()
-        # The stuck-offer guard: the label, refusal code and count of the current run of identical
-        # failures, and the ticks left in the cooling-off window that withholds it (see
-        # `STUCK_REPEATS`/`STUCK_COOLDOWN` and `_track_stuck`).
-        self._stuck_label: str | None = None
-        self._stuck_code: str | None = None
-        self._stuck_reps = 0
-        self._stuck_off = 0
+        # The stuck-offer guard, one run per label: the last refusal code and the count of
+        # identical failures for that label, and the ticks left in the cooling-off window that
+        # withholds it (see `STUCK_REPEATS`/`STUCK_COOLDOWN` and `_track_stuck`). Per label, not a
+        # single slot: while one label sat out its window the loop returned early and never counted
+        # a *different* label failing on every tick it got (live, run17: `build_portal` was withheld
+        # for 15 ticks, during which `light_portal` answered `[PORTAL_NO_FRAME]` 150 times without
+        # ever reaching the threshold).
+        self._stuck_reps: dict[str, int] = {}
+        self._stuck_code: dict[str, str | None] = {}
+        self._stuck_off: dict[str, int] = {}
         # Death cells whose recovery walk already reached them and found nothing
         # (`[NO_MATCHING_ITEMS]` and the other final codes): `_can_recover` stops offering the
         # walk there, so the bot does not stand at an emptied death site until the window runs
@@ -265,7 +273,7 @@ class Agent:
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
         gs.stance_skip = frozenset(self._stance_skip)
-        gs.stuck_label = self._stuck_label if self._stuck_off > 0 else None
+        gs.stuck_labels = frozenset(self._stuck_off)
         gs.recover_written_off = frozenset(self._recover_written_off)
         # One decision off the feet in water, counted here so `candidates` can hold the rescue
         # back for its first moments (live, run15).
@@ -312,10 +320,40 @@ class Agent:
             grid.update(perception.parse_box(await perception.scan_ground(self.mcp, gs.pos, dy)))
         self.build_site = flat_build_site(grid, gs.pos)
 
+    async def _scan_bed_site(self, gs) -> None:
+        """Prove the site a nearby standing bed anchors can carry the portal frame, once.
+
+        `_adopt_homebase` re-anchors the base on a bed a restart (or an early `sleep`) left in the
+        world, and that path never met `establish_base`'s `flat_build_site` clearance. A bed the
+        run laid underground or on a slope then pins the base where the frame cannot be raised
+        (live, run17: the base sat nine blocks under the surface and the frame's top and west cells
+        stayed stone). This reads the ground around the bed -- its own level and four above, as
+        `_scan_build_site` does for the bot -- and records the base only when
+        `targets.bed_frame_site` accepts it, so a bad site falls through to `establish_base`. The
+        read is kept per bed cell, so it is paid once.
+        """
+        if self.base is not None or gs.pos is None:
+            return
+        bed = gs.resource_nearest("white_bed")
+        if bed is None or bed.distance > ADOPT_BED_RADIUS:
+            self._bed_base = None
+            self._bed_base_scanned = None
+            return
+        at = (bed.x, bed.y, bed.z)
+        if self._bed_base_scanned == at:
+            return
+        self._bed_base_scanned = at
+        grid: dict = {}
+        for dy in (0, 4):
+            grid.update(perception.parse_box(
+                await perception.scan_ground(self.mcp, (bed.x, bed.y, bed.z), dy)))
+        self._bed_base = (bed.x, bed.y - 1, bed.z) if bed_frame_site(grid, bed) else None
+
     async def _observe(self):
         """One perception read, with the loop-owned facts and the base-site scan folded in."""
         gs = await perception.build(self.mcp)
         await self._adopt_portal_base(gs)
+        await self._scan_bed_site(gs)
         gs = self._inject(gs)
         await self._scan_build_site(gs)
         await self._scan_portal_opening(gs)
@@ -381,13 +419,15 @@ class Agent:
         """Re-adopt a home base and chest a previous run left standing in the world.
 
         `base` and `chest_pos` are per-run state, so a restart loses them - but the bed and the
-        chest are real blocks. When the bot stands at a placed bed, that bed's ground cell becomes
-        the base again, and a chest a few blocks away is remembered with it, so the home-base
-        steps (sleep, stow) keep working at the old base instead of building a second one.
+        chest are real blocks. When the bot stands at a placed bed whose ground can carry the
+        frame (`_scan_bed_site` proved it, `targets.bed_frame_site`), that bed's ground cell becomes
+        the base again, and a chest a few blocks away is remembered with it, so the home-base steps
+        (sleep, stow) keep working at the old base instead of building a second one. A bed whose
+        site fails the check -- laid underground or on a slope -- is left alone, so the run anchors
+        a base the frame can actually stand on instead.
         """
-        bed = gs.resource_nearest("white_bed")
-        if self.base is None and bed is not None and bed.distance <= ADOPT_BED_RADIUS:
-            self.base = (bed.x, bed.y - 1, bed.z)
+        if self.base is None and self._bed_base is not None:
+            self.base = self._bed_base
         if self.chest_pos is None and self.base is not None:
             bx, by, bz = self.base
             for hit in gs.resources.get("chest", []):
@@ -601,35 +641,40 @@ class Agent:
         """Withhold a label that keeps answering the identical refusal without progress.
 
         See `STUCK_REPEATS`/`STUCK_COOLDOWN`. Any success, any `progressed` tick, or a *different*
-        refusal code starts the run of identical ones over, so only a genuine standstill is
-        caught. The window is a countdown, not a lock: the label returns on its own, which keeps
+        refusal code starts that label's run of identical ones over, so only a genuine standstill
+        is caught. The window is a countdown, not a lock: the label returns on its own, which keeps
         the offer honest and lets the loop retry it after it has moved somewhere new.
+
+        Each label is counted on its own. The window of one is ticked down here first, so it never
+        shields another: previously a single withheld label made the loop return early for the
+        whole window, and a second label refusing on every tick it got went uncounted (live, run17:
+        `build_portal` withheld for 15 ticks, `light_portal` answering `[PORTAL_NO_FRAME]` 150 times
+        beside it and never reaching the threshold).
         """
-        if self._stuck_off > 0:
-            self._stuck_off -= 1
-            if self._stuck_off == 0:
-                label_was = self._stuck_label
-                self._stuck_label = self._stuck_code = None
-                self._stuck_reps = 0
+        for held in list(self._stuck_off):
+            self._stuck_off[held] -= 1
+            if self._stuck_off[held] <= 0:
+                del self._stuck_off[held]
                 self.log.append({"stage": "policy", "reason": "stuck_offer_restored",
-                                 "label": label_was})
-            return
+                                 "label": held})
         if ok or progressed:
-            self._stuck_label = self._stuck_code = None
-            self._stuck_reps = 0
+            self._stuck_reps.pop(label, None)
+            self._stuck_code.pop(label, None)
             return
         code = _fail_code(text)
         if code is None:
             return
-        if label == self._stuck_label and code == self._stuck_code:
-            self._stuck_reps += 1
+        if label in self._stuck_off:
+            # Withheld right now: the offer left it out, so this tick is not evidence against it.
+            return
+        if self._stuck_code.get(label) == code:
+            self._stuck_reps[label] = self._stuck_reps.get(label, 0) + 1
         else:
-            self._stuck_label = label
-            self._stuck_code = code
-            self._stuck_reps = 1
-        if self._stuck_reps >= STUCK_REPEATS:
-            self._stuck_off = STUCK_COOLDOWN
-            self._stuck_reps = 0
+            self._stuck_code[label] = code
+            self._stuck_reps[label] = 1
+        if self._stuck_reps[label] >= STUCK_REPEATS:
+            self._stuck_reps[label] = 0
+            self._stuck_off[label] = STUCK_COOLDOWN
             self.log.append({"stage": "policy", "reason": "stuck_offer_dropped",
                              "label": label, "code": code, "ticks": STUCK_COOLDOWN})
 

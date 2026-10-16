@@ -233,6 +233,37 @@ def flat_build_site(grid: dict[tuple[int, int, int], str],
     return min(sites, key=lambda a: (a[0] + 2 - fx) ** 2 + (a[2] - fz) ** 2 + (a[1] - fy) ** 2)
 
 
+def bed_frame_site(grid: dict[tuple[int, int, int], str], bed) -> bool:
+    """Whether the ground a standing bed anchors can carry the portal frame, bed included.
+
+    `_adopt_homebase` takes a bed the world already holds as the home base, and it has to be as
+    choosy as `establish_base`: `flat_build_site` proves the frame fits, but it demands the
+    *anchor* column be clear, and the bed stands exactly there. This applies the same criteria to
+    the frame's own four columns -- solid bottom row and ground beneath it, open-sky air up to the
+    top row -- and asks only that the bed's own column be real ground. A bed the run laid on a
+    cave floor or a slope is refused (its roof or step leaves frame cells the build server will not
+    dig); live, run17: the base was pinned nine blocks under the surface and the frame's top and
+    western cells stayed stone, so `light_portal` answered `[PORTAL_NO_FRAME]` on 150 ticks. The
+    run then falls back to `establish_base` and anchors a site the frame can stand on.
+
+    `bed` is a `perception.BlockHit` for the bed block; its ground cell is the base anchor.
+    """
+    if not grid:
+        return False
+    bx, by, bz = int(bed.x), int(bed.y) - 1, int(bed.z)
+    if not _solid(grid.get((bx, by, bz))) or not _solid(grid.get((bx, by - 1, bz))):
+        return False  # the bed's own footing
+    for x in range(bx + 1, bx + FRAME_WIDTH):
+        if not _solid(grid.get((x, by, bz))):
+            return False
+        if not _solid(grid.get((x, by - 1, bz))):
+            return False  # a hole below the bottom row gives the obsidian nothing to sit on
+        for dy in range(1, FRAME_HEIGHT):
+            if not _open_sky(grid.get((x, by + dy, bz))):
+                return False
+    return True
+
+
 def _solid(name: str | None) -> bool:
     return name is not None and name not in _NOT_SOLID
 

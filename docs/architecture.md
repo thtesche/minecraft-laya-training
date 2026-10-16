@@ -773,7 +773,8 @@ just one level deeper.
   reset, never the endless retry. `tests/test_graph.py::BaseAnchorRepairTest`,
   `tests/test_perception.py::ParseGroundHeightTest`.
   **Clear the opening before the build:** The scan clears the glade only for the base *it*
-  chose. An adopted base (`_adopt_homebase`) or one chosen via `base_target` never had
+  chose. An adopted base (`_adopt_homebase`, whose own bed site is now checked by
+  `_scan_bed_site`/`bed_frame_site`) or one chosen via `base_target` never had
   this check. Therefore, during the build window (flint and steel carried, portal
   unlit), the loop reads the six interior cells of the opening (`perception.scan_frame_volume` → `parse_cells` →
   `perception.portal_interior`); if a non-replaceable block lies there, the candidates show
@@ -811,7 +812,13 @@ just one level deeper.
   `Agent._adopt_homebase` adopts at tick start an already **standing** bed in reach
   (`ADOPT_BED_RADIUS` = 12 m) as anchor and a **chest** near the anchor (`ADOPT_CHEST_RADIUS` = 4)
   as `chest_pos` — so a restart continues at the same homebase instead of building a second
-  (the chest is listed for that in `perception.CHAIN_NAMES` in the `view_blocks` scan).
+  (the chest is listed for that in `perception.CHAIN_NAMES` in the `view_blocks` scan). The bed is
+  only adopted once its ground is proven to carry the frame: `Agent._scan_bed_site` reads the ground
+  around the bed (its own level and four above, as `_scan_build_site` does for the bot) and
+  `targets.bed_frame_site` applies `flat_build_site`'s criteria to the frame's own four columns — a
+  bed the run laid underground or on a slope is **refused**, so `establish_base` anchors a site the
+  frame can stand on (live, run17: the base was pinned nine blocks under the surface and the frame's
+  top and western cells stayed stone, so `light_portal` answered `[PORTAL_NO_FRAME]` on 150 ticks).
   **Anchor from the standing portal (live, continuing run7c):** Bed adoption has a
   blind spot — the bed can stand far from the portal (here: underground at y=28), and `base`
   is per run only in memory. After a restart the bot stood 76 m from its own, already
