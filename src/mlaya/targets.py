@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .perception import GROUND_NAMES, BlockHit, GameState
+from .perception import GROUND_NAMES, RESCUE_Y_BAND, BlockHit, GameState
 
 # Queries that give a walkable destination. Stone counts as ground; logs do not.
 DESTINATION_QUERIES = frozenset(GROUND_NAMES) | {"stone"}
@@ -147,17 +147,29 @@ def base_target(gs: GameState) -> Target | None:
 
 
 def nearest_ground(gs: GameState) -> Target | None:
-    """The closest standable ground at any level, for the water rescue.
+    """The closest dry standable ground the water rescue can actually swim to.
 
     `base_target` looks only at or above the bot, so an underground base is not anchored to the
     cave floor underfoot; a bot treading water needs the opposite -- the dry cell it can actually
-    reach may sit a block below the waterline -- so this takes the closest hit outright. `standable`
-    still requires open `air` overhead, so a picker cannot target a cell under a cave ceiling.
+    reach may sit a block below the waterline -- so this may take a hit below the bot too.
+    `standable` still requires open `air` overhead, so a picker cannot target a cell under a cave
+    ceiling.
+
+    Two live lessons narrow "closest". Taking the outright nearest standable cell aimed the
+    rescue 32 m **down** at a flooded cave floor, a dive no swim completes (`[NAVIGATION_STOPPED]
+    ... closest node was -182,59,-85`; live, run19b), while the shore that would have worked sat
+    just past `RESOURCE_RADIUS`. So the cell is taken from the wider `gs.rescue_ground` scan when
+    there is one, and a cell inside `RESCUE_Y_BAND` of the bot's own level (a shoreline cell) is
+    preferred; the nearest any-level cell is still the fallback, so a world with only a low dry
+    ledge behaves as before.
     """
-    hits = [h for query in GROUND_NAMES for h in gs.resources.get(query, []) if h.standable]
+    pool = gs.rescue_ground or gs.resources
+    hits = [h for query in GROUND_NAMES for h in pool.get(query, []) if h.standable]
     if not hits:
         return None
-    hit = min(hits, key=lambda h: (h.distance, h.y))
+    y0 = gs.pos[1] if gs.pos else 0.0
+    waterline = [h for h in hits if abs(h.y - y0) <= RESCUE_Y_BAND]
+    hit = min(waterline or hits, key=lambda h: (h.distance, h.y))
     x0 = gs.pos[0] if gs.pos else 0.0
     z0 = gs.pos[2] if gs.pos else 0.0
     text = f"{hit.name} {hit.distance:.0f}m {_compass(hit.x - x0, hit.z - z0)}, open above"

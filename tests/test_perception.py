@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.perception import (parse_box, parse_cells, parse_ground_height,
-                              parse_portal_corner, parse_resource_counts, parse_status,
-                              parse_surface_height, portal_interior)
+from mlaya.perception import (RESCUE_RADIUS, parse_box, parse_cells, parse_ground_height,
+                              parse_portal_corner, parse_resource_counts, parse_resources,
+                              parse_status, parse_surface_height, portal_interior)
 
 
 def _status(situation: dict) -> dict:
@@ -27,6 +27,28 @@ class ResourceCountParseTest(unittest.TestCase):
 
     def test_missing_find_block_is_empty(self) -> None:
         self.assertEqual(parse_resource_counts({}), {})
+
+
+class ResourceParseRadiusTest(unittest.TestCase):
+    """`parse_resources` bounds its hits at `RESOURCE_RADIUS`, but the water rescue's ground
+    scan is read to `RESCUE_RADIUS`: the shore it had to swim to sat at 65.1 m while the 64 m
+    read left only a cave floor to aim at (live, run19b). No other group widens the bound."""
+
+    _DATA = {"response": {"data": {"result": {"blocks": {"find": [
+        {"name": "grass_block", "found": 40, "listed": [
+            {"x": -117, "y": 62, "z": -88, "name": "grass_block", "distance": 65.1,
+             "above": "air", "below": "dirt"},
+            {"x": -116, "y": 62, "z": -86, "name": "grass_block", "distance": 66.0,
+             "above": "air", "below": "dirt"},
+        ]},
+    ]}}}}}
+
+    def test_the_default_read_drops_ground_past_the_resource_radius(self) -> None:
+        self.assertEqual(parse_resources(self._DATA), {})
+
+    def test_the_rescue_radius_keeps_the_shore(self) -> None:
+        kept = parse_resources(self._DATA, radius=RESCUE_RADIUS)
+        self.assertEqual([h.distance for h in kept["grass_block"]], [65.1, 66.0])
 
 
 class PortalCornerParseTest(unittest.TestCase):

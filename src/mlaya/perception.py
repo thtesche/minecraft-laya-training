@@ -42,6 +42,17 @@ CHAIN_NAMES = ("lava", "chest", "furnace", "gold_ore")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava",)
 RESOURCE_RADIUS = 64.0
+# How far the water rescue looks for dry land. The shore it needs to swim to is the one
+# reach the *last* live stranding missed: the nearest dry ground sat 65.1 m off, a whisker
+# past `RESOURCE_RADIUS`, so the scan never listed it and the rescue aimed at the only
+# standable cell it did see -- a cave floor 32 m under the bot, a dive no swim completes
+# ("closest node was -182,59,-85"; live, run19b). Ground only: every other group keeps its
+# 64 m read.
+RESCUE_RADIUS = 128.0
+# How far off the bot's own feet a rescue target may sit. A shore is at the waterline; a
+# standable cell in this band is reachable by swimming, one far below is a flooded cave
+# floor. `nearest_ground` prefers inside over outside, whichever is nearer.
+RESCUE_Y_BAND = 4.0
 RESOURCE_LIMIT = 4
 # Per-group scan depth. The ore and log scans only want the nearest few cells, but two groups
 # need the tail of the list: the lava group, because a pour cell is only recognisable when the
@@ -202,6 +213,10 @@ class GameState:
     survivors: list[str] = field(default_factory=list)
     # name -> [BlockHit] nearest first, already radius-filtered
     resources: dict[str, list[BlockHit]] = field(default_factory=dict)
+    # The ground queries alone, read to `RESCUE_RADIUS` instead of `RESOURCE_RADIUS`, off the
+    # same scan: what a bot treading water has to aim at is not a nearby resource but dry land.
+    # Kept apart so no other consumer starts treating a 100 m block as reach.
+    rescue_ground: dict[str, list[BlockHit]] = field(default_factory=dict)
     sleeping: bool | None = None
     minutes_to_change: float | None = None
     # (name, kind, count, nearest distance) for every nearby mob species
@@ -613,13 +628,16 @@ def parse_status(data: dict) -> GameState:
     return gs
 
 
-def parse_resources(data: dict, limit: int = RESOURCE_LIMIT) -> dict[str, list[BlockHit]]:
-    """view_blocks find -> {query_name: [BlockHit]} within RESOURCE_RADIUS, nearest first.
+def parse_resources(data: dict, limit: int = RESOURCE_LIMIT,
+                    radius: float = RESOURCE_RADIUS) -> dict[str, list[BlockHit]]:
+    """view_blocks find -> {query_name: [BlockHit]} within `radius`, nearest first.
 
     `limit` caps the hits kept per query name. It has to match the `limit` the scan asked
     the server for, or the parse would throw away hits the state still needs -- the lava
     group especially, where a pour cell is only recognisable when the *source* beside it is
     in the list too (and that source is not among the nearest few cells).
+
+    `radius` is the read bound; only the rescue's ground scan widens it to `RESCUE_RADIUS`.
     """
     blocks = get(data, "response", "data", "result", "blocks", default={}) or {}
     groups = blocks.get("find") if isinstance(blocks, dict) else None
@@ -633,7 +651,7 @@ def parse_resources(data: dict, limit: int = RESOURCE_LIMIT) -> dict[str, list[B
             if not isinstance(e, dict):
                 continue
             d = _num(e.get("distance"))
-            if d is None or d > RESOURCE_RADIUS or "x" not in e:
+            if d is None or d > radius or "x" not in e:
                 continue
             hits.append(BlockHit(
                 query=query,
@@ -876,6 +894,7 @@ async def build(executor) -> GameState:
     # already uses all eight, so each group is scanned separately and merged; a failed group
     # just leaves its names out of the state.
     gs.resources = {}
+    gs.rescue_ground = {}
     for names, limit, why in ((RESOURCE_NAMES, RESOURCE_LIMIT,
                                "scan nearby resources for the next step"),
                               (GROUND_NAMES, GROUND_LIMIT,
@@ -890,6 +909,11 @@ async def build(executor) -> GameState:
             )
             payload = coerce(blocks.data, blocks.text)
             gs.resources.update(parse_resources(payload, limit))
+            if names == GROUND_NAMES:
+                # The water rescue is the one read that wants the ground past 64 m (live,
+                # run19b: the shore sat at 65.1 m and the 64 m scan left only a cave floor
+                # to aim at). Same payload, wider bound, kept in its own pool.
+                gs.rescue_ground = parse_resources(payload, limit, RESCUE_RADIUS)
             gs.resource_found.update(parse_resource_counts(payload))
         except Exception:
             pass

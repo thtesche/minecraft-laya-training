@@ -172,7 +172,11 @@ decisions without ground and navigates back to the nearest dry ground (the base 
 last resort). The first decisions are left to the goal: the server navigates a
 swim leg itself, and a crossing the bot aborts in the water was otherwise pulled straight back
 (**live run15**: 155 rescues against 30 diamond digs, 157 breath aborts,
-0 diamonds). A **wedged** bot (server stop `repeated_movement_failure`)
+0 diamonds). The rescue reads the **wider** ground radius (`RESCUE_RADIUS` = 128, and prefers a
+cell at the bot's own level within `RESCUE_Y_BAND`): the point is the nearest water-safe cell, and
+the nearest dry block a 64 m read sees can be a *cave floor* far below (live run19b: the rescue
+aimed 31 blocks straight down at a cavity floor, `closest node was -182,59,-85`, while the shore
+that would have ended it sat at 65.1 m — 1.1 m past the 64 m read). A **wedged** bot (server stop `repeated_movement_failure`)
 counts as blocked surroundings, so the unblock ladder kicks in instead of an endless loop. The key to the chain remains the **obsidian latch**, but it is now the **frame** rather than the igniter: `mine_obsidian` stands while no obsidian has been raised in the base's portal plane (`_frame_started_at_base`), so it does not dig again after the build (which yields the 10 blocks) — and, unlike the old `not has_fs` latch, it still mines when a restart carries the flint & steel into a world whose pack is short or whose base was re-anchored away from the old frame. The bed is
 placed **only at night** — only sleeping sets the respawn point. At the
 base the generic night sleep is **suppressed** in front of the lit portal: the server places

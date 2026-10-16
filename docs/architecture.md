@@ -704,9 +704,17 @@ just one level deeper.
   contact, it would have yanked the bot out of every crossing as soon as an action came back (**live run15**: the goal ran
   east into a flooded seagrass flat, the rescue ran it back — 155 rescue paths against
   30 diamond digs, 157 breath aborts, 0 diamonds). `resolve("escape_water")` navigates **first to the
-  nearest dry, standable ground** (`targets.nearest_ground`, any level — the dry cell the
-  swimming body can really reach may lie *below* the water line) with
-  `dig`/`scaffold`; the homebase is **only the stopgap** when no ground lies within scan range.
+  nearest dry, standable ground** (`targets.nearest_ground`: a cell at the bot's own level — the
+  shoreline the swimming body can really reach) with `dig`/`scaffold`. The pick went wrong twice in
+  **live run19b**: taken as the outright nearest, the aim was a *cave floor* 32 m below the swimming
+  body (a dive — `[NAVIGATION_STOPPED] ... closest node was -182,59,-85`), and the shore that would
+  have ended it (65.1 m, at the bot's own level) sat a whisker past the 64 m read the list was
+  bounded by, so the aim fell through to the base. `nearest_ground` now prefers a cell within
+  `RESCUE_Y_BAND` of the bot's level out of a ground pool read to `RESCUE_RADIUS`
+  (`perception`, `gs.rescue_ground`: the same `view_blocks` payload, a wider bound — every other
+  group keeps its 64 m read), with the nearest any-level cell as the fallback, so a world with only
+  a low dry ledge behaves as before. The homebase is **only the stopgap** when no ground lies within
+  scan range.
   Reason: without ground under the feet the shared pathfinder breaks — a `collect_block` ran live
   370 blocks wide and a net 0.18 m — while `navigate` keeps working from the swimming posture.
   (**Live run8:** the bot drowned ten times or more because the reflex stubbornly navigated to the

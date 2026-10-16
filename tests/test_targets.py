@@ -192,6 +192,28 @@ class NearestGroundTest(unittest.TestCase):
         ]}
         self.assertEqual(nearest_ground(gs).pos, (3, 62, 1))
 
+    def test_a_shore_at_the_bot_level_beats_a_nearest_cave_floor(self) -> None:
+        # Live run19b, to the block: treading water at (-181,62,-84), the only standable hit
+        # inside 64 m was a cave floor 32 m **below** -- a dive the pathfinder cannot walk
+        # ("closest node was -182,59,-85"). The shore at the bot's own level sat 65.1 m off,
+        # just past `RESOURCE_RADIUS`, so only the wider rescue scan lists it. Prefer the
+        # waterline cell.
+        gs = GameState()
+        gs.pos = (-181.5, 62.1, -84.5)
+        floor = hit("grass_block", "grass_block", -182, 30, -85, 32.0)
+        gs.resources = {"grass_block": [floor]}
+        gs.rescue_ground = {"grass_block": [floor, hit("grass_block", "grass_block",
+                                                       -117, 62, -88, 65.1)]}
+        self.assertEqual(nearest_ground(gs).pos, (-117, 62, -88))
+
+    def test_a_deep_floor_is_still_taken_without_a_shore(self) -> None:
+        # The preference must not drop the target a world actually offers: with no waterline
+        # cell the nearest any-level cell stands, exactly as before the band.
+        gs = GameState()
+        gs.pos = (0.0, 63.0, 0.0)
+        gs.resources = {"gravel": [hit("gravel", "gravel", 0, 40, 5, 23.0)]}
+        self.assertEqual(nearest_ground(gs).pos, (0, 40, 5))
+
     def test_ignores_ground_under_a_cave_ceiling(self) -> None:
         gs = GameState()
         gs.pos = (0.0, 63.0, 0.0)
