@@ -202,10 +202,11 @@ it12). Pinned in `tests/test_actions.py::MakeRoomTest`.
 
 **Defused:** `hunt_food` used to roam unprotected to the nearest creature (a night run wandered
 159–190 m and was killed twice, total loss of the inventory). It is now tied to a
-**daylight barrier** (`FOOD_HUNT_RANGE_DAY = 128` / `FOOD_HUNT_RANGE_NIGHT = 16`): at night
-only animals in reach, during the day also more distant ones. The day reach is wide enough to
-cover what the loaded-area food gate sees, so the completion gate is never held open by an
-animal no hunt would walk to. It still holds that at night the
+**daylight barrier** (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`): at night
+only animals in reach, during the day also more distant ones. Widening the day reach to 128 to
+make a stricter food gate reachable was tried live (run19b) and reverted — it walked the bot
+150–200 m from the base, where the base-range latches re-open the portal chain and it stranded
+in water. It still holds that at night the
 server `hostile_reflex` temporarily holds the body ("body owner: …"), and mobs in the list (≤ ~150 m)
 must first be **loaded** to be huntable (`[HUNT_TARGET_NOT_LOADED]`).
 Details + 22 determinism tests: [`docs/architecture.md`](docs/architecture.md#m2d--reached-reacting-to-eventnotification-types).
@@ -223,8 +224,7 @@ raw meat stayed put. So that the furnace is not constantly torn down in the proc
 **saturation** (`FOOD_SATURATION`): steak before bread before raw
 meat before `rotten_flesh`. Golden carrots (the best Nether food) need carrots and gold, which
 this bot neither farms nor mines — cooked meat is the best within reach. If no
-work is found at all, `wait` holds the position at the base instead of running away — with the
-food reserve still open, `explore` roams instead until a source is inside the hunt reach.
+work is found at all, `wait` holds the position at the base instead of running away.
 
 **Nether preparation (post-portal step, implemented):** The same lull now also re-equips the
 remaining Nether gear (`_all_nether_prep_steps`, a single place for offering **and**
@@ -238,11 +238,15 @@ no prep step is still open **and the food reserve is banked** (`_food_reserve_me
 64 Nether units from `_food_goal`; live run13 otherwise ended the run with only 4× cooked_mutton) —
 the run thus prepares itself fully instead of ending with the bed on the first night. Each
 step drops out of the list as soon as it gets no further (no spawn, no ore loaded), and
-the food demand drops away as soon as no food animal is in the **loaded area** the server
-scans and no zombie is within melee reach (24 m) — so an unreachable item never blocks the
+the food demand drops away as soon as no food animal is within the **daylight hunt reach**
+and no zombie is within melee reach (24 m) — so an unreachable item never blocks the
 run. The auto-stop also insists the gate bed lies **at the base**
-(`not _bed_off_base`): a leftover bed merely *loaded* satisfies `_bed_placed`, so without the
+(`_bed_at_base`): a leftover bed merely *loaded* satisfies `_bed_placed`, so without the
 clause the run could stop with the bed still in an earlier run's shaft (live, run19). The
+same condition guards the bed work: `sleep` at the base needs a bed *standing* there (`place_bed`
+lays a carried one first), `take_bed` brings a leftover one home, and a carried bed walks home in
+daylight too, because `place_bed` only lays it after dark (live, run19b: the bed was taken up by
+day, no `go_home` came, and it was never laid). The
 deep dig for gold is not on offer at night (`_nether_prep_steps` filters it), but stays
 open for the auto-stop.
 

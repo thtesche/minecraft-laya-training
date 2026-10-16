@@ -328,7 +328,7 @@ a **food acquisition** that fits "actually survive".
   back to `base` in the `finally`. `mlaya.cli policy [--apply] [--preset base|hunt]`.
 - **Eating** in `actions.py`: `hunt_food` acquires the **minimum stock** (`FOOD_RESERVE = 16`;
   nether goal 64, see lull) — next passive mob (`FOOD_MOBS = cow/pig/chicken/sheep/rabbit`) **within
-  a daylight-dependent range** (`FOOD_HUNT_RANGE_DAY = 128` / `FOOD_HUNT_RANGE_NIGHT = 16`:
+  a daylight-dependent range** (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`:
   at night only what is already near) or, as a fallback, a **single zombie** (`rotten_flesh`,
   gated: ≤2 hostiles ≤16 m and all zombies, health ≥18). `cook_food` fries raw meat
   (`smelt_item` in the carried furnace). `hunt_food` is offered as long as the stock is < `_food_goal`
@@ -348,17 +348,21 @@ a **food acquisition** that fits "actually survive".
   units** of high-saturation food, because hunger falls faster when sprinting and fighting and death
   costs the whole inventory; a shulker of fried meat is only one inventory slot, so cheap.
   **The reserve is part of the auto-stop:** `tech_tree_complete` now requires `_food_reserve_met`
-  (the 64 units from `_food_goal`), and the requirement drops — like a prep step — as soon as
-  no food animal is in the **loaded area** the server scans and no zombie is within melee
-  reach (`_food_source_in_reach`: any scanned passive mob, or zombie ≤ 24 m), so that a world
-  without food never blocks the run. Loaded-area, not walking-reach: the older bound used the
-  daylight hunt range from wherever the bot happened to stand, so a hole in the ground read a
-  food-rich world as "no food ever" and let the gate drop there (live, run19: the run stopped at
-  the goal after one tick with the pack at 18 of 64, the animal 33 m away but no base within the
-  reach). The day hunt range widened to 128 m so the gate and the hunt agree — an animal the
-  gate can see is one the hunt will walk to — and the lull's fallback `explore`s instead of
-  holding at the base while the reserve is still open. Live, run13 would otherwise have ended
-  with only 4× `cooked_mutton`.
+  (the 64 units from `_food_goal`), and the requirement drops — like a prep step — as soon as no
+  food source is in the **hunt's walking reach** (`_food_source_in_reach`: a passive animal within
+  the daylight range, 64 m, or a zombie within melee reach, 24 m), so that a world with nothing
+  reachable never blocks the run. Distance-bounded on purpose, unlike the "is it loaded anywhere?"
+  test of the Nether prep steps: a hunt must *close the distance* to a moving target, so a source
+  merely loaded far away cannot hold the gate open with nothing the bot can do. The stricter
+  "is any food loaded?" test plus a day reach widened to 128 m were tried live (run19b) and
+  reverted: the far hunt walked the bot 150–200 m from the base, where the base-range latches
+  re-open the portal chain, and it stranded in water for 76 ticks. The auto-stop also insists the
+  gate bed lies **at the base** (`_bed_at_base`): a leftover bed merely *loaded* satisfies
+  `_bed_placed`, so without the clause the run could stop with the bed still in an earlier run's
+  shaft (live, run19). The same clause governs `sleep` at the base once the portal is lit (a bed
+  merely loaded sent the server to the leftover bed and pinned the respawn point off the gate —
+  live, run19b it25: nine blocks below the base) and `place_bed`, which fills a base without a bed.
+  Live, run13 would otherwise have ended with only 4× `cooked_mutton`.
   `cook_food` may work with **any** fuel in the lull (`_furnace_fuel`: coal/charcoal
   first, else planks/logs — one log fries exactly one item). It eats by **saturation**
   (`FOOD_SATURATION`): fried meat before bread before raw meat before `rotten_flesh`. Golden

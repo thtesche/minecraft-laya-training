@@ -220,6 +220,35 @@ class BedChainTest(unittest.TestCase):
         g = gs(inventory={"white_bed": 1}, phase="day", sleeping=False)
         self.assertIsNone(resolve("sleep", g))
 
+    def test_sleep_at_the_base_needs_a_bed_standing_there(self) -> None:
+        # Once the portal is lit the gate bed has to *stand at the base*: counting any loaded bed
+        # sent the server to the leftover bed in the base's own shaft and pinned the respawn point
+        # off the gate again (live, run19b it25: the bot slept nine blocks below the base).
+        off = lit_portal(at_home(geared(cooked_beef=8, furnace=1)))
+        off.phase = "night"
+        off.resources = {**off.resources,
+                         "white_bed": [BlockHit("white_bed", "white_bed", -196, -56, -98, 9.0)]}
+        self.assertNotIn("sleep", candidates(off))
+        self.assertIsNone(resolve("sleep", off))
+
+    def test_sleep_at_the_base_works_on_the_base_bed(self) -> None:
+        g = lit_portal(at_home(geared(cooked_beef=8, furnace=1)))
+        g.phase = "night"
+        g.resources = {**g.resources,
+                       "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0)]}
+        self.assertIn("sleep", candidates(g))
+        self.assertIsNotNone(resolve("sleep", g))
+
+    def test_a_carried_bed_walks_home_in_the_day(self) -> None:
+        # `take_bed` can strike by day, but `place_bed` only lays the bed after dark. The bed
+        # belongs home whatever the hour, so `go_home` offers in daylight too (live, run19b: the
+        # bed was taken up in the day, no `go_home` came, and it was never laid).
+        g = lit_portal(at_home(geared(cooked_beef=8, white_bed=1, furnace=1)))
+        g.pos = (-196.5, -46.0, -60.5)
+        g.phase = "day"
+        self.assertIn("go_home", candidates(g))
+        self.assertIsNotNone(resolve("go_home", g))
+
 
 class FoodChainTest(unittest.TestCase):
     def test_hunt_passive_animal(self) -> None:
@@ -253,15 +282,8 @@ class FoodChainTest(unittest.TestCase):
         self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
 
     def test_day_hunt_gives_up_beyond_range(self) -> None:
-        # The day reach is 128, wide enough to cover what the loaded-area food gate
-        # (`_food_source_in_reach`) sees so a loaded animal is never a gate no hunt would walk to.
-        # A walk of 130 m is still given up.
-        g = gs(mobs=[("cow", "animal", 5, 130.0)], phase="day")
+        g = gs(mobs=[("cow", "animal", 5, 80.0)], phase="day")
         self.assertIsNone(resolve("hunt_food", g))
-
-    def test_day_hunt_boundary(self) -> None:
-        self.assertIsNotNone(resolve("hunt_food", gs(mobs=[("cow", "animal", 1, 128.0)], phase="day")))
-        self.assertIsNone(resolve("hunt_food", gs(mobs=[("cow", "animal", 1, 128.1)], phase="day")))
 
     def test_night_hunt_boundary(self) -> None:
         self.assertIsNotNone(resolve("hunt_food", gs(mobs=[("pig", "animal", 1, 16.0)], phase="night")))
@@ -323,18 +345,6 @@ class FoodChainTest(unittest.TestCase):
         g = lit_portal(at_home(geared(cooked_beef=64, cobblestone=12, flint_and_steel=1,
                                       white_bed=1, furnace=1)))
         g.mobs = [("cow", "animal", 5, 10.0)]
-        self.assertIsNone(resolve("hunt_food", g))
-
-    def test_the_day_hunt_reaches_a_loaded_animal(self) -> None:
-        # The day reach (128) covers what the loaded-area food gate can see, so a run is never
-        # held open by an animal no hunt would walk to. After dark the bot only tops up from what
-        # is at hand (16), the range that keeps it from roaming into a night ambush.
-        g = lit_portal(at_home(geared(beef=8, cooked_beef=0, cobblestone=12,
-                                      flint_and_steel=1, white_bed=1, furnace=1)))
-        g.mobs = [("cow", "animal", 3, 100.0)]
-        g.phase = "day"
-        self.assertIsNotNone(resolve("hunt_food", g))
-        g.phase = "night"
         self.assertIsNone(resolve("hunt_food", g))
 
     def test_eat_prefers_the_most_nutritious_food(self) -> None:
@@ -399,19 +409,13 @@ class NetherLullWaitTest(unittest.TestCase):
         self.assertIn("explore", candidates(g))
         self.assertNotIn("wait", candidates(g))
 
-    def test_an_open_reserve_with_no_reach_goes_exploring(self) -> None:
-        # The loaded-area gate sees an animal past the hunt reach, so the reserve is still open
-        # and holding at the base would never fill it: the bot roams until the animal is inside
-        # the hunt reach and `hunt_food` can take over (live, run19: 18 of 64 banked while the
-        # nearest animals sat 65-134 m off, and the run read itself as done).
+    def test_an_open_reserve_with_no_hunt_in_reach_holds(self) -> None:
+        # A reserve still short with no animal in hunt reach: the requirement drops out (the
+        # reach test), so the lull holds at the base rather than roaming after it. Roaming for
+        # food was tried live (run19b) and reverted - it carried the bot 150-200 m out.
         g = self._idle()
         g.mobs = [("cow", "animal", 3, 300.0)]
-        self.assertEqual(candidates(g), ["explore"])
-
-    def test_an_open_reserve_in_reach_still_hunts(self) -> None:
-        g = self._idle()
-        g.mobs = [("cow", "animal", 3, 100.0)]
-        self.assertEqual(candidates(g), ["hunt_food"])
+        self.assertEqual(candidates(g), ["wait"])
 
     def test_wait_needs_the_lit_portal(self) -> None:
         g = at_home(geared(flint_and_steel=1, cobblestone=12, white_bed=1, cooked_beef=24))
@@ -578,7 +582,8 @@ class OverworldGateTest(unittest.TestCase):
         self.assertIsNone(resolve("place_bed", self._night("minecraft:the_nether")))
 
     def test_overworld_still_allows_the_bed(self) -> None:
-        self.assertIsNotNone(resolve("sleep", self._night("minecraft:overworld")))
+        # The bed belongs in the Overworld; `place_bed` lays the carried bed at the gate there.
+        self.assertIsNotNone(resolve("place_bed", self._night("minecraft:overworld")))
 
     def test_fill_bucket_refused_in_the_nether(self) -> None:
         g = geared(bucket=1)
@@ -1151,20 +1156,11 @@ class TechTreeCompleteTest(unittest.TestCase):
             "cooked_beef": 8})
         self.assertFalse(tech_tree_complete(g))
 
-    def test_a_loaded_source_keeps_the_reserve_required(self) -> None:
-        # Loaded-area, not walking-reach: a source the bot can walk to holds the gate wherever the
-        # bot currently stands. Bound by the daylight *hunt* range instead, a hole in the ground
-        # read a food-rich world as "no food ever" (live, run19: the run stopped at the goal with
-        # an animal 33 m away but no base within the reach, and the pack at 18 of 64).
-        g = self._complete(mobs=[("cow", "animal", 3, 100.0)],
-                           inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
-                                      "cobblestone": 64, "cooked_beef": 8})
-        self.assertFalse(tech_tree_complete(g))
-
-    def test_a_lone_distant_zombie_drops_the_reserve_requirement(self) -> None:
-        # Rotten flesh is only banked from a safe, close fight, so a zombie past melee reach is
-        # not a source the run will walk to; with no animal loaded either, the requirement drops.
-        g = self._complete(mobs=[("zombie", "hostile", 1, 40.0)],
+    def test_a_source_beyond_reach_drops_the_reserve_requirement(self) -> None:
+        # A mob merely *loaded* (here a cow past the daylight hunt range, and a zombie past melee
+        # range) cannot hold the gate open: the hunt could not reach either, so the requirement
+        # drops out like an unreachable prep step rather than stalling the run on a distant mob.
+        g = self._complete(mobs=[("cow", "animal", 3, 100.0), ("zombie", "hostile", 1, 40.0)],
                            inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
                                       "cobblestone": 64, "cooked_beef": 8})
         self.assertTrue(tech_tree_complete(g))
@@ -1671,10 +1667,20 @@ class NetherGateTest(unittest.TestCase):
         self.assertIsNone(resolve("place_bed", g))
 
     def test_place_bed_is_not_repeated(self) -> None:
-        g = self._at_home(self._geared(white_bed=1))
+        # A bed already standing at the base is not laid a second time.
+        g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0))
+        g.inventory["white_bed"] = 1
         g.phase = "night"
-        g.resources = self._blocks("nether_portal", "white_bed")
         self.assertNotIn("place_bed", candidates(g))
+
+    def test_place_bed_lays_the_carried_bed_at_a_base_without_one(self) -> None:
+        # A bed standing *away* from the base is no gate bed: the carried bed goes down at the
+        # base even while the leftover stands (the leftover is `take_bed`'s job, and the bot
+        # carries a bed, so it cannot take one up just now).
+        g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -270, 64, -56, 3.0))
+        g.inventory["white_bed"] = 1
+        g.phase = "night"
+        self.assertIn("place_bed", candidates(g))
 
     def test_sleep_is_held_off_the_base_until_the_portal_is_lit(self) -> None:
         # The server lays the bed "beside the bot", and at the base that spot is the portal's
@@ -1688,10 +1694,20 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("sleep", candidates(g))
         self.assertIsNone(resolve("sleep", g))
 
-    def test_sleep_returns_once_the_portal_is_lit(self) -> None:
+    def test_sleep_at_the_base_waits_for_the_bed_to_stand_there(self) -> None:
+        # With the portal lit the gate bed must *stand* at the base: a carried bed is `place_bed`'s
+        # job first (the server lays the bed beside the bot, so the respawn point is set at the
+        # gate), and only then does `sleep` use it. A bed merely *loaded* used to send the bot to
+        # sleep in whatever bed was nearest (live, run19b it25: nine blocks below the base).
         g = self._at_home(self._geared(white_bed=1))
         g.phase = "night"
         g.resources = self._blocks("nether_portal")
+        self.assertNotIn("sleep", candidates(g))
+        self.assertIn("place_bed", candidates(g))
+        self.assertEqual(resolve("place_bed", g).tool, "sleep")
+
+        g.resources = {**g.resources,
+                       "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0)]}
         self.assertIn("sleep", candidates(g))
         self.assertEqual(resolve("sleep", g).tool, "sleep")
 

@@ -250,11 +250,12 @@ NETHER_COBBLE = 64
 # Food hunting is the one gather that walks to a moving target, so it is bounded by
 # daylight: a long walk to a distant animal is cheap in daylight, but after dark the bot
 # only tops up from animals already at hand. The old unguarded hunt roamed ~180 m at
-# night and was killed twice, losing a fresh iron pickaxe. The day reach is wide (128) so
-# it covers what the loaded-area food gate (`_food_source_in_reach`) can see: at 64 the two
-# disagreed, and a base whose nearest animal sat 65-134 m off held the completion gate open
-# with no hunt the bot would actually walk to (live, run19: `wait` at the base forever).
-FOOD_HUNT_RANGE_DAY = 128.0
+# night and was killed twice, losing a fresh iron pickaxe. Widening the day reach to 128 to
+# make a stricter food gate reachable cost far more than it bought: live (run19b) the hunt
+# walked the bot 150-200 m from the base, where the base-range latches re-open the portal
+# chain and the bot stranded in water for 76 ticks, so the reach is back to the bound the
+# death above produced.
+FOOD_HUNT_RANGE_DAY = 64.0
 FOOD_HUNT_RANGE_NIGHT = 16.0
 # A zombie hunted for its rotten flesh has to be this close (shared with `_safe_zombie_hunt`,
 # which also uses it as the source test for the completion gate).
@@ -659,6 +660,16 @@ def _bed_off_base(gs: GameState) -> bool:
                    for hit in hits)
 
 
+def _bed_at_base(gs: GameState) -> bool:
+    """A bed stands at the base - the gate bed `place_bed` lays beside the lit portal.
+
+    The one clause the completion gate, `sleep` and `place_bed` all key off: a bed merely
+    *loaded* is not it (`_bed_placed`), because the leftover in the base's own shaft would send
+    the server to that bed and pin the respawn point off the gate again (live, run19b it25).
+    """
+    return _bed_placed(gs) and not _bed_off_base(gs)
+
+
 def _nether_idle(gs: GameState) -> bool:
     """The daytime lull after the portal is lit: the kit is done, the gate is open and only the
     night bed is left. The extra Nether-prep work (deepening the food reserve, cooking on any
@@ -674,25 +685,21 @@ def _food_goal(gs: GameState) -> int:
 
 
 def _food_source_in_reach(gs: GameState) -> bool:
-    """Whether a food source the run could still fetch stands in the loaded area: a passive animal
-    anywhere the server's nearby scan reports, or a zombie within melee reach for its rotten flesh.
+    """Whether food the daylight hunt could actually walk to is present: a passive animal within
+    the daylight reach, or a zombie within melee reach for its rotten flesh.
 
-    Loaded-area, not walking-reach. The older test bounded the animal search by the daylight hunt
-    range measured from wherever the bot happened to stand, so a hole in the ground read a
-    food-rich world as "no food ever" and let the completion gate drop the reserve there: live,
-    run19 ended `{"iterations": 1, "stop": "goal"}` because `go_home` had carried the bot 62
-    blocks to a spot with no animal within the daylight reach, stopping the run with the pack at
-    18 of the 64 the gate asks for (and the leftover bed still underground). The scan the server
-    already returns *is* the loaded area, so asking it whether any animal is there answers the
-    question the gate means - "is there food in this world to fetch?" - independent of the hole
-    the bot stands in. A listed animal the daylight hunt cannot path to holds the gate until the
-    run's iteration limit instead of ending it on a half-stocked pack, which is the safer failure
-    for a run whose whole point is the full kit.
+    Distance-bounded, unlike the Nether prep steps' "is it loaded anywhere?" test, because a hunt
+    must *close the distance* while a mine can tunnel to a merely loaded deposit: keying the
+    completion gate off a mob anywhere could hold the run open with nothing it can do (the lull
+    then offers only `wait`, and the run stalls). The *daylight* range is used regardless of the
+    current phase, so the gate does not read the shorter night range as "no source ever": the run
+    sleeps the night and hunts by day, and that `sleep` is what keeps the gate from idling.
 
-    The zombie test stays melee-bounded: rotten flesh is only banked from a safe, close fight
-    (`_safe_zombie_hunt`), so a distant zombie is not a source the run will walk to.
+    Testing the loaded area instead, to stop the gate flipping when the bot stands in a tunnel,
+    was tried live (run19b) and reverted: a gate no hunt within reach can satisfy pushed the run
+    into the far hunt below, which is the far worse failure.
     """
-    return (_nearest_food_mob(gs) is not None
+    return (_nearest_food_mob(gs, FOOD_HUNT_RANGE_DAY) is not None
             or (gs.mob_nearest("zombie") or float("inf")) <= ZOMBIE_HUNT_RANGE)
 
 
@@ -961,6 +968,23 @@ def _bed_available(gs: GameState) -> bool:
     return _has_bed(gs.inventory) or _bed_placed(gs)
 
 
+def _sleep_ready(gs: GameState) -> bool:
+    """Whether `sleep` may run where the bot stands.
+
+    Before the portal is lit the bot sleeps *away* from the base: the server lays the bed "beside
+    the bot", and at the base that spot is the portal's own interior, which the later frame build
+    cannot clear (`remove_wrong_blocks` answers "movement policy prohibits breaking this block"
+    for a bed). Once the portal is lit the gate bed belongs at the base, and it has to be a bed
+    *standing at the base*: counting any loaded bed sent the server to the leftover bed in the
+    base's own shaft and pinned the respawn point off the gate again (live, run19b it25: the bot
+    stood at the base and slept in the bed nine blocks below). A carried bed is `place_bed`'s job
+    first; `take_bed` brings a leftover one home.
+    """
+    if _portal_lit(gs):
+        return _at_base(gs) and _bed_at_base(gs)
+    return not _at_base(gs) and _bed_available(gs)
+
+
 def _at_base(gs: GameState) -> bool:
     """Whether the bot stands at the home base, close enough to lay blocks out there."""
     if gs.base is None or gs.pos is None:
@@ -1016,8 +1040,11 @@ def _base_steps_ready(gs: GameState) -> bool:
     if (_has(inv, FLINT_STEEL_ITEM) and can_build
             and inv.get("cobblestone", 0) >= PORTAL_CORNERS and not _portal_lit(gs)):
         return True
-    if (_portal_lit(gs) and _has_bed(inv) and not _bed_placed(gs)
-            and gs.phase == "night"):
+    if _portal_lit(gs) and _has_bed(inv) and not _bed_at_base(gs):
+        # Not gated on the night: `place_bed` only runs after dark, but a bed carried out of the
+        # base's own shaft (taken up by `take_bed`) belongs home whatever the hour. Gated on the
+        # night, the bot carried it around all day and never came back (live, run19b it39-40:
+        # `take_bed` succeeded in daylight, `go_home` was not offered, and the bed was never laid).
         return True
     # In the lull, a carried furnace belongs at the base: walking back lets `place_furnace`
     # stand it there, after which cooking reuses it rather than tearing a temporary one down.
@@ -1200,8 +1227,7 @@ def tech_tree_complete(gs: GameState) -> bool:
     Requiring the armour to be worn (not just present) is what lets the loop finish
     `equip_armor` first instead of stopping with the set still in the pack.
     """
-    return (_gear_ready(gs) and _portal_lit(gs) and _bed_placed(gs)
-            and not _bed_off_base(gs)
+    return (_gear_ready(gs) and _portal_lit(gs) and _bed_at_base(gs)
             and not _all_nether_prep_steps(gs) and _food_reserve_met(gs))
 
 
@@ -1333,18 +1359,13 @@ def candidates(gs: GameState) -> list[str]:
     wool = _wool(inv)
     string = inv.get("string", 0)
     bed = _bed_available(gs)
-    # Night + a bed (carried or already standing): sleeping skips to morning and pins the
-    # respawn point. `_at_base` is required exactly when the portal is lit. Before that, *not*
-    # at the home base: the server lays the bed "beside the bot", and at the base that spot is
-    # the portal's own interior, which the later frame build then cannot clear
-    # (`remove_wrong_blocks` answers "movement policy prohibits breaking this block" for a bed).
-    # Live, the bed landed in the opening and `light_portal` answered `[PORTAL_NO_FRAME]` on
-    # every tick. After the portal is lit the gate bed belongs at the base, so sleeping anywhere
-    # else would pin the respawn point away from the gate - and a carried bed laid wherever the
-    # bot happened to be is exactly the leftover `take_bed` then had to fetch back.
-    # `place_bed` owns the base bed and only runs once the portal is lit.
-    if (gs.phase == "night" and not gs.sleeping and bed and _overworld(gs)
-            and _at_base(gs) == _portal_lit(gs)):
+    # Night + a bed: sleeping skips to morning and pins the respawn point. `_sleep_ready` owns
+    # *where* it may run - away from the base before the portal is lit (the server lays the bed
+    # "beside the bot", and at the base that spot is the portal's own interior, which the later
+    # frame build then cannot clear: live, the bed landed in the opening and `light_portal`
+    # answered `[PORTAL_NO_FRAME]` on every tick), and at the base on a bed actually standing
+    # there once it is lit. `place_bed` owns the base bed, `take_bed` brings a leftover one home.
+    if gs.phase == "night" and not gs.sleeping and _overworld(gs) and _sleep_ready(gs):
         out.append("sleep")
 
     # A bed standing away from the base is a leftover the new base did not bring along. Take it
@@ -1507,7 +1528,7 @@ def candidates(gs: GameState) -> list[str]:
             out.append("light_portal")
     # The bed goes down at the base at night, because `sleep` is what actually sets the respawn
     # point: placing it in daylight would leave the pause point unset.
-    if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_placed(gs)
+    if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_at_base(gs)
             and gs.phase == "night" and _overworld(gs)):
         out.append("place_bed")
 
@@ -1550,13 +1571,11 @@ def candidates(gs: GameState) -> list[str]:
     # The explicit last fallback when nothing productive is available. In the lull after the
     # portal is lit the only work left is the night bed, and wandering off just burned five
     # pathfinder timeouts and left the bot away from the base at dusk (live, from-zero run), so
-    # hold at the base and wait it out rather than explore. That hold is only right once the food
-    # reserve is banked: with it still open the bot must go and find the animal the gate sees
-    # (`_food_source_in_reach` reached past the hunt range), otherwise it waits at the base while
-    # the run can never end. `explore` roams until a source is inside the hunt reach.
+    # hold at the base and wait it out rather than explore. Roaming to fill an open food reserve
+    # was tried live (run19b) and reverted: the roam carried the bot 150-200 m out, where the
+    # base-range latches re-open the portal chain and it stranded in water for 76 ticks.
     if not out:
-        hold = _at_base(gs) and _nether_idle(gs) and _food_reserve_met(gs)
-        out.append("wait" if hold else "explore")
+        out.append("wait" if _at_base(gs) and _nether_idle(gs) else "explore")
     return out
 
 
@@ -1835,14 +1854,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"block_name": "white_bed", "count": 1},
                       "take the standing respawn bed back up so it can be laid at the base")
     if label == "place_bed":
-        if (not _has_bed(inv) or not _portal_lit(gs) or _bed_placed(gs)
+        if (not _has_bed(inv) or not _portal_lit(gs) or _bed_at_base(gs)
                 or not _at_base(gs) or gs.phase != "night" or not _overworld(gs)):
             return None
         return Action(label, "sleep", {},
                       "place the carried bed beside the lit portal and set the respawn point")
     if label == "sleep":
-        if (gs.phase != "night" or gs.sleeping or not _bed_available(gs)
-                or not _overworld(gs) or (_at_base(gs) != _portal_lit(gs))):
+        if (gs.phase != "night" or gs.sleeping or not _overworld(gs)
+                or not _sleep_ready(gs)):
             return None
         return Action(label, "sleep", {},
                       "sleep through the night and set the respawn point")
