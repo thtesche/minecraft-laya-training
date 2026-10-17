@@ -3,9 +3,10 @@ from __future__ import annotations
 import unittest
 
 from mlaya.perception import (GROUND_NAMES, RESCUE_GROUND_NAMES, RESCUE_RADIUS, BlockHit,
-                              parse_block_above, parse_box, parse_cells, parse_ground_height,
-                              parse_portal_corner, parse_resource_counts, parse_resources,
-                              parse_status, parse_surface_height, portal_interior)
+                              frame_volume, parse_block_above, parse_box, parse_cells,
+                              parse_ground_height, parse_portal_corner, parse_refused_cells,
+                              parse_resource_counts, parse_resources, parse_status,
+                              parse_surface_height, portal_interior)
 
 
 def _status(situation: dict) -> dict:
@@ -178,6 +179,60 @@ class FrameOpeningParseTest(unittest.TestCase):
         self.assertEqual(len(cells), 6)
         self.assertEqual(set(cells),
                          {(x, y, -98) for x in (-195, -194) for y in (-46, -45, -44)})
+
+
+class FrameVolumeTest(unittest.TestCase):
+    """`frame_volume`: the whole 5x5 plane the build may touch, opening included.
+
+    The frame read has to cover the border as well as the opening: a container the build refuses
+    can sit in a border cell (`clear_frame`), and only a name for that exact cell lets
+    `collect_block` be asked for it.
+    """
+
+    def test_the_plane_is_five_by_five_and_contains_the_opening(self) -> None:
+        base = (228, 62, 222)
+        cells = frame_volume(base)
+        self.assertEqual(len(cells), 25)
+        self.assertEqual(set(cells), {(x, y, 222) for x in range(228, 233)
+                                      for y in range(62, 67)})
+        self.assertTrue(set(portal_interior(base)) <= set(cells))
+
+    def test_the_run27_frame_corner_is_in_the_plane(self) -> None:
+        # Run26's furnace stood at (229, 62, 222), the new base's frame corner: the scan must
+        # return that cell so `clear_frame` can name and dig it.
+        self.assertIn((229, 62, 222), frame_volume((228, 62, 222)))
+
+
+class ParseRefusedCellsTest(unittest.TestCase):
+    """`parse_refused_cells` reads the frame cells a build refused to touch.
+
+    `build_structure` cannot dig a container in a frame cell in place: the movement policy refuses
+    a break it was not asked for. The refusal names the cell, and `clear_frame` digs it with the
+    explicit `collect_block` the policy does allow (live, run27: run26's furnace on the new base's
+    frame corner refused on every `build_portal`).
+    """
+
+    def test_the_refused_cell_is_read(self) -> None:
+        text = ("[BUILD_INCOMPLETE] 1 cell still wrong: 1 were refused (229,62,222: movement "
+                "policy prohibits breaking this block).")
+        self.assertEqual(parse_refused_cells(text), [(229, 62, 222)])
+
+    def test_several_refused_cells_keep_their_order(self) -> None:
+        text = ("[BUILD_INCOMPLETE] 2 cells still wrong: 2 were refused (1,64,-3: movement policy "
+                "prohibits breaking this block), (1,65,-3: movement policy prohibits breaking this "
+                "block).")
+        self.assertEqual(parse_refused_cells(text), [(1, 64, -3), (1, 65, -3)])
+
+    def test_a_cell_refused_for_another_reason_is_not_dug(self) -> None:
+        # A route failure is retried by the build; digging it out from under the build is wrong.
+        text = "[BUILD_INCOMPLETE] 1 cell still wrong: 1 were refused (5,6,7: no route)."
+        self.assertEqual(parse_refused_cells(text), [])
+
+    def test_any_other_answer_or_empty_text_is_empty(self) -> None:
+        self.assertEqual(parse_refused_cells("[BUILD_COMPLETE] 16 placed"), [])
+        self.assertEqual(parse_refused_cells("(1,2,3: movement policy prohibits breaking this block)"), [])
+        self.assertEqual(parse_refused_cells(""), [])
+        self.assertEqual(parse_refused_cells(None), [])
 
 
 class ArmourParseTest(unittest.TestCase):

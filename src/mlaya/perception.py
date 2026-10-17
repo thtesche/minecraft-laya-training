@@ -338,6 +338,18 @@ class GameState:
     # step forever; while this stands `candidates` drops it so the lull work owns the tick (live,
     # run25: 163 identical `build_portal` ticks on an already finished frame, the bot frozen).
     frame_complete: bool = False
+    # Frame cells a `build_structure` refused to touch (`[BUILD_INCOMPLETE] ... (x, y, z: ...)`,
+    # read by `parse_refused_cells`). The server digs a wrong frame cell in place, but the movement
+    # policy refuses a break it was not asked for, and a *container* (a furnace, a chest) always
+    # needs that explicit request -- so the cell never clears and the frame never closes, leaving
+    # `light_portal` to answer `[PORTAL_NO_FRAME]` forever. `clear_frame` digs each with the
+    # explicit `collect_block` the policy does allow (live, run27: run26's furnace stood on the new
+    # base's frame corner and the build refused it on every attempt).
+    refused_frame: tuple[tuple[int, int, int], ...] = ()
+    # The block name of each cell of the frame plane (`frame_volume`), read by the frame scan while
+    # a build is pending. `clear_frame` needs the name to hand `collect_block`, which matches the
+    # block it is asked for; a cell the scan has not named yet waits for the next read.
+    frame_names: dict[tuple[int, int, int], str] = field(default_factory=dict)
     # Death cells (`actions._cell`) a recovery walk already reached and found empty
     # (`[NO_MATCHING_ITEMS]` and the other final codes). `_can_recover` refuses to offer the walk
     # there again, so a bot whose gear is gone does not stand at the death site for the whole
@@ -805,19 +817,34 @@ def portal_interior(base: tuple[int, int, int]) -> list[tuple[int, int, int]]:
     return [(x, y, bz) for x in (bx + 2, bx + 3) for y in (by + 1, by + 2, by + 3)]
 
 
+def frame_volume(base: tuple[int, int, int]) -> list[tuple[int, int, int]]:
+    """Every cell of the frame plane the build may touch: the 5-wide ground row and the 5 layers up.
+
+    The frame is a west-east plane at z = bz (`targets.FRAME_WIDTH` by `FRAME_HEIGHT`, the bottom
+    row on the ground). Its opening is the 2x3 middle (`portal_interior`); the rest is the border
+    the build raises and the ground row it digs out and re-places as obsidian. The read has to
+    cover the whole plane, not just the opening: a block the build refuses anywhere in it (a
+    container in a border cell, see `Agent._note_frame_cells`) needs its name to be dug by
+    `clear_frame`.
+    """
+    bx, by, bz = base
+    return [(x, y, bz) for x in range(bx, bx + 5) for y in range(by, by + 5)]
+
+
 async def scan_frame_volume(executor, base: tuple[int, int, int]) -> dict:
-    """One `view_blocks cells` read of the portal opening, for the frame-clearance step.
+    """One `view_blocks cells` read of the whole frame plane, for the frame-clearance steps.
 
     The base scan (`targets.flat_build_site`) only proves clearance for a site *it* chose; a
     base the loop adopted from a standing bed, or one taken from the `base_target` fallback,
-    never got that check. This read is what lets `clear_portal` dig a stray block out of the
-    opening before `build_portal`. Returns the coerced result for `parse_cells`.
+    never got that check. This read lets `clear_portal` dig a stray block out of the opening
+    before `build_portal`, and lets `clear_frame` name a cell the build itself refused to touch.
+    Returns the coerced result for `parse_cells`.
     """
-    cells = [{"x": x, "y": y, "z": z} for x, y, z in portal_interior(base)]
+    cells = [{"x": x, "y": y, "z": z} for x, y, z in frame_volume(base)]
     res = await executor.read(
         "view_blocks",
         {"cells": cells},
-        "read the portal opening for stray blocks before the frame is built",
+        "read the portal frame plane for stray and refused cells before the frame is built",
     )
     return coerce(res.data, res.text)
 
@@ -894,6 +921,25 @@ def parse_block_above(text: str) -> tuple[int, int, int] | None:
     if not m:
         return None
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def parse_refused_cells(text: str) -> list[tuple[int, int, int]]:
+    """A `[BUILD_INCOMPLETE]` answer -> the cells the build refused, in the order it named them.
+
+    `build_structure` reports a cell it could not work as `... 1 were refused (229,62,222:
+    movement policy prohibits breaking this block).` The movement policy refuses a break it was
+    not asked for, and a *container* always needs that explicit request, so a container standing
+    in a frame cell is never dug by the build itself (see `Agent._note_frame_cells`). Only the
+    "prohibits breaking" refusals are returned: a cell the route merely failed to reach is
+    retried by the build and must not be dug out from under it. Any other failure yields [].
+    """
+    if "[BUILD_INCOMPLETE]" not in (text or ""):
+        return []
+    out: list[tuple[int, int, int]] = []
+    for m in re.finditer(r"\((-?\d+),\s*(-?\d+),\s*(-?\d+):([^)]*)\)", text):
+        if "prohibits breaking" in m.group(4):
+            out.append((int(m.group(1)), int(m.group(2)), int(m.group(3))))
+    return out
 
 
 async def scan_portal_corner(executor) -> tuple[int, int, int] | None:

@@ -102,6 +102,8 @@ class WaterTicksTest(unittest.TestCase):
         agent._chest_above = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent._water_ticks = 0
         return agent
 
@@ -357,6 +359,8 @@ class PourSkipTest(unittest.TestCase):
         agent.furnace_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -443,6 +447,8 @@ class StanceSkipTest(unittest.TestCase):
         agent._chest_above = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent.furnace_pos = None
         agent.chest_pos = None
         agent.base = None
@@ -522,6 +528,8 @@ class StuckOfferTest(unittest.TestCase):
         agent._chest_above = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent.furnace_pos = None
         agent.chest_pos = None
         agent.base = None
@@ -616,6 +624,8 @@ class FrameCompleteLatchTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -659,6 +669,87 @@ class FrameCompleteLatchTest(unittest.TestCase):
         self.assertFalse(agent._frame_complete)
 
 
+class FrameRefusalTest(unittest.TestCase):
+    """A frame cell the build refused is remembered and cleared with an explicit dig.
+
+    `build_structure` cannot dig a container in a frame cell in place: the movement policy
+    refuses a break it was not asked for. The build then reports the cell refused on every
+    attempt, the frame never closes, and `light_portal` answers `[PORTAL_NO_FRAME]` forever
+    (live, run27: run26's furnace stood on the new base's frame corner). `_note_frame_cells`
+    reads the cell from the answer so `clear_frame` can dig it with a `collect_block` -- the
+    explicit break the policy does allow.
+    """
+
+    class _Action:
+        def __init__(self, label: str, **args) -> None:
+            self.label = label
+            self.args = args
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.base = None
+        agent.surface = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_off = {}
+        agent._recover_written_off = set()
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._blocked_cell = None
+        agent._chest_above = None
+        agent._portal_blocked = []
+        agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
+        agent._water_ticks = 0
+        return agent
+
+    _REFUSAL = ("[BUILD_INCOMPLETE] 1 cell still wrong: 1 were refused (229,62,222: movement "
+                "policy prohibits breaking this block).")
+
+    def test_a_refused_frame_cell_is_remembered(self) -> None:
+        agent = self._agent()
+        agent._note_frame_cells(self._Action("build_portal"), False, self._REFUSAL)
+        self.assertEqual(agent._refused_frame, {(229, 62, 222)})
+
+    def test_the_cell_rides_into_the_state_with_its_name(self) -> None:
+        agent = self._agent()
+        agent._note_frame_cells(self._Action("build_portal"), False, self._REFUSAL)
+        agent._frame_names = {(229, 62, 222): "furnace"}
+        state = agent._inject(gs(base=(228, 62, 222)))
+        self.assertEqual(state.refused_frame, ((229, 62, 222),))
+        self.assertEqual(state.frame_names, {(229, 62, 222): "furnace"})
+
+    def test_a_refusal_for_another_reason_is_not_remembered(self) -> None:
+        agent = self._agent()
+        agent._note_frame_cells(self._Action("build_portal"), False,
+                                "[BUILD_INCOMPLETE] 1 cell still wrong: 1 were refused (5,6,7: no route).")
+        self.assertEqual(agent._refused_frame, set())
+
+    def test_a_finished_build_clears_the_list(self) -> None:
+        agent = self._agent()
+        agent._note_frame_cells(self._Action("build_portal"), False, self._REFUSAL)
+        agent._note_frame_cells(self._Action("build_portal"), True, "")
+        self.assertEqual(agent._refused_frame, set())
+
+    def test_clearing_one_cell_drops_only_that_cell(self) -> None:
+        agent = self._agent()
+        agent._note_frame_cells(
+            self._Action("build_portal"), False,
+            "[BUILD_INCOMPLETE] 2 cells still wrong: 2 were refused "
+            "(229,62,222: movement policy prohibits breaking this block), "
+            "(229,66,222: movement policy prohibits breaking this block).")
+        agent._note_frame_cells(self._Action("clear_frame", x=229, y=62, z=222), True, "")
+        self.assertEqual(agent._refused_frame, {(229, 66, 222)})
+
+
 class RecoverWriteOffTest(unittest.TestCase):
     """A recovery walk that reaches the death site and finds nothing is not retried.
 
@@ -689,6 +780,8 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._chest_above = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent.base = None
         agent.chest_pos = None
         agent.furnace_pos = None
@@ -920,6 +1013,8 @@ class DropHoleTest(unittest.TestCase):
         agent.furnace_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -980,6 +1075,8 @@ class ChestSupportTest(unittest.TestCase):
         agent.furnace_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -1042,6 +1139,8 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.chest_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -1182,6 +1281,8 @@ class ChestLidTest(unittest.TestCase):
         agent._furnace_blocked = False
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -1276,6 +1377,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._furnace_blocked = False
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         agent._blocked_cell = None
         agent._chest_above = None
         agent._base_adopted = False
@@ -1434,6 +1537,8 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent.build_site = None
         agent._portal_blocked = []
         agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
         self.assertTrue(agent._inject(gs()).base_adopted)
 
 

@@ -1652,6 +1652,59 @@ class NetherGateTest(unittest.TestCase):
         g.portal_blocked = [(-195, -46, -98)]
         self.assertIsNone(resolve("clear_portal", g))
 
+    def test_a_container_in_a_frame_cell_is_cleared_explicitly(self) -> None:
+        # A container the build cannot dig in place (the movement policy refuses an unasked break)
+        # is refused on every `build_portal`, so the frame never closes (live, run27: run26's
+        # furnace stood on the new base's frame corner at the frame's west-bottom cell). The step
+        # is a `collect_block` at that exact cell, whose requested break the policy does allow.
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=10, cobblestone=4))
+        g.refused_frame = ((-196, -47, -98),)
+        g.frame_names = {(-196, -47, -98): "furnace"}
+        self.assertIn("clear_frame", candidates(g))
+        self.assertNotIn("build_portal", candidates(g))
+        a = resolve("clear_frame", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "furnace")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-196, -47, -98))
+
+    def test_clear_frame_is_offered_with_the_obsidian_already_spent(self) -> None:
+        # The frame is partly built and the bank is spent; clearing the cell needs no obsidian and
+        # no cobble, so it still stands -- the bot clears it while it refills the pack (live,
+        # run27: the build had spent the ten blocks when run26's furnace was refused).
+        g = self._at_home(self._geared(flint_and_steel=1, cobblestone=4))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        g.refused_frame = ((-196, -47, -98),)
+        g.frame_names = {(-196, -47, -98): "furnace"}
+        self.assertIn("clear_frame", candidates(g))
+        self.assertNotIn("build_portal", candidates(g))
+
+    def test_clear_frame_waits_until_the_frame_read_names_the_cell(self) -> None:
+        # `collect_block` matches on the block name, so a refused cell the frame read has not
+        # named yet waits for the next read instead of being dug blind; the build stays offered.
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=10, cobblestone=4))
+        g.refused_frame = ((-196, -47, -98),)
+        self.assertNotIn("clear_frame", candidates(g))
+        self.assertIn("build_portal", candidates(g))
+        self.assertIsNone(resolve("clear_frame", g))
+
+    def test_the_frame_block_and_fluids_are_never_dug(self) -> None:
+        # The refuse list is a set of cells, not of block kinds: the frame's own obsidian (already
+        # correct) and a fluid (a `collect_block` cannot safely break it) are passed over.
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=10, cobblestone=4))
+        g.refused_frame = ((-196, -47, -98),)
+        for name in ("nether_portal", "lava", "water"):
+            g.frame_names = {(-196, -47, -98): name}
+            self.assertNotIn("clear_frame", candidates(g))
+            self.assertIsNone(resolve("clear_frame", g))
+
+    def test_clear_frame_waits_until_the_bot_is_at_the_base(self) -> None:
+        g = self._geared(flint_and_steel=1, obsidian=10, cobblestone=4)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)  # geared but far from home
+        g.refused_frame = ((-196, -47, -98),)
+        g.frame_names = {(-196, -47, -98): "furnace"}
+        self.assertIsNone(resolve("clear_frame", g))
+
     def test_light_portal_strikes_the_nearest_frame_block(self) -> None:
         # The frame stands and the expedition is ready to go through; the nearest obsidian block
         # *inside the frame plane* is the one struck.

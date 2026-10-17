@@ -271,6 +271,13 @@ class Agent:
         # in the pack, and a policy that keeps choosing it freezes the run at the base (live,
         # run25: 163 identical `build_portal` ticks on a finished frame, the bot at its base).
         self._frame_complete = False
+        # Frame cells a `build_structure` refused to dig (`_note_frame_cells`): a container the
+        # movement policy will not break unasked. `clear_frame` digs each with the explicit
+        # `collect_block` the policy allows, and the build resumes once the cell is clear.
+        self._refused_frame: set[tuple[int, int, int]] = set()
+        # The block name of each cell of the frame plane, from the frame scan
+        # (`perception.scan_frame_volume`). `clear_frame` needs the name to hand `collect_block`.
+        self._frame_names: dict[tuple[int, int, int], str] = {}
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -297,6 +304,8 @@ class Agent:
         gs.chest_above = self._chest_above
         gs.portal_blocked = list(self._portal_blocked)
         gs.frame_complete = self._frame_complete
+        gs.refused_frame = tuple(sorted(self._refused_frame))
+        gs.frame_names = dict(self._frame_names)
         return gs
 
     async def _scan_build_site(self, gs) -> None:
@@ -420,6 +429,9 @@ class Agent:
                 await perception.scan_frame_volume(self.mcp, self.base))
         except Exception:
             return
+        # Every cell of the frame plane, for `clear_frame`: a border cell the build refused needs
+        # its block name to be dug with the explicit `collect_block` (`_note_frame_cells`).
+        self._frame_names = names
         if any(name == perception.PORTAL_BLOCK for name in names.values()):
             # A base re-adopted from a standing portal (`_adopt_portal_base`): the opening already
             # holds the lit portal's own blocks, which are not a stray block to dig.
@@ -732,6 +744,30 @@ class Agent:
         if not any(delta.get("inventory_delta", {}).values()):
             self._frame_complete = True
 
+    def _note_frame_cells(self, action, ok: bool, text: str | None) -> None:
+        """Remember the frame cells the build refused, so `clear_frame` digs them explicitly.
+
+        `build_structure` removes a wrong block in a frame cell by digging it in place, but the
+        movement policy refuses a break it was not asked for, and a *container* always needs that
+        explicit request: `[BUILD_INCOMPLETE] ... 1 were refused (229,62,222: movement policy
+        prohibits breaking this block).` The build then fails on every attempt, the frame never
+        closes, and `light_portal` never runs (live, run27: run26's furnace stood on the new base's
+        frame corner). The refused cells are remembered here and `clear_frame` digs each with the
+        explicit `collect_block` the policy does allow; a finished build clears the whole list, and
+        `clear_frame` drops just the cell it broke.
+        """
+        if action.label == "clear_frame":
+            if ok and {"x", "y", "z"} <= set(action.args):
+                self._refused_frame.discard((int(action.args["x"]), int(action.args["y"]),
+                                             int(action.args["z"])))
+            return
+        if action.label not in ("build_portal", "clear_portal"):
+            return
+        if ok:
+            self._refused_frame.clear()
+            return
+        self._refused_frame.update(perception.parse_refused_cells(text))
+
     def _note_base(self, action, ok: bool, text: str | None) -> None:
         """Repair a home base whose anchor cell has lost its footing.
 
@@ -896,6 +932,7 @@ class Agent:
         self._note_chest(action, _ok, _text)
         self._note_chest_lid(action, _ok, _text)
         self._note_furnace(action, _ok, _text)
+        self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
         self._note_recover(before, action, _ok, _text)
         if action.label == "stow_surplus":

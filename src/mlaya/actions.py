@@ -71,6 +71,7 @@ CRITERIA: dict[str, str] = {
     "get_flint": "dig gravel for flint, the spark the flint and steel needs",
     "craft_flint_and_steel": "craft flint and steel from flint and an iron ingot to light the portal",
     "clear_portal": "dig stray blocks out of the portal opening so the frame can be built and lit",
+    "clear_frame": "break a container or other block the frame build cannot remove from a frame cell, then finish the frame",
     "build_portal": "build the nether portal frame from the ten banked obsidian and four cobblestone corners",
     "light_portal": "strike the built portal frame with the carried flint and steel to light it",
     "place_bed": "place the carried bed beside the gate frame so the respawn point sits at the gate",
@@ -140,6 +141,11 @@ IRON_MINE_BATCH = 8
 PORTAL_OBSIDIAN = 10
 PORTAL_CORNERS = 4
 PORTAL_BLOCK = "nether_portal"
+# Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
+# fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
+# not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.
+FRAME_UNDIGGABLE = frozenset({"nether_portal", "lava", "flowing_lava", "water", "flowing_water",
+                              "fire", "soul_fire", "bedrock"})
 BUCKET_ITEM = "bucket"
 WATER_BUCKET = "water_bucket"
 FLINT_ITEM = "flint"
@@ -1373,6 +1379,24 @@ def _portal_frame_started(gs: GameState) -> bool:
     return False
 
 
+def _frame_blocker(gs: GameState) -> tuple[tuple[int, int, int], str] | None:
+    """The first frame cell the build refused that `clear_frame` can dig, with its block name.
+
+    `build_structure` digs a wrong frame cell in place, but the movement policy refuses a break it
+    was not asked for, and a *container* always needs that explicit request, so the build reports
+    the cell refused on every attempt and the frame never closes (see `Agent._note_frame_cells`).
+    The name comes from the frame-plane read (`gs.frame_names`): `collect_block` matches on it, so
+    a cell the scan has not named yet -- or one holding the frame's own block, a fluid, or bedrock
+    -- waits rather than being dug blind.
+    """
+    for cell in gs.refused_frame:
+        name = gs.frame_names.get(cell)
+        if name is None or name in AIR_NAMES or name in FRAME_UNDIGGABLE:
+            continue
+        return cell, name
+    return None
+
+
 def _frame_started_at_base(gs: GameState) -> bool:
     """Whether our own frame already stands in the base's portal plane.
 
@@ -1763,7 +1787,14 @@ def candidates(gs: GameState) -> list[str]:
         # `Agent._note_build`; live, run25: 163 identical `build_portal` ticks, the bot frozen).
         can_build = (obsidian >= PORTAL_OBSIDIAN
                      or (obsidian >= 1 and _portal_frame_started(gs)))
-        if (_at_base(gs) and has_fs and can_build and cobble >= PORTAL_CORNERS
+        if _at_base(gs) and has_fs and not gs.frame_complete and _frame_blocker(gs) is not None:
+            # A block the build cannot remove -- a container in a frame cell, which the movement
+            # policy only digs when the break is asked for (`Agent._note_frame_cells`) -- clears
+            # first, with the explicit `collect_block` the build never sends (live, run27: run26's
+            # furnace on the new base's frame corner). Clearing needs no obsidian and no cobble,
+            # so it stands ahead of the build gate: the cell is cleared while the pack is refilled.
+            out.append("clear_frame")
+        elif (_at_base(gs) and has_fs and can_build and cobble >= PORTAL_CORNERS
                 and not gs.frame_complete):
             # A block left standing in the opening (above the support layer) has to go first:
             # the frame would be built around it and `light_portal` would answer
@@ -2077,6 +2108,19 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         return Action(label, "craft_item", {"items": [{"item_name": FLINT_STEEL_ITEM}]},
                       "craft flint and steel from flint and an iron ingot")
+    if label == "clear_frame":
+        # A frame cell the build refused (`Agent._note_frame_cells`): a container there is dug by
+        # an explicit `collect_block`, the only break the movement policy allows. `_frame_blocker`
+        # yields the cell and its name; a cell the frame read has not named yet waits.
+        if not _at_base(gs) or _portal_lit(gs) or gs.frame_complete:
+            return None
+        blocker = _frame_blocker(gs)
+        if blocker is None:
+            return None
+        (x, y, z), name = blocker
+        return Action(label, "collect_block",
+                      {"block_name": name, "count": 1, "x": x, "y": y, "z": z},
+                      "break the block the frame build cannot remove from its cell")
     if label == "clear_portal":
         if (not _at_base(gs) or _portal_lit(gs) or not _has(inv, FLINT_STEEL_ITEM)
                 or not gs.portal_blocked):
