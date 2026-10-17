@@ -2098,6 +2098,27 @@ class HomeBaseTest(unittest.TestCase):
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -97))
         self.assertEqual(a.args["items"], [{"item_name": "tuff", "count": 64}])
 
+    def test_stow_surplus_digs_the_block_off_the_chest_lid(self) -> None:
+        # Live, run26: the base sat two blocks under the surface, a cobblestone came to rest
+        # directly on the chest, and `use_container` answered `[CHEST_BLOCKED]` on every tick, so
+        # the full pack could never drain. The remembered cell above the chest is dug first; the
+        # deposit runs as soon as the lid is clear.
+        g = self._home(self._geared(tuff=64))
+        g.chest_pos = (-197, -46, -97)
+        g.chest_above = (-197, -45, -97)
+        g.slots_used = 34
+        a = resolve("stow_surplus", g)
+        self.assertEqual(a.tool, "build_structure")
+        self.assertEqual(a.args["blocks"],
+                         [{"x": -197, "y": -45, "z": -97, "block_name": "air"}])
+
+    def test_inventory_relief_digs_the_lid_before_depositing(self) -> None:
+        g = self._home(self._geared(tuff=64))
+        g.chest_pos = (-197, -46, -97)
+        g.chest_above = (-197, -45, -97)
+        g.slots_used = 36
+        self.assertEqual(inventory_relief(g).tool, "build_structure")
+
     def test_drop_junk_falls_back_without_a_chest(self) -> None:
         g = self._home(self._geared(tuff=64))
         g.slots_used = 34
@@ -2215,6 +2236,26 @@ class BaseFurnaceTest(unittest.TestCase):
         self.assertEqual(a.tool, "smelt_item")
         self.assertNotIn("temporary_workstation", a.args)
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -99))
+
+    def test_a_full_pack_holds_cooking_back(self) -> None:
+        # Live, run26: the cook completed but the pack had no free slot for the output, so the
+        # output stayed in the furnace and every later insert was refused (`[FURNACE_NOT_EMPTY]`).
+        # One free slot keeps the recovery from stranding itself; at 36 the loop sheds first.
+        g = self._lull(furnace=0, beef=2, coal=1)
+        g.furnace_pos = (-197, -46, -99)
+        g.slots_used = 36
+        self.assertNotIn("cook_food", candidates(g))
+        self.assertIsNone(resolve("cook_food", g))
+        g.slots_used = 35
+        self.assertIn("cook_food", candidates(g))
+        self.assertIsNotNone(resolve("cook_food", g))
+
+    def test_a_full_pack_holds_gold_smelting_back(self) -> None:
+        g = self._lull(furnace=0, raw_gold=2, coal=1)
+        g.furnace_pos = (-197, -46, -99)
+        g.slots_used = 36
+        self.assertNotIn("smelt_gold", candidates(g))
+        self.assertIsNone(resolve("smelt_gold", g))
 
 
 class EscapeWaterTest(unittest.TestCase):

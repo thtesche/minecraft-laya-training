@@ -299,6 +299,12 @@ class GameState:
     # around the bot need not touch it (the chest cell sits beside the base, not the bot). Live,
     # from-zero run: the cell held `grass_block` and `place_chest` answered the code every tick.
     blocked_cell: tuple[int, int, int] | None = None
+    # The opaque full cube the server found sitting directly above the base chest, refusing to
+    # open it (`[CHEST_BLOCKED]`, `perception.parse_block_above`). `stow_surplus` digs that exact
+    # cell before opening again: the lid cannot swing under a full cube, so the deposit (and with
+    # it the whole inventory relief) fails on every tick otherwise (live, run26: the buried base
+    # put a cobblestone on the chest lid and the full pack could never be unloaded).
+    chest_above: tuple[int, int, int] | None = None
     # Whether a block kind exists anywhere in the loaded world, even beyond RESOURCE_RADIUS.
     # `view_blocks find` reports a per-name `found` count across every loaded chunk, so a deep
     # deposit the 64 m scan cannot list still proves the ore is there to dig for. This is what
@@ -873,6 +879,21 @@ def parse_ground_height(text: str) -> int | None:
     """
     m = re.search(r"ground in that column is at y=\s*(-?\d+)", text or "")
     return int(m.group(1)) if m else None
+
+
+def parse_block_above(text: str) -> tuple[int, int, int] | None:
+    """A `[CHEST_BLOCKED]` answer -> the cell whose block stops the chest lid, or None.
+
+    `use_container` refuses to open a chest that has an opaque full cube directly above it:
+    `[CHEST_BLOCKED] The chest at (x, y, z) cannot open: cobblestone is directly above it at
+    (x, y+1, z).` The refusal names both the chest and the offending block; the cell after
+    "above it at" is the one the bot has to dig so the lid can swing. Only that phrase yields a
+    value; any other failure or an empty text returns None.
+    """
+    m = re.search(r"above it at \((-?\d+),\s*(-?\d+),\s*(-?\d+)\)", text or "")
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
 async def scan_portal_corner(executor) -> tuple[int, int, int] | None:

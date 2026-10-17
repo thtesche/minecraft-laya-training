@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from mlaya.perception import (GROUND_NAMES, RESCUE_GROUND_NAMES, RESCUE_RADIUS, BlockHit,
-                              parse_box, parse_cells, parse_ground_height,
+                              parse_block_above, parse_box, parse_cells, parse_ground_height,
                               parse_portal_corner, parse_resource_counts, parse_resources,
                               parse_status, parse_surface_height, portal_interior)
 
@@ -326,6 +326,32 @@ class ParseGroundHeightTest(unittest.TestCase):
         self.assertIsNone(parse_ground_height("[NAVIGATION_TARGET_UNSUPPORTED] no height given"))
         self.assertIsNone(parse_ground_height(""))
         self.assertIsNone(parse_ground_height(None))
+
+
+class ParseBlockAboveTest(unittest.TestCase):
+    """`parse_block_above` reads the cell whose block stops a chest lid.
+
+    `use_container` refuses to open a chest under an opaque full cube and names that block:
+    `[CHEST_BLOCKED] The chest at (229, 62, 224) cannot open: cobblestone is directly above it at
+    (229, 63, 224).` The cell after "above it at" is what `stow_surplus` has to dig so the lid
+    can swing (live, run26: a buried base put a cobblestone on the chest and the deposit failed on
+    every tick, so the full pack could never be unloaded).
+    """
+
+    def test_the_block_above_the_chest_is_read(self) -> None:
+        text = ("[CHEST_BLOCKED] The chest at (229, 62, 224) cannot open: cobblestone is directly "
+                "above it at (229, 63, 224).")
+        self.assertEqual(parse_block_above(text), (229, 63, 224))
+
+    def test_negative_coordinates_read(self) -> None:
+        text = "[CHEST_BLOCKED] The chest at (-3, 64, 7) cannot open: stone is directly above it at (-3, 65, 7)."
+        self.assertEqual(parse_block_above(text), (-3, 65, 7))
+
+    def test_any_other_failure_or_empty_text_is_none(self) -> None:
+        self.assertIsNone(parse_block_above("[CHEST_CLEARANCE_UNLOADED] The cell above is not loaded."))
+        self.assertIsNone(parse_block_above("[INVENTORY_FULL] No free slot"))
+        self.assertIsNone(parse_block_above(""))
+        self.assertIsNone(parse_block_above(None))
 
 
 if __name__ == "__main__":

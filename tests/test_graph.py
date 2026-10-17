@@ -99,6 +99,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._water_ticks = 0
@@ -163,6 +164,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._unblock_attempts = 0
         agent._unblock_done = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._stuck_code = {}
@@ -356,6 +358,7 @@ class PourSkipTest(unittest.TestCase):
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -437,6 +440,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent.furnace_pos = None
@@ -515,6 +519,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent.furnace_pos = None
@@ -630,6 +635,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._blocked_cell = None
+        agent._chest_above = None
         return agent
 
     def test_a_build_that_spends_nothing_latches_the_frame_complete(self) -> None:
@@ -680,6 +686,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent.base = None
@@ -914,6 +921,7 @@ class DropHoleTest(unittest.TestCase):
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -973,6 +981,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -1020,9 +1029,9 @@ class FurnaceSupportTest(unittest.TestCase):
     """
 
     class _Action:
-        def __init__(self, label: str) -> None:
+        def __init__(self, label: str, tool: str = "place_block") -> None:
             self.label = label
-            self.tool = "place_block"
+            self.tool = tool
             self.args = {"block_name": "furnace", "x": 1, "y": 2, "z": 3}
 
     def _agent(self) -> Agent:
@@ -1034,6 +1043,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -1088,6 +1098,106 @@ class FurnaceSupportTest(unittest.TestCase):
         g = gs(resources={"furnace": [BlockHit("furnace", "furnace", -150, -46, -99, 40.0)]})
         agent._adopt_homebase(g)
         self.assertIsNone(agent.furnace_pos)
+
+    def test_a_given_up_furnace_is_not_re_adopted(self) -> None:
+        # Abandoning the occupied base furnace (`_furnace_blocked`, `furnace_pos` cleared) must
+        # not be undone a tick later by the block scan re-adopting the same standing furnace --
+        # cooking would target it again and answer `[FURNACE_NOT_EMPTY]` forever.
+        agent = self._agent()
+        agent.base = (-197, -47, -98)
+        agent._furnace_blocked = True
+        g = gs(resources={"furnace": [BlockHit("furnace", "furnace", -197, -46, -99, 2.0)]})
+        agent._adopt_homebase(g)
+        self.assertIsNone(agent.furnace_pos)
+
+    def test_an_occupied_base_furnace_is_abandoned(self) -> None:
+        # Live, run26: a completed cook could not recover its output (the pack was full), so the
+        # furnace held pre-existing output and every later cook answered `[FURNACE_NOT_EMPTY]`.
+        # No MCP tool can open a furnace to drain it (`use_container` handles only location-owned
+        # containers), so the cell is dropped: `furnace_pos` cleared, `place_furnace` barred, and
+        # cooking falls back to a furnace `smelt_item` carries for the one batch.
+        agent = self._agent()
+        agent.furnace_pos = (229, 62, 222)
+        agent._note_furnace(self._Action("cook_food", "smelt_item"), False,
+                            "[FURNACE_NOT_EMPTY] The furnace has pre-existing output; "
+                            "nothing was inserted.")
+        self.assertTrue(agent._furnace_blocked)
+        self.assertIsNone(agent.furnace_pos)
+
+    def test_a_normal_smelt_failure_leaves_the_furnace_standing(self) -> None:
+        agent = self._agent()
+        agent.furnace_pos = (229, 62, 222)
+        agent._note_furnace(self._Action("cook_food", "smelt_item"), False,
+                            "[SMELT_NO_FUEL] The furnace ran out of fuel.")
+        self.assertFalse(agent._furnace_blocked)
+        self.assertEqual(agent.furnace_pos, (229, 62, 222))
+
+
+class ChestLidTest(unittest.TestCase):
+    """A block standing on the chest's lid is dug off before the deposit is retried.
+
+    Live, run26: the base sat two blocks under the surface, a cobblestone came to rest directly
+    above the chest, and `use_container` answered `[CHEST_BLOCKED]` on every tick -- so the full
+    pack could never be unloaded and every gather stayed refused with `[INVENTORY_FULL]`. The
+    block is a property of the cell, not of the attempt, so the loop remembers it and the
+    deposit's own resolve digs it clear first.
+    """
+
+    class _Action:
+        def __init__(self, label: str, tool: str = "use_container") -> None:
+            self.label = label
+            self.tool = tool
+            self.args = {"operation": "deposit"}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._chest_above = None
+        return agent
+
+    def test_remembers_the_block_on_the_lid(self) -> None:
+        agent = self._agent()
+        agent._note_chest_lid(self._Action("stow_surplus"), False,
+                              "[CHEST_BLOCKED] The chest at (229, 62, 224) cannot open: "
+                              "cobblestone is directly above it at (229, 63, 224).")
+        self.assertEqual(agent._chest_above, (229, 63, 224))
+
+    def test_forgets_it_once_the_stow_succeeds(self) -> None:
+        agent = self._agent()
+        agent._chest_above = (229, 63, 224)
+        agent._note_chest_lid(self._Action("stow_surplus"), True, "")
+        self.assertIsNone(agent._chest_above)
+
+    def test_ignores_other_labels_and_other_refusals(self) -> None:
+        agent = self._agent()
+        agent._note_chest_lid(self._Action("drop_junk", "drop_item"), False, "[CHEST_BLOCKED] x")
+        agent._note_chest_lid(self._Action("stow_surplus"), False, "[INVENTORY_FULL] no slot")
+        self.assertIsNone(agent._chest_above)
+
+    def test_inject_hands_the_cell_to_the_state(self) -> None:
+        agent = self._agent()
+        agent.base = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._portal_blocked = []
+        agent._frame_complete = False
+        agent._blocked_cell = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
+        agent.surface = None
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._recover_written_off = set()
+        agent._drop_hole_blocked = False
+        agent._chest_above = (229, 63, 224)
+        self.assertEqual(agent._inject(gs()).chest_above, (229, 63, 224))
 
 
 class GoalStopTest(unittest.TestCase):
@@ -1167,6 +1277,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._blocked_cell = None
+        agent._chest_above = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
         agent.surface = None
@@ -1266,6 +1377,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._portal_base_scanned = None
         agent.surface = None
         agent._blocked_cell = None
+        agent._chest_above = None
         agent.mcp = self._Mcp(data)
         return agent
 
@@ -1382,6 +1494,7 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
         agent.base = None
         agent.chest_pos = None
         agent.furnace_pos = None
+        agent._furnace_blocked = False
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent.mcp = self._Mcp(grid)

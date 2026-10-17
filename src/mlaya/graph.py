@@ -255,6 +255,11 @@ class Agent:
         # (`[PLACE_TARGET_OCCUPIED]`): `make_room` digs that cell clear, since a pocket around
         # the bot need not even touch it (the chest cell sits beside the base, not the bot).
         self._blocked_cell: tuple[int, int, int] | None = None
+        # The opaque block the server found sitting on the base chest's lid (`[CHEST_BLOCKED]`,
+        # `perception.parse_block_above`): `stow_surplus` digs that exact cell before opening the
+        # chest again, since the lid cannot swing under a full cube (live, run26: the buried base
+        # put a cobblestone on the chest and the full pack could never be unloaded).
+        self._chest_above: tuple[int, int, int] | None = None
         # Cells of the portal opening (`perception.portal_interior`) that hold a stray block,
         # read while a frame build is pending. `clear_portal` digs them, so a block left above
         # the support layer cannot stall the gate (live: a bed in the opening left
@@ -289,6 +294,7 @@ class Agent:
         gs.chest_blocked = self._chest_blocked
         gs.furnace_blocked = self._furnace_blocked
         gs.blocked_cell = self._blocked_cell
+        gs.chest_above = self._chest_above
         gs.portal_blocked = list(self._portal_blocked)
         gs.frame_complete = self._frame_complete
         return gs
@@ -443,7 +449,7 @@ class Agent:
                         and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS):
                     self.chest_pos = hit.pos
                     break
-        if self.furnace_pos is None and self.base is not None:
+        if self.furnace_pos is None and self.base is not None and not self._furnace_blocked:
             bx, by, bz = self.base
             for hit in gs.resources.get("furnace", []):
                 if (abs(hit.x - bx) <= ADOPT_CHEST_RADIUS
@@ -793,17 +799,49 @@ class Agent:
         if "PLACE_NO_SUPPORT" in (text or ""):
             self._chest_blocked = True
 
-    def _note_furnace(self, action, ok: bool, text: str | None) -> None:
-        """Remember that the base's ground cannot hold the furnace, so the chain is dropped.
+    def _note_chest_lid(self, action, ok: bool, text: str | None) -> None:
+        """Remember the block sitting on the base chest's lid, so `stow_surplus` digs it.
 
-        Same `[PLACE_NO_SUPPORT]` answer as the chest: a property of the base site, not of the
-        attempt. Giving the permanent furnace up lets `cook_food` fall back to the temporary
-        workstation `smelt_item` places itself, which works anywhere and cannot stall the run.
+        `[CHEST_BLOCKED]` says an opaque full cube stands directly above the chest and its lid
+        cannot open (`perception.parse_block_above` names that cell). It is a property of the
+        block, not of the attempt, so the cell is remembered and the deposit's own resolve digs
+        it clear before opening again. Cleared on any `stow_surplus` success -- the dig, or the
+        deposit that follows it -- so the dig runs once and the chest is then opened.
         """
-        if ok or action.label != "place_furnace":
+        if action.label != "stow_surplus":
             return
-        if "PLACE_NO_SUPPORT" in (text or ""):
+        if ok:
+            self._chest_above = None
+            return
+        cell = perception.parse_block_above(text or "")
+        if cell is not None:
+            self._chest_above = cell
+
+    def _note_furnace(self, action, ok: bool, text: str | None) -> None:
+        """Give up a base furnace the loop can no longer use, so cooking falls back to a
+        temporary workstation.
+
+        Two refusals mean the standing furnace is finished. `[PLACE_NO_SUPPORT]` on the
+        `place_furnace` itself: no solid block touches the cell beside the base, so it can never
+        stand there. `[FURNACE_NOT_EMPTY]` on a `smelt_item`: the furnace still holds output the
+        previous cook could not recover (recovery needs a free pack slot and the pack was full),
+        and no MCP tool can open a furnace to drain it -- `use_container` handles only
+        location-owned containers (chests, barrels, hoppers). Both are properties of that cell,
+        not of the attempt, so the cell is dropped (`furnace_pos`) and `place_furnace` is barred
+        from re-targeting it. Cooking then runs in a furnace `smelt_item` carries and places for
+        the one batch (live, run26: the completed cook left its output behind on a full pack and
+        every `cook_food` after answered `[FURNACE_NOT_EMPTY]`).
+        """
+        if ok:
+            return
+        text = text or ""
+        if action.label == "place_furnace":
+            if "PLACE_NO_SUPPORT" in text:
+                self._furnace_blocked = True
+            return
+        if action.tool == "smelt_item" and "FURNACE_NOT_EMPTY" in text:
             self._furnace_blocked = True
+            self.furnace_pos = None
 
     def _note_place(self, action, ok: bool, text: str | None) -> None:
         """Remember the cell a placement was refused at, so the unblock step can dig it clear.
@@ -856,6 +894,7 @@ class Agent:
         self._note_base(action, _ok, _text)
         self._note_drop(action, _ok, _text)
         self._note_chest(action, _ok, _text)
+        self._note_chest_lid(action, _ok, _text)
         self._note_furnace(action, _ok, _text)
         self._note_place(action, _ok, _text)
         self._note_recover(before, action, _ok, _text)

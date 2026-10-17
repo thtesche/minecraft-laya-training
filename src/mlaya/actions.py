@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .perception import AIR_NAMES, INVENTORY_NEAR_FULL, PORTAL_BLOCK, GameState
+from .perception import AIR_NAMES, INVENTORY_NEAR_FULL, INVENTORY_SLOTS, PORTAL_BLOCK, GameState
 from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
                       frontier_heading, nearest_ground)
 
@@ -961,7 +961,8 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
             if table:
                 out.append("craft_gold_helmet")
         elif _has(inv, RAW_GOLD):
-            if (_has(inv, "furnace") or _furnace_ready(gs)) and _furnace_fuel(inv) is not None:
+            if ((_has(inv, "furnace") or _furnace_ready(gs)) and _furnace_fuel(inv) is not None
+                    and _furnace_room(gs)):
                 out.append("smelt_gold")
         elif _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
             out.append("mine_gold")
@@ -1056,6 +1057,17 @@ def _furnace_ready(gs: GameState) -> bool:
     `cook_food`/`smelt_gold` call (live: the bot visibly tore the furnace down between batches).
     """
     return gs.furnace_pos is not None
+
+
+def _furnace_room(gs: GameState) -> bool:
+    """Whether the pack has a free slot for the output `smelt_item` has to recover.
+
+    A smelt that completes with no room leaves its cooked output stuck in the furnace (live,
+    run26), and a furnace with pre-existing output refuses the next insert forever. Requiring a
+    free slot keeps a cook from stranding itself; when the pack is full the loop sheds
+    (`stow_surplus`/`drop_junk`) first.
+    """
+    return gs.slots_used < INVENTORY_SLOTS
 
 
 def _smelt_args(gs: GameState, item_name: str, count: int, fuel_name: str) -> dict:
@@ -1574,7 +1586,8 @@ def candidates(gs: GameState) -> list[str]:
             and not gs.furnace_blocked and _has(inv, "furnace")
             and _furnace_site(gs) is not None):
         out.append("place_furnace" if _at_base(gs) else "go_home")
-    if (_has(inv, "furnace") or _furnace_ready(gs)) and _first_cookable(inv) and not eating:
+    if ((_has(inv, "furnace") or _furnace_ready(gs)) and _first_cookable(inv) and not eating
+            and _furnace_room(gs)):
         # Cook raw meat so it feeds far more hunger. Outside the Nether lull only coal/charcoal
         # may be spent on it (as before, so it never steals wood from the chain); during the lull
         # any carried fuel does, so a bot with raw meat and wood still cooks.
@@ -1622,7 +1635,7 @@ def candidates(gs: GameState) -> list[str]:
         out.append("craft_stone_pickaxe")
     if tier >= 1 and table and not furnace and cobble >= 8:
         out.append("craft_furnace")
-    if furnace and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs):
+    if furnace and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs) and _furnace_room(gs):
         out.append("smelt_iron")
     if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
         out.append("craft_iron_pickaxe")
@@ -1916,7 +1929,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "craft a furnace to smelt iron")
     if label == "smelt_iron":
         if (not (_has(inv, "furnace") or _furnace_ready(gs)) or inv.get("raw_iron", 0) < 1
-                or inv.get("coal", 0) < 1):
+                or inv.get("coal", 0) < 1 or not _furnace_room(gs)):
             return None
         count = min(inv.get("raw_iron", 0), 3)
         return Action(label, "smelt_item", _smelt_args(gs, "raw_iron", count, "coal"),
@@ -2171,7 +2184,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "smelt_gold":
         fuel = _furnace_fuel(inv)
         if (not (_has(inv, "furnace") or _furnace_ready(gs)) or inv.get(RAW_GOLD, 0) < 1
-                or fuel is None or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+                or fuel is None or not _furnace_room(gs)
+                or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
             return None
         fuel_name, capacity = fuel
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
@@ -2205,7 +2219,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "cook_food":
         raw = _first_cookable(inv)
         fuel = _furnace_fuel(inv)
-        if not raw or not (_has(inv, "furnace") or _furnace_ready(gs)) or fuel is None:
+        if (not raw or not (_has(inv, "furnace") or _furnace_ready(gs)) or fuel is None
+                or not _furnace_room(gs)):
             return None
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
         if fuel[0] not in ("coal", "charcoal") and not _nether_idle(gs):
@@ -2326,6 +2341,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         items += _hoard_surplus(inv)
         if not _chest_ready(gs) or not items:
             return None
+        # A block sitting on the chest stops its lid (`[CHEST_BLOCKED]`): dig that exact cell
+        # first, then open the chest on the next tick. Reusing the label keeps the relief to one
+        # step; the deposit runs as soon as the cell above the chest is clear.
+        if gs.chest_above is not None:
+            ax, ay, az = gs.chest_above
+            return Action(label, "build_structure",
+                          {"blocks": [{"x": ax, "y": ay, "z": az, "block_name": "air"}]},
+                          f"dig the block at {ax},{ay},{az} that blocks the chest lid")
         cx, cy, cz = gs.chest_pos
         return Action(label, "use_container",
                       {"operation": "deposit", "x": cx, "y": cy, "z": cz, "items": items[:12]},
