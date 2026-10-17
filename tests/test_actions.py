@@ -1592,6 +1592,20 @@ class NetherGateTest(unittest.TestCase):
         a = resolve("build_portal", g)
         self.assertEqual(a.args["portal_frame"], {"x": -195, "y": -46, "z": -98, "axis": "x"})
 
+    def test_a_finished_frame_is_not_rebuilt(self) -> None:
+        # A build the server answers `ok` to while it spends nothing has placed every cell it
+        # can: the frame stands complete. The "resume a partial frame" clause would otherwise
+        # keep the step in the offer for as long as a leftover block sits in the pack, and the
+        # no-op success resets the stuck guard, so nothing else would ever drop it (live, run25:
+        # 163 identical `build_portal` ticks on a finished frame). `gs.frame_complete` is the latch
+        # the loop sets from that answer (`Agent._note_build`).
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=9, cobblestone=22))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        self.assertIn("build_portal", candidates(g))  # a partial frame still resumes
+        g.frame_complete = True
+        self.assertNotIn("build_portal", candidates(g))
+        self.assertIsNone(resolve("build_portal", g))
+
     def test_build_portal_stays_put_without_ten_blocks_or_a_frame(self) -> None:
         # Seven obsidian and no frame started yet: the bot must bank the rest first.
         g = self._at_home(self._geared(flint_and_steel=1, obsidian=7, cobblestone=4))

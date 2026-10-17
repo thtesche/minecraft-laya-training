@@ -260,6 +260,12 @@ class Agent:
         # the support layer cannot stall the gate (live: a bed in the opening left
         # `light_portal` answering `[PORTAL_NO_FRAME]` on every tick).
         self._portal_blocked: list[tuple[int, int, int]] = []
+        # A `build_portal` the server answered `ok` to while it spent nothing (`_note_build`):
+        # the frame already stands complete. The step's "resume a partial frame" clause would
+        # otherwise re-offer the build on a finished frame for as long as any obsidian is left
+        # in the pack, and a policy that keeps choosing it freezes the run at the base (live,
+        # run25: 163 identical `build_portal` ticks on a finished frame, the bot at its base).
+        self._frame_complete = False
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -284,6 +290,7 @@ class Agent:
         gs.furnace_blocked = self._furnace_blocked
         gs.blocked_cell = self._blocked_cell
         gs.portal_blocked = list(self._portal_blocked)
+        gs.frame_complete = self._frame_complete
         return gs
 
     async def _scan_build_site(self, gs) -> None:
@@ -702,6 +709,23 @@ class Agent:
         if y is not None:
             self.surface = (int(action.args["x"]), y, int(action.args["z"]))
 
+    def _note_build(self, action, ok: bool, delta: dict) -> None:
+        """Remember that the frame build has nothing left to place.
+
+        A `build_portal` the server answers `ok` to while it spends no obsidian and no
+        cobblestone has placed every cell it can: the frame already stands complete, and
+        re-sending the same structure is a no-op the server still calls a success. That success
+        resets `_track_stuck`, so `candidates`' "resume a partial frame" clause would keep the
+        step in the offer for as long as a leftover block sits in the pack, and a policy that
+        keeps choosing it freezes the run at the base (live, run25: 163 identical `build_portal`
+        ticks on a finished frame, the bot standing at its own gate the whole time). Marked here
+        so `candidates` and `resolve` drop the step for the rest of the run.
+        """
+        if action.label != "build_portal" or not ok:
+            return
+        if not any(delta.get("inventory_delta", {}).values()):
+            self._frame_complete = True
+
     def _note_base(self, action, ok: bool, text: str | None) -> None:
         """Repair a home base whose anchor cell has lost its footing.
 
@@ -858,6 +882,7 @@ class Agent:
         self._note_surface(action, _ok, _text, after.pos)
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
+        self._note_build(action, _ok, delta)
         progressed = vmod.progressed(action.label, delta)
         self._track_stuck(action.label, _ok, _text, progressed)
         record = {

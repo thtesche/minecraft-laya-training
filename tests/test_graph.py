@@ -100,6 +100,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._furnace_blocked = False
         agent._blocked_cell = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent._water_ticks = 0
         return agent
 
@@ -353,6 +354,7 @@ class PourSkipTest(unittest.TestCase):
         agent._furnace_blocked = False
         agent.furnace_pos = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -436,6 +438,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._furnace_blocked = False
         agent._blocked_cell = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent.furnace_pos = None
         agent.chest_pos = None
         agent.base = None
@@ -513,6 +516,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._furnace_blocked = False
         agent._blocked_cell = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent.furnace_pos = None
         agent.chest_pos = None
         agent.base = None
@@ -589,6 +593,66 @@ class StuckOfferTest(unittest.TestCase):
         self.assertEqual(candidates(g), ["explore"])
 
 
+class FrameCompleteLatchTest(unittest.TestCase):
+    """A frame build the server answers `ok` to while spending nothing is not re-offered.
+
+    Live, run25: the frame was finished but the pack still carried nine obsidian, so the
+    "resume a partial frame" clause in `candidates` kept offering `build_portal`, and the server
+    answered that no-op with a plain success - which resets `_track_stuck`, so no stuck guard ever
+    dropped it. The policy chose it on 163 ticks in a row and the bot stood frozen at its own gate.
+    `_note_build` reads the answer as "the frame already stands complete"; `candidates` steps over
+    the build from then on and the lull work (bow, gold helmet, cobble, food) owns the tick.
+    """
+
+    class _Action:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._frame_complete = False
+        agent.base = None
+        agent.surface = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
+        agent._portal_blocked = []
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_off = {}
+        agent._recover_written_off = set()
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._water_ticks = 0
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._blocked_cell = None
+        return agent
+
+    def test_a_build_that_spends_nothing_latches_the_frame_complete(self) -> None:
+        agent = self._agent()
+        agent._note_build(self._Action("build_portal"), True, {"inventory_delta": {}})
+        self.assertTrue(agent._frame_complete)
+        # The loop hands the latch to the state, where `candidates`/`resolve` read it.
+        self.assertTrue(agent._inject(gs()).frame_complete)
+
+    def test_a_build_that_places_blocks_is_not_the_latch(self) -> None:
+        agent = self._agent()
+        agent._note_build(self._Action("build_portal"), True,
+                          {"inventory_delta": {"obsidian": -2, "cobblestone": -1}})
+        self.assertFalse(agent._frame_complete)
+        self.assertFalse(agent._inject(gs()).frame_complete)
+
+    def test_only_a_successful_build_portal_latches_it(self) -> None:
+        agent = self._agent()
+        agent._note_build(self._Action("mine_obsidian"), True, {"inventory_delta": {}})
+        agent._note_build(self._Action("build_portal"), False, {"inventory_delta": {}})
+        self.assertFalse(agent._frame_complete)
+
+
 class RecoverWriteOffTest(unittest.TestCase):
     """A recovery walk that reaches the death site and finds nothing is not retried.
 
@@ -617,6 +681,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._furnace_blocked = False
         agent._blocked_cell = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent.base = None
         agent.chest_pos = None
         agent.furnace_pos = None
@@ -847,6 +912,7 @@ class DropHoleTest(unittest.TestCase):
         agent._furnace_blocked = False
         agent.furnace_pos = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -905,6 +971,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._furnace_blocked = False
         agent.furnace_pos = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -965,6 +1032,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.furnace_pos = None
         agent.chest_pos = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -1097,6 +1165,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent.furnace_pos = None
         agent._furnace_blocked = False
         agent._portal_blocked = []
+        agent._frame_complete = False
         agent._blocked_cell = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -1252,6 +1321,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent.furnace_pos = None
         agent.build_site = None
         agent._portal_blocked = []
+        agent._frame_complete = False
         self.assertTrue(agent._inject(gs()).base_adopted)
 
 

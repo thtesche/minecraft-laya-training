@@ -1744,9 +1744,14 @@ def candidates(gs: GameState) -> list[str]:
         # `build_portal` runs while the bot carries ten obsidian, or to *resume* a frame it
         # already started: a partial build leaves exactly the cells it still needs in the pack,
         # and re-sending the same structure resumes it (the server takes the interior corner).
+        # A frame the build already finished is stepped over: a leftover obsidian in the pack
+        # would otherwise keep the resume clause live on a finished frame, and the server answers
+        # the no-op with a plain success, which no stuck guard counts (`gs.frame_complete`,
+        # `Agent._note_build`; live, run25: 163 identical `build_portal` ticks, the bot frozen).
         can_build = (obsidian >= PORTAL_OBSIDIAN
                      or (obsidian >= 1 and _portal_frame_started(gs)))
-        if (_at_base(gs) and has_fs and can_build and cobble >= PORTAL_CORNERS):
+        if (_at_base(gs) and has_fs and can_build and cobble >= PORTAL_CORNERS
+                and not gs.frame_complete):
             # A block left standing in the opening (above the support layer) has to go first:
             # the frame would be built around it and `light_portal` would answer
             # `[PORTAL_NO_FRAME]` forever (live, Nether run: a bed the generic sleep laid
@@ -2076,7 +2081,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         can_build = (obsidian >= PORTAL_OBSIDIAN
                      or (obsidian >= 1 and _portal_frame_started(gs)))
         if (site is None or not _at_base(gs) or not _has(inv, FLINT_STEEL_ITEM)
-                or _portal_lit(gs) or not can_build
+                or _portal_lit(gs) or not can_build or gs.frame_complete
                 or inv.get("cobblestone", 0) < PORTAL_CORNERS):
             return None
         return Action(label, "build_structure",

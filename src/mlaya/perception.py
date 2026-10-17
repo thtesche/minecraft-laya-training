@@ -326,6 +326,12 @@ class GameState:
     # answers `[PORTAL_NO_FRAME]` on every tick (live, Nether run: a bed the generic sleep laid
     # "beside the bot" landed in the opening). `clear_portal` digs these cells before the build.
     portal_blocked: list[tuple[int, int, int]] = field(default_factory=list)
+    # The loop learned from the server that the frame build has nothing left to place: a
+    # `build_portal` answered `ok` while spending no obsidian or cobblestone (`Agent._note_build`).
+    # That success resets `_track_stuck`, so the "resume a partial frame" clause would offer the
+    # step forever; while this stands `candidates` drops it so the lull work owns the tick (live,
+    # run25: 163 identical `build_portal` ticks on an already finished frame, the bot frozen).
+    frame_complete: bool = False
     # Death cells (`actions._cell`) a recovery walk already reached and found empty
     # (`[NO_MATCHING_ITEMS]` and the other final codes). `_can_recover` refuses to offer the walk
     # there again, so a bot whose gear is gone does not stand at the death site for the whole
