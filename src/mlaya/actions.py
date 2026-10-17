@@ -10,6 +10,7 @@ from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
 # Labels Laya may choose among; each maps to a real mine-ai MCP tool.
 CRITERIA: dict[str, str] = {
     "escape_water": "swim clear of the water and climb back onto dry ground; the body has no footing, so this owns the tick once the bot has spent a decision off its feet",
+    "leave_portal": "step out of a lit nether portal the body is standing in; standing in the gate teleports the bot within seconds, so this owns the tick outright",
     "eat_food": "eat a carried food item to restore hunger",
     "get_wood": "chop a tree and collect logs; the bot has no wood yet, so this comes first",
     "craft_pickaxe": "craft a wooden pickaxe from the logs the bot carries; this is the next step",
@@ -40,9 +41,9 @@ CRITERIA: dict[str, str] = {
     "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
-    "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the portal is lit, stock the deeper Nether reserve",
+    "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the gate frame stands, stock the deeper Nether reserve",
     "cook_food": "cook carried raw meat in the furnace at the base (or the carried furnace, set up just for the batch) so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
-    # Nether prep, stocked in the daytime lull after the portal is lit (see `_nether_prep_steps`).
+    # Nether prep, stocked in the daytime lull once the gate frame stands (see `_nether_prep_steps`).
     "craft_bow": "craft a bow from string and sticks; the server's combat layer fires it for ranged defence against ghasts and blazes",
     "craft_arrows": "craft arrows from flint, sticks and feathers so the carried bow has ammunition",
     "hunt_feather": "kill a nearby chicken to collect feathers for the Nether arrows",
@@ -72,7 +73,7 @@ CRITERIA: dict[str, str] = {
     "clear_portal": "dig stray blocks out of the portal opening so the frame can be built and lit",
     "build_portal": "build the nether portal frame from the ten banked obsidian and four cobblestone corners",
     "light_portal": "strike the built portal frame with the carried flint and steel to light it",
-    "place_bed": "place the carried bed beside the lit portal so the respawn point sits at the gate",
+    "place_bed": "place the carried bed beside the gate frame so the respawn point sits at the gate",
     "take_bed": "take the standing respawn bed back up when it lies away from the base, so it can be laid beside the portal",
     "drop_junk": "drop low-value blocks from the full pack so a gathering action has room again",
 }
@@ -212,7 +213,7 @@ FOOD_SATURATION = {
 }
 # Minimum edible items to keep banked. 16 is the floor held through the tech tree; the Nether
 # wants far more -- hunger drains fast while sprinting and fighting there and a death drops the
-# whole pack -- so the target deepens in the daytime lull after the portal is lit (see
+# whole pack -- so the target deepens in the daytime lull once the gate frame stands (see
 # `_food_goal`). The usual advice is 64-128 units (one to two stacks) of high-saturation food;
 # a stack of cooked meat is a single inventory slot, so 64 is cheap to carry.
 FOOD_RESERVE = 16
@@ -226,7 +227,7 @@ HEALTH_MAX = 20.0
 EAT_HUNGER = 14.0
 REGEN_HUNGER = 18.0
 
-# --- Nether prep (the daytime lull after the portal) ---
+# --- Nether prep (the daytime lull once the gate frame stands) ---
 # Beyond the deep food reserve, the expedition wants a ranged answer, a piglin pass and building
 # material. All of it is stocked in the same lull, so the run reaches the gate fully prepared:
 #   * a bow with arrows -- the server's combat layer fires the bow itself (`survival.BASE_CHANGES`
@@ -382,7 +383,7 @@ def _furnace_fuel(inv: dict[str, int]) -> tuple[str, int] | None:
     is not stolen; a plank or log smelts one and a half, so a single one cooks exactly one item.
     Requiring coal alone was too strict: a bot carrying a stack of raw meat and plenty of wood
     still could not cook (live, the from-zero run: `coal` was None, so `cook_food` never fired
-    and the daytime lull after the portal fell through to `explore`).
+    and the daytime lull after the gate frame went up fell through to `explore`).
     """
     for name in ("coal", "charcoal"):
         if inv.get(name, 0) > 0:
@@ -636,6 +637,59 @@ def _portal_lit(gs: GameState) -> bool:
     return gs.resource_distance(PORTAL_BLOCK) is not None
 
 
+def _portal_built(gs: GameState) -> bool:
+    """Whether the gate structure stands at the base - the frame is up, lit or not.
+
+    The whole daytime lull used to key on `_portal_lit`, which meant the gate had to be
+    *burning* before the run would stock the Nether prep - and so it burned through the entire
+    prep window while the bot worked at the base beside its open interior (live, run22: lit at
+    it208, in the Nether by it245). The frame standing is the earlier, honest signal: the prep
+    belongs to the window the frame is up, and only `light_portal` now waits for the expedition
+    to be ready (`_expedition_ready`). A lit portal always has its frame, so this still holds for
+    a gate a previous run left standing.
+    """
+    return _portal_lit(gs) or _frame_started_at_base(gs)
+
+
+def _in_portal(gs: GameState) -> bool:
+    """Whether the bot's own body occupies a lit portal block.
+
+    The shared pathfinder treats a portal block as open, so a `navigate` goal on the far side
+    routes the body straight through the gate, and the teleport fires a few seconds later - no
+    step ever asked for the crossing (live, run22: the lit gate stood beside the base and the
+    bot was in the Nether a few decisions after it was lit). The rescue owns the tick while the
+    body is in the gate, so it steps out before the teleport. Phase 3, the intended crossing,
+    must bypass this.
+    """
+    if gs.pos is None:
+        return False
+    fx, fy, fz = (math.floor(v) for v in gs.pos)
+    cells = {(fx, fy, fz), (fx, fy + 1, fz)}
+    return any(hit.pos in cells for hit in gs.resources.get(PORTAL_BLOCK, []))
+
+
+def _leave_portal_target(gs: GameState) -> tuple[float, float, float] | None:
+    """A standable cell just outside the gate the bot stands in, or None.
+
+    The home base is the natural step-out (the frame plane sits two blocks east of it), so it
+    wins when it is clear of the portal; otherwise the nearest horizontal neighbour that is not
+    itself a portal block. No digging: the frame around the opening must not be damaged by the
+    rescue.
+    """
+    if gs.pos is None:
+        return None
+    fx, fy, fz = (math.floor(v) for v in gs.pos)
+    portal = {hit.pos for hit in gs.resources.get(PORTAL_BLOCK, [])}
+    if gs.base is not None:
+        bx, by, bz = gs.base
+        if (bx, by + 1, bz) not in portal and (bx, by + 2, bz) not in portal:
+            return (bx + 0.5, by + 1, bz + 0.5)
+    for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0), (0, -2), (0, 2), (-2, 0), (2, 0)):
+        if (fx + dx, fy, fz + dz) not in portal:
+            return (fx + dx + 0.5, fy, fz + dz + 0.5)
+    return None
+
+
 def _bed_placed(gs: GameState) -> bool:
     """A bed block stands nearby - the bed the run places next to the portal."""
     return gs.resource_distance("white_bed") is not None
@@ -644,7 +698,7 @@ def _bed_placed(gs: GameState) -> bool:
 def _bed_off_base(gs: GameState) -> bool:
     """A bed stands nearby, but not at the base.
 
-    The base bed belongs beside the lit portal, so a bed lying anywhere else is a leftover - the
+    The base bed belongs beside the gate frame, so a bed lying anywhere else is a leftover - the
     respawn bed of an earlier base, or of an earlier run in the same world, that the new base did
     not bring along. Live, run18: the run17 bed sat at y=55 inside the shaft the surface base dug
     for gold, and every `collect_block` stumbled on its half-block top (feet 55.56, no settled
@@ -668,7 +722,7 @@ def _bed_off_base(gs: GameState) -> bool:
 
 
 def _bed_at_base(gs: GameState) -> bool:
-    """A bed stands at the base - the gate bed `place_bed` lays beside the lit portal.
+    """A bed stands at the base - the gate bed `place_bed` lays beside the gate frame.
 
     The one clause the completion gate, `sleep` and `place_bed` all key off: a bed merely
     *loaded* is not it (`_bed_placed`), because the leftover in the base's own shaft would send
@@ -678,11 +732,14 @@ def _bed_at_base(gs: GameState) -> bool:
 
 
 def _nether_idle(gs: GameState) -> bool:
-    """The daytime lull after the portal is lit: the kit is done, the gate is open and only the
-    night bed is left. The extra Nether-prep work (deepening the food reserve, cooking on any
-    fuel, holding at the base) is scoped to this window; before it the bot is busy with the
-    chain and must not be pulled off it."""
-    return _gear_ready(gs) and _portal_lit(gs)
+    """The daytime lull once the gate frame stands: the kit is done, the frame is up and only
+    the prep (bow, gold helmet, deep food and cobble) and the gate bed are left. The extra
+    Nether-prep work (deepening the food reserve, cooking on any fuel, holding at the base) is
+    scoped to this window; before it the bot is busy with the chain and must not be pulled off
+    it. It keys on the frame (`_portal_built`), not on the lit gate: the gate is only lit when
+    the expedition is ready (`_expedition_ready`), so the prep is precisely the work that runs
+    *before* the portal burns rather than beside the open interior."""
+    return _gear_ready(gs) and _portal_built(gs)
 
 
 def _food_goal(gs: GameState) -> int:
@@ -713,8 +770,8 @@ def _food_source_in_reach(gs: GameState) -> bool:
 def _food_reserve_met(gs: GameState) -> bool:
     """Whether the banked food reserve is met, or out of reach.
 
-    The gate holds the run for `_food_goal` - the deep `NETHER_FOOD_RESERVE` in the post-portal
-    lull - but lets the requirement drop out once no source is in reach, the same "unreachable
+    The gate holds the run for `_food_goal` - the deep `NETHER_FOOD_RESERVE` in the lull once the
+    gate frame stands - but lets the requirement drop out once no source is in reach, the same "unreachable
     material drops out" rule the Nether prep steps follow. So a stocked pack is now part of "the
     overworld is done": if the gate holds, a hunt is offered in the same reach (or the night's
     `sleep` is), so it never stalls; and a world with no animal near can never leave the run
@@ -763,7 +820,7 @@ def _gold_goal(inv: dict[str, int]) -> int:
 
 
 def _nether_prep_steps(gs: GameState) -> list[str]:
-    """The Nether prep to offer in the daytime lull after the portal, in order, or [].
+    """The Nether prep to offer in the daytime lull once the gate frame stands, in order, or [].
 
     Each step appears only while it can actually make progress, so an unreachable material (no
     spider, no chicken, no gold ore loaded) drops that step out and never blocks the run -- the
@@ -821,6 +878,38 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
     if inv.get("cobblestone", 0) < NETHER_COBBLE and _can_mine(gs, "stone"):
         out.append("mine_stone")
     return out
+
+
+def _expedition_prepared(gs: GameState) -> bool:
+    """The trip is fully stocked - only the lighting (and the bed laid right after) is left.
+
+    The diamond kit, a bed at hand, every prep step banked and the deep food reserve met. The
+    frame must stand (`_portal_built`): `_all_nether_prep_steps` reports an empty list both once
+    every step is done *and* before the prep window opens, so the frame is what tells a stocked
+    trip apart from one still before its lull.
+    """
+    return (_gear_ready(gs) and _portal_built(gs) and _bed_available(gs)
+            and not _all_nether_prep_steps(gs) and _food_reserve_met(gs))
+
+
+def _expedition_ready(gs: GameState) -> bool:
+    """Whether the gate may be lit now.
+
+    `_expedition_prepared` (the whole trip stocked), plus a moment that leaves no burning gate
+    standing unused: the bed already stands **at the base** (`_bed_at_base`), or it is **night**,
+    when `place_bed` lays the carried bed the very next tick. `light_portal` requires this, so
+    lighting is the last Overworld act: with the frame merely built, unlit, the bot can work at
+    the base for as long as the prep takes without ever standing at an open gate.
+
+    The bed is laid *after* the gate lights, not before. The server lays a carried bed on the
+    nearest flat two-block footprint, and beside an *unlit* frame that footprint is often the
+    open 2x3 opening itself; `clear_portal` cannot remove it (the movement policy protects a bed
+    from a route dig), so `light_portal` would answer `[PORTAL_NO_FRAME]` forever. With the gate
+    lit the opening holds portal blocks and the bed falls on the ground beside the base instead.
+    So the gate lights once a bed is *at hand*, and only when it can be laid at once. After that
+    the completion gate needs only the bed at the base.
+    """
+    return _expedition_prepared(gs) and (_bed_at_base(gs) or gs.phase == "night")
 
 
 def _junk_carried(inv: dict[str, int]) -> list[str]:
@@ -995,14 +1084,16 @@ def _bed_available(gs: GameState) -> bool:
 def _sleep_ready(gs: GameState) -> bool:
     """Whether `sleep` may run where the bot stands.
 
-    Before the portal is lit the bot sleeps *away* from the base: the server lays the bed "beside
+    Before the gate is lit the bot sleeps *away* from the base: the server lays the bed "beside
     the bot", and at the base that spot is the portal's own interior, which the later frame build
-    cannot clear (`remove_wrong_blocks` answers "movement policy prohibits breaking this block"
-    for a bed). Once the portal is lit the gate bed belongs at the base, and it has to be a bed
-    *standing at the base*: counting any loaded bed sent the server to the leftover bed in the
-    base's own shaft and pinned the respawn point off the gate again (live, run19b it25: the bot
-    stood at the base and slept in the bed nine blocks below). A carried bed is `place_bed`'s job
-    first; `take_bed` brings a leftover one home.
+    or `light_portal` cannot clear (`remove_wrong_blocks` answers "movement policy prohibits
+    breaking this block" for a bed). Once the gate is lit the gate bed belongs at the base, and it
+    has to be a bed *standing at the base*: counting any loaded bed sent the server to the leftover
+    bed in the base's own shaft and pinned the respawn point off the gate again (live, run19b
+    it25: the bot stood at the base and slept in the bed nine blocks below). A carried bed is
+    `place_bed`'s job first; `take_bed` brings a leftover one home. The switch is the *lit* gate
+    (`_portal_lit`), not the bare frame: with the frame up but unlit the opening is still open
+    air, so a bed laid there blocks `light_portal`; only once it burns is a base bed safe.
     """
     if _portal_lit(gs):
         return _at_base(gs) and _bed_at_base(gs)
@@ -1069,6 +1160,17 @@ def _base_steps_ready(gs: GameState) -> bool:
         # base's own shaft (taken up by `take_bed`) belongs home whatever the hour. Gated on the
         # night, the bot carried it around all day and never came back (live, run19b it39-40:
         # `take_bed` succeeded in daylight, `go_home` was not offered, and the bed was never laid).
+        # Keyed on the *lit* gate, not the bare frame: a carried bed cannot be laid until the gate
+        # burns (see `_sleep_ready`), so drawing it home through the unlit prep window would only
+        # pull the bot off `mine_gold` and the hunts that leave the base.
+        return True
+    # The whole trip is stocked and only the lighting is left: it happens at the base (and the
+    # bed laid the very next tick), so walk home rather than drift. `light_portal` itself is
+    # `_at_base`-gated, so without this the bot that finished the prep away from the base (a gold
+    # shaft under it, a feather hunt nearby) would never come back to light the gate. Keyed on
+    # `_expedition_prepared`, not `_expedition_ready`: the walk home is worth it by day too, when
+    # the lighting itself still waits for night.
+    if not _portal_lit(gs) and _expedition_prepared(gs):
         return True
     # In the lull, a carried furnace belongs at the base: walking back lets `place_furnace`
     # stand it there, after which cooking reuses it rather than tearing a temporary one down.
@@ -1236,22 +1338,27 @@ def tech_tree_complete(gs: GameState) -> bool:
 
     The prerequisite gear (`_gear_ready`): a diamond pickaxe, a diamond sword, all four diamond
     armour pieces actually *worn* - not merely carried, since it is `equip_armor` that puts them
-    on - and the shield in the off-hand. Then the overworld -> Nether gate itself: the portal is
-    lit and a bed stands *at the base* beside it to respawn at (a bed merely loaded is not
-    enough: a leftover bed from an earlier run satisfies `_bed_placed` while `_bed_off_base`
-    still reports it, so the run keeps working until `take_bed`/`place_bed` bring it home). The
-    bed is only laid at night, so `sleep` actually ran and the respawn point is set. Then the
-    Nether prep must be finished: the run keeps stocking the lull (`_all_nether_prep_steps`)
-    until a bow with arrows, a gold helmet and a deep cobblestone stack are banked, *and* the
-    food reserve is banked (`_food_reserve_met`, the deep `NETHER_FOOD_RESERVE`), so the trip
-    starts prepared rather than stopping the moment the bed is laid. A prep step whose material
-    has no source simply drops out of the list - and so does the food reserve once no source is
-    in the loaded area - so an unreachable item never leaves the run unable to end.
+    on - and the shield in the off-hand. Then the overworld -> Nether gate itself: a bed stands
+    *at the base* beside the frame to respawn at (a bed merely loaded is not enough: a leftover
+    bed from an earlier run satisfies `_bed_placed` while `_bed_off_base` still reports it, so
+    the run keeps working until `take_bed`/`place_bed` bring it home; the bed is only laid at
+    night, so `sleep` actually ran and the respawn point is set), the Nether prep is finished
+    (a bow with arrows, a gold helmet and a deep cobblestone stack are banked, `_all_nether_prep_steps`)
+    and the deep food reserve is banked (`_food_reserve_met`, the `NETHER_FOOD_RESERVE`). The
+    gate is lit with all of that in place but the bed still carried (`light_portal` requires
+    `_expedition_ready`), so the only burning-portal moment before the bed is laid is one tick at
+    night, immediately followed by `place_bed`; only then does this gate close. It must never be
+    lit early: the bot works at the base beside the frame, and the pathfinder walks an open gate
+    like any block, so a portal burning through the prep window walks the body through it (live,
+    run22: lit at it208, the bot stood in its own portal and was in the Nether by it245, with no
+    step asking for the crossing). A prep step whose material has no source simply drops out of
+    the list - and so does the food reserve once no source is in the loaded area - so an
+    unreachable item never leaves the run unable to end.
 
     Requiring the armour to be worn (not just present) is what lets the loop finish
     `equip_armor` first instead of stopping with the set still in the pack.
     """
-    return (_gear_ready(gs) and _portal_lit(gs) and _bed_at_base(gs)
+    return (_portal_lit(gs) and _gear_ready(gs) and _bed_at_base(gs)
             and not _all_nether_prep_steps(gs) and _food_reserve_met(gs))
 
 
@@ -1329,6 +1436,16 @@ def candidates(gs: GameState) -> list[str]:
                and gs.food is not None and gs.food < REGEN_HUNGER)
     eating = (starving or wounded) and bool(_first_edible(inv))
 
+    # --- standing in a lit portal (rescue) ---
+    # The pathfinder walks a portal block like any other open gate, so a `navigate` goal on the
+    # far side routes the body through it and the teleport fires a few seconds later - no step
+    # ever asked for the crossing (live, run22: the lit gate stood beside the base and the bot was
+    # in the Nether a few decisions after it was lit). Nothing and nobody intends to be in the
+    # gate here, so the rescue owns the tick outright (no Laya choice), exactly like the water
+    # rescue. Phase 3, the intended crossing, must bypass this.
+    if _in_portal(gs):
+        return ["leave_portal"]
+
     # --- no footing in water (rescue) ---
     # Live failure: the obsidian dig left the bot treading water off the ground. Off-ground
     # breaks the shared pathfinder -- `collect_block` then thrashed for minutes without moving a
@@ -1375,7 +1492,7 @@ def candidates(gs: GameState) -> list[str]:
             out.append("cook_food")
     # Food reserve: bank edible items. At full hunger the reflex cannot eat, so gathered drops
     # accumulate; when hunger drops it spends them. Never compete with eating: feed to 20 first,
-    # bank after. The goal deepens to the Nether target in the lull after the portal is lit.
+    # bank after. The goal deepens to the Nether target once the gate frame stands.
     if (_edible_count(inv) < _food_goal(gs) and not eating
             and _food_target(gs) is not None):
         out.append("hunt_food")
@@ -1384,11 +1501,12 @@ def candidates(gs: GameState) -> list[str]:
     string = inv.get("string", 0)
     bed = _bed_available(gs)
     # Night + a bed: sleeping skips to morning and pins the respawn point. `_sleep_ready` owns
-    # *where* it may run - away from the base before the portal is lit (the server lays the bed
+    # *where* it may run - away from the base before the gate is lit (the server lays the bed
     # "beside the bot", and at the base that spot is the portal's own interior, which the later
-    # frame build then cannot clear: live, the bed landed in the opening and `light_portal`
-    # answered `[PORTAL_NO_FRAME]` on every tick), and at the base on a bed actually standing
-    # there once it is lit. `place_bed` owns the base bed, `take_bed` brings a leftover one home.
+    # frame build - or the still-open unlit opening - cannot clear: live, the bed landed in the
+    # opening and `light_portal` answered `[PORTAL_NO_FRAME]` on every tick), and at the base on a
+    # bed actually standing there once the gate is lit. `place_bed` owns the base bed, `take_bed`
+    # brings a leftover home.
     if gs.phase == "night" and not gs.sleeping and _overworld(gs) and _sleep_ready(gs):
         out.append("sleep")
 
@@ -1547,11 +1665,21 @@ def candidates(gs: GameState) -> list[str]:
         # After the build the ten obsidian have left the pack (`obsidian < PORTAL_OBSIDIAN`)
         # while the flint and steel remains - that is the "frame is standing" signal. It is
         # confirmed against the frame plane (`_portal_frame_started`) so natural obsidian near
-        # the base cannot be mistaken for our frame.
-        if has_fs and obsidian < PORTAL_OBSIDIAN and _portal_frame_started(gs):
+        # the base cannot be mistaken for our frame. Lighting waits for the whole expedition to
+        # be ready (`_expedition_ready`) and for the bot to stand at the base: it is the last
+        # Overworld act, so the gate never burns while the prep still runs beside it (live, run22
+        # walked into its own early-lit gate). `_expedition_ready` also holds lighting to a night
+        # with the bed still carried (or a bed already at the base), so `place_bed` follows the
+        # very next tick and the burning gate is never left standing while the bot works.
+        if (_at_base(gs) and has_fs and obsidian < PORTAL_OBSIDIAN
+                and _portal_frame_started(gs) and _expedition_ready(gs)):
             out.append("light_portal")
     # The bed goes down at the base at night, because `sleep` is what actually sets the respawn
-    # point: placing it in daylight would leave the pause point unset.
+    # point: placing it in daylight would leave the pause point unset. It waits for the *lit*
+    # gate (`_portal_lit`), not the bare frame: the server lays a carried bed on the nearest flat
+    # footprint, and beside an unlit frame that is the open 2x3 opening, which `clear_portal`
+    # cannot dig (a bed is protected from a route dig) and `light_portal` then fails on. Once the
+    # gate burns the opening is solid and the bed falls on the ground beside the base.
     if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_at_base(gs)
             and gs.phase == "night" and _overworld(gs)):
         out.append("place_bed")
@@ -1574,9 +1702,10 @@ def candidates(gs: GameState) -> list[str]:
     if cobble < 12 and _can_mine(gs, "stone"):
         out.append("mine_stone")
 
-    # --- Nether prep (the daytime lull after the portal) ---
+    # --- Nether prep (the daytime lull once the gate frame stands) ---
     # The bow, its arrows, the gold helmet and the deep cobblestone stack, stocked once the
-    # portal is lit. `_nether_prep_steps` is the single source for both this list and the
+    # gate frame stands (still unlit: the gate only lights when all of this is done). `_nether_prep_steps`
+    # is the single source for both this list and the
     # completion gate, so the offered steps and `tech_tree_complete` never disagree.
     out.extend(_nether_prep_steps(gs))
 
@@ -1592,9 +1721,9 @@ def candidates(gs: GameState) -> list[str]:
     if gs.stuck_labels:
         out = [label for label in out if label not in gs.stuck_labels]
 
-    # The explicit last fallback when nothing productive is available. In the lull after the
-    # portal is lit the only work left is the night bed, and wandering off just burned five
-    # pathfinder timeouts and left the bot away from the base at dusk (live, from-zero run), so
+    # The explicit last fallback when nothing productive is available. In the lull once the gate
+    # frame stands the only work left is the prep and the night bed, and wandering off just burned
+    # five pathfinder timeouts and left the bot away from the base at dusk (live, from-zero run), so
     # hold at the base and wait it out rather than explore. Roaming to fill an open food reserve
     # was tried live (run19b) and reverted: the roam carried the bot 150-200 m out, where the
     # base-range latches re-open the portal chain and it stranded in water for 76 ticks.
@@ -1864,12 +1993,20 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "build the obsidian portal frame beside the bot")
     if label == "light_portal":
         hit = gs.resource_nearest("obsidian")
-        if (not _has(inv, FLINT_STEEL_ITEM) or _portal_lit(gs)
+        if (not _has(inv, FLINT_STEEL_ITEM) or _portal_lit(gs) or not _at_base(gs)
                 or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN or hit is None
-                or not _portal_frame_started(gs)):
+                or not _portal_frame_started(gs) or not _expedition_ready(gs)):
             return None
         return Action(label, "activate_portal", {"x": hit.x, "y": hit.y, "z": hit.z},
                       "light the built portal frame with the carried flint and steel")
+    if label == "leave_portal":
+        target = _leave_portal_target(gs)
+        if target is None:
+            return None
+        tx, ty, tz = target
+        return Action(label, "navigate",
+                      {"x": tx, "y": ty, "z": tz, "dig": False, "scaffold": False},
+                      "step out of the lit portal the body is standing in, before it teleports")
     if label == "take_bed":
         if (_has_bed(inv) or not _nether_idle(gs) or not _overworld(gs)
                 or not _bed_off_base(gs)):
@@ -1882,7 +2019,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                 or not _at_base(gs) or gs.phase != "night" or not _overworld(gs)):
             return None
         return Action(label, "sleep", {},
-                      "place the carried bed beside the lit portal and set the respawn point")
+                      "place the carried bed beside the gate and set the respawn point")
     if label == "sleep":
         if (gs.phase != "night" or gs.sleeping or not _overworld(gs)
                 or not _sleep_ready(gs)):

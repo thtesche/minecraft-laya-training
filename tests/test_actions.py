@@ -1229,6 +1229,23 @@ class NetherGateTest(unittest.TestCase):
                        "white_bed": [bed]}
         return g
 
+    def _expedition(self, **inv) -> GameState:
+        """A geared bot at the base with the frame standing, the prep banked and the gate bed
+        down: `_expedition_ready` holds, so `light_portal` is offered.
+
+        The frame is confirmed by an obsidian hit *inside the frame plane* (the signal
+        `build_portal` leaves behind); the gate itself is still unlit, which is exactly the
+        state `light_portal` is meant to run from.
+        """
+        base = {"flint_and_steel": 1, "bow": 1, "arrow": 16, "cobblestone": 64}
+        base.update(inv)
+        g = self._at_home(self._geared(**base))
+        g.resources = {
+            "obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)],
+            "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0)],
+        }
+        return g
+
     def test_craft_bucket_from_three_iron(self) -> None:
         a = resolve("craft_bucket", self._geared(iron_ingot=3))
         self.assertEqual(a.tool, "craft_item")
@@ -1613,14 +1630,53 @@ class NetherGateTest(unittest.TestCase):
         self.assertIsNone(resolve("clear_portal", g))
 
     def test_light_portal_strikes_the_nearest_frame_block(self) -> None:
-        # After the build the ten obsidian have left the pack; an obsidian hit *inside the
-        # frame plane* confirms the frame is standing, and its nearest block is struck.
-        g = self._at_home(self._geared(flint_and_steel=1))
-        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        # The frame stands and the expedition is ready to go through; the nearest obsidian block
+        # *inside the frame plane* is the one struck.
+        g = self._expedition()
         self.assertIn("light_portal", candidates(g))
         a = resolve("light_portal", g)
         self.assertEqual(a.tool, "activate_portal")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-195, -47, -98))
+
+    def test_light_portal_waits_until_a_bed_is_at_hand(self) -> None:
+        # The frame stands and the flint and steel is carried, but no bed is at hand: lighting
+        # folds the bed into the "ready" bundle, so it waits. This is the run22 bug - had the
+        # gate been lit here it would have burned through the whole prep window beside the base.
+        g = self._expedition()
+        g.resources.pop("white_bed")
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
+
+    def test_light_portal_waits_for_the_prep(self) -> None:
+        # The bed is down but the deep cobble stack is short: still not ready to go through.
+        g = self._expedition(cobblestone=6)
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
+
+    def test_light_portal_waits_for_night_with_only_a_carried_bed(self) -> None:
+        # A bed merely *carried* cannot be laid until the gate burns (a bed laid beside an unlit
+        # frame can land in the open opening, which `clear_portal` cannot dig). So lighting with a
+        # carried bed waits for night, when `place_bed` can run the very next tick; by day the
+        # burning gate would sit beside the working bot.
+        def carried(phase: str) -> GameState:
+            g = self._at_home(self._geared(white_bed=1, flint_and_steel=1,
+                                           bow=1, arrow=16, cobblestone=64))
+            g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+            g.phase = phase
+            return g
+
+        day = carried("day")
+        self.assertNotIn("light_portal", candidates(day))
+        self.assertIsNone(resolve("light_portal", day))
+        night = carried("night")
+        self.assertIn("light_portal", candidates(night))
+        self.assertEqual(resolve("light_portal", night).tool, "activate_portal")
+
+    def test_light_portal_ignores_the_hour_with_a_bed_at_the_base(self) -> None:
+        # A bed already standing at the base needs no night wait: lighting stops the run at once.
+        g = self._expedition()
+        g.phase = "day"
+        self.assertIn("light_portal", candidates(g))
 
     def test_light_portal_ignores_obsidian_off_the_frame(self) -> None:
         # Natural obsidian near the base is not our frame: without an obsidian block in the
@@ -1660,11 +1716,43 @@ class NetherGateTest(unittest.TestCase):
         g.phase = "day"
         self.assertNotIn("place_bed", candidates(g))
 
-    def test_place_bed_waits_for_the_lit_portal(self) -> None:
+    def test_place_bed_waits_for_the_lit_gate(self) -> None:
+        # The frame stands but the gate is not lit: a bed laid beside the open 2x3 opening can
+        # land in it, and `clear_portal` cannot dig a bed out (the movement policy protects it),
+        # so `light_portal` would answer `[PORTAL_NO_FRAME]` forever. The bed waits for the lit
+        # gate, whose opening blocks are what keep the bed on the ground beside the base.
         g = self._at_home(self._geared(white_bed=1))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
         g.phase = "night"
         self.assertNotIn("place_bed", candidates(g))
         self.assertIsNone(resolve("place_bed", g))
+
+    def test_the_gate_lights_before_the_bed_goes_down(self) -> None:
+        # A carried bed, the prep banked and night: the *gate* is offered, not the bed. Once it
+        # lights the opening is solid, so `place_bed` lays the bed safely the very next tick and
+        # the run stops - the burning gate is never left standing while the bot works.
+        g = self._at_home(self._geared(white_bed=1, flint_and_steel=1, bow=1, arrow=16,
+                                       cobblestone=64))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        g.phase = "night"
+        self.assertIn("light_portal", candidates(g))
+        self.assertNotIn("place_bed", candidates(g))
+
+    def test_go_home_draws_the_bot_home_once_the_trip_is_stocked(self) -> None:
+        # The trip is stocked but the gate is unlit, and `light_portal` is `_at_base`-gated, so a
+        # bot that finished the prep away from the base (a gold shaft under it, a feather hunt
+        # nearby) is drawn home rather than drifting until dusk with nothing left to do.
+        g = self._expedition()
+        g.pos = (-230.5, 40.0, -120.5)
+        self.assertIn("go_home", candidates(g))
+
+    def test_go_home_is_not_drawn_before_the_frame_stands(self) -> None:
+        # `_all_nether_prep_steps` is empty before the prep window opens (the frame standing), so
+        # without the frame clause in `_expedition_prepared` a geared bot with a bed and food
+        # would read as fully stocked and be hauled home for a lighting that cannot happen yet.
+        g = self._at_home(self._geared(white_bed=1))
+        g.pos = (-230.5, 40.0, -120.5)
+        self.assertNotIn("go_home", candidates(g))
 
     def test_place_bed_is_not_repeated(self) -> None:
         # A bed already standing at the base is not laid a second time.
@@ -1754,7 +1842,7 @@ class NetherGateTest(unittest.TestCase):
         g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -197, -42, -98, 3.0))
         self.assertNotIn("take_bed", candidates(g))
 
-    def test_take_bed_waits_until_the_portal_is_lit(self) -> None:
+    def test_take_bed_waits_until_the_frame_stands(self) -> None:
         g = self._geared()
         g.base = (-197, -47, -98)
         g.pos = (-196.5, -46.0, -98.5)
@@ -2176,6 +2264,70 @@ class EscapeWaterTest(unittest.TestCase):
     def test_escape_without_ground_defers(self) -> None:
         g = gs(in_water=True, on_ground=False, pos=(-300.5, 60.0, -120.5))
         self.assertIsNone(resolve("escape_water", g))
+
+
+class LeavePortalTest(unittest.TestCase):
+    """The standing-in-a-portal rescue.
+
+    The shared pathfinder walks a portal block like any open gate, so a `navigate` goal on the
+    far side routes the body through the gate and the teleport fires a few seconds later - no
+    step ever asked for the crossing (live, run22: the lit gate stood beside the base and the bot
+    was in the Nether a few decisions after it was lit). The rescue owns the tick outright, so
+    the body steps out before the teleport.
+    """
+
+    def test_standing_in_a_portal_owns_the_tick(self) -> None:
+        # The bot's feet cell *is* a portal block: it is halfway through the gate.
+        g = geared()
+        g.base = (-197, -47, -98)
+        g.pos = (-195.5, -46.0, -97.5)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  -196, -46, -98, 0.6)]}
+        self.assertEqual(candidates(g), ["leave_portal"])
+
+    def test_leave_steps_back_to_the_base(self) -> None:
+        # The frame plane sits two blocks east of the base, so the base is the natural step-out.
+        g = geared()
+        g.base = (-197, -47, -98)
+        g.pos = (-195.5, -46.0, -97.5)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  -196, -46, -98, 0.6)]}
+        a = resolve("leave_portal", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-196.5, -46.0, -97.5))
+        # Never dig or scaffold: the rescue must not damage the frame around the opening.
+        self.assertFalse(a.args["dig"])
+        self.assertFalse(a.args["scaffold"])
+
+    def test_leave_without_a_base_steps_to_a_neighbour(self) -> None:
+        g = geared()
+        g.pos = (-195.5, 64.0, -97.5)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  -196, 64, -98, 0.6)]}
+        a = resolve("leave_portal", g)
+        self.assertEqual(a.tool, "navigate")
+        # The target is a horizontal neighbour, never the portal cell itself.
+        cell = (math.floor(a.args["x"]), math.floor(a.args["y"]), math.floor(a.args["z"]))
+        self.assertNotEqual(cell, (-196, 64, -98))
+
+    def test_a_portal_beside_the_bot_is_not_the_rescue(self) -> None:
+        # A lit gate a couple of blocks off is the normal case (the bot works at the base beside
+        # it); only actually standing *in* it is the rescue.
+        g = geared()
+        g.base = (-197, -47, -98)
+        g.pos = (-196.5, -46.0, -97.5)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  -194, -46, -98, 3.0)]}
+        self.assertNotEqual(candidates(g), ["leave_portal"])
+
+    def test_head_only_in_a_portal_is_still_the_rescue(self) -> None:
+        # Feet clear but the head block is the portal: still mid-teleport, still a rescue.
+        g = geared()
+        g.base = (-197, -47, -98)
+        g.pos = (-196.5, -46.0, -97.5)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  -197, -45, -98, 1.0)]}
+        self.assertEqual(candidates(g), ["leave_portal"])
 
 
 if __name__ == "__main__":

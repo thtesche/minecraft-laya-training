@@ -340,8 +340,9 @@ a **food acquisition** that fits "actually survive".
   requires hunger ≥ `REGEN_HUNGER = 18`, so a bot between 14 and 17 neither ate nor healed and
   simply bled out (live: 17 ticks at 2.7 HP and hunger 17, then killed by the mob). It eats
   only at `health < HEALTH_MAX = 20`, so an uninjured bot at hunger 17 keeps its reserve.
-  **Lull follow-up (`_nether_idle`, live-found):** As soon as the diamond kit stands **and** the portal
-  burns, only the night bed is left open — the bot fell into pure `explore` during the day (live in
+  **Lull follow-up (`_nether_idle`, live-found):** As soon as the diamond kit stands **and** the gate
+  frame stands, only the prep (bow, gold helmet, deep food and cobble) and the gate bed are left
+  open — the bot fell into pure `explore` during the day (live in
   the from-zero run: 25 idle ticks, of which 5 × `[NAVIGATION_STOPPED]` timeouts). This lull is now used for
   nether preparation: `_food_goal` raises the reserve target to `NETHER_FOOD_RESERVE = 64` (one
   full shulker; live the bot had 17 edibles). The usual rule of thumb for the Nether is **64–128
@@ -359,7 +360,7 @@ a **food acquisition** that fits "actually survive".
   re-open the portal chain, and it stranded in water for 76 ticks. The auto-stop also insists the
   gate bed lies **at the base** (`_bed_at_base`): a leftover bed merely *loaded* satisfies
   `_bed_placed`, so without the clause the run could stop with the bed still in an earlier run's
-  shaft (live, run19). The same clause governs `sleep` at the base once the portal is lit (a bed
+  shaft (live, run19). The same clause governs `sleep` at the base once the gate is lit (a bed
   merely loaded sent the server to the leftover bed and pinned the respawn point off the gate —
   live, run19b it25: nine blocks below the base) and `place_bed`, which fills a base without a bed.
   Live, run13 would otherwise have ended with only 4× `cooked_mutton`.
@@ -647,12 +648,21 @@ just one level deeper.
 - **Auto-stop on completed tech tree (implemented):** `actions.tech_tree_complete(gs)` is true,
   once the full diamond kit stands — diamond pickaxe + diamond sword, **all four**
   diamond armour pieces **worn** (`_worn`, not just in the inventory — otherwise the run would end
-  before `equip_armor` takes effect) and the shield in the off-hand — **and** the overworld goal stands: the
-  portal is lit, a bed placed **at the base** beside it (`_bed_placed` *and* `not _bed_off_base`: a
-  leftover bed merely *loaded* satisfies the first clause, so the run keeps working until
-  `take_bed`/`place_bed` bring it home), **no Nether prep step left open**
+  before `equip_armor` takes effect) and the shield in the off-hand — **and** the overworld goal stands. The
+  goal is split in two. `_expedition_ready` is the prepared trip minus the burning gate and the laid
+  bed: **a bed at hand** (`_bed_available`, carried or standing — a leftover bed merely *loaded* still
+  needs `take_bed`/`place_bed` to bring it home), **no Nether prep step left open**
   (`_all_nether_prep_steps`: bow+arrows, gold helmet, deep cobblestone) **and the food reserve
-  banked** (`_food_reserve_met`, the 64 units from `_food_goal`). Prep steps like the
+  banked** (`_food_reserve_met`, the 64 units from `_food_goal`) — and, because the bed is laid
+  *after* the gate burns (see the bed note below), only when that can happen at once: the bed
+  already stands **at the base** (`_bed_at_base`) or it is **night**, so `place_bed` runs the very
+  next tick. `light_portal` requires `_expedition_ready`, so **the gate is lit last**: the portal
+  burning is the last Overworld act, and `tech_tree_complete` — `_portal_lit` **and** `_gear_ready`
+  **and** `_bed_at_base` **and** `not _all_nether_prep_steps` **and** `_food_reserve_met` — closes in
+  the same tick the bed goes down. It must never light early — the bot works at the base right
+  beside the frame and the pathfinder walks an open portal like any block, so a gate burning through
+  the prep window walks the body through it (live, run22: lit at it208, the bot stood in its own
+  portal and was in the Nether by it245, with no step asking for the crossing). Prep steps like the
   food demand drop away as soon as their raw material is unreachable (no spawn, no ore, no
   food animal in the loaded area and no zombie in melee reach), so an unreachable item never
   blocks the run. `[loop]
@@ -692,7 +702,8 @@ just one level deeper.
   `_portal_frame_started` checks the fixed frame plane (`_portal_site` ± neighbours) for obsidian: if any lies
   there, `build_portal` may **continue** with the rest in the inventory (after a partial build the
   remaining quantity is exactly the still-missing cells), and `light_portal` only fires when obsidian really
-  stands **in the frame** (`has_fs and obsidian < 10 and _portal_frame_started`); natural obsidian
+  stands **in the frame** (`has_fs and obsidian < 10 and _portal_frame_started`) **and** the trip
+  is fully prepared (`_expedition_ready`, see the auto-stop above); natural obsidian
   next to the base no longer counts.
   Tested in `tests/test_actions.py::NetherGateTest` and `tests/test_verify.py`.
 - **Water escape reflex (implemented):** `candidates` checks `gs.in_water and not gs.on_ground` as
@@ -730,6 +741,21 @@ just one level deeper.
   base-first rule was the error, not the model.) If the bot stands on the bottom (water trench, pond,
   a pour that does not flood it), the reflex does **not** engage. Tested in
   `tests/test_actions.py::EscapeWaterTest` and `tests/test_graph.py::WaterTicksTest`.
+- **Portal escape reflex (implemented, live run22):** The shared pathfinder treats a **lit nether
+  portal block as open ground**, so a `navigate` goal on the far side of the gate routes the body
+  straight through it — and a body standing in the gate teleports a few seconds later, with no step
+  ever asking for the crossing. Live run22: the gate was lit at it208 beside the base, the bot kept
+  working there, and by it245 it stood in the Nether. Two defences: (1) the gate is **only lit once
+  the trip is ready** (`light_portal` requires `_expedition_ready`, see the auto-stop above), so no
+  lit portal exists during the long prep window at all; (2) a reflex for the residual case — an
+  adopted gate a previous run left standing, or the instant just after lighting. `candidates` checks
+  `_in_portal` (the bot's own feet or head cell is a loaded `nether_portal` block) as the very first
+  thing, ahead of the water rescue — the teleport is faster than drowning — and returns **only**
+  `["leave_portal"]`, another rescue where Laya does not choose. `resolve("leave_portal")` navigates
+  one step out with **no** `dig`/`scaffold` (the frame must not be damaged by the rescue), preferring
+  the home base (the frame plane sits two blocks east of it) and otherwise the nearest horizontal
+  neighbour that is not itself a portal cell. Phase 3, the intended crossing, must bypass this.
+  Tested in `tests/test_actions.py::LeavePortalTest`.
   **Stuck (`repeated_movement_failure`):** The server reports this stop when the body does **not**
   get anywhere on a re-issued route — the bot is physically enclosed.
   Live run10: in a 1-block-wide, flooded shaft, `navigate`, `collect_block` and
@@ -824,18 +850,22 @@ just one level deeper.
   `_bed_available` also counts a **placed** bed (not just a carried one): after a
   manual base build or a restart the bed otherwise remains as a block and the loop would
   needlessly look for wool for a second one.
-  **Bed only after the portal:** Before the lit portal the generic `sleep` at the
+  **Bed once the gate is lit:** Before the lit gate the generic `sleep` at the
   base is **suppressed** (`_at_base` and *not* `_portal_lit`). The server places the bed "next to the
   bot", and at the base that is exactly the portal interior — `build_portal` cannot
   clear a bed there (`remove_wrong_blocks` answers "movement policy prohibits breaking this block"). Live
   the bed landed in the opening and `light_portal` answered in every tick with
-  `[PORTAL_NO_FRAME]`. The base bed is `place_bed`'s job and waits for the *lit*
-  portal; away from the base the night sleep stays unchanged **until the portal burns**. After that
+  `[PORTAL_NO_FRAME]`. The base bed is `place_bed`'s job and waits for the *lit* gate: with the
+  frame up but unlit the opening is still open air and a bed laid there blocks the lighting, so the
+  gate goes first. `light_portal` requires `_expedition_ready` — which holds once a bed is **at
+  hand** and it is night or the bed already stands at the base (see the auto-stop) — and `place_bed`
+  lays it the very next tick, when the opening is solid. Away from the base the night
+  sleep stays unchanged **until the gate is lit**. After that
   `sleep` is restricted to the base (`_at_base` *iff* `_portal_lit`): anywhere else it would pin the
   respawn point away from the gate, and a carried bed laid wherever the bot happened to stand is
   exactly the leftover `take_bed` then had to fetch. A bed standing **away from the base** — the
   respawn bed of an earlier base, or of an earlier run in the same world — is taken up in the lull
-  (`take_bed` → `collect_block {block_name: "white_bed", count: 1}`, only once the portal is lit)
+  (`take_bed` → `collect_block {block_name: "white_bed", count: 1}`, once the frame stands)
   and laid again at the base by `place_bed`, so the gate bed ends up where it belongs. The
   auto-stop insists on it too: `tech_tree_complete` adds `not _bed_off_base`, so the run cannot
   end with the gate bed still sitting in an earlier run's shaft (live, run19: the goal read
@@ -896,7 +926,7 @@ just one level deeper.
   restart a furnace near the anchor from the `furnace` scan in `CHAIN_NAMES`). `cook_food`,
   `smelt_gold` and `smelt_iron` then give `smelt_item` these coordinates and *without*
   `temporary_workstation`, so that the same furnace stays standing. The step runs only in the lull
-  (`_nether_idle`) — before the portal the chain still needs the carried furnace for smelting
+  (`_nether_idle`) — before the gate frame stands the chain still needs the carried furnace for smelting
   away from the base —, and `_furnace_site` refuses the cell if a bed already stands there
   (the `[PLACE_TARGET_OCCUPIED]` unblock would otherwise dig away the respawn bed); if the floor
   cannot support the furnace (`[PLACE_NO_SUPPORT]`), the chain drops away (`Agent._note_furnace` →

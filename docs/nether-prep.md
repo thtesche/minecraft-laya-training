@@ -1,14 +1,20 @@
-# Nether preparation (post-portal step)
+# Nether preparation (pre-gate step)
 
 Status: **phases 1 + 2 implemented** (bow + arrows, cobblestone reserve, gold helmet; safety
 gates). Phase 3 (the actual Nether visit) is still open. Details below.
 
 ## Idea
 
-Between "the portal burns" (`light_portal`) and "the bot enters the Nether" a
-**preparation stage** is missing: the bot should only step through the gate once armour, tools,
+Between "the frame stands" (`build_portal`, the gate still **unlit**) and "the bot enters the
+Nether" a **preparation stage** is missing: the bot should only step through the gate once armour, tools,
 food and building material really are right. Just as with eating (see `NETHER_FOOD_RESERVE = 64`
-in `README.md`): better properly prepared than quickly in and losing everything.
+in [`architecture.md`](architecture.md)): better properly prepared than quickly in and
+losing everything. The gate is lit **only once all of this stands** (`light_portal` requires
+`_expedition_ready`: the prep done, the food reserved, a bed at hand, and it night or the bed
+already at the base), so the portal never burns through the preparation window beside the base —
+the bot used to walk into its own lit gate there (live, run22). The bed is laid the very next tick
+after lighting, once the opening holds the portal's own blocks; laid beside the *unlit* frame it can
+fall into the still-open opening, which `clear_portal` cannot dig out.
 
 Preparation runs in **the same daytime lull** as eating (see `_nether_idle`) and is
 now part of the **auto-stop**: `tech_tree_complete` additionally requires that no preparation
@@ -115,7 +121,9 @@ Nether terrain is already provided for in the server reflex.
   (`_swap_to_gold_helmet` on entry, see below).
 
 **Phase 3 — open (the actual Nether visit):**
-- **`enter_portal`**: navigate in (`dimension → nether`).
+- **`enter_portal`**: navigate in (`dimension → nether`). This must **bypass the portal escape
+  reflex** (`_in_portal` → `leave_portal`, see architecture): the rescue steps the body out of a
+  lit gate, so the intended crossing needs an explicit intent the rescue respects.
 - **Armour swap on entry:** diamond helmet off, gold helmet on (`_swap_to_gold_helmet`), so that
   piglins stay neutral. The diamond helmet stays in the pack for the way back.
 - Build the **shelter**, secure the **way back**, then the first Nether resource (blaze/netherrack) as
