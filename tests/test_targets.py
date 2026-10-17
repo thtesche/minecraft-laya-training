@@ -171,6 +171,19 @@ class BaseTargetTest(unittest.TestCase):
         ]}
         self.assertEqual(base_target(gs).pos, (0, 71, 0))
 
+    def test_below_the_bot_takes_the_highest_ground_not_the_deepest_hole(self) -> None:
+        # Live run26: the bot stood on the surface at y=64 beside ground at y=63 and a dug-out
+        # dip at y=61. Nothing sat at or above its feet, and the old fallback -- `min` over
+        # every hit -- anchored the base on the dip floor, two blocks under the surface; the
+        # frame, chest and furnace then went into the ground around it. Take the highest ground.
+        gs = GameState()
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.resources = {"grass_block": [
+            hit("grass_block", "grass_block", 1, 63, 0, 1.5),
+            hit("grass_block", "grass_block", 2, 61, 0, 2.5),   # the dip floor: lower, nearer
+        ]}
+        self.assertEqual(base_target(gs).pos, (1, 63, 0))
+
     def test_none_without_ground(self) -> None:
         gs = GameState()
         gs.pos = (0.0, 64.0, 0.0)
@@ -347,6 +360,17 @@ class FlatBuildSiteTest(unittest.TestCase):
         grid = self._grid(range(0, 6), range(0, 1))
         grid[(2, 62, 0)] = "air"
         self.assertIsNone(flat_build_site(grid, (2.5, 64.0, 0.5)))
+
+    def test_rejects_a_pit_floor_below_the_bots_own_footing(self) -> None:
+        # Live run26: the two scan reads reach three blocks below the bot, and a dug-out dip
+        # floor met every other criterion, so the base sank to it -- the bot stood at y=64, the
+        # anchor landed at y=61, and the frame, chest and furnace were laid into the hillside
+        # 1-2 blocks under the surrounding ground. A row below the bot's own footing (fy - 1) is
+        # a pit floor, not the surface the base may stand on; its own level and the level ground
+        # overhead stay admissible.
+        for ground, expected in ((61, None), (62, None), (63, (0, 63, 0))):
+            grid = self._grid(range(0, 6), range(-2, 3), ground=ground)
+            self.assertEqual(flat_build_site(grid, (2.5, 64.0, 0.5)), expected)
 
     def test_no_grid_no_site(self) -> None:
         self.assertIsNone(flat_build_site({}, (0.0, 64.0, 0.0)))

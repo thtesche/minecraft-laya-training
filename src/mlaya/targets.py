@@ -134,6 +134,8 @@ def base_target(gs: GameState) -> Target | None:
     Unlike `ground_targets` (farthest first, stone included, meant for wandering) this picks
     the closest real surface: only the ground queries, and only cells at or above the bot's
     own level, so the pick is the open ground overhead rather than a cave floor underfoot.
+    With nothing at or above the bot it takes the highest ground below it -- the surface
+    nearest its own level -- never the lowest.
     """
     hits = [h for query in GROUND_NAMES for h in gs.resources.get(query, []) if h.standable]
     if not hits:
@@ -141,8 +143,18 @@ def base_target(gs: GameState) -> Target | None:
     x0 = gs.pos[0] if gs.pos else 0.0
     z0 = gs.pos[2] if gs.pos else 0.0
     y0 = gs.pos[1] if gs.pos else 0.0
-    above = [h for h in hits if h.y >= y0] or hits
-    hit = min(above, key=lambda h: (h.y, h.distance))
+    above = [h for h in hits if h.y >= y0]
+    if above:
+        hit = min(above, key=lambda h: (h.y, h.distance))
+    else:
+        # The bot stands *above* every surface cell it has seen (it climbed a scaffold or a
+        # hill slope). Falling back to `min` over each hit -- the lowest ground there is --
+        # anchored the base to the bottom of a pit: live, run26, the bot stood on the surface
+        # at y=64 beside a dug-out dip, the base landed at (229,61,223) two blocks under the
+        # surrounding ground, and the portal frame, chest and furnace were then laid 1-2 blocks
+        # into the hillside (the furnace alone dug a dirt block out to fit). Take the highest
+        # ground instead, so the base stays at the surface.
+        hit = max(hits, key=lambda h: (h.y, -h.distance))
     text = f"{hit.name} {hit.distance:.0f}m {_compass(hit.x - x0, hit.z - z0)}, open above"
     return Target(label=f"{hit.name}@{hit.x},{hit.z}", text=text, hit=hit)
 
@@ -225,12 +237,22 @@ def flat_build_site(grid: dict[tuple[int, int, int], str],
 
     Candidates are ranked by squared distance to the bot (cells and level together), so the
     walk is short and the base lands at the bot's own height rather than on a ledge or in a pit.
+    Ranking alone is too weak a promise, though: in ground dug over by earlier runs no row at
+    the bot's own height fits any more, and the pick then dropped to the floor of the scan box.
+    A candidate more than one block below the bot's feet is therefore no candidate at all: that
+    is a pit floor, not the surface the bot stands on (its own footing is `fy - 1`, and
+    `_at_surface` proved that is open ground -- live, run26: the bot stood at y=64, the pick was
+    the floor of a two-deep dip at y=61, and the frame, chest and furnace went in 1-2 blocks
+    under the surrounding ground).
     """
     if not grid:
         return None
     fx, fy, fz = (int(math.floor(v)) for v in feet)
+    lowest = fy - 1  # the bot's own footing block: level with the surface it stands on
     sites: list[tuple[int, int, int]] = []
     for (bx, by, bz), name in grid.items():
+        if by < lowest:  # below the surface underfoot: a pit floor, not the base site
+            continue
         if name in _NOT_SOLID:  # the anchor itself must be real ground
             continue
         row = range(bx, bx + FRAME_WIDTH)
