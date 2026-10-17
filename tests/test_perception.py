@@ -3,10 +3,10 @@ from __future__ import annotations
 import unittest
 
 from mlaya.perception import (GROUND_NAMES, RESCUE_GROUND_NAMES, RESCUE_RADIUS, BlockHit,
-                              frame_volume, parse_block_above, parse_box, parse_cells,
-                              parse_ground_height, parse_portal_corner, parse_refused_cells,
-                              parse_resource_counts, parse_resources, parse_status,
-                              parse_surface_height, portal_interior)
+                              frame_obsidian_cells, frame_volume, parse_block_above, parse_box,
+                              parse_cells, parse_ground_height, parse_portal_corner,
+                              parse_refused_cells, parse_resource_counts, parse_resources,
+                              parse_status, parse_surface_height, portal_interior)
 
 
 def _status(situation: dict) -> dict:
@@ -201,6 +201,31 @@ class FrameVolumeTest(unittest.TestCase):
         # Run26's furnace stood at (229, 62, 222), the new base's frame corner: the scan must
         # return that cell so `clear_frame` can name and dig it.
         self.assertIn((229, 62, 222), frame_volume((228, 62, 222)))
+
+
+class FrameObsidianCellsTest(unittest.TestCase):
+    """`frame_obsidian_cells`: the ten blocks a finished nether portal frame holds.
+
+    A portal needs obsidian in every block that touches the 2x3 opening; the four outer corners
+    are free, which is why the run fills them with cobblestone. Reading exactly these cells tells
+    a finished frame from a partial one (`_frame_complete_at_base`).
+    """
+
+    def test_the_ten_cells_are_the_blocks_touching_the_opening(self) -> None:
+        base = (-197, -47, -98)
+        cells = frame_obsidian_cells(base)
+        self.assertEqual(len(cells), 10)
+        # Bottom and top rows between the corners, and both columns between the rows.
+        self.assertEqual(
+            set(cells),
+            {(-195, -47, -98), (-194, -47, -98),          # bottom middle
+             (-195, -43, -98), (-194, -43, -98),          # top middle
+             (-196, -46, -98), (-196, -45, -98), (-196, -44, -98),   # left column
+             (-193, -46, -98), (-193, -45, -98), (-193, -44, -98)})  # right column
+
+    def test_the_cells_are_inside_the_frame_plane(self) -> None:
+        base = (228, 63, 221)
+        self.assertTrue(set(frame_obsidian_cells(base)) <= set(frame_volume(base)))
 
 
 class ParseRefusedCellsTest(unittest.TestCase):

@@ -831,6 +831,22 @@ def frame_volume(base: tuple[int, int, int]) -> list[tuple[int, int, int]]:
     return [(x, y, bz) for x in range(bx, bx + 5) for y in range(by, by + 5)]
 
 
+def frame_obsidian_cells(base: tuple[int, int, int]) -> list[tuple[int, int, int]]:
+    """The ten obsidian cells a finished nether portal frame holds.
+
+    A portal needs obsidian in every block that touches the 2x3 opening; the four outer corners
+    are free (the run fills them with cobblestone). So the ten touching cells are up both sides
+    and along the top and bottom rows between the corners -- reading exactly these tells a
+    finished frame from a partial one without guessing from the pack's obsidian count.
+    """
+    bx, by, bz = base
+    cells = [(bx + 2, by, bz), (bx + 3, by, bz)]
+    cells += [(bx + 1, by + dy, bz) for dy in (1, 2, 3)]
+    cells += [(bx + 4, by + dy, bz) for dy in (1, 2, 3)]
+    cells += [(bx + 2, by + 4, bz), (bx + 3, by + 4, bz)]
+    return cells
+
+
 async def scan_frame_volume(executor, base: tuple[int, int, int]) -> dict:
     """One `view_blocks cells` read of the whole frame plane, for the frame-clearance steps.
 

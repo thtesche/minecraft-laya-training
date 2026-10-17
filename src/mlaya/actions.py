@@ -3,7 +3,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .perception import AIR_NAMES, INVENTORY_NEAR_FULL, INVENTORY_SLOTS, PORTAL_BLOCK, GameState
+from .perception import (AIR_NAMES, INVENTORY_NEAR_FULL, INVENTORY_SLOTS, PORTAL_BLOCK,
+                         GameState, frame_obsidian_cells)
 from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
                       frontier_heading, nearest_ground)
 
@@ -174,8 +175,22 @@ WATER_RESCUE_AFTER = 2
 # anything a recipe consumes: cobblestone (portal corners, furnace), planks/logs/sticks, wool,
 # string, coal, iron, flint, gravel, obsidian and food.
 JUNK_ITEMS = ("tuff", "calcite", "diorite", "andesite", "granite", "cobbled_deepslate",
-              "deepslate", "dirt", "leather", "bone", "raw_copper", "glow_ink_sac",
+              "deepslate", "dirt", "coarse_dirt", "pointed_dripstone", "lapis_lazuli",
+              "leather", "bone", "raw_copper", "glow_ink_sac",
               "egg", "rotten_flesh", "mossy_stone_brick_slab", "sand", "dripstone_block")
+
+# Geometry of the gear the tech chain upgrades through, weakest material first. A carried tool
+# or armour piece of a lower tier than the best the bot already carries, wears or holds is dead
+# weight no recipe here wants, but `_junk_carried` cannot see it either (the name is a real tool),
+# so a full pack of nothing else never sheds and every slot-needing action answers
+# `[INVENTORY_FULL]` forever (live, run28: a pack of the iron kit and the stone/wooden picks
+# stalled on `craft_table` and on every mob drop). The gold helmet keeps piglins off in the
+# Nether, so it is never shed even though a diamond helmet outranks it.
+_TOOL_KINDS = ("pickaxe", "axe", "shovel", "hoe", "sword")
+_ARMOR_KINDS = ("helmet", "chestplate", "leggings", "boots")
+_GEAR_RANK = {"leather": 1, "golden": 1, "wooden": 1, "stone": 2, "chainmail": 2, "iron": 3,
+              "diamond": 4, "netherite": 5}
+_GEAR_KEEP = ("golden_helmet",)
 
 # Home base. The run keeps one anchor on the surface; the bed, the portal frame and the chest
 # all stand there, and the bot walks back to it to deploy them. Eight planks make a chest, which
@@ -1028,8 +1043,33 @@ def _hoard_surplus(inv: dict[str, int]) -> list[dict[str, int]]:
     return out
 
 
-def _sheddable(inv: dict[str, int]) -> bool:
-    return bool(_junk_carried(inv) or _hoard_surplus(inv))
+def _spare_gear(gs: GameState, inv: dict[str, int]) -> list[str]:
+    """Carried tools and armour below the best the bot already carries, wears or holds.
+
+    The pack fills with the kit the chain upgraded through (wooden/stone/iron picks, an iron
+    sword and iron armour once the diamond set is on). No recipe here wants them and
+    `_junk_carried` cannot see them, so a full pack of nothing else never sheds. The "best"
+    counts carried, worn and held gear, so the bot only drops pieces a strictly better one
+    replaces, and `_GEAR_KEEP` (the gold helmet) is never dropped.
+    """
+    out: list[str] = []
+    for kinds, held in ((_TOOL_KINDS, gs.tools), (_ARMOR_KINDS, {})):
+        for kind in kinds:
+            best = 0
+            for material, rank in _GEAR_RANK.items():
+                name = f"{material}_{kind}"
+                if (inv.get(name, 0) or _worn(gs, name)
+                        or held.get(kind) == material):
+                    best = max(best, rank)
+            for material, rank in _GEAR_RANK.items():
+                name = f"{material}_{kind}"
+                if rank < best and name not in _GEAR_KEEP and inv.get(name, 0):
+                    out.append(name)
+    return out
+
+
+def _sheddable(gs: GameState, inv: dict[str, int]) -> bool:
+    return bool(_junk_carried(inv) or _hoard_surplus(inv) or _spare_gear(gs, inv))
 
 
 def _chest_ready(gs: GameState) -> bool:
@@ -1288,7 +1328,7 @@ def _base_steps_ready(gs: GameState) -> bool:
         return True
     if not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs):
         return True
-    if _chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(inv):
+    if _chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(gs, inv):
         return True
     return False
 
@@ -1373,6 +1413,14 @@ def _portal_frame_started(gs: GameState) -> bool:
     if site is None:
         return False
     sx, sy, sz = site["x"], site["y"], site["z"]
+    # The exact frame-plane read first: `gs.resources` keeps only the four nearest obsidian hits
+    # inside `RESOURCE_RADIUS`, so a deep deposit (or an older frame one block over) crowds our
+    # own obsidian out and the loop believes no frame stands (live, run28: it re-mined ten
+    # obsidian after the frame was already up, then could never light the finished gate).
+    if gs.base is not None and gs.frame_names:
+        if any(gs.frame_names.get(cell) == "obsidian"
+               for cell in frame_obsidian_cells(gs.base)):
+            return True
     for hit in gs.resources.get("obsidian", []):
         if hit.z == sz and sx - 1 <= hit.x <= sx + 2 and sy - 1 <= hit.y <= sy + 3:
             return True
@@ -1404,6 +1452,37 @@ def _frame_started_at_base(gs: GameState) -> bool:
     plane is only the bot's own feet, where the answer means nothing, so it stays false here.
     """
     return gs.base is not None and _portal_frame_started(gs)
+
+
+def _frame_complete_at_base(gs: GameState) -> bool:
+    """All ten frame obsidian stand in the base's plane, from the exact frame-plane read.
+
+    `light_portal` used to prove "the build spent its bank" by `obsidian < PORTAL_OBSIDIAN`, but
+    the pack can carry a fresh ten again (a restart, or the loop re-mining) and then a *finished*
+    frame could never be lit (live, run28). The plane read is the frame's own state, so it needs
+    no guess from the pack. The four cobblestone corners are not required: a nether portal needs
+    obsidian only in the blocks that touch the opening.
+    """
+    if gs.base is None or not gs.frame_names:
+        return False
+    return all(gs.frame_names.get(cell) == "obsidian"
+               for cell in frame_obsidian_cells(gs.base))
+
+
+def _portal_ignite_cell(gs: GameState) -> tuple[int, int, int] | None:
+    """A frame obsidian cell to strike with the flint and steel.
+
+    Prefers the nearest obsidian the scan reports; when the four nearest hits are a deposit or an
+    older frame and ours is not among them, the exact frame-plane read names one of our cells.
+    """
+    hit = gs.resource_nearest("obsidian")
+    if hit is not None:
+        return (hit.x, hit.y, hit.z)
+    if gs.base is not None:
+        for cell in frame_obsidian_cells(gs.base):
+            if gs.frame_names.get(cell) == "obsidian":
+                return cell
+    return None
 
 
 def _frame_needs_obsidian(gs: GameState, inv: dict) -> bool:
@@ -1811,7 +1890,8 @@ def candidates(gs: GameState) -> list[str]:
         # walked into its own early-lit gate). `_expedition_ready` also holds lighting to a night
         # with the bed still carried (or a bed already at the base), so `place_bed` follows the
         # very next tick and the burning gate is never left standing while the bot works.
-        if (_at_base(gs) and has_fs and obsidian < PORTAL_OBSIDIAN
+        if (_at_base(gs) and has_fs
+                and (obsidian < PORTAL_OBSIDIAN or _frame_complete_at_base(gs))
                 and _portal_frame_started(gs) and _expedition_ready(gs)):
             out.append("light_portal")
     # The bed goes down at the base at night, because `sleep` is what actually sets the respawn
@@ -1832,7 +1912,7 @@ def candidates(gs: GameState) -> list[str]:
             out.append("place_chest")
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
             out.append("craft_chest")
-    if gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(inv):
+    if gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(gs, inv):
         if gs.base is not None and _chest_ready(gs) and _at_base(gs):
             out.append("stow_surplus")
         elif gs.base is None or not _chest_ready(gs):
@@ -2145,12 +2225,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"portal_frame": site, "remove_wrong_blocks": True},
                       "build the obsidian portal frame beside the bot")
     if label == "light_portal":
-        hit = gs.resource_nearest("obsidian")
+        cell = _portal_ignite_cell(gs)
         if (not _has(inv, FLINT_STEEL_ITEM) or _portal_lit(gs) or not _at_base(gs)
-                or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN or hit is None
-                or not _portal_frame_started(gs) or not _expedition_ready(gs)):
+                or (inv.get("obsidian", 0) >= PORTAL_OBSIDIAN
+                    and not _frame_complete_at_base(gs))
+                or cell is None or not _portal_frame_started(gs) or not _expedition_ready(gs)):
             return None
-        return Action(label, "activate_portal", {"x": hit.x, "y": hit.y, "z": hit.z},
+        return Action(label, "activate_portal", {"x": cell[0], "y": cell[1], "z": cell[2]},
                       "light the built portal frame with the carried flint and steel")
     if label == "leave_portal":
         target = _leave_portal_target(gs)
@@ -2381,7 +2462,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"block_name": "furnace", "x": fx, "y": fy, "z": fz},
                       "place the carried furnace at the home base so cooking reuses it")
     if label == "stow_surplus":
-        items = [{"item_name": n, "count": inv[n]} for n in _junk_carried(inv)]
+        items = [{"item_name": n, "count": inv[n]}
+                 for n in _junk_carried(inv) + _spare_gear(gs, inv)]
         items += _hoard_surplus(inv)
         if not _chest_ready(gs) or not items:
             return None
@@ -2398,7 +2480,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"operation": "deposit", "x": cx, "y": cy, "z": cz, "items": items[:12]},
                       "deposit the surplus blocks into the chest at the base")
     if label == "drop_junk":
-        items = [{"item_name": n} for n in _junk_carried(inv)]
+        items = [{"item_name": n} for n in _junk_carried(inv) + _spare_gear(gs, inv)]
         items += _hoard_surplus(inv)
         if not items:
             return None

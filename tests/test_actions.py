@@ -11,7 +11,7 @@ import unittest
 
 from mlaya.actions import (Action, candidates, inventory_relief, resolve, tech_tree_complete,
                            WATER_RESCUE_AFTER)
-from mlaya.perception import BlockHit, GameState
+from mlaya.perception import BlockHit, GameState, frame_obsidian_cells
 
 
 def gs(**kw) -> GameState:
@@ -1769,6 +1769,40 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("light_portal", candidates(g))
         self.assertIsNone(resolve("light_portal", g))
 
+    def test_light_portal_lights_a_finished_frame_with_the_obsidian_re_banked(self) -> None:
+        # Live, run28: the build finished the frame, the loop then re-mined a fresh ten (the
+        # nearby obsidian scan had dropped the frame's own hits) and `obsidian < PORTAL_OBSIDIAN`
+        # never held again, so the finished gate could not be lit. The exact plane read proves
+        # the frame is complete, so the pack's obsidian count no longer decides it.
+        g = self._expedition(obsidian=10)
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        self.assertIn("light_portal", candidates(g))
+        self.assertEqual(resolve("light_portal", g).tool, "activate_portal")
+
+    def test_light_portal_waits_when_a_re_banked_pack_has_only_a_partial_frame(self) -> None:
+        # The count alone is not enough: a re-banked ten with one frame cell still missing must
+        # not light, or the server answers `[PORTAL_NO_FRAME]` on every tick.
+        g = self._expedition(obsidian=10)
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)[:-1]}
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
+
+    def test_the_frame_plane_read_stops_the_obsidian_re_mine(self) -> None:
+        # `gs.resources` keeps only the four nearest obsidian hits, so a deposit the bot is
+        # walking to can crowd the frame's own obsidian out of it. The exact plane read still
+        # sees the frame, and the obsidian chain stands down instead of re-mining a fresh ten
+        # (live, run28: that re-banked ten then blocked `light_portal` forever).
+        def state(frame: bool) -> GameState:
+            g = self._at_home(self._geared(water_bucket=1, obsidian=1, flint_and_steel=1))
+            g.resources = self._lava()
+            g.resources["obsidian"] = [BlockHit("obsidian", "obsidian", -240, 20, -200, 2.0)]
+            if frame:
+                g.frame_names = {cell: "obsidian"
+                                 for cell in frame_obsidian_cells(g.base)}
+            return g
+        self.assertIn("mine_obsidian", candidates(state(frame=False)))
+        self.assertNotIn("mine_obsidian", candidates(state(frame=True)))
+
     def test_no_gate_actions_once_the_portal_is_lit(self) -> None:
         g = self._geared(flint_and_steel=1)
         g.resources = self._blocks("obsidian", "nether_portal")
@@ -2180,6 +2214,32 @@ class HomeBaseTest(unittest.TestCase):
         a = resolve("drop_junk", g)
         self.assertEqual(a.tool, "drop_item")
         self.assertEqual(a.args["items"], [{"item_name": "tuff"}])
+
+    def test_a_full_pack_of_spare_gear_still_sheds(self) -> None:
+        # Live, run28: the pack was full of the kit the chain upgraded through (an iron sword,
+        # wooden/stone/iron picks and iron armour, with the diamond set worn). `_junk_carried`
+        # saw none of it, so `_sheddable` was False and every slot-needing action -- `craft_table`,
+        # every mob drop -- answered `[INVENTORY_FULL]` on end. Spare gear has to be shed too.
+        g = self._home(self._geared(iron_sword=1, iron_pickaxe=1, stone_pickaxe=1,
+                                    wooden_pickaxe=1, iron_helmet=1, iron_chestplate=1,
+                                    iron_leggings=1, iron_boots=1))
+        g.slots_used = 36
+        self.assertIn("drop_junk", candidates(g))
+        a = resolve("drop_junk", g)
+        self.assertEqual(a.tool, "drop_item")
+        names = [i["item_name"] for i in a.args["items"]]
+        self.assertIn("iron_sword", names)
+        self.assertIn("iron_pickaxe", names)
+        self.assertIn("wooden_pickaxe", names)
+        self.assertIn("iron_chestplate", names)
+        self.assertNotIn("diamond_pickaxe", names)
+
+    def test_spare_gear_never_drops_the_gold_helmet(self) -> None:
+        # The gold helmet keeps piglins off in the Nether: it is not spare even though the worn
+        # diamond helmet outranks it, so alone it is never a reason to shed.
+        g = self._home(self._geared(golden_helmet=1))
+        g.slots_used = 36
+        self.assertNotIn("drop_junk", candidates(g))
 
     def test_drop_junk_uses_a_hole_until_the_terrain_refuses_one(self) -> None:
         # `in_a_hole` digs an enclosed disposal pit so the dropped blocks stay put; where the
