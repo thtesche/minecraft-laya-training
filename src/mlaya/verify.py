@@ -107,7 +107,10 @@ def progressed(label: str, d: dict) -> bool:
     if label == "light_portal":
         return bool(d.get("portal_lit"))
     if label == "place_bed":
-        return bool(d.get("bed_placed"))
+        # The bed appears once `sleep` runs, but the step first walks the bot onto the stance
+        # clear of the gate (`place_bed` resolves a `navigate` until the feet are there), so
+        # movement is progress too.
+        return bool(d.get("bed_placed")) or (d["pos_delta"] or 0) > 2
     # Home base. Walking home (or up to the surface) shows as movement; the chest shows as the
     # item entering or leaving the pack; stowing/dropping shows as any carried item going down.
     if label in ("surface_up", "establish_base", "go_home"):

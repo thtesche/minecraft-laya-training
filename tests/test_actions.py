@@ -235,7 +235,7 @@ class BedChainTest(unittest.TestCase):
         g = lit_portal(at_home(geared(cooked_beef=8, furnace=1)))
         g.phase = "night"
         g.resources = {**g.resources,
-                       "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0)]}
+                       "white_bed": [BlockHit("white_bed", "white_bed", -198, -46, -98, 1.0)]}
         self.assertIn("sleep", candidates(g))
         self.assertIsNotNone(resolve("sleep", g))
 
@@ -1054,7 +1054,9 @@ class TechTreeCompleteTest(unittest.TestCase):
         """The world blocks the gate adds: the lit portal and the bed beside it."""
         return {
             "nether_portal": [BlockHit("nether_portal", "nether_portal", -270, 64, -56, 3.0)],
-            "white_bed": [BlockHit("white_bed", "white_bed", -269, 64, -56, 4.0)],
+            # The bed stands `BED_PORTAL_CLEARANCE` from the portal, as `place_bed` lays it: the
+            # next cell south of the frame, not against the opening.
+            "white_bed": [BlockHit("white_bed", "white_bed", -270, 64, -58, 4.0)],
         }
 
     def _complete(self, **overrides) -> GameState:
@@ -1098,10 +1100,17 @@ class TechTreeCompleteTest(unittest.TestCase):
         g = self._complete(resources={"nether_portal": self._gate()["nether_portal"]})
         self.assertFalse(tech_tree_complete(g))
 
-    def test_a_bed_at_the_base_completes(self) -> None:
-        # The bed the gate asks for sits at the base (the box `_at_base` allows the bot itself).
-        g = self._complete(base=(-270, 64, -57))
-        self.assertTrue(tech_tree_complete(g))
+    def test_a_bed_in_the_gate_is_not_done(self) -> None:
+        # A bed within `BED_PORTAL_CLEARANCE` of the lit gate is not the gate bed, even at the
+        # base: sleeping pins the respawn point to the bed's own cell, so it would drop the bot
+        # into the portal on its next death, and the gate would throw it to the Nether. The run
+        # takes the bed up (`take_bed`) and lays a fresh one clear of the gate.
+        g = self._complete(
+            base=(-270, 64, -57),
+            resources={**self._gate(),
+                       "white_bed": [BlockHit("white_bed", "white_bed", -269, 64, -56, 1.0)]},
+        )
+        self.assertFalse(tech_tree_complete(g))
 
     def test_a_bed_away_from_the_base_is_not_done(self) -> None:
         # A leftover bed from an earlier run satisfies `_bed_placed` but lies off the base, so the
@@ -1795,7 +1804,7 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(resolve("place_bed", g).tool, "sleep")
 
         g.resources = {**g.resources,
-                       "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0)]}
+                       "white_bed": [BlockHit("white_bed", "white_bed", -198, -46, -98, 1.0)]}
         self.assertIn("sleep", candidates(g))
         self.assertEqual(resolve("sleep", g).tool, "sleep")
 

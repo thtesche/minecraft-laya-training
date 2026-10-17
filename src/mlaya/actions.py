@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .perception import AIR_NAMES, INVENTORY_NEAR_FULL, GameState
+from .perception import AIR_NAMES, INVENTORY_NEAR_FULL, PORTAL_BLOCK, GameState
 from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
                       frontier_heading, nearest_ground)
 
@@ -186,6 +186,16 @@ BASE_RADIUS = 4.0
 # margin stays; anything more is a cave floor, and a cell learned for a *different* column never
 # counts at all (`_at_surface`).
 BASE_SURFACE_TOL = 2
+# How far the respawn bed must stand from the lit gate, measured in blocks (Chebyshev) in the
+# horizontal plane between a bed cell and any `nether_portal` block. Sleeping sets the respawn
+# point to the bed's *own* cell, so a bed laid in the opening - or against the frame - drops the
+# bot straight into the gate on its next death, which teleports it to the Nether within seconds
+# (live: the bed sat in the opening, respawn at the gate, the Nether three seconds later, and the
+# bed then stood behind the lit gate where it could not be reached). Two blocks is the clearance
+# that keeps the bed on the ground *beside* the frame; the `sleep` server lays a carried bed on
+# the nearest flat footprint, so `place_bed` walks the bot to a stance whose whole footprint is
+# this far from the gate rather than trusting the anchor it happens to stand on.
+BED_PORTAL_CLEARANCE = 2
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
@@ -690,6 +700,85 @@ def _leave_portal_target(gs: GameState) -> tuple[float, float, float] | None:
     return None
 
 
+# Candidate stances for the gate bed, as offsets from the base anchor in the horizontal plane,
+# nearest first. `place_bed` walks the bot onto the first one whose own cell and four orthogonal
+# neighbours all clear `BED_PORTAL_CLEARANCE`: the `sleep` server lays the carried bed on the flat
+# footprint "beside the bot" (the bed's two cells are two of those five), so proving the whole
+# 3x3-less-the-diagonals block clear is what makes the bed clear whichever way it lands. The
+# anchor (0,0) is tried first so a base whose gate is already far enough is left untouched.
+_BED_STANCE_OFFSETS = tuple(sorted(
+    ((dx, dz) for dx in range(-4, 5) for dz in range(-4, 5)),
+    key=lambda o: (max(abs(o[0]), abs(o[1])), abs(o[0]) + abs(o[1]), o[0], o[1])))
+
+
+def _gate_gap(cell: tuple[int, int, int], portal: list) -> int:
+    """Chebyshev distance in the horizontal plane from a cell to the nearest lit portal block.
+
+    `portal` is the `nether_portal` hit list; an empty list (nothing lit or loaded) reads as a
+    gap no stance can fail on. The vertical axis is ignored on purpose: the hazard the clearance
+    guards against is a bed that respawns the bot inside the gate's own footprint, and
+    `BED_PORTAL_CLEARANCE` is the plan-view margin the bed keeps from the opening.
+    """
+    if not portal:
+        return 1 << 30
+    x, _, z = cell
+    return min(max(abs(x - h.pos[0]), abs(z - h.pos[2])) for h in portal)
+
+
+def _bed_bad_spot(gs: GameState) -> bool:
+    """A bed stands within `BED_PORTAL_CLEARANCE` of the lit gate, wherever the base is.
+
+    Sleeping pins the respawn point to the bed's own cell, so such a bed is not a valid gate bed
+    even when it sits inside the base box (`_bed_at_base`): the respawn can drop the bot into the
+    portal, which teleports it to the Nether within seconds. Live: the bed sat in the opening, the
+    bot respawned at the gate, and the Nether followed three seconds later. `take_bed` clears it
+    and `place_bed` lays a fresh one clear of the gate. Keyed on the gate being lit - before that
+    there is no portal block to be close to, so the prep bed away from the base is untouched.
+    """
+    portal = gs.resources.get(PORTAL_BLOCK) or []
+    if not portal:
+        return False
+    return any(_gate_gap(hit.pos, portal) < BED_PORTAL_CLEARANCE
+               for hit in gs.resources.get("white_bed") or [])
+
+
+def _bed_needs_moving(gs: GameState) -> bool:
+    """A standing bed that `take_bed` should pick up: a leftover away from the base, or one laid
+    too close to the gate (`_bed_bad_spot`). Both leave a respawn point the gate bed must not be.
+    """
+    return _bed_off_base(gs) or _bed_bad_spot(gs)
+
+
+def _bed_stance(gs: GameState) -> tuple[int, int, int] | None:
+    """The feet cell the bot must stand on for `place_bed`, clear of the gate, or None.
+
+    See `_BED_STANCE_OFFSETS`. The base anchor is tried first; where the frame's western column
+    sits one block east of it that anchor fails (its neighbour is the frame) and the stance steps
+    one block west, off the gate's plan-view footprint. None with no base, or when no offset
+    within the base box is clear - `place_bed` then stands down rather than lay the bed against
+    the gate.
+    """
+    if gs.base is None:
+        return None
+    bx, by, bz = gs.base
+    portal = gs.resources.get(PORTAL_BLOCK) or []
+    for dx, dz in _BED_STANCE_OFFSETS:
+        sx, sz = bx + dx, bz + dz
+        cells = ((sx, sz), (sx - 1, sz), (sx + 1, sz), (sx, sz - 1), (sx, sz + 1))
+        if all(_gate_gap((cx, by + 1, cz), portal) >= BED_PORTAL_CLEARANCE
+               for cx, cz in cells):
+            return (sx, by + 1, sz)
+    return None
+
+
+def _at_stance(gs: GameState, cell: tuple[int, int, int]) -> bool:
+    """Whether the bot's feet occupy the stance cell, so `sleep` lays the bed exactly there."""
+    if gs.pos is None:
+        return False
+    return (math.floor(gs.pos[0]), math.floor(gs.pos[1]),
+            math.floor(gs.pos[2])) == cell
+
+
 def _bed_placed(gs: GameState) -> bool:
     """A bed block stands nearby - the bed the run places next to the portal."""
     return gs.resource_distance("white_bed") is not None
@@ -726,9 +815,11 @@ def _bed_at_base(gs: GameState) -> bool:
 
     The one clause the completion gate, `sleep` and `place_bed` all key off: a bed merely
     *loaded* is not it (`_bed_placed`), because the leftover in the base's own shaft would send
-    the server to that bed and pin the respawn point off the gate again (live, run19b it25).
+    the server to that bed and pin the respawn point off the gate again (live, run19b it25). A
+    bed inside the base box but too close to the gate is not it either (`_bed_bad_spot`): it
+    would respawn the bot into the portal, so the run takes it up and lays it clear.
     """
-    return _bed_placed(gs) and not _bed_off_base(gs)
+    return _bed_placed(gs) and not _bed_off_base(gs) and not _bed_bad_spot(gs)
 
 
 def _nether_idle(gs: GameState) -> bool:
@@ -1514,7 +1605,7 @@ def candidates(gs: GameState) -> list[str]:
     # up in the lull and lay it again beside the portal: the respawn point belongs at the gate,
     # and a bed left in the base's own dig shaft is what `mine_gold` keeps stumbling on. Offered
     # with the prep, so the bed is cleared before the dig starts rather than mid-tunnel.
-    if _nether_idle(gs) and _overworld(gs) and not _has_bed(inv) and _bed_off_base(gs):
+    if _nether_idle(gs) and _overworld(gs) and not _has_bed(inv) and _bed_needs_moving(gs):
         out.append("take_bed")
 
     # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
@@ -2009,17 +2100,27 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "step out of the lit portal the body is standing in, before it teleports")
     if label == "take_bed":
         if (_has_bed(inv) or not _nether_idle(gs) or not _overworld(gs)
-                or not _bed_off_base(gs)):
+                or not _bed_needs_moving(gs)):
             return None
         return Action(label, "collect_block",
                       {"block_name": "white_bed", "count": 1},
                       "take the standing respawn bed back up so it can be laid at the base")
     if label == "place_bed":
+        stance = _bed_stance(gs)
         if (not _has_bed(inv) or not _portal_lit(gs) or _bed_at_base(gs)
+                or stance is None
                 or not _at_base(gs) or gs.phase != "night" or not _overworld(gs)):
             return None
+        if not _at_stance(gs, stance):
+            # The `sleep` server lays the carried bed on the flat footprint beside the bot, so the
+            # bot has to *stand* where the bed may go before it may sleep: walking to the clear
+            # stance is half the step, and the very next tick lays the bed there.
+            sx, sy, sz = stance
+            return Action(label, "navigate",
+                          {"x": sx, "y": sy, "z": sz, "dig": True, "scaffold": True},
+                          "walk onto the spot clear of the gate, where the respawn bed goes")
         return Action(label, "sleep", {},
-                      "place the carried bed beside the gate and set the respawn point")
+                      "place the carried bed clear of the gate and set the respawn point")
     if label == "sleep":
         if (gs.phase != "night" or gs.sleeping or not _overworld(gs)
                 or not _sleep_ready(gs)):

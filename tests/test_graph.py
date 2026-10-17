@@ -1034,9 +1034,8 @@ class GoalStopTest(unittest.TestCase):
 
     @staticmethod
     def _complete() -> GameState:
-        # The full overworld goal: diamond kit worn, shield off-hand, the portal lit and a bed
-        # beside it (both read from the world-block resources, not the inventory), and the Nether
-        # prep banked (bow + arrows + the deep cobblestone stack, see `_nether_prep_steps`).
+        # The full overworld goal: diamond kit worn, shield off-hand, the portal lit and the gate
+        # bed laid clear of it, and the Nether prep banked (bow + arrows + the cobblestone stack).
         return gs(tools={"pickaxe": "diamond", "sword": "diamond"},
                   inventory={"diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64},
                   armor={slot: {"item": f"diamond_{slot}"}
@@ -1045,7 +1044,9 @@ class GoalStopTest(unittest.TestCase):
                   resources={
                       "nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                  -270, 64, -56, 3.0)],
-                      "white_bed": [BlockHit("white_bed", "white_bed", -269, 64, -56, 4.0)],
+                      # Two blocks clear of the gate (`BED_PORTAL_CLEARANCE`), as `place_bed` lays
+                      # it: a bed in the opening would respawn the bot into the portal.
+                      "white_bed": [BlockHit("white_bed", "white_bed", -270, 64, -58, 4.0)],
                   })
 
     def test_the_goal_ends_the_run_early(self) -> None:
