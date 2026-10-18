@@ -2935,6 +2935,16 @@ class NetherExpeditionTest(unittest.TestCase):
         a = resolve("enter_portal", g)
         self.assertEqual(a.tool, "enter_nether_portal")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.GATE)
+        # The server pauses a crossing below 32 arrows; this run banks 16, so the crossing would
+        # otherwise be refused forever (live, run41: `[PORTAL_LOW_SUPPLIES] 38/16 food 0/32
+        # arrows` with a stocked expedition).
+        self.assertTrue(a.args["allow_low_supplies"])
+
+    def test_the_crossing_needs_no_low_supplies_override_to_leave_the_nether(self) -> None:
+        # The guard only applies on the way in: coming home, the destination is the Overworld.
+        g = self._with_exit(self._down(blaze_rod=9))
+        a = resolve("leave_nether", g)
+        self.assertNotIn("allow_low_supplies", a.args)
 
     def test_the_gate_stays_shut_before_the_expedition_is_stocked(self) -> None:
         # The trip needs the whole bank first: a bot that walks in with half an inventory loses
