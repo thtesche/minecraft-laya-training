@@ -5,7 +5,8 @@ import unittest
 from mlaya.perception import (FORTRESS_RADIUS, GROUND_NAMES, RESCUE_GROUND_NAMES,
                               RESCUE_RADIUS, RESOURCE_LIMIT, BlockHit,
                               frame_obsidian_cells, frame_volume, parse_block_above, parse_box,
-                              parse_cells, parse_ground_height, parse_frontier_heading,
+                              parse_cells, parse_furnace_contents, parse_ground_height,
+                              parse_frontier_heading,
                               parse_portal_corner, parse_refused_cells, parse_resource_counts,
                               parse_resources, parse_status, parse_surface_height,
                               portal_interior, build)
@@ -150,6 +151,55 @@ class NetherSearchReadsTest(unittest.IsolatedAsyncioTestCase):
         gs = await build(mcp)
         self.assertNotIn("query_bot_data", mcp.calls)
         self.assertIsNone(gs.frontier_heading)
+
+
+class FurnaceContentsParseTest(unittest.TestCase):
+    """What a `use_container inspect` on a furnace reported.
+
+    The answer shape is the live one from run50: `use_container inspect` at (229,62,222) against
+    the base furnace answered `succeeded` with `container.blockName: "furnace"` and one filled
+    slot. It is the only place the loop can learn what is in the furnace, and `collect_smelted`
+    issues it precisely because it holds nothing -- so if this is dropped, the step inspects
+    forever and never sends the `withdraw` that would empty the cell.
+    """
+
+    ANSWER = {"response": {"data": {"state": "settled", "output": {
+        "action": "use_container", "durationMs": 761,
+        "result": {"status": "succeeded", "container": {
+            "dimension": "overworld", "x": 229, "y": 62, "z": 222,
+            "operation": "inspect", "blockName": "furnace", "slotCount": 3,
+            "contents": [{"slot": 2, "item": "cooked_beef", "count": 1}],
+            "observedAt": "2026-10-18T18:12:24.083Z"}}}}}}
+
+    def test_the_filled_slot_is_read_as_item_and_count(self) -> None:
+        self.assertEqual(parse_furnace_contents(self.ANSWER), {"cooked_beef": 1})
+
+    def test_the_three_slots_of_a_furnace_add_up_per_item(self) -> None:
+        # Input, fuel and output share one window, so the same name can appear twice.
+        answer = {"response": {"data": {"result": {"container": {
+            "blockName": "furnace", "slotCount": 3,
+            "contents": [{"slot": 0, "item": "raw_beef", "count": 4},
+                         {"slot": 1, "item": "coal", "count": 3},
+                         {"slot": 2, "item": "raw_beef", "count": 2}]}}}}}
+        self.assertEqual(parse_furnace_contents(answer),
+                         {"raw_beef": 6, "coal": 3})
+
+    def test_an_empty_window_is_empty_not_a_failure(self) -> None:
+        answer = {"response": {"data": {"result": {"container": {
+            "blockName": "furnace", "slotCount": 3, "contents": []}}}}}
+        self.assertEqual(parse_furnace_contents(answer), {})
+
+    def test_an_answer_without_a_window_is_empty(self) -> None:
+        # A refusal or a truncated answer must not read as a furnace full of nonsense: the loop
+        # cooks instead, which is the safe way round.
+        self.assertEqual(parse_furnace_contents({}), {})
+        self.assertEqual(parse_furnace_contents(
+            {"response": {"data": {"result": {"error": "CONTAINER_NOT_PRESENT"}}}}), {})
+
+    def test_a_contents_list_without_a_block_name_is_not_taken_for_a_window(self) -> None:
+        answer = {"response": {"data": {"result": {
+            "inventory": {"contents": [{"item": "cooked_beef", "count": 1}]}}}}}
+        self.assertEqual(parse_furnace_contents(answer), {})
 
 
 class RescueGroundCastTest(unittest.TestCase):

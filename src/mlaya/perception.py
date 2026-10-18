@@ -191,6 +191,57 @@ async def remembered_home(executor) -> tuple[int, int, int] | None:
     return parse_remembered_home(coerce(res.data, res.text))
 
 
+def _find_container(payload: Any) -> Any:
+    """The innermost dict that carries a `contents` list, however the answer nested it.
+
+    A settled action buries it under `output.result.container`, but the wrapper has changed shape
+    before and the loop cannot afford to stop draining over a path. One dict wins: the one with
+    both a `contents` list and a `blockName`, so a stray `contents` elsewhere cannot be mistaken
+    for the window.
+    """
+    stack = [payload]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            if isinstance(cur.get("contents"), list) and "blockName" in cur:
+                return cur
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return None
+
+
+def parse_furnace_contents(payload: Any) -> dict[str, int]:
+    """What a `use_container inspect` on a furnace reported, as item -> count.
+
+    The drain is two calls and the second one needs this: `collect_smelted` issues an `inspect`
+    when it holds nothing, and the answer's `container.contents` is the only place the loop ever
+    learns what is in the furnace. Throwing it away left the step inspecting forever -- `_furnace_
+    occupied` was cleared as if the look had emptied the cell, so `cook_food` met
+    `[FURNACE_NOT_EMPTY]` again on the next tick and nothing ever moved (live, run50: five
+    successful `collect_smelted`, no cooked food in the pack, no `withdraw` ever sent).
+
+    A furnace window has three slots -- input, fuel, output -- so a name may repeat; the counts
+    add rather than overwrite. An absent or unreadable container is an empty dict, which reads as
+    "nothing in it" and makes the loop cook rather than drain, the safe way round.
+    """
+    contents = None
+    window = _find_container(payload)
+    if isinstance(window, dict):
+        contents = window.get("contents")
+    if not isinstance(contents, list):
+        return {}
+    out: dict[str, int] = {}
+    for slot in contents:
+        if not isinstance(slot, dict):
+            continue
+        name, count = slot.get("item"), slot.get("count")
+        if not name or not isinstance(count, (int, float)) or isinstance(count, bool):
+            continue
+        out[str(name)] = out.get(str(name), 0) + int(count)
+    return out
+
+
 def parse_frontier_heading(payload: Any) -> float | None:
     """Compass heading to the nearest unobserved chunk edge, or None when there is none.
 

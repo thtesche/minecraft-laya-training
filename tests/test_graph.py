@@ -883,6 +883,94 @@ class WanderGuardTest(unittest.TestCase):
         self.assertEqual(agent._stuck_off, {})
 
 
+class FurnaceDrainReadTest(unittest.TestCase):
+    """The look into the furnace is how the drain gets its item list, so it must be read.
+
+    `collect_smelted` is two calls: an `inspect` to learn what is in the cell, then a `withdraw`
+    of exactly that. The second call can only be built from the first one's answer, and the loop
+    was clearing its own state on the successful inspect -- as if looking had emptied the furnace.
+    So the step inspected on every tick, sent no `withdraw` at all, and the cook behind it met
+    `[FURNACE_NOT_EMPTY]` again (live, run50: five successful `collect_smelted`, nothing drained,
+    nothing in the pack).
+    """
+
+    ANSWER = {"response": {"data": {"state": "settled", "output": {
+        "result": {"status": "succeeded", "container": {
+            "blockName": "furnace", "slotCount": 3,
+            "contents": [{"slot": 2, "item": "cooked_beef", "count": 1}]}}}}}}
+
+    class _Res:
+        def __init__(self, data):
+            self.ok = True
+            self.text = ""
+            self.data = data
+
+    class _Action:
+        def __init__(self, label, tool, args=None):
+            self.label = label
+            self.tool = tool
+            self.args = args or {}
+
+    def _agent(self):
+        agent = Agent.__new__(Agent)
+        agent._furnace_blocked = False
+        agent._furnace_contents = {}
+        agent._furnace_occupied = False
+        agent.furnace_pos = None
+        agent.log = []
+        return agent
+
+    def _inspect(self, operation="inspect"):
+        return self._Action("collect_smelted", "use_container", {"operation": operation,
+                                                                "x": 229, "y": 62, "z": 222})
+
+    def test_the_inspect_is_remembered_as_what_the_furnace_holds(self) -> None:
+        agent = self._agent()
+        agent._note_furnace(self._inspect(), True, "", self._Res(self.ANSWER))
+        self.assertEqual(agent._furnace_contents, {"cooked_beef": 1})
+        self.assertTrue(agent._furnace_occupied)
+
+    def test_the_withdraw_empties_the_cell(self) -> None:
+        agent = self._agent()
+        agent._note_furnace(self._inspect(), True, "", self._Res(self.ANSWER))
+        agent._note_furnace(self._inspect("withdraw"), True, "", self._Res({}))
+        self.assertEqual(agent._furnace_contents, {})
+        self.assertFalse(agent._furnace_occupied)
+
+    def test_an_empty_window_leaves_the_furnace_marked_empty(self) -> None:
+        agent = self._agent()
+        agent._furnace_occupied = True
+        empty = {"response": {"data": {"result": {"container": {
+            "blockName": "furnace", "contents": []}}}}}
+        agent._note_furnace(self._inspect(), True, "", self._Res(empty))
+        self.assertFalse(agent._furnace_occupied)
+
+    def test_a_refused_inspect_changes_nothing(self) -> None:
+        agent = self._agent()
+        agent._furnace_occupied = True
+        agent._note_furnace(self._inspect(), False, "[CONTAINER_NOT_PRESENT] not a container")
+        self.assertTrue(agent._furnace_occupied)
+        self.assertEqual(agent._furnace_contents, {})
+
+    def test_the_second_call_is_now_buildable_from_what_the_first_learned(self) -> None:
+        # The end of the whole thing: after the inspect the state names the item, so `resolve`
+        # produces a withdraw of it rather than another look.
+        from mlaya.actions import candidates, resolve
+        agent = self._agent()
+        agent._note_furnace(self._inspect(), True, "", self._Res(self.ANSWER))
+        agent.furnace_pos = (229, 62, 222)
+        state = gs(inventory={}, base=agent.furnace_pos, furnace_pos=agent.furnace_pos,
+                   furnace_occupied=agent._furnace_occupied,
+                   furnace_contents=dict(agent._furnace_contents))
+        state.base_adopted = frozenset()
+        state.pos = (229.5, 62.0, 222.5)
+        a = resolve("collect_smelted", state)
+        self.assertIsNotNone(a)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "withdraw")
+        self.assertEqual(a.args["items"], [{"item_name": "cooked_beef", "count": 1}])
+
+
 class FrameCompleteLatchTest(unittest.TestCase):
     """A frame build the server answers `ok` to while spending nothing is not re-offered.
 

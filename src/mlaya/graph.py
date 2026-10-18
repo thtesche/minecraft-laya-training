@@ -1104,7 +1104,7 @@ class Agent:
         if cell is not None:
             self._chest_above = cell
 
-    def _note_furnace(self, action, ok: bool, text: str | None) -> None:
+    def _note_furnace(self, action, ok: bool, text: str | None, res=None) -> None:
         """Give up a base furnace the loop can no longer use, so cooking falls back to a
         temporary workstation.
 
@@ -1121,8 +1121,16 @@ class Agent:
         """
         if ok:
             if action.label == "collect_smelted" and action.tool == "use_container":
-                self._furnace_contents = {}
-                self._furnace_occupied = False
+                if (getattr(action, "args", None) or {}).get("operation") == "inspect":
+                    # The look is how the loop learns what is in there. Treating it as a finished
+                    # drain threw that away and cleared the occupied flag, so the next tick cooked
+                    # into a furnace the loop believed empty and met the same refusal again.
+                    contents = perception.parse_furnace_contents(getattr(res, "data", None))
+                    self._furnace_contents = contents
+                    self._furnace_occupied = bool(contents)
+                else:
+                    self._furnace_contents = {}
+                    self._furnace_occupied = False
             return
         text = text or ""
         if action.label == "collect_smelted" and "CONTAINER_OPERATION_UNSUPPORTED" in text:
@@ -1190,7 +1198,7 @@ class Agent:
         self._note_drop(action, _ok, _text)
         self._note_chest(action, _ok, _text)
         self._note_chest_lid(action, _ok, _text)
-        self._note_furnace(action, _ok, _text)
+        self._note_furnace(action, _ok, _text, res)
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
         self._note_recover(before, action, _ok, _text)
