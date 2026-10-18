@@ -16,8 +16,8 @@ import unittest
 from mlaya.actions import Action, candidates, resolve
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS,
-                         WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
+from mlaya.graph import (Agent, HOME_ANCHOR_TICKS, PORTAL_INTENT_TICKS, STUCK_COOLDOWN,
+                         STUCK_REPEATS, WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
 from mlaya.perception import BlockHit, GameState
 
@@ -634,6 +634,129 @@ class StuckOfferTest(unittest.TestCase):
         self.assertEqual(candidates(g), ["mine_obsidian"])
         g.stuck_labels = frozenset({"mine_obsidian"})
         self.assertEqual(candidates(g), ["explore"])
+
+
+class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
+    """A run that lost its base walks back to the chest it last kept.
+
+    `base` is per-run state, so every restart loses it, and the two ways back are both bounded by
+    what the world has loaded: the lit portal and the bed are found only within view distance. The
+    bot died 300 m from home and the run answered by raising a second base and pouring a second
+    portal (live, run47). The chest is the one anchor that is not a read of the world: the server
+    keeps every container the bot opened in its own database, which outlives the death, the
+    dimension change and the restart.
+    """
+
+    class _Read:
+        def __init__(self, data):
+            self.data = data
+            self.text = None
+
+    class _Mcp:
+        def __init__(self, rows):
+            self.rows = rows
+            self.calls: list = []
+
+        async def read(self, tool, args, why):
+            self.calls.append((tool, args))
+            payload = {"response": {"data": {"result": {"query": {
+                "columns": ["block_x", "block_y", "block_z"], "rows": self.rows}}}}}
+            return RememberedHomeTest._Read(payload)
+
+    def _agent(self, **over):
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.base = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent._home_anchor = None
+        agent._home_ticks = 0
+        agent.log = []
+        for k, v in over.items():
+            setattr(agent, k, v)
+        return agent
+
+    # The live run47 world: the chest at (229,62,224) beside a base at (226,63,222), seen from
+    # (12,62,463) -- 300 m away, in a different dimension's worth of walking.
+    ROWS = [[229, 62, 224]]
+
+    async def test_a_lost_base_walks_the_bot_back_to_the_chest_it_kept(self) -> None:
+        agent = self._agent()
+        agent.mcp = self._Mcp(self.ROWS)
+        await agent._walk_home_to_memory(gs(pos=(12.0, 62.0, 463.0),
+                                            dimension="minecraft:overworld"))
+        self.assertEqual(agent.chest_pos, (229, 62, 224))
+        # The standing cell beside the chest: the same offset `place_chest` uses to put one there.
+        self.assertEqual(agent.base, (229, 61, 225))
+        self.assertEqual(agent._home_anchor, (229, 62, 224))
+
+    async def test_the_read_happens_once_and_only_without_a_base(self) -> None:
+        agent = self._agent()
+        mcp = self._Mcp(self.ROWS)
+        agent.mcp = mcp
+        await agent._walk_home_to_memory(gs(pos=(12.0, 62.0, 463.0)))
+        calls = len(mcp.calls)
+        self.assertEqual(calls, 1)
+        await agent._walk_home_to_memory(gs(pos=(13.0, 62.0, 463.0)))
+        self.assertEqual(len(mcp.calls), calls)   # the base is set, so the rescue is done
+
+    async def test_a_world_with_no_remembered_chest_is_left_alone(self) -> None:
+        agent = self._agent()
+        agent.mcp = self._Mcp([])
+        await agent._walk_home_to_memory(gs(pos=(12.0, 62.0, 463.0)))
+        self.assertIsNone(agent.base)
+        self.assertIsNone(agent.chest_pos)
+        self.assertIsNone(agent._home_anchor)
+
+    async def test_the_nether_never_gets_an_overworld_base(self) -> None:
+        # The remembered chest is in the Overworld. Guessing a base from a Nether position is how a
+        # run ends up building where it cannot come back from.
+        agent = self._agent()
+        agent.mcp = self._Mcp(self.ROWS)
+        await agent._walk_home_to_memory(gs(pos=(10.0, 65.0, 5.0),
+                                            dimension="minecraft:the_nether"))
+        self.assertIsNone(agent.base)
+        self.assertEqual(agent.mcp.calls, [])
+
+    async def test_a_failed_read_leaves_the_run_free_to_base_itself(self) -> None:
+        class _Boom:
+            async def read(self, *a):
+                raise RuntimeError("ACTION_BUSY")
+        agent = self._agent()
+        agent.mcp = _Boom()
+        await agent._walk_home_to_memory(gs(pos=(12.0, 62.0, 463.0)))
+        self.assertIsNone(agent.base)
+
+    def test_arriving_retires_the_guess_so_the_real_anchor_can_be_named(self) -> None:
+        # The base was guessed from a chest. Keeping it would pour the frame plane at a cell no
+        # scan ever checked; dropping it puts the lit portal and the bed back in reach.
+        agent = self._agent(_home_anchor=(229, 62, 224), _home_ticks=HOME_ANCHOR_TICKS)
+        agent.base = (229, 61, 225)
+        agent._settle_home_anchor(gs(pos=(229.5, 61.0, 225.5), base=(229, 61, 225)))
+        self.assertIsNone(agent.base)
+        self.assertIsNone(agent._home_anchor)
+
+    def test_the_chest_survives_the_guess_being_retired(self) -> None:
+        # The chest is a real observation, not part of the guess: it is the one thing this anchor
+        # got right, and `stow_surplus`/`stow_blaze_powder` need it to be the real one.
+        agent = self._agent(_home_anchor=(229, 62, 224), _home_ticks=HOME_ANCHOR_TICKS)
+        agent.base = (229, 61, 225)
+        agent.chest_pos = (229, 62, 224)
+        agent._settle_home_anchor(gs(pos=(229.5, 61.0, 225.5), base=(229, 61, 225)))
+        self.assertEqual(agent.chest_pos, (229, 62, 224))
+
+    def test_a_walk_that_never_arrives_gives_up_instead_of_stalling_forever(self) -> None:
+        agent = self._agent(_home_anchor=(229, 62, 224), _home_ticks=1)
+        agent.base = (229, 61, 225)
+        agent._settle_home_anchor(gs(pos=(12.0, 62.0, 463.0), base=(229, 61, 225)))
+        self.assertIsNone(agent.base)
+        self.assertEqual([r["reason"] for r in agent.log], ["home_anchor_given_up"])
+
+    def test_the_window_ticks_down_while_the_bot_is_still_walking(self) -> None:
+        agent = self._agent(_home_anchor=(229, 62, 224), _home_ticks=HOME_ANCHOR_TICKS)
+        agent.base = (229, 61, 225)
+        agent._settle_home_anchor(gs(pos=(12.0, 62.0, 463.0), base=(229, 61, 225)))
+        self.assertEqual(agent._home_ticks, HOME_ANCHOR_TICKS - 1)
+        self.assertEqual(agent.base, (229, 61, 225))
 
 
 class WanderGuardTest(unittest.TestCase):

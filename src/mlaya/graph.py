@@ -97,6 +97,12 @@ WANDER_WALK = 80.0
 WANDER_RATIO = 6.0
 WANDER_REPEATS = 2
 
+# How long the run may spend walking back to the chest it last kept before it stops pretending
+# that cell is its base. A long walk is the normal case (the live one was 300 m), so this is
+# generous, but it is not unbounded: an anchor the bot cannot reach would stand between it and
+# every base step, and the run would look for a portal around a site it never chose.
+HOME_ANCHOR_TICKS = 60
+
 _CODE_RE = re.compile(r"\[([A-Z][A-Z_]+)\]")
 
 # The two lines the server prints into every settled result's final progress
@@ -276,6 +282,10 @@ class Agent:
         # The walking guard's own count per label (`_track_wander`), separate from `_stuck_reps`:
         # a wandering action is not a refusal and must not reset or advance the refusal run.
         self._wander_reps: dict[str, int] = {}
+        # The remembered chest a lost base is walked back to, and the decisions left to get there
+        # (see `_walk_home_to_memory`/`_settle_home_anchor` and `HOME_ANCHOR_TICKS`).
+        self._home_anchor: tuple[int, int, int] | None = None
+        self._home_ticks: int = 0
         # Death cells whose recovery walk already reached them and found nothing
         # (`[NO_MATCHING_ITEMS]` and the other final codes): `_can_recover` stops offering the
         # walk there, so the bot does not stand at an emptied death site until the window runs
@@ -449,6 +459,7 @@ class Agent:
         gs = await perception.build(self.mcp)
         await self._adopt_portal_base(gs)
         await self._scan_bed_site(gs)
+        await self._walk_home_to_memory(gs)
         self._note_dimension(gs)
         gs = self._inject(gs)
         await self._scan_build_site(gs)
@@ -456,7 +467,77 @@ class Agent:
         if self._base_adopted and _at_base(gs):
             # The re-adopted base has been reached: from here behave as if the run raised it.
             self._base_adopted = False
+        self._settle_home_anchor(gs)
         return gs
+
+    async def _walk_home_to_memory(self, gs) -> None:
+        """Stand a provisional base on the chest this bot last kept, so a run can walk home again.
+
+        `base` is per-run state, so a restart loses it, and both ways back are bounded by what the
+        world has loaded: the lit portal and the bed a previous run left are found only within view
+        distance, which after a death in the Nether is nowhere near the base. That is not a rare
+        edge - the bot died 300 m from home, the bed at the base was gone, and the run answered by
+        raising a second base on open ground and pouring a second portal with obsidian it had to
+        mine again (live, run47, `establish_base` at (19,73,476) beside 4 fresh obsidian).
+
+        The chest is different. The server keeps every container the bot has opened in its own
+        database, and a read of that database is not a read of the world: the entry outlives the
+        death, the dimension change and the restart, and it answers from any distance. So the
+        standing cell beside it becomes a provisional base and `go_home` walks the bot there. On
+        arrival `_settle_home_anchor` drops the guess, because by then the real anchor is in view
+        distance and the portal and bed scans can name it properly. The chest alone cannot: it is
+        placed at base+(0,1,1), but `_adopt_homebase` also accepts any chest within four blocks, so
+        its position does not determine the base and must not be treated as if it did.
+
+        One read, once per run, and only while the run has no base at all. This is the rescue, not
+        the normal path: a run that has never kept a chest finds nothing and carries on.
+        """
+        if self.base is not None or self.chest_pos is not None or gs.pos is None:
+            return
+        if "nether" in str(gs.dimension or "").lower():
+            # The remembered chest is in the Overworld. Guessing a base from a Nether position is
+            # how a run ends up building where it cannot come back from.
+            return
+        try:
+            home = await perception.remembered_home(self.mcp)
+        except Exception:
+            return
+        if home is None:
+            return
+        self._home_anchor = home
+        self._home_ticks = HOME_ANCHOR_TICKS
+        self.chest_pos = home
+        self.base = (home[0], home[1] - 1, home[2] + 1)
+
+    def _settle_home_anchor(self, gs) -> None:
+        """Retire the provisional base once the bot stands on it, or when the window runs out.
+
+        On arrival the guess has done its job and has to go: the base it named is a guess, and a run
+        that kept it would go on pouring the frame plane at a cell it never checked --
+        `flat_build_site` only ever cleared the site the run chose for itself. With `base` unset
+        again, the lit portal and the bed are within view distance and `_adopt_portal_base` /
+        `_adopt_homebase` name the real one on the next tick. If neither is standing,
+        `establish_base` raises a fresh site where the bot actually stands, which is the right
+        answer when there is genuinely nothing left to go back to.
+        """
+        if self._home_anchor is None:
+            return
+        if _at_base(gs):
+            self._home_anchor = None
+            self._home_ticks = 0
+            self.base = None
+            return
+        self._home_ticks -= 1
+        if self._home_ticks > 0:
+            return
+        # The walk did not arrive in `HOME_ANCHOR_TICKS` decisions. Stop guessing: an anchor the
+        # bot cannot reach would stand between it and every base step, and the stuck guard would
+        # then have to unpick a stall that was never the world's fault.
+        self.log.append({"stage": "policy", "reason": "home_anchor_given_up",
+                         "cell": self._home_anchor, "ticks": HOME_ANCHOR_TICKS})
+        self._home_anchor = None
+        self._home_ticks = 0
+        self.base = None
 
     def _note_dimension(self, gs) -> None:
         """Count down a standing crossing intent and remember the Nether arrival.

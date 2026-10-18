@@ -147,6 +147,50 @@ def _num(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+# The containers the bot has opened are kept by the server in its own SQLite database, and a read
+# of that database is not a read of the world: the entry survives a death, a dimension change and
+# a restart, and it answers from 300 blocks away, which no block scan can do. `view_blocks` is
+# bound to the loaded chunks, so the portal and the bed a previous run left are invisible from
+# across a map, and after dying in the Nether the loop re-based on open ground and started pouring
+# a second portal while the lit gate and the chest it had filled stood 300 m off (live, run47:
+# `establish_base` at (19,73,476) with 4 fresh obsidian and the chest still at (229,62,224)).
+# This is the one anchor that survives the trip, so it is where the run walks first.
+REMEMBERED_HOME_SQL = (
+    "SELECT block_x, block_y, block_z FROM observed_containers "
+    "WHERE block_name = 'chest' AND dimension = 'overworld' "
+    "ORDER BY observed_at DESC LIMIT 1")
+
+
+def parse_remembered_home(payload: Any) -> tuple[int, int, int] | None:
+    """The cell of the newest chest this bot has ever opened, or None if it has opened none.
+
+    Newest first: `observed_at` is the last time the bot saw the chest, and the chest it kept
+    filling is the one it saw last. No entry means a fresh world -- nothing has been stored, and
+    there is nothing to walk back to, which is the ordinary case and not a failure.
+    """
+    rows = get(payload, "response", "data", "result", "query", "rows")
+    if not isinstance(rows, list) or not rows:
+        return None
+    row = rows[0]
+    cells = row if isinstance(row, list) else [row]
+    if len(cells) < 3:
+        return None
+    x, y, z = (_num(cells[0]), _num(cells[1]), _num(cells[2]))
+    if x is None or y is None or z is None:
+        return None
+    return (int(x), int(y), int(z))
+
+
+async def remembered_home(executor) -> tuple[int, int, int] | None:
+    """The remembered chest cell, or None. The read is the bot's database, not the world."""
+    res = await executor.read(
+        "query_bot_data",
+        {"sql": REMEMBERED_HOME_SQL},
+        "recall the chest this bot last kept, so a lost base can be walked back to",
+    )
+    return parse_remembered_home(coerce(res.data, res.text))
+
+
 def parse_frontier_heading(payload: Any) -> float | None:
     """Compass heading to the nearest unobserved chunk edge, or None when there is none.
 
