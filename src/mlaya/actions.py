@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 
 from .perception import (AIR_NAMES, INVENTORY_NEAR_FULL, INVENTORY_SLOTS, PORTAL_BLOCK,
-                         GameState, frame_obsidian_cells)
+                         GameState, _in_nether_dimension, frame_obsidian_cells)
 from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
                       frontier_heading, nearest_ground)
 
@@ -1886,6 +1886,16 @@ def _can_recover(gs: GameState) -> bool:
     if gs.last_death_age_s > RECOVER_WINDOW_S:
         return False
     if gs.death_dim and gs.dimension and gs.death_dim != gs.dimension:
+        return False
+    # Never walk back for a drop in the Nether, whatever the distance or the age. A death down
+    # there drops the whole kit on the spot where the bot fell, which in the one place it ever
+    # dies is the worst place to walk back into: a fortress ledge, a lava sea, a ghast's reach.
+    # The gear is not worth a second trip through the dimension that just killed the bot for it,
+    # and the walk back is what the recovery *is* - there is no partial recovery, it is the same
+    # dangerous ground with the bot carrying nothing. The cost of the rule is the whole kit, paid
+    # in the Overworld where a death costs a walk; the cost of breaking it is a run that cannot
+    # finish an expedition twice.
+    if _in_nether(gs) or _in_nether_dimension(gs.death_dim):
         return False
     if _dist(gs.pos, gs.death_pos) > RECOVER_RANGE:
         return False

@@ -97,6 +97,24 @@ class RecoverDropsTest(unittest.TestCase):
                last_death_age_s=30.0, dimension="overworld", death_dim="the_nether")
         self.assertIsNone(resolve("recover_drops", g))
 
+    def test_no_recovery_walk_in_the_nether_at_all(self) -> None:
+        # A death in the Nether drops the whole kit where the bot fell -- a fortress ledge, a lava
+        # sea, a ghast's reach. Walking back for it is the same ground that just killed the bot,
+        # with nothing in hand, so the rule is the dimension and not the distance or the age.
+        # Live: run43 died at (-23,57,134) and run44 was offered the walk straight back into it.
+        g = gs(pos=(0.0, 64.0, 0.0), death_pos=(3.0, 64.0, 3.0),
+               last_death_age_s=5.0, dimension="the_nether", death_dim="the_nether")
+        self.assertIsNone(resolve("recover_drops", g))
+        self.assertNotIn("recover_drops", candidates(g))
+
+    def test_a_nether_death_is_not_recovered_from_the_overworld_either(self) -> None:
+        # Same reason from the other side: the drops are in the Nether, and crossing back into the
+        # dimension that killed the bot to fetch them is the trip we just refused.
+        g = gs(pos=(0.0, 64.0, 0.0), death_pos=(10.0, 64.0, 0.0),
+               last_death_age_s=5.0, dimension="overworld", death_dim="the_nether")
+        self.assertIsNone(resolve("recover_drops", g))
+        self.assertNotIn("recover_drops", candidates(g))
+
     def test_out_of_range(self) -> None:
         g = gs(pos=(0.0, 64.0, 0.0), death_pos=(500.0, 64.0, 0.0),
                last_death_age_s=30.0, dimension="overworld", death_dim="overworld")
