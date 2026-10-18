@@ -2579,6 +2579,38 @@ class LeavePortalTest(unittest.TestCase):
         self.assertEqual(candidates(g), ["leave_portal"])
 
 
+class CraftBedDimensionTest(unittest.TestCase):
+    """A bed is only worth making where one can be laid.
+
+    `sleep`, `place_bed` and `fill_bucket` are Overworld-only (a bed explodes in the Nether, water
+    evaporates there), and `craft_bed` was not: the trip was offered a bed it could not lay, so it
+    spent wool and a slot on it while it should have been hunting for blaze rods (live, run37).
+    """
+
+    def _stocked(self, dimension: str) -> GameState:
+        g = at_home(geared(crafting_table=1, white_wool=6, oak_log=4), base=(-197, -47, -98))
+        g.dimension = dimension
+        g.health = 20.0
+        g.food = 18.0
+        return g
+
+    def test_the_bed_chain_still_works_in_the_overworld(self) -> None:
+        g = self._stocked("minecraft:overworld")
+        self.assertIn("craft_bed", candidates(g))
+        self.assertIsNotNone(resolve("craft_bed", g))
+
+    def test_no_bed_is_made_in_the_nether(self) -> None:
+        g = self._stocked("minecraft:the_nether")
+        self.assertNotIn("craft_bed", candidates(g))
+        self.assertIsNone(resolve("craft_bed", g))
+
+    def test_the_bed_chain_is_untouched_where_a_bed_already_stands(self) -> None:
+        # The Nether rule adds to that one, it does not replace it.
+        g = self._stocked("minecraft:overworld")
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -100, 1.5)]}
+        self.assertNotIn("craft_bed", candidates(g))
+
+
 class GoldHelmetSlotTest(unittest.TestCase):
     """In the Nether the helmet slot belongs to the gold helmet.
 

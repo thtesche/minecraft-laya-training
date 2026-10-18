@@ -2009,8 +2009,11 @@ def candidates(gs: GameState) -> list[str]:
         out.append("smelt_iron")
     if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
         out.append("craft_iron_pickaxe")
-    # Bed chain: a bed lets `sleep` skip the night and set the respawn point.
-    if not bed:
+    # Bed chain: a bed lets `sleep` skip the night and set the respawn point. Overworld only, with
+    # `sleep` and `place_bed`: a bed cannot be laid in the Nether (`place_bed` is refused there),
+    # so crafting one down there spends wool and a slot on something the trip cannot use (live,
+    # run37: `craft_bed` offered while hunting for blaze rods).
+    if not bed and _overworld(gs):
         if table and (wool >= 3 or string >= 12) and (logs >= 1 or planks >= 3):
             out.append("craft_bed")
         elif wool < 3 and string < 12:
@@ -2589,6 +2592,9 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "sleep", {},
                       "sleep through the night and set the respawn point")
     if label == "craft_bed":
+        if not _overworld(gs):
+            # Nothing can lay a bed in the Nether, so there is no reason to make one there.
+            return None
         if not _has(inv, "crafting_table") or (_wool(inv) < 3 and inv.get("string", 0) < 12) \
                 or (_logs(inv) < 1 and _planks(inv) < 3):
             return None
