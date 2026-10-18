@@ -25,6 +25,7 @@ CRITERIA: dict[str, str] = {
     "craft_iron_pickaxe": "craft an iron pickaxe at a crafting table from three iron ingots and sticks",
     "mine_diamond": "mine diamond ore with an iron or better pickaxe to gather diamonds for diamond tools and armour",
     "craft_diamond_pickaxe": "craft a diamond pickaxe from three diamonds and sticks; the best pickaxe the bot can make",
+    "craft_pickaxe_spare": "craft the second diamond pickaxe the Nether trip needs; a pickaxe that breaks out there ends the expedition and nothing can be recovered",
     "craft_diamond_sword": "craft a diamond sword from two diamonds and a stick, once the diamond pickaxe exists",
     "equip_armor": "wear the armour pieces the bot crafted (iron first, then diamond), so their protection is active",
     "craft_shield": "craft a shield from six planks and one iron ingot; it blocks attacks while held in the off-hand",
@@ -309,6 +310,13 @@ ARROW_ITEM = "arrow"
 BOW_STRING = 3
 NETHER_ARROWS = 16
 FEATHER_ITEM = "feather"
+# Pickaxes carried into the Nether, the active one included. The expedition digs: netherrack for
+# cover, obsidian for a return gate if the arrival portal is gone, and the frame if the bot has to
+# re-light on the far side. A pickaxe that breaks out there ends the trip where it stands, and with
+# `recover_drops` refusing the Nether (`_can_recover`) there is no way back to the tools - so the
+# second one is made here, in the Overworld, where a broken pickaxe costs one craft_item. Live: the
+# pack held exactly one `diamond_pickaxe` with the trip stocked and the gate lit.
+NETHER_PICKAXES = 2
 GOLD_HELMET_ITEM = "golden_helmet"
 GOLD_HELMET_INGOTS = 5
 GOLD_ORE = "gold_ore"
@@ -1100,6 +1108,22 @@ def _nether_hopeless(gs: GameState) -> bool:
     return gs.nether_ticks >= NETHER_HOPELESS_AFTER
 
 
+def _spare_pickaxe_missing(gs: GameState) -> bool:
+    """Whether the trip is stocked enough to start mining diamonds for the second pickaxe.
+
+    Offered the moment the expedition is otherwise prepared and the pack holds fewer than
+    `NETHER_PICKAXES`, whether or not the diamonds are already in it: the gate is already lit at
+    that point, so the run stands at its own portal waiting, and the mining step that fills the
+    gap is the same one the tech tree used to make the first. `craft_diamond_pickaxe` could not do
+    this job - it is a chain step that fires only while `tier < DIAMOND_PICK_TIER`, and it was
+    never offered at all, so there was no path to a second diamond pickaxe in the first place.
+    """
+    inv = gs.inventory
+    return (_overworld(gs) and not gs.nether_entered
+            and _expedition_prepared(gs)
+            and inv.get("diamond_pickaxe", 0) < NETHER_PICKAXES)
+
+
 def _nether_departure_ready(gs: GameState) -> bool:
     """Whether the Overworld gate is the bot's next job and it has to be standing at the base.
 
@@ -1109,9 +1133,15 @@ def _nether_departure_ready(gs: GameState) -> bool:
     drifts off after stocking the trip had no way back and the departure could never happen
     (live, run30: fully stocked, portal burning, bot 40 m off in a hole, `enter_portal` never
     offered and no step willing to walk it home).
+
+    The spare pickaxe (`NETHER_PICKAXES`) is checked here rather than in `_expedition_ready`, so it
+    gates the crossing and not the gate-lighting: a run that has stocked the trip and lit the portal
+    stands at its own gate for a few ticks while the second pickaxe is made, which is a wait it can
+    see the end of, rather than a portal that stays dark until three more diamonds are dug.
     """
     return (not nether_expedition_complete(gs) and not gs.nether_entered
-            and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs))
+            and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
+            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES)
 
 
 def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
@@ -2254,6 +2284,8 @@ def candidates(gs: GameState) -> list[str]:
                 out.append("leave_nether")
         else:
             # Overworld side: the gate is the way in, and it opens once the expedition is stocked.
+            if _spare_pickaxe_missing(gs):
+                out.append("craft_pickaxe_spare")
             if _at_base(gs) and _nether_departure_ready(gs):
                 out.append("enter_portal")
             if gs.nether_entered and not _in_nether(gs):
@@ -2473,6 +2505,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "equip",
                       {"items": [{"item_name": SHIELD_ITEM, "destination": "off-hand"}]},
                       "put the shield in the off-hand so it blocks attacks")
+    if label == "craft_pickaxe_spare":
+        if not _spare_pickaxe_missing(gs):
+            return None
+        if inv.get("diamond", 0) < 3 or not _can_sticks(inv, _logs(inv), _planks(inv)):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": "diamond_pickaxe"}], "temporary_workstation": True},
+                      "craft the second diamond pickaxe to take into the Nether")
     if label == "craft_diamond_pickaxe":
         if (inv.get("diamond", 0) < 3 or not _has(inv, "crafting_table")
                 or tier >= DIAMOND_PICK_TIER or not _can_sticks(inv, _logs(inv), _planks(inv))):

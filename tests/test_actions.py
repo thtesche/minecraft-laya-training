@@ -410,7 +410,7 @@ class NetherLullWaitTest(unittest.TestCase):
         # tick is holding at the base.
         g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=64, white_bed=1,
                                       iron_ingot=1, cooked_beef=24,
-                                      bow=1, arrow=16)))
+                                      bow=1, arrow=16, diamond_pickaxe=2)))
         g.food = 20.0
         g.chest_pos = (-198, -47, -98)
         g.furnace_pos = (-198, -46, -99)
@@ -2896,8 +2896,10 @@ class CookFoodReachTest(unittest.TestCase):
     BASE = (-197, -47, -98)
 
     def _stocked(self, **inv) -> GameState:
+        # Two pickaxes, because that is what a banked trip carries now (`NETHER_PICKAXES`); with
+        # one, the spare-pickaxe step outranks everything the lull is being tested for.
         g = at_home(geared(furnace=1, coal=8, beef=5, crafting_table=1,
-                            cobblestone=64, **inv), base=self.BASE)
+                            cobblestone=64, diamond_pickaxe=2, **inv), base=self.BASE)
         g.dimension = "minecraft:overworld"
         g.health = 20.0
         g.food = 18.0
@@ -3011,8 +3013,12 @@ class NetherExpeditionTest(unittest.TestCase):
 
     def _home(self, **inv) -> GameState:
         """The bot at its base in the Overworld, gate lit and the expedition fully banked."""
+        # `diamond_pickaxe=2`: banking the trip includes the spare (`NETHER_PICKAXES`). One
+        # pickaxe is not a banked expedition any more - it breaks in the Nether and nothing is
+        # recoverable there, so a bot holding one is still on its way to the gate, not through it.
         stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64,
-                     golden_helmet=1, cooked_mutton=64, white_bed=1)
+                     golden_helmet=1, cooked_mutton=64, white_bed=1,
+                     diamond_pickaxe=2)
         stock.update(inv)
         g = at_home(geared(**stock), base=self.BASE)
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
@@ -3270,6 +3276,79 @@ class NetherExpeditionTest(unittest.TestCase):
         for label in ("enter_portal", "hunt_blaze", "leave_nether", "craft_blaze_powder",
                       "stow_blaze_powder"):
             self.assertNotIn(label, out)
+
+
+class ExpeditionSparePickaxeTest(unittest.TestCase):
+    """The trip carries two pickaxes, and the gate stays shut until it does.
+
+    The expedition digs: netherrack, obsidian for a return gate if the arrival portal is gone, the
+    frame if it has to re-light on the far side. A pickaxe that breaks out there ends the trip
+    where it stands, and `_can_recover` refuses the Nether on purpose, so nothing can be fetched
+    from where it fell. Live: the pack held exactly one `diamond_pickaxe` with the trip stocked and
+    the gate lit.
+    """
+
+    BASE = (-197, -47, -98)
+    GATE = (-195, -46, -98)
+
+    def _stocked(self, **inv) -> GameState:
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64,
+                     golden_helmet=1, cooked_mutton=64, white_bed=1, diamond_pickaxe=1)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                   *self.GATE, 2.0)],
+                       "obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
+                       "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -100, 2.5)]}
+        g.dimension = "minecraft:overworld"
+        return g
+
+    def test_one_pickaxe_holds_the_gate_shut(self) -> None:
+        g = self._stocked()
+        self.assertNotIn("enter_portal", candidates(g))
+
+    def test_a_stocked_trip_with_one_pickaxe_asks_for_the_second(self) -> None:
+        g = self._stocked()
+        self.assertIn("craft_pickaxe_spare", candidates(g))
+        self.assertNotIn("enter_portal", candidates(g))
+
+    def test_two_pickaxes_open_the_gate(self) -> None:
+        g = self._stocked(diamond_pickaxe=2)
+        self.assertIn("enter_portal", candidates(g))
+        self.assertNotIn("craft_pickaxe_spare", candidates(g))
+
+    def test_the_spare_is_offered_before_the_diamonds_are_in_the_pack(self) -> None:
+        # The gate is already lit at that point, so the run stands at its own portal waiting. The
+        # step has to outrank idling there, and `mine_diamond` then fills the gap.
+        g = self._stocked(diamond=0)
+        self.assertIn("craft_pickaxe_spare", candidates(g))
+        self.assertIsNone(resolve("craft_pickaxe_spare", g))
+
+    def test_the_spare_needs_three_diamonds_and_two_sticks(self) -> None:
+        a = resolve("craft_pickaxe_spare", self._stocked(diamond=3, stick=4))
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_pickaxe"}])
+        self.assertIsNone(resolve("craft_pickaxe_spare", self._stocked(diamond=2)))
+        self.assertIsNone(resolve("craft_pickaxe_spare", self._stocked(diamond=3, stick=0)))
+
+    def test_the_spare_is_not_asked_for_before_the_trip_is_stocked(self) -> None:
+        # An unstocked trip has to be stocked first: the pickaxe is the last thing before the
+        # crossing, not the first step of it.
+        self.assertNotIn("craft_pickaxe_spare",
+                         candidates(self._stocked(cobblestone=12)))
+
+    def test_the_nether_is_never_asked_to_craft_one(self) -> None:
+        g = self._stocked()
+        g.dimension = "minecraft:the_nether"
+        g.nether_entered = True
+        self.assertNotIn("craft_pickaxe_spare", candidates(g))
+
+    def test_the_chain_step_that_would_have_done_it_is_never_offered(self) -> None:
+        # `craft_diamond_pickaxe` exists and would craft exactly this, but it is a chain step that
+        # fires only while `tier < DIAMOND_PICK_TIER`, and nothing ever appended it to the offer
+        # at all. So there was no path to a second diamond pickaxe before this.
+        self.assertNotIn("craft_diamond_pickaxe",
+                         candidates(self._stocked(diamond=3, stick=4)))
 
 
 if __name__ == "__main__":
