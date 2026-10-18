@@ -2747,6 +2747,17 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertNotIn("enter_portal", candidates(g))
         self.assertIsNone(resolve("enter_portal", g))
 
+    def test_a_bow_less_bot_may_still_depart(self) -> None:
+        # The bow is part of the bank, not a precondition for the trip: a diamond sword and shield
+        # are what the bot fights blazes with, and holding the departure for a bow made run34 wait
+        # at its own gate for an item nothing on the map could supply. The Overworld section is
+        # still not "done" - the bank is short - so the run keeps working either way.
+        g = self._home()
+        g.inventory.pop("bow", None)
+        g.inventory.pop("arrow", None)
+        self.assertIn("enter_portal", candidates(g))
+        self.assertFalse(tech_tree_complete(g))
+
     def test_the_gate_is_not_offered_twice(self) -> None:
         g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
         g.nether_entered = True

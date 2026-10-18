@@ -1215,6 +1215,12 @@ def _nether_bank_carried(gs: GameState) -> bool:
     The gold helmet stays on the pending-step side on purpose: an unreachable material must not be
     able to block completion (`test_unreachable_prep_does_not_block_completion`), and unlike the
     bow it is not a piece the run quietly carries the whole trip without.
+
+    This gates the *completion claim*, not the trip: `_expedition_prepared` deliberately does not
+    read it, so a bot that cannot rebuild its bow can still walk through the gate. Holding the
+    departure for a bow made the run wait at its own gate for an item nothing on the map could
+    supply (live, run34: no spider within reach for hours), while a diamond sword and shield are
+    what it actually fights blazes with.
     """
     inv = gs.inventory
     return _has(inv, BOW_ITEM) and inv.get(ARROW_ITEM, 0) >= NETHER_ARROWS
@@ -1229,7 +1235,7 @@ def _expedition_prepared(gs: GameState) -> bool:
     trip apart from one still before its lull.
     """
     return (_gear_ready(gs) and _portal_built(gs) and _bed_available(gs)
-            and not _all_nether_prep_steps(gs) and _nether_bank_carried(gs)
+            and not _all_nether_prep_steps(gs)
             and _food_reserve_met(gs))
 
 
