@@ -1624,11 +1624,40 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.base, (-1, 2, 3))
         self.assertEqual(agent.mcp.calls, [])
 
-    async def test_skips_before_the_diamond_kit(self) -> None:
+    async def test_skips_before_the_bot_can_light_a_gate(self) -> None:
+        # No flint and steel, no diamond kit: nothing in this run has ever built a gate, so a lit
+        # portal found now belongs to someone else and adopting it would move the base off a
+        # half-built site of our own.
         agent = self._agent(self._FIND)
         await agent._adopt_portal_base(gs(pos=(0.0, 64.0, 0.0)))
         self.assertIsNone(agent.base)
         self.assertEqual(agent.mcp.calls, [])
+
+    async def test_adopts_with_the_flint_and_steel_alone(self) -> None:
+        # The case that lost run43 its base: dead in the Nether, no diamond kit, but the flint and
+        # steel still in the pack - the gate and the chest a previous run built were standing.
+        agent = self._agent(self._FIND)
+        await agent._adopt_portal_base(gs(pos=(-178.5, 68.0, 329.5),
+                                         inventory={"flint_and_steel": 1}))
+        self.assertEqual(agent.base, (-156, 62, 257))
+        self.assertTrue(agent._base_adopted)
+
+    async def test_the_chest_beside_the_adopted_gate_comes_back_too(self) -> None:
+        # The whole point of re-anchoring: the goal stows the blaze powder in the chest at the
+        # portal, so a base adopted from the gate has to bring the chest and the furnace with it -
+        # live, run43 died in the Nether and would have re-based on open ground, chest included.
+        agent = self._agent(self._FIND)
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent._furnace_blocked = False
+        await agent._adopt_portal_base(gs(pos=(-178.5, 68.0, 329.5),
+                                         inventory={"flint_and_steel": 1}))
+        g = gs(pos=(-178.5, 68.0, 329.5), inventory={"flint_and_steel": 1},
+               resources={"chest": [BlockHit("chest", "container", -154, 63, 258, 30.0)],
+                          "furnace": [BlockHit("furnace", "container", -155, 63, 258, 30.0)]})
+        agent._adopt_homebase(g)
+        self.assertEqual(agent.chest_pos, (-154, 63, 258))
+        self.assertEqual(agent.furnace_pos, (-155, 63, 258))
 
     def test_inject_hands_the_adopted_flag_to_the_state(self) -> None:
         agent = self._agent(self._FIND)

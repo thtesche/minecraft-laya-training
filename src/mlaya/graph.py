@@ -451,8 +451,18 @@ class Agent:
         `establish_base` raising a second portal (impossible anyway once the flint and steel is
         crafted and the obsidian is spent). A fresh run finds no lit portal, so the base pick is
         unchanged; the scan only runs while the base is still unset and moves with the bot.
+
+        The gear gate was the wrong question. The diamond kit is what *lights* a gate; it is not
+        what recognises one, and a bot that died in the Nether came back without it - so it could
+        never re-adopt the gate and chest it had already built, and `establish_base` raised a
+        fresh base instead, frame and all, with the ten obsidian gone in the same death (live,
+        run43: the lit gate and the chest stood at `(226,63,222)` and the run re-based on open
+        ground). A lit portal already proves what it takes to build one, so the gate here is the
+        means to light one: the flint and steel.
         """
-        if self.base is not None or not _gear_ready(gs) or gs.pos is None:
+        if self.base is not None or gs.pos is None:
+            return
+        if not (_gear_ready(gs) or "flint_and_steel" in gs.inventory):
             return
         px, _, pz = gs.pos
         at = self._portal_base_scanned
