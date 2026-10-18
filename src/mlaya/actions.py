@@ -2026,7 +2026,12 @@ def candidates(gs: GameState) -> list[str]:
     need_wood = (tier == 0 or not table
                  or (not bed and (wool >= 3 or string >= 12))
                  or (_pickaxe_due_for_spare(gs) and not _can_sticks(inv, logs, planks)))
-    if logs == 0 and planks == 0 and need_wood:
+    if logs == 0 and planks == 0 and need_wood and _overworld(gs):
+        # Overworld only, like `craft_bed` and `place_bed`: the Nether has no trees, so a chop-a-tree
+        # step can never succeed there and burns every tick it is offered. The bed chain is what
+        # asks for wood most often (wool in the pack, no bed yet), which is why it kept winning the
+        # offer over `leave_nether` - live, run42 spent all 600 iterations on `get_wood` in the
+        # Nether and came home with nothing.
         out.append("get_wood")
     if (logs >= 1 or planks >= 5) and tier == 0:
         out.append("craft_pickaxe")
@@ -2330,6 +2335,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                           "swim clear of the water and climb back up to the dry home base")
         return None
     if label == "get_wood":
+        if not _overworld(gs):
+            # Gated here as well as in the offer: a label the policy still holds must not be able
+            # to smuggle an impossible action through (same reason as `craft_bed`).
+            return None
         return Action(label, "collect_block", {"block_name": "logs", "count": 8},
                       "gather logs to start the tech tree")
     if label == "mine_stone":

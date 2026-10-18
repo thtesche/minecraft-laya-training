@@ -2664,6 +2664,21 @@ class CraftBedDimensionTest(unittest.TestCase):
         self.assertNotIn("craft_bed", candidates(g))
         self.assertIsNone(resolve("craft_bed", g))
 
+    def test_no_wood_is_chopped_in_the_nether(self) -> None:
+        # The Nether has no trees. `get_wood` stayed in the offer all the way through run42 and
+        # took every tick over `leave_nether`, so 600 iterations bought nothing.
+        g = self._stocked("minecraft:the_nether")
+        g.inventory.pop("crafting_table", None)
+        g.inventory.pop("oak_log", None)
+        self.assertNotIn("get_wood", candidates(g))
+        self.assertIsNone(resolve("get_wood", g))
+
+    def test_wood_is_still_chopped_in_the_overworld(self) -> None:
+        g = self._stocked("minecraft:overworld")
+        g.inventory.pop("crafting_table", None)
+        g.inventory.pop("oak_log", None)
+        self.assertIn("get_wood", candidates(g))
+
     def test_the_bed_chain_is_untouched_where_a_bed_already_stands(self) -> None:
         # The Nether rule adds to that one, it does not replace it.
         g = self._stocked("minecraft:overworld")
