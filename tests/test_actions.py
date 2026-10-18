@@ -2579,6 +2579,66 @@ class LeavePortalTest(unittest.TestCase):
         self.assertEqual(candidates(g), ["leave_portal"])
 
 
+class NetherSearchHeadingTest(unittest.TestCase):
+    """The fortress search marches the east-west axis instead of wandering.
+
+    Nether fortresses spawn in parallel east-west stripes, so a straight line along that axis
+    crosses them. The generic `explore` branch takes the best standable ground inside the scan
+    radius, and in the Nether that is netherrack in every direction - live run37 walked 231 blocks
+    to gain 31 blocks of ground, a 13 % straight line through open lava sea that crossed no stripe.
+    """
+
+    NETHER = "minecraft:the_nether"
+
+    def _down(self, x: float, arrival_x: float = 0.0, **res) -> GameState:
+        g = gs(pos=(x, 65.0, 0.0), dimension=self.NETHER, health=20.0, food=18.0)
+        g.base = (-197, -47, -98)
+        g.nether_entered = True
+        g.nether_arrival = (arrival_x, 65, 0)
+        g.resources = dict(res)
+        return g
+
+    def test_the_search_marches_the_axis_rather_than_hopping_to_nearby_ground(self) -> None:
+        g = self._down(10.0)
+        a = resolve("explore", g)
+        self.assertEqual(a.tool, "explore_frontier")
+        self.assertIn(a.args["heading"], (90.0, 270.0))
+
+    def test_the_march_flips_once_it_is_past_where_it_came_in(self) -> None:
+        # East until it is level with the arrival cell, then back west: a boustrophedon sweep
+        # across the stripes, with no state of its own to keep.
+        east = self._down(120.0, arrival_x=0.0)
+        self.assertEqual(resolve("explore", east).args["heading"], 270.0)
+        west = self._down(-120.0, arrival_x=0.0)
+        self.assertEqual(resolve("explore", west).args["heading"], 90.0)
+
+    def test_a_spawner_in_reach_is_walked_to_rather_than_marched_past(self) -> None:
+        g = self._down(10.0, spawner=[BlockHit("spawner", "spawner", 40, 66, 4, 22.0)])
+        a = resolve("explore", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (40, 66, 4))
+
+    def test_fortress_bricks_win_over_marching(self) -> None:
+        g = self._down(10.0, nether_bricks=[BlockHit("nether_bricks", "nether_bricks",
+                                                     31, 64, -8, 16.0)])
+        a = resolve("explore", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (31, 64, -8))
+
+    def test_the_overworld_wander_is_untouched(self) -> None:
+        # Home, a fortress is nothing to walk to - the walk-at-the-bricks is the Nether's, and
+        # `explore` there keeps the ordinary branch it always had.
+        g = at_home(geared(crafting_table=1, cobblestone=64), base=(-197, -47, -98))
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 18.0
+        g.nether_arrival = None
+        g.resources = {"nether_bricks": [BlockHit("nether_bricks", "nether_bricks",
+                                                  -180, 64, -90, 14.0)]}
+        a = resolve("explore", g)
+        self.assertNotEqual((a.args.get("x"), a.args.get("y"), a.args.get("z")), (-180, 64, -90))
+
+
 class CraftBedDimensionTest(unittest.TestCase):
     """A bed is only worth making where one can be laid.
 

@@ -993,6 +993,37 @@ def _overworld(gs: GameState) -> bool:
     return "nether" not in dim and "end" not in dim
 
 
+# The fortress bricks and spawners a Nether search recognises, in the order a search prefers them:
+# the cage itself, then the structure around it.
+FORTRESS_BLOCKS = ("spawner", "nether_bricks", "nether_brick_fence", "nether_brick_stairs")
+
+
+def _fortress_hit(gs: GameState):
+    """The nearest fortress landmark in reach, or None.
+
+    Blazes exist only in a Nether fortress, so the bricks and the spawner cage are the landmark
+    worth walking to rather than the local greedy step `explore` would otherwise take.
+    """
+    for name in FORTRESS_BLOCKS:
+        hit = gs.resource_nearest(name)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _nether_search_heading(gs: GameState) -> float:
+    """Compass heading for the fortress search: due east or due west along the X axis.
+
+    Nether fortresses spawn in parallel east-west stripes, so a straight line along that axis
+    crosses them; a search that wanders crosses none. The direction is chosen from where the bot
+    stands relative to where it came in - east until it is past that point, then west - which
+    sweeps the stripes in a boustrophedon without any state of its own to keep.
+    """
+    if gs.nether_arrival is None or gs.pos is None:
+        return 90.0
+    return 270.0 if gs.pos[0] >= gs.nether_arrival[0] else 90.0
+
+
 def _in_nether(gs: GameState) -> bool:
     """Whether the bot stands in the Nether. The mirror of `_overworld`."""
     return "nether" in str(gs.dimension or "").lower()
@@ -2903,6 +2934,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "explore":
         if x is None or z is None:
             return None
+        if _in_nether(gs):
+            # The Nether has no chain to work through, so `explore` is not wandering here - it is
+            # the fortress search. Walk at the bricks when they are in reach, otherwise march the
+            # east-west axis that fortresses are striped along. The generic branch below takes
+            # the best standable ground inside the scan radius, which in the Nether is netherrack
+            # in every direction: 231 blocks of walking bought 31 blocks of ground in run37, a
+            # 13 % straight line through open lava sea that crossed no stripe at all.
+            fortress = _fortress_hit(gs)
+            if fortress is not None:
+                fx, fy, fz = fortress.pos
+                return Action(label, "navigate",
+                              {"x": fx, "y": fy, "z": fz, "dig": True, "scaffold": True},
+                              f"walk to the {fortress.name} at {fx},{fy},{fz}, where blazes spawn")
+            heading = _nether_search_heading(gs)
+            return Action(label, "explore_frontier",
+                          {"heading": heading, "chunks": EXPLORE_FRONTIER_CHUNKS},
+                          "march east-west along the fortresses' axis, where blazes spawn")
         if target is not None and target.hit.distance >= EXPLORE_MIN_M:
             tx, ty, tz = target.pos
             return Action(label, "navigate",
