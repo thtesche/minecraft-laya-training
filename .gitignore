@@ -94,3 +94,8 @@ MEMORY.md
 
 # --- Python venv ---
 .venv/
+
+# --- Lockfiles ---
+# uv.lock is reproducible-build state for this local training venv; it is not
+# shared with the repo, so it stays out of version control.
+uv.lock
