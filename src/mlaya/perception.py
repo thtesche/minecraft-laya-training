@@ -51,6 +51,12 @@ RESCUE_ABOVE = ("air", "cave_air")
 # deep under the surface counts through `resource_found` so the `collect_block` tunnel is still
 # offered. Kept as its own `view_blocks find` group: that call takes at most eight names.
 CHAIN_NAMES = ("lava", "chest", "furnace", "gold_ore")
+# The Nether's own scan group, read *only* in the Nether: the bricks a fortress is built from are
+# the one landmark that tells the bot a blaze spawner is plausibly near, and `spawner` names the
+# cage itself. Blazes are hostile, so they only reach the state through `view_status` once one is
+# actually loaded -- a fortress can sit hundreds of blocks off, and these names are what gives
+# `explore` a heading to walk toward instead of wandering at random.
+NETHER_CHAIN_NAMES = ("nether_bricks", "nether_brick_fence", "nether_brick_stairs", "spawner")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava",)
 RESOURCE_RADIUS = 64.0
@@ -350,6 +356,22 @@ class GameState:
     # a build is pending. `clear_frame` needs the name to hand `collect_block`, which matches the
     # block it is asked for; a cell the scan has not named yet waits for the next read.
     frame_names: dict[tuple[int, int, int], str] = field(default_factory=dict)
+    # The loop is *intending* a portal crossing this tick (`enter_portal` / `leave_nether`). The
+    # `_in_portal` rescue exists to step a body out of a gate that merely walked into one, so it
+    # must stand down for the one crossing that is asked for - otherwise the rescue undoes the
+    # crossing every tick and the trip never happens (Agent `_enter_intent`).
+    enter_intent: bool = False
+    # The Nether expedition has already happened at least once, so the loop does not offer the
+    # Overworld gate again while it is busy down there or on the way back.
+    nether_entered: bool = False
+    # The cell the bot arrived in on the Nether side (Agent `_note_arrival`). The exit portal is
+    # that spot or right beside it, and a portal block only reaches the state while it is loaded -
+    # so when the scan comes up empty this is the heading `leave_nether` walks instead.
+    nether_arrival: tuple[int, int, int] | None = None
+    # The blaze powder reached the chest at the Overworld portal (Agent `_note_stow`). Reading the
+    # chest back would cost a `use_container` inspection every tick, and the deposit is already
+    # verified by the action's own result - the same latch shape as `frame_complete`.
+    powder_stowed: bool = False
     # Death cells (`actions._cell`) a recovery walk already reached and found empty
     # (`[NO_MATCHING_ITEMS]` and the other final codes). `_can_recover` refuses to offer the walk
     # there again, so a bot whose gear is gone does not stand at the death site for the whole
@@ -1033,4 +1055,23 @@ async def build(executor) -> GameState:
             gs.resource_found.update(parse_resource_counts(payload))
         except Exception:
             pass
+    # The Nether group is a fourth read and only earns its place down there: in the Overworld it
+    # finds nothing, so `explore` gets no heading and `hunt_blaze` no route.
+    if _in_nether_dimension(gs.dimension):
+        try:
+            blocks = await executor.read(
+                "view_blocks",
+                {"find": {"block_names": list(NETHER_CHAIN_NAMES), "limit": RESOURCE_LIMIT}},
+                "scan the nether bricks that lead to a fortress and the spawners inside it",
+            )
+            payload = coerce(blocks.data, blocks.text)
+            gs.resources.update(parse_resources(payload, RESOURCE_LIMIT))
+            gs.resource_found.update(parse_resource_counts(payload))
+        except Exception:
+            pass
     return gs
+
+
+def _in_nether_dimension(dimension: Any) -> bool:
+    """Whether a `view_status` dimension string names the Nether."""
+    return "nether" in str(dimension or "").lower()

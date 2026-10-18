@@ -78,6 +78,13 @@ CRITERIA: dict[str, str] = {
     "place_bed": "place the carried bed beside the gate frame so the respawn point sits at the gate",
     "take_bed": "take the standing respawn bed back up when it lies away from the base, so it can be laid beside the portal",
     "drop_junk": "drop low-value blocks from the full pack so a gathering action has room again",
+    "enter_portal": "step into the lit gate and cross into the Nether for the blaze rods",
+    "swap_to_gold_helmet": "wear the gold helmet instead of the diamond one, so piglins stay neutral in the Nether",
+    "hunt_blaze": "kill a blaze and take its blaze rod, nine of which make eighteen blaze powder",
+    "leave_nether": "step back into the Nether exit portal and cross home with the rods",
+    "swap_to_diamond_helmet": "wear the diamond helmet again now that the bot is back in the Overworld",
+    "craft_blaze_powder": "craft the carried blaze rods into blaze powder, one rod to two powder",
+    "stow_blaze_powder": "deposit the blaze powder into the chest at the Overworld portal",
 }
 
 EDIBLE = {
@@ -142,6 +149,25 @@ IRON_MINE_BATCH = 8
 PORTAL_OBSIDIAN = 10
 PORTAL_CORNERS = 4
 PORTAL_BLOCK = "nether_portal"
+# --- The Nether expedition (phase 3) ---
+# The goal the user set for the first trip: nine blaze rods, which are eighteen blaze powder (one
+# rod makes two). The rods are only ever *carried* out of the Nether and turned into powder back
+# in the Overworld, where a crafting table exists and the bot is not standing in a lava sea.
+BLAZE_RODS = 9
+BLAZE_POWDER = BLAZE_RODS * 2
+BLAZE_MOB = "blaze"
+BLAZE_ROD_ITEM = "blaze_rod"
+BLAZE_POWDER_ITEM = "blaze_powder"
+# How far a blaze may be for `hunt_blaze` to commit. Blazes hover, so `collect_mob_drop` has to
+# close that distance itself; past this the bot is better off walking the fortress bricks first.
+BLAZE_HUNT_RANGE = 24.0
+# Blazes set themselves on fire when struck and answer with fireballs, so a hunt only starts from a
+# healthy bot that is not already in a fight. This mirrors `_safe_spider_hunt`.
+BLAZE_HUNT_HEALTH = 14.0
+# When the Nether trip has to end. Blazes hit hard, so the bot leaves at a quarter of its health
+# and well before it is hungry; both thresholds are checked on the state, never guessed at runtime.
+NETHER_RETURN_HEALTH = 8.0
+NETHER_RETURN_FOOD = 8.0
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
 # not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.
@@ -691,10 +717,14 @@ def _in_portal(gs: GameState) -> bool:
     routes the body straight through the gate, and the teleport fires a few seconds later - no
     step ever asked for the crossing (live, run22: the lit gate stood beside the base and the
     bot was in the Nether a few decisions after it was lit). The rescue owns the tick while the
-    body is in the gate, so it steps out before the teleport. Phase 3, the intended crossing,
-    must bypass this.
+    body is in the gate, so it steps out before the teleport.
+
+    `gs.enter_intent` is the one crossing that *was* asked for: the loop sets it the tick it
+    resolves `enter_portal` or `leave_nether` and holds it while the body is in the gate, so the
+    rescue stands down for the intended trip and keeps owning every accidental one (Agent
+    `_enter_intent`).
     """
-    if gs.pos is None:
+    if gs.enter_intent or gs.pos is None:
         return False
     fx, fy, fz = (math.floor(v) for v in gs.pos)
     cells = {(fx, fy, fz), (fx, fy + 1, fz)}
@@ -926,6 +956,84 @@ def _overworld(gs: GameState) -> bool:
     evaporates there, so `sleep`, `place_bed` and `fill_bucket` are Overworld-only."""
     dim = str(gs.dimension or "").lower()
     return "nether" not in dim and "end" not in dim
+
+
+def _in_nether(gs: GameState) -> bool:
+    """Whether the bot stands in the Nether. The mirror of `_overworld`."""
+    return "nether" in str(gs.dimension or "").lower()
+
+
+def _blaze_rods(inv: dict[str, int]) -> int:
+    """Blaze rods carried, counting neither powder nor a chest full of either."""
+    return int(inv.get(BLAZE_ROD_ITEM, 0))
+
+
+def _blaze_powder(inv: dict[str, int]) -> int:
+    """Blaze powder carried in the pack."""
+    return int(inv.get(BLAZE_POWDER_ITEM, 0))
+
+
+def _safe_blaze_hunt(gs: GameState) -> bool:
+    """Whether a blaze is a fight worth starting right now.
+
+    A blaze answers melee by igniting itself and answering with fireballs, and a fortress has
+    more of them than one bot can survive at once, so the same guard `_safe_spider_hunt` uses
+    applies: one target in reach, the bot healthy, and no other hostile crowding the fight.
+    """
+    blaze = gs.mob_nearest(BLAZE_MOB)
+    if blaze is None or blaze > BLAZE_HUNT_RANGE or (gs.health or 0) < BLAZE_HUNT_HEALTH:
+        return False
+    others = [d for n, k, _, d in gs.mobs
+              if k == "hostile" and n != BLAZE_MOB and d is not None and d <= 16]
+    return not others
+
+
+def _nether_must_return(gs: GameState) -> bool:
+    """Whether the Nether trip has to end now, rods or no rods.
+
+    A death down there drops the whole haul and the diamond kit, so the trip ends on the first
+    sign that the bot cannot keep fighting: badly hurt, starving, in lava, or so full that the
+    next blaze drop has nowhere to go. The rods already carried are worth the walk home.
+    """
+    if gs.in_lava:
+        return True
+    if gs.health is not None and gs.health < NETHER_RETURN_HEALTH:
+        return True
+    if gs.food is not None and gs.food < NETHER_RETURN_FOOD:
+        return True
+    return gs.slots_used >= INVENTORY_NEAR_FULL
+
+
+def _nether_hopeless(gs: GameState) -> bool:
+    """Whether the hunt is over because no blaze is left to reach.
+
+    Blazes only ever reach the state while one is loaded, and a fortress can sit a long walk
+    away with nothing between. Hunted out and with fortress bricks nowhere in sight, continuing
+    to explore the Nether is not a plan - the bot goes home with the rods it has and finishes the
+    chain there (a short haul still becomes powder, and the trip can be run again later).
+    """
+    if _safe_blaze_hunt(gs):
+        return False
+    if gs.mob_nearest(BLAZE_MOB) is not None:
+        return False
+    return gs.resource_distance("nether_bricks") is None \
+        and gs.resource_found.get("nether_bricks", 0) == 0
+
+
+def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
+    """The nearest `nether_portal` block cell in reach, the Nether exit as much as the way in."""
+    hits = gs.resources.get(PORTAL_BLOCK) or []
+    return hits[0].pos if hits else None
+
+
+def _gold_helmet_needed(gs: GameState) -> bool:
+    """Whether the diamond helmet still stands where a gold one has to go.
+
+    One worn piece of gold armour is enough to keep piglins from attacking on sight, and the
+    helmet is the slot it has to share with the diamond piece, so this is the swap both ways.
+    """
+    return (_in_nether(gs) and _worn(gs, "diamond_helmet")
+            and (gs.inventory.get(GOLD_HELMET_ITEM, 0) > 0 or _worn(gs, GOLD_HELMET_ITEM)))
 
 
 def _string_goal(gs: GameState) -> int:
@@ -1558,6 +1666,20 @@ def _next_iron_armor_item(gs: GameState) -> tuple[str, int] | None:
     return None
 
 
+def nether_expedition_complete(gs: GameState) -> bool:
+    """True when the blaze powder from the first Nether trip stands in the Overworld chest.
+
+    The goal the user set for the first visit: nine blaze rods, eighteen blaze powder, parked in
+    the chest at the portal for now. Reading the chest back would cost a `use_container`
+    inspection on every tick of a long run, so the deposit is latched by the loop when the action
+    reports success (`gs.powder_stowed`, `Agent._note_stow`) - the same shape as `frame_complete`.
+
+    Powder still in the pack does not count: the point is that the haul is safe at home, and a bot
+    that dies on the way back loses the inventory in one step.
+    """
+    return bool(gs.powder_stowed)
+
+
 def _diamond_craft_ready(gs: GameState, item: str) -> bool:
     """Carried materials for a diamond craft: always a table, sticks only for tool and sword."""
     if not _has(gs.inventory, "crafting_table"):
@@ -1932,6 +2054,43 @@ def candidates(gs: GameState) -> list[str]:
     if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_at_base(gs)
             and gs.phase == "night" and _overworld(gs)):
         out.append("place_bed")
+
+    # --- The Nether expedition (phase 3) ---
+    # One chain, read in the order the bot has to walk it: cross, keep piglins off, kill blazes
+    # for nine rods, come home with them, swap the helmet back, turn the rods into powder, and
+    # park the powder in the chest at the gate. Each step only appears while the ones before it are
+    # done, so no step is ever offered out of turn.
+    if not nether_expedition_complete(gs):
+        if _in_nether(gs):
+            # The helmet first: piglins attack on sight without a worn gold piece, and the whole
+            # trip is fought around them.
+            if _gold_helmet_needed(gs):
+                out.append("swap_to_gold_helmet")
+            rods = _blaze_rods(inv)
+            if rods >= BLAZE_RODS:
+                # The haul is complete; every extra blaze down there is another fireball between
+                # the bot and its own portal.
+                out.append("leave_nether")
+            elif _safe_blaze_hunt(gs):
+                out.append("hunt_blaze")
+            elif _nether_must_return(gs) or _nether_hopeless(gs):
+                # Out of health, out of room, or out of chances: come home with what was got
+                # rather than die down there. The rods in the pack are already worth the trip.
+                out.append("leave_nether")
+        else:
+            # Overworld side: the gate is the way in, and it opens once the expedition is stocked.
+            if not gs.nether_entered and _overworld(gs) and _portal_lit(gs) \
+                    and _expedition_ready(gs):
+                out.append("enter_portal")
+            if gs.nether_entered and not _in_nether(gs):
+                if _worn(gs, GOLD_HELMET_ITEM) and (_has(inv, "diamond_helmet")
+                                                    or _worn(gs, "diamond_helmet")):
+                    out.append("swap_to_diamond_helmet")
+                if _blaze_rods(inv) >= BLAZE_RODS and _has(inv, "crafting_table") \
+                        and _blaze_powder(inv) < BLAZE_POWDER:
+                    out.append("craft_blaze_powder")
+                if _blaze_powder(inv) > 0 and _chest_ready(gs):
+                    out.append("stow_blaze_powder")
 
     # --- Home base storage ---
     # A chest at the base is where a filling pack sheds surplus, well before the server's
@@ -2358,6 +2517,70 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": GOLD_HELMET_ITEM}], "temporary_workstation": True},
                       "craft the gold helmet that keeps piglins neutral in the Nether")
+    if label == "enter_portal":
+        cell = _exit_portal_cell(gs)
+        if (cell is None or not _overworld(gs) or not _portal_lit(gs)
+                or gs.nether_entered or not _expedition_ready(gs)):
+            return None
+        x, y, z = cell
+        return Action(label, "enter_nether_portal", {"x": x, "y": y, "z": z},
+                      "cross into the Nether through the lit gate at the base")
+    if label == "swap_to_gold_helmet":
+        if not _gold_helmet_needed(gs):
+            return None
+        return Action(label, "equip", {"items": [{"item_name": GOLD_HELMET_ITEM,
+                                                  "destination": "head"}]},
+                      "wear the gold helmet so piglins stay neutral; the diamond one goes to the pack")
+    if label == "hunt_blaze":
+        if not _in_nether(gs) or not _safe_blaze_hunt(gs):
+            return None
+        want = BLAZE_RODS - _blaze_rods(inv)
+        return Action(label, "collect_mob_drop",
+                      {"mob_name": BLAZE_MOB, "drop_name": BLAZE_ROD_ITEM,
+                       "count": min(3, want), "allow_without_shield": True},
+                      f"kill a blaze for its blaze rod ({want} still needed)")
+    if label == "leave_nether":
+        if not _in_nether(gs):
+            return None
+        cell = _exit_portal_cell(gs)
+        if cell is not None:
+            x, y, z = cell
+            return Action(label, "enter_nether_portal", {"x": x, "y": y, "z": z},
+                          "cross back through the Nether exit portal with the rods")
+        # No portal block in the scan: the exit is the cell the bot arrived on, so the way home is
+        # that spot. Walk there first; the crossing itself waits until the portal is loaded again.
+        if gs.nether_arrival is None:
+            return None
+        ax, ay, az = gs.nether_arrival
+        return Action(label, "navigate",
+                      {"x": ax, "y": ay, "z": az, "range": 2, "dig": True, "scaffold": True},
+                      "walk back to where the Nether trip started, where the exit portal stands")
+    if label == "swap_to_diamond_helmet":
+        if _in_nether(gs) or not _worn(gs, GOLD_HELMET_ITEM):
+            return None
+        if not (_has(inv, "diamond_helmet") or _worn(gs, "diamond_helmet")):
+            return None
+        return Action(label, "equip", {"items": [{"item_name": "diamond_helmet",
+                                                  "destination": "head"}]},
+                      "wear the diamond helmet again, now that the bot is back in the Overworld")
+    if label == "craft_blaze_powder":
+        if (_in_nether(gs) or _blaze_rods(inv) < BLAZE_RODS or not _has(inv, "crafting_table")
+                or _blaze_powder(inv) >= BLAZE_POWDER):
+            return None
+        want = BLAZE_POWDER - _blaze_powder(inv)
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": BLAZE_POWDER_ITEM, "count": want}],
+                       "temporary_workstation": True},
+                      f"craft the carried blaze rods into {want} blaze powder, one rod to two")
+    if label == "stow_blaze_powder":
+        if _in_nether(gs) or _blaze_powder(inv) <= 0 or not _chest_ready(gs):
+            return None
+        cx, cy, cz = gs.chest_pos
+        powder = _blaze_powder(inv)
+        return Action(label, "use_container",
+                      {"operation": "deposit", "x": cx, "y": cy, "z": cz,
+                       "items": [{"item_name": BLAZE_POWDER_ITEM, "count": powder}]},
+                      f"deposit {powder} blaze powder into the chest at the portal")
     if label == "hunt_food":
         if _edible_count(inv) >= _food_goal(gs):
             return None

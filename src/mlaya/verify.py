@@ -39,6 +39,10 @@ def diff(before: GameState, after: GameState) -> dict:
         # loaded and would mask the frame in a resource-presence check.
         "portal_lit": after.resource_distance("nether_portal") is not None,
         "bed_placed": after.resource_distance("white_bed") is not None,
+        # The portal crossing moves no stack and may move the body not at all: the only proof is
+        # that the dimension is not the one the step started in. Kept as a boolean rather than the
+        # two dimension strings so the log stays readable.
+        "dimension_changed": before.dimension != after.dimension,
     }
 
 
@@ -111,6 +115,19 @@ def progressed(label: str, d: dict) -> bool:
         # clear of the gate (`place_bed` resolves a `navigate` until the feet are there), so
         # movement is progress too.
         return bool(d.get("bed_placed")) or (d["pos_delta"] or 0) > 2
+    # The Nether expedition. A crossing is proved by the dimension it leaves behind (the walk back
+    # to the arrival cell is progress until the exit portal is loaded), the helmet swap by the
+    # armour slot that changed, and the haul by its own item.
+    if label in ("enter_portal", "leave_nether"):
+        return d.get("dimension_changed") or (d["pos_delta"] or 0) > 2
+    if label in ("swap_to_gold_helmet", "swap_to_diamond_helmet"):
+        return bool(d.get("armor_delta"))
+    if label == "hunt_blaze":
+        return d["inventory_delta"].get("blaze_rod", 0) > 0
+    if label == "craft_blaze_powder":
+        return d["inventory_delta"].get("blaze_powder", 0) > 0
+    if label == "stow_blaze_powder":
+        return d["inventory_delta"].get("blaze_powder", 0) < 0
     # Home base. Walking home (or up to the surface) shows as movement; the chest shows as the
     # item entering or leaving the pack; stowing/dropping shows as any carried item going down.
     if label in ("surface_up", "establish_base", "go_home"):

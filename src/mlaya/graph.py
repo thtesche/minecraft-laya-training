@@ -12,7 +12,8 @@ from . import perception
 from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
-                      tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready)
+                      tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
+                      nether_expedition_complete)
 from .brain import Brain, escalate_to_system2
 from .memory import MemoryLog
 from .config import Settings
@@ -31,6 +32,11 @@ ADOPT_BED_RADIUS = 12.0
 # How far a chest may sit from the re-adopted base and still belong to it (one block of slack
 # over the base radius, plus the vertical step a chest is placed at).
 ADOPT_CHEST_RADIUS = 4
+# How long an *intended* portal crossing keeps the `_in_portal` rescue switched off, in ticks.
+# The crossing action blocks until the server settles it and the teleport needs a moment after
+# that, so a couple of decisions of slack; a gate the bot merely wandered into is rescued again
+# right after (Agent `_note_crossing`).
+PORTAL_INTENT_TICKS = 3
 
 # Tool-result codes that mean "the bot's surroundings block the action". `craft_item` and
 # `smelt_item` place a carried workstation beside the bot; in a 1x1 excavation shaft there
@@ -278,6 +284,18 @@ class Agent:
         # The block name of each cell of the frame plane, from the frame scan
         # (`perception.scan_frame_volume`). `clear_frame` needs the name to hand `collect_block`.
         self._frame_names: dict[tuple[int, int, int], str] = {}
+        # The crossing the loop is *intending* (`enter_portal` / `leave_nether`), so the
+        # `_in_portal` rescue stands down while the body is in the gate. Counted down per observe
+        # (`_note_dimension`) so a gate the bot merely walked into can never keep it switched off.
+        self._enter_intent_ticks = 0
+        # The Nether has been entered at least once, and where the bot landed doing it. The
+        # Overworld gate is then closed (`enter_portal` stops being offered) and `leave_nether`
+        # has a cell to walk back to when no exit portal block is loaded in the scan.
+        self._nether_entered = False
+        self._nether_arrival: tuple[int, int, int] | None = None
+        # The blaze powder reached the chest at the Overworld portal (`_note_stow`): the phase-3
+        # goal. Latched on the deposit's own success, the same shape as `_frame_complete`.
+        self._powder_stowed = False
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -306,6 +324,10 @@ class Agent:
         gs.frame_complete = self._frame_complete
         gs.refused_frame = tuple(sorted(self._refused_frame))
         gs.frame_names = dict(self._frame_names)
+        gs.enter_intent = self._enter_intent_ticks > 0
+        gs.nether_entered = self._nether_entered
+        gs.nether_arrival = self._nether_arrival
+        gs.powder_stowed = self._powder_stowed
         return gs
 
     async def _scan_build_site(self, gs) -> None:
@@ -376,6 +398,7 @@ class Agent:
         gs = await perception.build(self.mcp)
         await self._adopt_portal_base(gs)
         await self._scan_bed_site(gs)
+        self._note_dimension(gs)
         gs = self._inject(gs)
         await self._scan_build_site(gs)
         await self._scan_portal_opening(gs)
@@ -383,6 +406,27 @@ class Agent:
             # The re-adopted base has been reached: from here behave as if the run raised it.
             self._base_adopted = False
         return gs
+
+    def _note_dimension(self, gs) -> None:
+        """Count down a standing crossing intent and remember the Nether arrival.
+
+        The intent is a tick count, not a flag that a gate is seen: the crossing action blocks
+        until the server settles it and the teleport needs a moment after that, so the rescue has
+        to stay down for a bounded number of ticks around the crossing and then come straight back
+        - a gate the bot merely walked into must never keep the rescue switched off for good.
+
+        Arrival is read off the observed dimension rather than off the action result, because that
+        is what actually puts the bot in the Nether, and the cell it stands in is where the exit
+        portal is.
+        """
+        if self._enter_intent_ticks > 0:
+            self._enter_intent_ticks -= 1
+        if "nether" in str(gs.dimension or "").lower():
+            if not self._nether_entered:
+                self._nether_entered = True
+                if gs.pos is not None:
+                    self._nether_arrival = (math.floor(gs.pos[0]), math.floor(gs.pos[1]),
+                                            math.floor(gs.pos[2]))
 
     async def _adopt_portal_base(self, gs) -> None:
         """Re-anchor the home base on a lit portal a previous run left standing, once.
@@ -582,7 +626,8 @@ class Agent:
 
     def _goal_reached(self, gs) -> bool:
         """Whether the run's goal is reached (see `actions.tech_tree_complete`)."""
-        return bool(self.settings.loop.stop_when_complete) and tech_tree_complete(gs)
+        return (bool(self.settings.loop.stop_when_complete)
+                and (tech_tree_complete(gs) or nether_expedition_complete(gs)))
 
     def _stop_state(self, gs, iteration: int) -> dict:
         """`done`/`stop` for the next state: the goal ends the run early, else the limit does."""
@@ -726,6 +771,29 @@ class Agent:
         y = perception.parse_surface_height(text or "")
         if y is not None:
             self.surface = (int(action.args["x"]), y, int(action.args["z"]))
+
+    def _note_crossing(self, action) -> None:
+        """Stand the `_in_portal` rescue down around a crossing the loop asked for.
+
+        The rescue exists to step a body out of a gate it wandered into. The intended crossing is
+        the one case where that undoes the plan, so the tick a crossing label is chosen opens a
+        short window (`_enter_intent_ticks`) in which `_in_portal` stands down - long enough for
+        the action to settle and the teleport to fire, short enough that the next accidental gate
+        still gets rescued.
+        """
+        if action.label in ("enter_portal", "leave_nether"):
+            self._enter_intent_ticks = PORTAL_INTENT_TICKS
+
+    def _note_stow(self, action, ok: bool, delta: dict) -> None:
+        """Remember that the blaze powder reached the chest at the portal (the phase-3 goal).
+
+        Latched on the deposit's own success and on the pack actually losing the powder, so a
+        refused deposit (full chest, lid blocked) leaves the goal open and the step in the offer.
+        """
+        if action.label != "stow_blaze_powder" or not ok:
+            return
+        if (delta.get("inventory_delta", {}) or {}).get("blaze_powder", 0) < 0:
+            self._powder_stowed = True
 
     def _note_build(self, action, ok: bool, delta: dict) -> None:
         """Remember that the frame build has nothing left to place.
@@ -935,6 +1003,9 @@ class Agent:
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
         self._note_recover(before, action, _ok, _text)
+        # Opened before the action runs: the rescue has to be down on the *next* tick, while the
+        # crossing settles and the teleport fires.
+        self._note_crossing(action)
         if action.label == "stow_surplus":
             # A failed deposit means the chest is full; stop offering it as the relief.
             self._stow_blocked = not _ok
@@ -959,6 +1030,7 @@ class Agent:
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
         self._note_build(action, _ok, delta)
+        self._note_stow(action, _ok, delta)
         progressed = vmod.progressed(action.label, delta)
         self._track_stuck(action.label, _ok, _text, progressed)
         record = {

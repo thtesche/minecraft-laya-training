@@ -123,14 +123,40 @@ Nether terrain is already provided for in the server reflex.
   it occupies the same slot as the diamond helmet — decided: **the gold helmet replaces the diamond helmet**
   (`_swap_to_gold_helmet` on entry, see below).
 
-**Phase 3 — open (the actual Nether visit):**
-- **`enter_portal`**: navigate in (`dimension → nether`). This must **bypass the portal escape
-  reflex** (`_in_portal` → `leave_portal`, see architecture): the rescue steps the body out of a
-  lit gate, so the intended crossing needs an explicit intent the rescue respects.
-- **Armour swap on entry:** diamond helmet off, gold helmet on (`_swap_to_gold_helmet`), so that
-  piglins stay neutral. The diamond helmet stays in the pack for the way back.
-- Build **no** shelter around the arrival portal (decided 2026-10-18, see (B)), secure the **way
-  back**, then the first Nether resource (blaze/netherrack) as the goal of the following chain.
+**Phase 3 — done (the first Nether visit: nine blaze rods, eighteen powder):**
+
+The goal the user set (2026-10-18): find and kill blazes in the Nether, take **9 blaze rods** home
+(→ **18 blaze powder**, one rod to two), and park the powder in the **chest at the Overworld
+portal** for now. Getting back out is part of the goal, not a detail.
+
+- **`enter_portal`** (`enter_nether_portal`): the crossing itself. It must **bypass the portal
+  escape reflex** (`_in_portal` → `leave_portal`, see architecture): the rescue steps the body out
+  of a lit gate, so the intended crossing needs an explicit intent the rescue respects. That is
+  `gs.enter_intent` — a **countdown** (`PORTAL_INTENT_TICKS`), not a latch: the crossing action
+  blocks until it settles and the teleport needs a moment after, and a gate the bot merely walked
+  into later must still be rescued. Offered only with the whole expedition stocked
+  (`_expedition_ready`) and never twice (`gs.nether_entered`).
+- **Armour swap on entry:** diamond helmet off, gold helmet on (`swap_to_gold_helmet`, one `equip`),
+  so piglins stay neutral. The diamond helmet stays in the pack, and `swap_to_diamond_helmet` puts
+  it back on once the bot is home.
+- **`hunt_blaze`** (`collect_mob_drop` on `blaze` → `blaze_rod`): only a blaze within
+  `BLAZE_HUNT_RANGE` of a healthy bot that is not already in a fight (`_safe_blaze_hunt`, the
+  `_safe_spider_hunt` guard — blazes ignite themselves when struck and answer with fireballs).
+  Without a blaze in reach the bot walks the fortress bricks instead: the Nether scan group
+  (`nether_bricks`, `nether_brick_fence`, `nether_brick_stairs`, `spawner`) is read **only** in the
+  Nether and is what gives `explore` a heading rather than a random walk.
+- **`leave_nether`** (the way out): the exit portal when a `nether_portal` block is loaded, and
+  otherwise a walk back to `gs.nether_arrival` — the cell the bot landed on, where the exit portal
+  stands. Offered when the nine rods are in, **and also** when the bot cannot afford to stay
+  (`_nether_must_return`: badly hurt, starving, in lava, or so full the next drop has nowhere to go)
+  or when there is nothing left to find (`_nether_hopeless`: no blaze, no fortress anywhere).
+  A short haul still becomes powder.
+- **Home:** `craft_blaze_powder` (9 rods → 18 powder, Overworld only — a temporary workstation in
+  a fortress is a bad trade) and `stow_blaze_powder` (deposit into the chest at the gate).
+- **Goal:** `nether_expedition_complete` — the powder standing in the chest, latched by
+  `Agent._note_stow` on the deposit's own success (the same shape as `frame_complete`; reading the
+  chest back would cost an inspection every tick). Powder still in the pack does **not** count:
+  the point is that the haul is safe at home, and one death on the way back takes the inventory.
 
 ## Decided: the gold helmet replaces the diamond helmet
 

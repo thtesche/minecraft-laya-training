@@ -16,8 +16,8 @@ import unittest
 from mlaya.actions import Action, candidates, resolve
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, STUCK_COOLDOWN, STUCK_REPEATS, blocked_by_surroundings,
-                         unblock_action)
+from mlaya.graph import (Agent, PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS,
+                         blocked_by_surroundings, unblock_action)
 from mlaya.perception import BlockHit, GameState
 
 
@@ -104,6 +104,10 @@ class WaterTicksTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent._water_ticks = 0
         return agent
 
@@ -361,6 +365,10 @@ class PourSkipTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -449,6 +457,10 @@ class StanceSkipTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent.furnace_pos = None
         agent.chest_pos = None
         agent.base = None
@@ -530,6 +542,10 @@ class StuckOfferTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent.furnace_pos = None
         agent.chest_pos = None
         agent.base = None
@@ -626,6 +642,10 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -708,6 +728,10 @@ class FrameRefusalTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent._water_ticks = 0
         return agent
 
@@ -782,6 +806,10 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent.base = None
         agent.chest_pos = None
         agent.furnace_pos = None
@@ -1015,6 +1043,10 @@ class DropHoleTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -1077,6 +1109,10 @@ class ChestSupportTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -1141,6 +1177,10 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -1283,6 +1323,10 @@ class ChestLidTest(unittest.TestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -1379,6 +1423,10 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent._base_adopted = False
@@ -1539,6 +1587,10 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
         self.assertTrue(agent._inject(gs()).base_adopted)
 
 
@@ -1646,6 +1698,123 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
         agent.base = (-1, 2, 3)
         await agent._scan_bed_site(self._near_bed())
         self.assertEqual(agent.mcp.calls, [])
+
+
+class NetherCrossingTest(unittest.TestCase):
+    """The loop side of the Nether trip: the intended crossing, and the trip's goal.
+
+    Two things cannot live in `actions` alone. The `_in_portal` rescue has to stand down for a
+    crossing the loop actually chose, and the powder that reaches the chest has to be remembered
+    as a fact of the run rather than re-read out of a chest every tick.
+    """
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.base = None
+        agent.surface = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._recover_written_off = set()
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._blocked_cell = None
+        agent._chest_above = None
+        agent._portal_blocked = []
+        agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_arrival = None
+        agent._powder_stowed = False
+        agent._water_ticks = 0
+        agent.settings = Settings()
+        return agent
+
+    def _in_gate(self) -> GameState:
+        """The bot standing in the gate, in the state the loop hands `candidates`."""
+        g = gs(pos=(-194.5, -46.0, -97.5), base=(-197, -47, -98), dimension="minecraft:overworld",
+               health=20.0, food=18.0)
+        # The feet and head cells are portal blocks (the mid-teleport case) and one block east is
+        # the frame, so this reads as "halfway through the gate" exactly like a live tick does.
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  -195, -46, -98, 0.4),
+                                         BlockHit("nether_portal", "nether_portal",
+                                                  -195, -45, -98, 0.9)],
+                       "obsidian": [BlockHit("obsidian", "obsidian", -194, -46, -98, 1.0)]}
+        return g
+
+    def test_a_chosen_crossing_stands_the_rescue_down(self) -> None:
+        agent = self._agent()
+        g = self._in_gate()
+        # Untouched by any crossing: the rescue owns the tick, as it must.
+        self.assertEqual(candidates(agent._inject(g)), ["leave_portal"])
+        agent._note_crossing(Action("enter_portal", "enter_nether_portal",
+                                    {"x": -195, "y": -46, "z": -98}, ""))
+        self.assertNotEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
+
+    def test_the_rescue_comes_back_after_the_crossing_window(self) -> None:
+        # The intent is a short countdown, not a switch: a gate the bot walks into later on must
+        # be rescued again, or the rescue would be disabled for the rest of the run.
+        agent = self._agent()
+        agent._note_crossing(Action("enter_portal", "enter_nether_portal",
+                                    {"x": -195, "y": -46, "z": -98}, ""))
+        for _ in range(PORTAL_INTENT_TICKS):
+            agent._note_dimension(self._in_gate())
+        self.assertEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
+
+    def test_ordinary_actions_never_open_the_window(self) -> None:
+        agent = self._agent()
+        agent._note_crossing(Action("mine_stone", "collect_block",
+                                    {"block_name": "stone", "count": 8}, ""))
+        self.assertEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
+
+    def test_arriving_in_the_nether_is_remembered_with_its_cell(self) -> None:
+        # `leave_nether` needs the arrival cell whenever no exit portal block is loaded, and the
+        # crossing itself is only observed afterwards as a dimension change.
+        agent = self._agent()
+        g = gs(pos=(12.5, 65.0, -3.5), dimension="minecraft:the_nether")
+        agent._note_dimension(g)
+        self.assertTrue(agent._nether_entered)
+        self.assertEqual(agent._nether_arrival, (12, 65, -4))
+        # Standing still down there must not walk the arrival cell along with the bot.
+        agent._note_dimension(gs(pos=(40.5, 70.0, -9.5), dimension="minecraft:the_nether"))
+        self.assertEqual(agent._nether_arrival, (12, 65, -4))
+
+    def test_the_powder_reaching_the_chest_closes_the_goal(self) -> None:
+        agent = self._agent()
+        deposit = Action("stow_blaze_powder", "use_container",
+                         {"operation": "deposit", "x": -196, "y": -46, "z": -98}, "")
+        agent._note_stow(deposit, True, {"inventory_delta": {"blaze_powder": -18}})
+        self.assertTrue(agent._powder_stowed)
+        self.assertTrue(agent._inject(gs()).powder_stowed)
+
+    def test_a_refused_deposit_leaves_the_goal_open(self) -> None:
+        # A full chest or a blocked lid must not count as done, or the run stops with the haul
+        # still in the pack where a death takes it.
+        agent = self._agent()
+        deposit = Action("stow_blaze_powder", "use_container",
+                         {"operation": "deposit", "x": -196, "y": -46, "z": -98}, "")
+        agent._note_stow(deposit, False, {"inventory_delta": {}})
+        self.assertFalse(agent._powder_stowed)
+        agent._note_stow(deposit, True, {"inventory_delta": {}})
+        self.assertFalse(agent._powder_stowed)
+
+    def test_the_stowed_expedition_ends_the_run(self) -> None:
+        agent = self._agent()
+        agent.settings.loop.stop_when_complete = True
+        agent._powder_stowed = True
+        self.assertTrue(agent._goal_reached(agent._inject(gs())))
 
 
 if __name__ == "__main__":

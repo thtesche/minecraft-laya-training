@@ -9,8 +9,8 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import (Action, candidates, inventory_relief, resolve, tech_tree_complete,
-                           WATER_RESCUE_AFTER)
+from mlaya.actions import (Action, candidates, inventory_relief, nether_expedition_complete,
+                           resolve, tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import BlockHit, GameState, frame_obsidian_cells
 
 
@@ -2536,6 +2536,224 @@ class LeavePortalTest(unittest.TestCase):
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                   -197, -45, -98, 1.0)]}
         self.assertEqual(candidates(g), ["leave_portal"])
+
+
+class NetherExpeditionTest(unittest.TestCase):
+    """The first Nether trip: nine blaze rods home, eighteen powder in the chest at the gate.
+
+    The chain the user asked for: cross into the Nether, keep piglins neutral with the gold
+    helmet, kill blazes for nine rods, come back over the exit portal, turn the rods into powder
+    in the Overworld, and park the powder in the chest at the portal. Getting *back out* is part
+    of the goal, so the return is offered whenever the haul is done or the bot can no longer
+    afford to stay.
+    """
+
+    BASE = (-197, -47, -98)
+    NETHER = "minecraft:the_nether"
+    OVERWORLD = "minecraft:overworld"
+    # The Overworld gate at the base: the frame plane sits two blocks east of it.
+    GATE = (-195, -46, -98)
+    # A Nether exit portal a few blocks from where the bot lands.
+    EXIT = (12, 65, -4)
+
+    def _home(self, **inv) -> GameState:
+        """The bot at its base in the Overworld, gate lit and the expedition fully banked."""
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64,
+                     golden_helmet=1, cooked_mutton=64, white_bed=1)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                   *self.GATE, 2.0)],
+                       "obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
+                       # The gate bed, standing clear of the opening as `place_bed` lays it.
+                       "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -100, 2.5)]}
+        g.dimension = self.OVERWORLD
+        return g
+
+    def _down(self, **inv) -> GameState:
+        """The bot in the Nether, helmet worn, no exit portal loaded."""
+        g = gs(pos=(12.5, 65.0, -3.5), dimension=self.NETHER, inventory=dict(inv),
+               tools={"pickaxe": "diamond", "sword": "diamond"},
+               armor={s: {"item": f"diamond_{s}"} for s in
+                      ("helmet", "chestplate", "leggings", "boots")},
+               offhand="shield", health=20.0, food=18.0)
+        g.base = self.BASE
+        g.nether_entered = True
+        g.nether_arrival = self.EXIT
+        return g
+
+    def _with_exit(self, g: GameState) -> GameState:
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                   *self.EXIT, 2.0)]}
+        return g
+
+    # --- crossing in ---
+    def test_the_gate_opens_once_the_expedition_is_stocked(self) -> None:
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        self.assertIn("enter_portal", candidates(g))
+        a = resolve("enter_portal", g)
+        self.assertEqual(a.tool, "enter_nether_portal")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.GATE)
+
+    def test_the_gate_stays_shut_before_the_expedition_is_stocked(self) -> None:
+        # The trip needs the whole bank first: a bot that walks in with half an inventory loses
+        # the kit and the trip with it.
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=12)
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertIsNone(resolve("enter_portal", g))
+
+    def test_the_gate_is_not_offered_twice(self) -> None:
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        g.nether_entered = True
+        self.assertNotIn("enter_portal", candidates(g))
+
+    def test_an_intended_crossing_stands_the_rescue_down(self) -> None:
+        # The rescue exists to step a body out of a gate it wandered into; it must not fight the
+        # one crossing the loop asked for, or the trip can never happen.
+        g = self._home()
+        g.pos = (self.GATE[0] + 0.5, float(self.GATE[1]), self.GATE[2] + 0.5)
+        self.assertEqual(candidates(g), ["leave_portal"])
+        g.enter_intent = True
+        self.assertNotEqual(candidates(g), ["leave_portal"])
+
+    # --- down there ---
+    def test_the_gold_helmet_goes_on_first(self) -> None:
+        g = self._down(golden_helmet=1)
+        self.assertIn("swap_to_gold_helmet", candidates(g))
+        a = resolve("swap_to_gold_helmet", g)
+        self.assertEqual(a.tool, "equip")
+        self.assertEqual(a.args["items"], [{"item_name": "golden_helmet", "destination": "head"}])
+
+    def test_the_helmet_swap_waits_for_the_gold_piece(self) -> None:
+        # Piglin neutrality needs a *worn* gold piece; without one there is nothing to swap to.
+        g = self._down()
+        self.assertNotIn("swap_to_gold_helmet", candidates(g))
+
+    def test_a_blaze_in_reach_is_hunted(self) -> None:
+        g = self._down()
+        g.mobs = [("blaze", "hostile", 1, 8.0)]
+        self.assertIn("hunt_blaze", candidates(g))
+        a = resolve("hunt_blaze", g)
+        self.assertEqual(a.tool, "collect_mob_drop")
+        self.assertEqual((a.args["mob_name"], a.args["drop_name"]), ("blaze", "blaze_rod"))
+
+    def test_a_blaze_beyond_reach_is_not_chased(self) -> None:
+        # Blazes hover; the bot walks the fortress bricks first rather than sprinting at one.
+        g = self._down()
+        g.mobs = [("blaze", "hostile", 1, 90.0)]
+        self.assertNotIn("hunt_blaze", candidates(g))
+
+    def test_a_hurt_bot_does_not_start_a_blaze_fight(self) -> None:
+        g = self._down()
+        g.mobs = [("blaze", "hostile", 1, 6.0)]
+        g.health = 9.0
+        self.assertNotIn("hunt_blaze", candidates(g))
+
+    def test_a_blaze_crowded_by_other_hostiles_is_left_alone(self) -> None:
+        g = self._down()
+        g.mobs = [("blaze", "hostile", 1, 6.0), ("piglin", "hostile", 2, 9.0)]
+        self.assertNotIn("hunt_blaze", candidates(g))
+
+    def test_the_trip_ends_with_the_haul(self) -> None:
+        g = self._down(blaze_rod=9)
+        g.mobs = [("blaze", "hostile", 1, 5.0)]
+        self.assertIn("leave_nether", candidates(g))
+        self.assertNotIn("hunt_blaze", candidates(g))
+
+    def test_the_exit_portal_is_the_way_home(self) -> None:
+        g = self._with_exit(self._down(blaze_rod=9))
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "enter_nether_portal")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+
+    def test_with_no_portal_in_the_scan_the_bot_walks_back_to_its_arrival(self) -> None:
+        # The exit portal only reaches the state while it is loaded. The cell the bot arrived on
+        # is where it stands, so that is the heading home.
+        g = self._down(blaze_rod=9)
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+
+    def test_a_badly_hurt_bot_goes_home_rods_or_not(self) -> None:
+        # Dying down there drops the kit and the haul both; the rods in the pack are already
+        # worth the walk back.
+        g = self._down(blaze_rod=2)
+        g.health = 6.0
+        self.assertIn("leave_nether", candidates(g))
+
+    def test_a_full_pack_goes_home(self) -> None:
+        g = self._down(blaze_rod=2)
+        g.slots_used = 36
+        self.assertIn("leave_nether", candidates(g))
+
+    def test_a_bot_with_nothing_left_to_find_goes_home(self) -> None:
+        # No blaze in reach and no fortress bricks anywhere: continuing to explore is not a plan.
+        g = self._down(blaze_rod=2)
+        self.assertIn("leave_nether", candidates(g))
+
+    def test_a_fortress_in_sight_keeps_the_hunt_open(self) -> None:
+        g = self._down(blaze_rod=2)
+        g.resources = {"nether_bricks": [BlockHit("nether_bricks", "nether_bricks",
+                                                   40, 66, 10, 30.0)]}
+        self.assertNotIn("leave_nether", candidates(g))
+
+    # --- home again ---
+    def test_the_diamond_helmet_goes_back_on(self) -> None:
+        g = self._home(blaze_rod=9, diamond_helmet=1)
+        g.nether_entered = True
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        self.assertIn("swap_to_diamond_helmet", candidates(g))
+        a = resolve("swap_to_diamond_helmet", g)
+        self.assertEqual(a.tool, "equip")
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_helmet", "destination": "head"}])
+
+    def test_the_rods_become_eighteen_powder(self) -> None:
+        g = self._home(blaze_rod=9, crafting_table=1)
+        g.nether_entered = True
+        self.assertIn("craft_blaze_powder", candidates(g))
+        a = resolve("craft_blaze_powder", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "blaze_powder", "count": 18}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_powder_is_not_crafted_down_in_the_nether(self) -> None:
+        # The Nether has no crafting table worth standing next to, and a temporary workstation
+        # in a fortress is a bad trade. The powder is made at home.
+        g = self._down(blaze_rod=9, crafting_table=1)
+        self.assertNotIn("craft_blaze_powder", candidates(g))
+        self.assertIsNone(resolve("craft_blaze_powder", g))
+
+    def test_the_powder_goes_into_the_chest_at_the_gate(self) -> None:
+        g = self._home(blaze_powder=18)
+        g.nether_entered = True
+        g.chest_pos = (-196, -46, -98)
+        self.assertIn("stow_blaze_powder", candidates(g))
+        a = resolve("stow_blaze_powder", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "deposit")
+        self.assertEqual(a.args["items"], [{"item_name": "blaze_powder", "count": 18}])
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), g.chest_pos)
+
+    def test_the_powder_needs_a_chest_to_go_into(self) -> None:
+        g = self._home(blaze_powder=18)
+        g.nether_entered = True
+        self.assertNotIn("stow_blaze_powder", candidates(g))
+        self.assertIsNone(resolve("stow_blaze_powder", g))
+
+    def test_the_goal_is_the_powder_in_the_chest(self) -> None:
+        # Still carried is not done: the point of the trip is that the haul is safe at home.
+        g = self._home(blaze_powder=18)
+        self.assertFalse(nether_expedition_complete(g))
+        g.powder_stowed = True
+        self.assertTrue(nether_expedition_complete(g))
+
+    def test_a_stowed_expedition_closes_the_chain(self) -> None:
+        g = self._home()
+        g.powder_stowed = True
+        out = candidates(g)
+        for label in ("enter_portal", "hunt_blaze", "leave_nether", "craft_blaze_powder",
+                      "stow_blaze_powder"):
+            self.assertNotIn(label, out)
 
 
 if __name__ == "__main__":
