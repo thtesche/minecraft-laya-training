@@ -15,6 +15,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
                       nether_expedition_complete)
 from .brain import Brain, escalate_to_system2
+from .mcp import _find
 from .memory import MemoryLog
 from .config import Settings
 from .targets import bed_frame_site, flat_build_site, ground_targets, _clear
@@ -85,7 +86,43 @@ INVENTORY_CODES = ("INVENTORY_FULL",)
 STUCK_REPEATS = 4
 STUCK_COOLDOWN = 15
 
+# The walking guard, in the same spirit and on the same window: an action that reports walking
+# this far and arriving this close to where it started has not been working. `_track_stuck` only
+# sees refusals, so a `collect_block` that *succeeds* while shambling was never caught: live, run43
+# and run45 each spent an action walking 459 blocks to end 17 from the start -- 27 walked for every
+# block gained -- and the loop's own positions looked fine, because the bot really was moving. Two
+# such actions in a row and the label is withheld, so the next tick is offered something that goes
+# somewhere. The Nether march passes this on merit (609 walked, 396 net).
+WANDER_WALK = 80.0
+WANDER_RATIO = 6.0
+WANDER_REPEATS = 2
+
 _CODE_RE = re.compile(r"\[([A-Z][A-Z_]+)\]")
+
+# The two lines the server prints into every settled result's final progress
+# (`formatProgress` in mine-ai-mcp): "**Travel:** 458.9 blocks, including ..." and
+# "**Distance from start:** 16.6 blocks." or "... unavailable".
+_WALKED_RE = re.compile(r"\*\*Travel:\*\*\s*([\d.]+)\s*blocks")
+_NET_RE = re.compile(r"\*\*Distance from start:\*\*\s*([\d.]+)\s*blocks")
+
+
+def _walk_progress(res) -> tuple[float | None, float | None]:
+    """How far an action walked and how far it ended from its start, or None for either.
+
+    The payload first (`_find` walks it, so nesting does not matter), then the result text, which
+    carries the same two numbers in every settled answer. Anything unreadable is None: a guard that
+    cannot see the walk has no evidence, and must not withhold on a guess.
+    """
+    data = getattr(res, "data", None)
+    walked = _find(data, "distanceTravelledBlocks")
+    net = _find(data, "distanceFromStartBlocks")
+    if isinstance(walked, (int, float)) and isinstance(net, (int, float)):
+        return float(walked), float(net)
+    text = getattr(res, "text", None) or ""
+    m, n = _WALKED_RE.search(text), _NET_RE.search(text)
+    if m is None or n is None:
+        return None, None
+    return float(m.group(1)), float(n.group(1))
 
 
 def _fail_code(text: str | None) -> str | None:
@@ -236,6 +273,9 @@ class Agent:
         self._stuck_reps: dict[str, int] = {}
         self._stuck_code: dict[str, str | None] = {}
         self._stuck_off: dict[str, int] = {}
+        # The walking guard's own count per label (`_track_wander`), separate from `_stuck_reps`:
+        # a wandering action is not a refusal and must not reset or advance the refusal run.
+        self._wander_reps: dict[str, int] = {}
         # Death cells whose recovery walk already reached them and found nothing
         # (`[NO_MATCHING_ITEMS]` and the other final codes): `_can_recover` stops offering the
         # walk there, so the bot does not stand at an emptied death site until the window runs
@@ -772,6 +812,44 @@ class Agent:
             self.log.append({"stage": "policy", "reason": "stuck_offer_dropped",
                              "label": label, "code": code, "ticks": STUCK_COOLDOWN})
 
+    def _track_wander(self, label: str, res) -> None:
+        """Withhold a label that keeps walking without arriving, per `WANDER_*`.
+
+        The server reports each action's own progress: `distanceTravelledBlocks` is how far the bot
+        walked for it, `distanceFromStartBlocks` how far from where it started it ended. A label
+        whose ratio of the first to the second is hopeless is not working, whatever it answers -
+        and it *does* answer, which is why `_track_stuck` never saw it: it has no failure code to
+        read, and the position changes every tick, so nothing looked stuck. Live, run43 and run45:
+        one `collect_block` walked 458.9 blocks to end 16.6 from its start (27:1), another 245.5
+        to end 24.2, and each took minutes, so the run managed six decisions in ten minutes.
+
+        The window is the same countdown as `_track_stuck`, so the label returns on its own and a
+        walk that merely crossed rough ground is not lost. Progress of any kind -- a different
+        ratio, a short walk, no progress reported at all -- starts that label's run over.
+
+        The numbers are read from the structured payload where it carries them and from the result
+        text otherwise, because the server prints both: `formatProgress` writes `**Travel:**` and
+        `**Distance from start:**` into every settled result, so the guard does not depend on the
+        payload keeping its shape. "unavailable" is no evidence, and neither is a missing line.
+        """
+        travelled, net = _walk_progress(res)
+        if travelled is None or net is None:
+            return
+        if label in self._stuck_off:
+            # Withheld right now: it was not offered, so its tick says nothing about the label.
+            return
+        if travelled < WANDER_WALK or net >= travelled / WANDER_RATIO:
+            self._wander_reps.pop(label, None)
+            return
+        self._wander_reps[label] = self._wander_reps.get(label, 0) + 1
+        if self._wander_reps[label] < WANDER_REPEATS:
+            return
+        self._wander_reps[label] = 0
+        self._stuck_off[label] = STUCK_COOLDOWN
+        self.log.append({"stage": "policy", "reason": "wander_offer_dropped",
+                         "label": label, "walked": round(float(travelled), 1),
+                         "net": round(float(net), 1), "ticks": STUCK_COOLDOWN})
+
     def _note_surface(self, action, ok: bool, text: str | None,
                       pos: tuple[float, float, float] | None) -> None:
         """Learn the surface cell from a `surface_up` probe or climb.
@@ -1065,6 +1143,9 @@ class Agent:
         self._note_stow(action, _ok, delta)
         progressed = vmod.progressed(action.label, delta)
         self._track_stuck(action.label, _ok, _text, progressed)
+        # After the stuck guard: it owns the countdown and the offer window, and a wandering
+        # action is not a refusal, so the two runs of counts do not disturb each other.
+        self._track_wander(action.label, res)
         record = {
             "stage": "action",
             "iteration": state.get("iteration", 0),

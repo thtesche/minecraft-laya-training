@@ -17,6 +17,7 @@ from mlaya.actions import Action, candidates, resolve
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS,
+                         WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
 from mlaya.perception import BlockHit, GameState
 
@@ -633,6 +634,130 @@ class StuckOfferTest(unittest.TestCase):
         self.assertEqual(candidates(g), ["mine_obsidian"])
         g.stuck_labels = frozenset({"mine_obsidian"})
         self.assertEqual(candidates(g), ["explore"])
+
+
+class WanderGuardTest(unittest.TestCase):
+    """An action that walks a long way and ends where it started is withheld from the offer.
+
+    `_track_stuck` reads refusal codes, so it cannot see this: a wandering action *succeeds*, and
+    the position moves every tick, so nothing looked stuck. Live, run43 and run45 each spent an
+    action walking 459 blocks to finish 17 from the start -- 27 walked per block gained -- and the
+    run managed six decisions in ten minutes while the bot visibly shuffled on the spot.
+    """
+
+    class _Res:
+        def __init__(self, travelled=None, net=None, ok=True, data=True):
+            self.ok = ok
+            self.data = {}
+            if data and travelled is not None:
+                self.data = {"terminal": {"output": {"progress": {
+                    "distanceTravelledBlocks": travelled,
+                    "distanceFromStartBlocks": net,
+                    "current": {"dimension": "minecraft:overworld", "x": 77.5, "z": 183.5},
+                }}}}
+            self.text = "collected 6x iron_ore"
+            if not data and travelled is not None:
+                # The server prints the same two numbers into the result text
+                # (`formatProgress`), and a client must not depend on the payload keeping its
+                # shape: this is the live run43 pair, 458.9 walked and 16.6 net.
+                self.text = (f"### Final progress\n**Travel:** {travelled} blocks, including "
+                             f"0 during reflexes. **Distance from start:** "
+                             f"{'unavailable' if net is None else f'{net} blocks'}.")
+
+    def _agent(self):
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._wander_reps = {}
+        agent._stuck_off = {}
+        agent.log = []
+        return agent
+
+    def test_withholds_after_two_walks_that_arrive_nowhere(self) -> None:
+        agent = self._agent()
+        agent._track_wander("mine_iron", self._Res(458.9, 16.6))   # live run43
+        self.assertEqual(agent._stuck_off, {})                      # one is not yet a pattern
+        self.assertEqual(agent._wander_reps, {"mine_iron": 1})
+        agent._track_wander("mine_iron", self._Res(245.5, 24.2))   # live run43
+        self.assertEqual(agent._stuck_off.get("mine_iron"), STUCK_COOLDOWN)
+        self.assertEqual([r["reason"] for r in agent.log], ["wander_offer_dropped"])
+
+    def test_a_walk_that_gets_somewhere_is_left_alone(self) -> None:
+        # The east-west Nether march, live run43: 609 walked, 396 net. It is a long walk, and it
+        # is progress; withholding it would break the search that depends on it.
+        agent = self._agent()
+        for _ in range(5):
+            agent._track_wander("explore", self._Res(608.8, 396.1))
+        self.assertEqual(agent._stuck_off, {})
+        self.assertEqual(agent._wander_reps, {})
+
+    def test_a_short_walk_is_never_wandering(self) -> None:
+        # Crafting and smelting walk a few blocks at most. The floor keeps them out of the count
+        # entirely, so no allowlist of labels is needed to exempt actions that do not travel.
+        agent = self._agent()
+        for _ in range(5):
+            agent._track_wander("craft_item", self._Res(WANDER_WALK - 1, 0.0))
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_one_walk_that_arrives_starts_the_run_over(self) -> None:
+        agent = self._agent()
+        agent._track_wander("mine_iron", self._Res(458.9, 16.6))
+        agent._track_wander("mine_iron", self._Res(20.0, 18.0))
+        self.assertEqual(agent._wander_reps, {})
+
+    def test_no_progress_reported_is_not_evidence(self) -> None:
+        # Not every action reports progress, and a read or a refusal carries none. That is not a
+        # reason to withhold anything.
+        agent = self._agent()
+        for _ in range(4):
+            agent._track_wander("mine_iron", self._Res())
+        self.assertEqual(agent._stuck_off, {})
+        self.assertEqual(agent._wander_reps, {})
+
+    def test_a_withheld_label_is_not_counted_again(self) -> None:
+        # Same reasoning as the refusal guard: while the offer leaves a label out, its ticks say
+        # nothing about it, and counting them would extend the window on the bot's own silence.
+        agent = self._agent()
+        agent._stuck_off["mine_iron"] = STUCK_COOLDOWN
+        agent._track_wander("mine_iron", self._Res(458.9, 16.6))
+        agent._track_wander("mine_iron", self._Res(458.9, 16.6))
+        self.assertEqual(agent._wander_reps, {})
+
+    def test_the_window_is_a_countdown_and_the_offer_takes_the_label_back(self) -> None:
+        agent = self._agent()
+        for _ in range(WANDER_REPEATS):
+            agent._track_wander("mine_iron", self._Res(458.9, 16.6))
+        agent._stuck_reps = {}
+        agent._stuck_code = {}
+        agent._track_stuck("smelt_iron", True, "", False)   # any tick ticks the window down
+        self.assertEqual(agent._stuck_off.get("mine_iron"), STUCK_COOLDOWN - 1)
+        agent._stuck_off["mine_iron"] = 1
+        agent._track_stuck("smelt_iron", True, "", False)
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_the_net_floor_is_the_walked_over_ratio(self) -> None:
+        # The floor is `walked / WANDER_RATIO`: exactly on it counts as arriving, a block under
+        # it counts as a shamble. Both calls walk the same distance, so the ratio alone decides.
+        agent = self._agent()
+        at = WANDER_WALK / WANDER_RATIO
+        agent._track_wander("explore", self._Res(WANDER_WALK, at))
+        self.assertEqual(agent._wander_reps, {})
+        agent._track_wander("explore", self._Res(WANDER_WALK, at - 1))
+        self.assertEqual(agent._wander_reps, {"explore": 1})
+
+    def test_the_same_walk_read_out_of_the_result_text_is_caught(self) -> None:
+        # No progress in the payload at all: the numbers are still in the text, so the guard has
+        # to fire on those too.
+        agent = self._agent()
+        for _ in range(WANDER_REPEATS):
+            agent._track_wander("mine_iron", self._Res(458.9, 16.6, data=False))
+        self.assertEqual(agent._stuck_off.get("mine_iron"), STUCK_COOLDOWN)
+
+    def test_an_unavailable_distance_is_no_evidence(self) -> None:
+        # The server prints "unavailable" when it could not sample the position. A walk with no
+        # end point is not proof of a shamble.
+        agent = self._agent()
+        for _ in range(4):
+            agent._track_wander("mine_iron", self._Res(458.9, None, data=False))
+        self.assertEqual(agent._stuck_off, {})
 
 
 class FrameCompleteLatchTest(unittest.TestCase):
