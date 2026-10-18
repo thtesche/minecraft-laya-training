@@ -257,6 +257,13 @@ class Agent:
         # the cell beside the base cannot hold it. The chain is dropped so `cook_food` falls back
         # to the temporary workstation `smelt_item` places itself.
         self._furnace_blocked = False
+        # What the base furnace was last seen to hold, from a `use_container inspect`. Empty until
+        # `collect_smelted` looks; `_note_furnace` clears it once the furnace has been emptied, so
+        # the step stops interrupting cooks.
+        self._furnace_contents: dict[str, int] = {}
+        # A `smelt_item` refused this furnace as occupied (`[FURNACE_NOT_EMPTY]`). That is the
+        # signal to drain it, not a reason to give the cell up.
+        self._furnace_occupied = False
         # The exact cell a placement was refused at because a block stood in it
         # (`[PLACE_TARGET_OCCUPIED]`): `make_room` digs that cell clear, since a pocket around
         # the bot need not even touch it (the chest cell sits beside the base, not the bot).
@@ -319,6 +326,8 @@ class Agent:
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.chest_blocked = self._chest_blocked
         gs.furnace_blocked = self._furnace_blocked
+        gs.furnace_contents = dict(self._furnace_contents)
+        gs.furnace_occupied = self._furnace_occupied
         gs.blocked_cell = self._blocked_cell
         gs.chest_above = self._chest_above
         gs.portal_blocked = list(self._portal_blocked)
@@ -932,25 +941,33 @@ class Agent:
 
         Two refusals mean the standing furnace is finished. `[PLACE_NO_SUPPORT]` on the
         `place_furnace` itself: no solid block touches the cell beside the base, so it can never
-        stand there. `[FURNACE_NOT_EMPTY]` on a `smelt_item`: the furnace still holds output the
-        previous cook could not recover (recovery needs a free pack slot and the pack was full),
-        and no MCP tool can open a furnace to drain it -- `use_container` handles only
-        location-owned containers (chests, barrels, hoppers). Both are properties of that cell,
-        not of the attempt, so the cell is dropped (`furnace_pos`) and `place_furnace` is barred
-        from re-targeting it. Cooking then runs in a furnace `smelt_item` carries and places for
-        the one batch (live, run26: the completed cook left its output behind on a full pack and
-        every `cook_food` after answered `[FURNACE_NOT_EMPTY]`).
+        stand there. `[FURNACE_NOT_EMPTY]` on a `smelt_item`: the furnace still holds output, which
+        used to be the end of that cell too - no MCP tool could open a furnace, so the loop dropped
+        the cell and cooked in a carried one instead (live, run26: a completed cook at a full pack
+        left its output behind and every `cook_food` after answered the same refusal).
+
+        The server now opens a furnace for `use_container inspect` and `withdraw`, so that refusal
+        is no longer fatal: `collect_smelted` empties the furnace and the cook retries. The cell is
+        only dropped when the drain itself is refused, which is the case no retry can fix.
         """
         if ok:
+            if action.label == "collect_smelted" and action.tool == "use_container":
+                self._furnace_contents = {}
+                self._furnace_occupied = False
             return
         text = text or ""
+        if action.label == "collect_smelted" and "CONTAINER_OPERATION_UNSUPPORTED" in text:
+            # A server without furnace support: back to cooking in a carried furnace.
+            self._furnace_blocked = True
+            self.furnace_pos = None
+            return
         if action.label == "place_furnace":
             if "PLACE_NO_SUPPORT" in text:
                 self._furnace_blocked = True
             return
         if action.tool == "smelt_item" and "FURNACE_NOT_EMPTY" in text:
-            self._furnace_blocked = True
-            self.furnace_pos = None
+            # Not the end of the cell: flag that it is occupied so `collect_smelted` drains it.
+            self._furnace_occupied = True
 
     def _note_place(self, action, ok: bool, text: str | None) -> None:
         """Remember the cell a placement was refused at, so the unblock step can dig it clear.

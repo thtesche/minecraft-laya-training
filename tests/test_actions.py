@@ -1097,6 +1097,35 @@ class TechTreeCompleteTest(unittest.TestCase):
         g = self._complete(resources={"white_bed": self._gate()["white_bed"]})
         self.assertFalse(tech_tree_complete(g))
 
+    def test_a_lost_bow_is_not_done(self) -> None:
+        # The prep step drops out when the string to rebuild the bow is out of reach, and an empty
+        # step list reads as "prep done" - which ended run32 at its first tick with a goal it had
+        # not reached. The bank is judged as carried, so a lost piece sends the run back to work.
+        g = self._complete()
+        self.assertTrue(tech_tree_complete(g))
+        g.inventory = {k: v for k, v in g.inventory.items() if k not in ("bow", "arrow")}
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_one_string_short_of_the_bow_is_still_a_lost_bow(self) -> None:
+        # Two string and no spider in reach: the bow cannot be rebuilt, so it cannot count as
+        # banked - which is the state run32 stopped in.
+        g = self._complete(inventory={"diamond_sword": 1, "string": 2, "stick": 3,
+                                      "cobblestone": 64})
+        self.assertFalse(tech_tree_complete(g))
+
+    def test_a_spider_in_reach_repairs_the_bow(self) -> None:
+        # The old spider guard wanted one within 10 m in a clear field, which made a single missing
+        # string unreachable and the bow unrepairable for good.
+        g = self._complete(inventory={"diamond_sword": 1, "string": 2, "stick": 3,
+                                      "cobblestone": 64}, health=20.0)
+        g.mobs = [("spider", "hostile", 1, 18.0)]
+        self.assertIn("hunt_string", candidates(g))
+
+    def test_a_half_made_arrow_reserve_is_not_done(self) -> None:
+        g = self._complete()
+        g.inventory = {**g.inventory, "bow": 1, "arrow": 8}
+        self.assertFalse(tech_tree_complete(g))
+
     def test_a_missing_bed_is_not_done(self) -> None:
         g = self._complete(resources={"nether_portal": self._gate()["nether_portal"]})
         self.assertFalse(tech_tree_complete(g))
@@ -1139,9 +1168,11 @@ class TechTreeCompleteTest(unittest.TestCase):
         self.assertFalse(tech_tree_complete(g))
 
     def test_unreachable_prep_does_not_block_completion(self) -> None:
-        # No string source, no chicken, no gold ore: every prep step drops out, so the run can
-        # still end instead of stalling on an item it can never get.
-        g = self._complete(inventory={"diamond_sword": 1, "cobblestone": 64})
+        # No chicken, no gold ore: those prep steps drop out, so the run can still end instead of
+        # stalling on an item it can never get. The bow and its arrows are carried, though - the
+        # Nether trip is fought with them, so they are no longer "a step that might drop out".
+        g = self._complete(inventory={"diamond_sword": 1, "bow": 1, "arrow": 16,
+                                      "cobblestone": 64})
         self.assertTrue(tech_tree_complete(g))
 
     def test_the_food_reserve_is_required(self) -> None:
@@ -2537,6 +2568,76 @@ class LeavePortalTest(unittest.TestCase):
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                   -197, -45, -98, 1.0)]}
         self.assertEqual(candidates(g), ["leave_portal"])
+
+
+class CollectSmeltedTest(unittest.TestCase):
+    """Draining the base furnace, instead of abandoning its cell.
+
+    A completed cook leaves its output in the furnace, and the next cook is refused with
+    `[FURNACE_NOT_EMPTY]`. The loop used to give the cell up and cook in a carried furnace, which
+    cost a furnace per batch and left the base with no oven at all. The server opens a furnace for
+    `inspect`/`withdraw`, so the output is taken back into the pack first.
+    """
+
+    BASE = (-197, -47, -98)
+    FURNACE = (-197, -46, -99)
+
+    def _home(self, **inv) -> GameState:
+        g = at_home(geared(**inv), base=self.BASE)
+        g.dimension = "minecraft:overworld"
+        g.furnace_pos = self.FURNACE
+        g.health = 20.0
+        g.food = 15.0
+        return g
+
+    def test_a_refused_cook_puts_the_furnace_on_the_list(self) -> None:
+        g = self._home(beef=5, coal=4)
+        g.furnace_occupied = True
+        g.furnace_contents = {"cooked_beef": 2}
+        self.assertIn("collect_smelted", candidates(g))
+        a = resolve("collect_smelted", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "withdraw")
+        self.assertEqual(a.args["items"], [{"item_name": "cooked_beef", "count": 2}])
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FURNACE)
+
+    def test_an_unlooked_furnace_is_inspected_before_it_is_reached_into(self) -> None:
+        # The refusal says "occupied", not "with what": the first look is an inspect, so a cook is
+        # only ever interrupted by a furnace that really holds something.
+        g = self._home(beef=5, coal=4)
+        g.furnace_occupied = True
+        a = resolve("collect_smelted", g)
+        self.assertEqual(a.args["operation"], "inspect")
+
+    def test_a_furnace_nobody_refused_is_left_alone(self) -> None:
+        # No refusal means no interruption: the step never reaches into a furnace mid-cook.
+        g = self._home(beef=5, coal=4)
+        self.assertNotIn("collect_smelted", candidates(g))
+        self.assertIsNone(resolve("collect_smelted", g))
+
+    def test_an_empty_furnace_has_nothing_to_withdraw(self) -> None:
+        g = self._home(beef=5, coal=4)
+        g.furnace_occupied = True
+        g.furnace_contents = {"coal": 0}
+        self.assertIsNone(resolve("collect_smelted", g))
+
+    def test_a_full_pack_is_shed_before_the_furnace_is_drained(self) -> None:
+        # The output has to land somewhere: recovering it onto a full pack is what stranded it in
+        # the slot the first time (live, run26).
+        g = self._home(beef=5, coal=4)
+        g.furnace_occupied = True
+        g.furnace_contents = {"cooked_beef": 2}
+        g.slots_used = 36
+        self.assertNotIn("collect_smelted", candidates(g))
+
+    def test_a_cell_the_terrain_refused_is_not_drained(self) -> None:
+        # `furnace_blocked` means there is no usable oven there at all; the flag is not stale
+        # truth about an occupied one.
+        g = self._home(beef=5, coal=4)
+        g.furnace_occupied = True
+        g.furnace_blocked = True
+        g.furnace_contents = {"cooked_beef": 2}
+        self.assertNotIn("collect_smelted", candidates(g))
 
 
 class NetherExpeditionTest(unittest.TestCase):

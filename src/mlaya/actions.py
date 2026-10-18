@@ -44,6 +44,7 @@ CRITERIA: dict[str, str] = {
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
     "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the gate frame stands, stock the deeper Nether reserve",
     "cook_food": "cook carried raw meat in the furnace at the base (or the carried furnace, set up just for the batch) so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
+    "collect_smelted": "take what a cook left sitting in the furnace at the base back into the pack, so the next cook can start",
     # Nether prep, stocked in the daytime lull once the gate frame stands (see `_nether_prep_steps`).
     "craft_bow": "craft a bow from string and sticks; the server's combat layer fires it for ranged defence against ghasts and blazes",
     "craft_arrows": "craft arrows from flint, sticks and feathers so the carried bow has ammunition",
@@ -171,6 +172,9 @@ NETHER_RETURN_FOOD = 8.0
 # How long the bot has to be down there before "no blaze and no fortress anywhere" counts as the
 # end of the hunt rather than as open Nether seen for the first time (`_nether_hopeless`).
 NETHER_HOPELESS_AFTER = 24
+# How far a lone spider may be for a *single* string (`_safe_string_hunt`, repairing the Nether
+# bow). Wider than the bed-chain's spider guard, which is about three strings at once.
+STRING_HUNT_RANGE = 24.0
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
 # not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.
@@ -478,6 +482,24 @@ def _safe_spider_hunt(gs: GameState) -> bool:
     others = [d for n, k, _, d in gs.mobs
               if k == "hostile" and n != "spider" and d is not None and d <= 16]
     return not others
+
+
+def _safe_string_hunt(gs: GameState) -> bool:
+    """Whether one spider is worth walking to for a single missing string.
+
+    `_safe_spider_hunt` guards the *bed* chain, where string comes in threes and a bad fight
+    costs the kit. The Nether bow needs one string to be repairable at all, and the strict guard
+    made that unreachable: with two string banked and no spider within 10 m of a clear field, the
+    bow step dropped out for good (live, run32) and the run could neither fight nor finish. One
+    spider is cheap next to a bow-less trip, so this widens the reach and allows a little company,
+    while still refusing a mob cluster and a hurt bot.
+    """
+    spider = gs.mob_nearest("spider")
+    if spider is None or spider > STRING_HUNT_RANGE or (gs.health or 0) < 16:
+        return False
+    others = [d for n, k, _, d in gs.mobs
+              if k == "hostile" and n != "spider" and d is not None and d <= STRING_HUNT_RANGE]
+    return len(others) <= 2
 
 
 def _safe_zombie_hunt(gs: GameState) -> bool:
@@ -1049,6 +1071,23 @@ def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
     return hits[0].pos if hits else None
 
 
+def _furnace_needs_draining(gs: GameState) -> bool:
+    """Whether the standing furnace at the base holds output that blocks the next cook.
+
+    `smelt_item` refuses a furnace whose output slot is occupied (`[FURNACE_NOT_EMPTY]`), and the
+    loop's old answer was to abandon the cell and cook the next batch in a carried furnace
+    (live, run26: a completed cook at a full pack left its output behind and every `cook_food`
+    after answered the same refusal, burning a furnace per batch). The output is ordinary items in
+    a three-slot window, so `use_container` can take them out - the server accepts `inspect` and
+    `withdraw` against a furnace and refuses `deposit`/`organize` for it.
+
+    Keyed on the refusal itself (`gs.furnace_occupied`) rather than on a guess, so the step never
+    interrupts a cook that could have run: the loop only looks once the server has said the
+    furnace is occupied.
+    """
+    return gs.furnace_pos is not None and gs.furnace_occupied and not gs.furnace_blocked
+
+
 def _gold_helmet_needed(gs: GameState) -> bool:
     """Whether the diamond helmet still stands where a gold one has to go.
 
@@ -1126,7 +1165,7 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
     if not _has(inv, BOW_ITEM):
         if table and inv.get("string", 0) >= BOW_STRING and sticks:
             out.append("craft_bow")
-        elif _safe_spider_hunt(gs):
+        elif _safe_string_hunt(gs):
             out.append("hunt_string")
     elif inv.get(ARROW_ITEM, 0) < NETHER_ARROWS:
         # Arrows: one flint, one stick and one feather each, crafted at the table.
@@ -1162,6 +1201,25 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
     return out
 
 
+def _nether_bank_carried(gs: GameState) -> bool:
+    """The banked trip kit, judged as *carried* rather than as "no step is pending".
+
+    `_all_nether_prep_steps` drops a step out whose material it cannot reach right now, which is
+    what keeps an unreachable item from blocking the chain - but an empty list then reads as "prep
+    done" to both `_expedition_prepared` and `tech_tree_complete`. Losing the bow therefore read as
+    a finished Overworld goal and ended the run at its first tick (live, run32: `bow` gone, two
+    string left, no spider near enough, `tech_tree_complete` True, `{"iterations": 1,
+    "stop": "goal"}`). The bow and its arrow reserve are therefore checked as the inventory they
+    are, so a lost one sends the run back to work rather than home.
+
+    The gold helmet stays on the pending-step side on purpose: an unreachable material must not be
+    able to block completion (`test_unreachable_prep_does_not_block_completion`), and unlike the
+    bow it is not a piece the run quietly carries the whole trip without.
+    """
+    inv = gs.inventory
+    return _has(inv, BOW_ITEM) and inv.get(ARROW_ITEM, 0) >= NETHER_ARROWS
+
+
 def _expedition_prepared(gs: GameState) -> bool:
     """The trip is fully stocked - only the lighting (and the bed laid right after) is left.
 
@@ -1171,7 +1229,8 @@ def _expedition_prepared(gs: GameState) -> bool:
     trip apart from one still before its lull.
     """
     return (_gear_ready(gs) and _portal_built(gs) and _bed_available(gs)
-            and not _all_nether_prep_steps(gs) and _food_reserve_met(gs))
+            and not _all_nether_prep_steps(gs) and _nether_bank_carried(gs)
+            and _food_reserve_met(gs))
 
 
 def _expedition_ready(gs: GameState) -> bool:
@@ -1748,7 +1807,8 @@ def tech_tree_complete(gs: GameState) -> bool:
     `equip_armor` first instead of stopping with the set still in the pack.
     """
     return (_portal_lit(gs) and _gear_ready(gs) and _bed_at_base(gs)
-            and not _all_nether_prep_steps(gs) and _food_reserve_met(gs))
+            and not _all_nether_prep_steps(gs) and _nether_bank_carried(gs)
+            and _food_reserve_met(gs))
 
 
 def _dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
@@ -2128,6 +2188,14 @@ def candidates(gs: GameState) -> list[str]:
     # --- Home base storage ---
     # A chest at the base is where a filling pack sheds surplus, well before the server's
     # `[INVENTORY_FULL]` refusal; `drop_junk` is only the fallback when no chest is there.
+    # --- Home base storage ---
+    # A cook refused with `[FURNACE_NOT_EMPTY]` means the base furnace still holds output. Empty it
+    # first: the alternative the loop used to take - abandon the cell and cook in a carried furnace
+    # - cost a furnace per batch (live, run26, and run32 it blocked the expedition's cooking).
+    if _furnace_needs_draining(gs) and _at_base(gs) and _furnace_room(gs):
+        out.append("collect_smelted")
+
+    # --- Home base storage ---
     if gs.base is not None and not _chest_ready(gs) and not gs.chest_blocked:
         if _has(inv, CHEST_ITEM) and _at_base(gs):
             out.append("place_chest")
@@ -2625,6 +2693,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"mob_name": mob, "drop_name": drop, "count": count,
                        "allow_without_shield": True},
                       f"hunt a {mob} for {drop}")
+    if label == "collect_smelted":
+        if not _furnace_needs_draining(gs) or not _at_base(gs) or not _furnace_room(gs):
+            return None
+        fx, fy, fz = gs.furnace_pos
+        if not gs.furnace_contents:
+            # Nothing known to be sitting in it yet: look before reaching in, so a cook is only
+            # interrupted by a furnace that really is occupied.
+            return Action(label, "use_container",
+                          {"operation": "inspect", "x": fx, "y": fy, "z": fz},
+                          "look at the furnace at the base to see whether it still holds output")
+        items = [{"item_name": n, "count": int(c)} for n, c in gs.furnace_contents.items()
+                 if int(c) > 0]
+        if not items:
+            return None
+        return Action(label, "use_container",
+                      {"operation": "withdraw", "x": fx, "y": fy, "z": fz, "items": items[:12]},
+                      "take everything out of the furnace at the base so the next cook can start")
     if label == "cook_food":
         raw = _first_cookable(inv)
         fuel = _furnace_fuel(inv)

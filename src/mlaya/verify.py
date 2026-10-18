@@ -144,6 +144,10 @@ def progressed(label: str, d: dict) -> bool:
         return d["inventory_delta"].get("furnace", 0) < 0
     if label in ("stow_surplus", "drop_junk"):
         return any(v < 0 for v in d["inventory_delta"].values())
+    if label == "collect_smelted":
+        # The look before the reach-in has nothing to show; the drain itself is the items landing
+        # in the pack, and an empty furnace reporting success is progress on a wasted step.
+        return not d["inventory_delta"] or any(v > 0 for v in d["inventory_delta"].values())
     if label == "explore":
         return (d["pos_delta"] or 0) > 2
     return False
