@@ -1933,10 +1933,18 @@ def candidates(gs: GameState) -> list[str]:
             and _furnace_site(gs) is not None):
         out.append("place_furnace" if _at_base(gs) else "go_home")
     if ((_has(inv, "furnace") or _furnace_ready(gs)) and _first_cookable(inv) and not eating
-            and _furnace_room(gs)):
+            and _furnace_room(gs) and _food_source_in_reach(gs)):
         # Cook raw meat so it feeds far more hunger. Outside the Nether lull only coal/charcoal
         # may be spent on it (as before, so it never steals wood from the chain); during the lull
         # any carried fuel does, so a bot with raw meat and wood still cooks.
+        #
+        # The step needs a source in reach, by the same rule as `_food_reserve_met`. Cooking
+        # turns one raw item into one cooked one and both count the same in `_edible_count`, so
+        # it cannot close the gap it is offered for - and while it is the only thing on offer the
+        # exploration fallback never runs, because that fallback only fires on an empty list. The
+        # bot stood at its base cooking its way through its stock and never went looking for the
+        # thing it was actually short of (live, run34: a bow it could not rebuild, no spider
+        # within 24 m, and `candidates: ['cook_food']` with nothing else on it).
         fuel = _furnace_fuel(inv)
         if fuel is not None and (fuel[0] in ("coal", "charcoal") or _nether_idle(gs)):
             out.append("cook_food")

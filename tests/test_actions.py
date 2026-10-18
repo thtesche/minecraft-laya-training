@@ -311,8 +311,10 @@ class FoodChainTest(unittest.TestCase):
     def test_cook_with_wood_fuel_in_the_nether_lull(self) -> None:
         # After the portal is lit the daytime lull is food-prep time: raw meat cooks on any
         # fuel, so a bot carrying wood but no coal cooks instead of falling through to explore
-        # (live, from-zero run: `coal` was None, so `cook_food` never fired).
+        # (live, from-zero run: `coal` was None, so `cook_food` never fired). An animal in reach
+        # keeps the food goal reachable, which is the other half of what cooking is offered for.
         g = lit_portal(at_home(geared(furnace=1, beef=7, acacia_planks=3)))
+        g.mobs = [("cow", "animal", 1, 10.0)]
         self.assertIn("cook_food", candidates(g))
         a = resolve("cook_food", g)
         self.assertEqual(a.args["item_name"], "beef")
@@ -2419,6 +2421,9 @@ class BaseFurnaceTest(unittest.TestCase):
         # One free slot keeps the recovery from stranding itself; at 36 the loop sheds first.
         g = self._lull(furnace=0, beef=2, coal=1)
         g.furnace_pos = (-197, -46, -99)
+        # An animal in reach, so this is about the pack room and not about whether cooking can
+        # advance the food goal at all (see `CookFoodReachTest`).
+        g.mobs = [("cow", "animal", 1, 9.0)]
         g.slots_used = 36
         self.assertNotIn("cook_food", candidates(g))
         self.assertIsNone(resolve("cook_food", g))
@@ -2568,6 +2573,44 @@ class LeavePortalTest(unittest.TestCase):
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                   -197, -45, -98, 1.0)]}
         self.assertEqual(candidates(g), ["leave_portal"])
+
+
+class CookFoodReachTest(unittest.TestCase):
+    """Cooking only while a hunt could follow it.
+
+    Cooking turns one raw item into one cooked one and both count the same in `_edible_count`,
+    so it can never close the gap it is offered for. While it was the only step on offer it also
+    suppressed the exploration fallback, which only fires on an empty list - so the bot stayed at
+    its base cooking through its stock instead of looking for what it was short of (run34: a bow
+    it could not rebuild, no spider in reach, `candidates: ['cook_food']`).
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _stocked(self, **inv) -> GameState:
+        g = at_home(geared(furnace=1, coal=8, beef=5, crafting_table=1,
+                            cobblestone=64, **inv), base=self.BASE)
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 18.0
+        return g
+
+    def test_raw_food_is_cooked_while_an_animal_is_in_reach(self) -> None:
+        # The useful case is unchanged: a hunt is available, so the reserve can still grow and
+        # cooked food is worth the furnace.
+        g = self._stocked()
+        g.mobs = [("cow", "animal", 2, 12.0)]
+        self.assertIn("cook_food", candidates(g))
+
+    def test_cooking_drops_out_when_no_food_source_is_in_reach(self) -> None:
+        g = self._stocked()
+        self.assertNotIn("cook_food", candidates(g))
+
+    def test_the_exploration_fallback_gets_the_tick_back(self) -> None:
+        # The point of dropping it: an empty offer list is what lets `wait`/`explore` run, so the
+        # bot can go and look for what it is missing instead of standing over a furnace.
+        g = self._stocked()
+        self.assertIn("explore", candidates(g))
 
 
 class CollectSmeltedTest(unittest.TestCase):
