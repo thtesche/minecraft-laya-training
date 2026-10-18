@@ -168,6 +168,9 @@ BLAZE_HUNT_HEALTH = 14.0
 # and well before it is hungry; both thresholds are checked on the state, never guessed at runtime.
 NETHER_RETURN_HEALTH = 8.0
 NETHER_RETURN_FOOD = 8.0
+# How long the bot has to be down there before "no blaze and no fortress anywhere" counts as the
+# end of the hunt rather than as open Nether seen for the first time (`_nether_hopeless`).
+NETHER_HOPELESS_AFTER = 24
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
 # not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.
@@ -1007,17 +1010,23 @@ def _nether_must_return(gs: GameState) -> bool:
 def _nether_hopeless(gs: GameState) -> bool:
     """Whether the hunt is over because no blaze is left to reach.
 
-    Blazes only ever reach the state while one is loaded, and a fortress can sit a long walk
-    away with nothing between. Hunted out and with fortress bricks nowhere in sight, continuing
-    to explore the Nether is not a plan - the bot goes home with the rods it has and finishes the
+    Blazes only ever reach the state while one is loaded, and a fortress can sit a long walk away
+    with nothing between. Hunted out and with fortress bricks nowhere in sight, continuing to
+    explore the Nether is not a plan - the bot goes home with the rods it has and finishes the
     chain there (a short haul still becomes powder, and the trip can be run again later).
+
+    The wait is the point: the bot arrives in open Nether, where a `view_blocks find` reaches
+    nothing but lava and the fortress is hundreds of blocks off. Judged on the first tick it would
+    turn straight round (live, run31: `leave_nether` offered the tick it landed), so the bot has to
+    have actually been down there, walking, before nothing counts as hopeless.
     """
-    if _safe_blaze_hunt(gs):
+    if _safe_blaze_hunt(gs) or gs.mob_nearest(BLAZE_MOB) is not None:
         return False
-    if gs.mob_nearest(BLAZE_MOB) is not None:
+    if gs.resource_distance("nether_bricks") is not None:
         return False
-    return gs.resource_distance("nether_bricks") is None \
-        and gs.resource_found.get("nether_bricks", 0) == 0
+    if gs.resource_found.get("nether_bricks", 0) > 0:
+        return False
+    return gs.nether_ticks >= NETHER_HOPELESS_AFTER
 
 
 def _nether_departure_ready(gs: GameState) -> bool:

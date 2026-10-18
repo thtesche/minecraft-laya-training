@@ -10,7 +10,8 @@ import math
 import unittest
 
 from mlaya.actions import (Action, candidates, inventory_relief, nether_expedition_complete,
-                           resolve, tech_tree_complete, WATER_RESCUE_AFTER)
+                           NETHER_HOPELESS_AFTER, resolve, tech_tree_complete,
+                           WATER_RESCUE_AFTER)
 from mlaya.perception import BlockHit, GameState, frame_obsidian_cells
 
 
@@ -2687,14 +2688,32 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertIn("leave_nether", candidates(g))
 
     def test_a_bot_with_nothing_left_to_find_goes_home(self) -> None:
-        # No blaze in reach and no fortress bricks anywhere: continuing to explore is not a plan.
+        # Hunted out, and the walk has shown no fortress anywhere: continuing is not a plan.
         g = self._down(blaze_rod=2)
+        g.nether_ticks = NETHER_HOPELESS_AFTER
         self.assertIn("leave_nether", candidates(g))
+
+    def test_open_nether_on_arrival_is_not_the_end_of_the_hunt(self) -> None:
+        # The bot lands in open Nether, where a scan reaches nothing but lava and a fortress is
+        # hundreds of blocks off. Turning round on the first tick would abandon every trip.
+        g = self._down(blaze_rod=2)
+        g.nether_ticks = 1
+        self.assertNotIn("leave_nether", candidates(g))
+        g.nether_ticks = NETHER_HOPELESS_AFTER - 1
+        self.assertNotIn("leave_nether", candidates(g))
 
     def test_a_fortress_in_sight_keeps_the_hunt_open(self) -> None:
         g = self._down(blaze_rod=2)
+        g.nether_ticks = NETHER_HOPELESS_AFTER + 10
         g.resources = {"nether_bricks": [BlockHit("nether_bricks", "nether_bricks",
                                                    40, 66, 10, 30.0)]}
+        self.assertNotIn("leave_nether", candidates(g))
+
+    def test_a_blaze_seen_but_out_of_reach_keeps_the_hunt_open(self) -> None:
+        # A blaze 90 m off is not a hunt to start, but it is a reason to close in, not to leave.
+        g = self._down(blaze_rod=2)
+        g.nether_ticks = NETHER_HOPELESS_AFTER + 10
+        g.mobs = [("blaze", "hostile", 1, 90.0)]
         self.assertNotIn("leave_nether", candidates(g))
 
     # --- home again ---

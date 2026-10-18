@@ -293,6 +293,7 @@ class Agent:
         # has a cell to walk back to when no exit portal block is loaded in the scan.
         self._nether_entered = False
         self._nether_arrival: tuple[int, int, int] | None = None
+        self._nether_ticks = 0
         # The blaze powder reached the chest at the Overworld portal (`_note_stow`): the phase-3
         # goal. Latched on the deposit's own success, the same shape as `_frame_complete`.
         self._powder_stowed = False
@@ -327,6 +328,7 @@ class Agent:
         gs.enter_intent = self._enter_intent_ticks > 0
         gs.nether_entered = self._nether_entered
         gs.nether_arrival = self._nether_arrival
+        gs.nether_ticks = self._nether_ticks
         gs.powder_stowed = self._powder_stowed
         return gs
 
@@ -422,11 +424,14 @@ class Agent:
         if self._enter_intent_ticks > 0:
             self._enter_intent_ticks -= 1
         if "nether" in str(gs.dimension or "").lower():
+            self._nether_ticks += 1
             if not self._nether_entered:
                 self._nether_entered = True
                 if gs.pos is not None:
                     self._nether_arrival = (math.floor(gs.pos[0]), math.floor(gs.pos[1]),
                                             math.floor(gs.pos[2]))
+        else:
+            self._nether_ticks = 0
 
     async def _adopt_portal_base(self, gs) -> None:
         """Re-anchor the home base on a lit portal a previous run left standing, once.

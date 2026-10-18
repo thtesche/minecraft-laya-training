@@ -364,6 +364,11 @@ class GameState:
     # The Nether expedition has already happened at least once, so the loop does not offer the
     # Overworld gate again while it is busy down there or on the way back.
     nether_entered: bool = False
+    # Decisions spent in the Nether (Agent `_note_dimension`), reset the moment the bot is home.
+    # `_nether_hopeless` needs it: the bot lands in open Nether, where a fortress is hundreds of
+    # blocks off and nothing but lava is loaded, and that must not read as "nothing left to find"
+    # on the first tick.
+    nether_ticks: int = 0
     # The cell the bot arrived in on the Nether side (Agent `_note_arrival`). The exit portal is
     # that spot or right beside it, and a portal block only reaches the state while it is loaded -
     # so when the scan comes up empty this is the heading `leave_nether` walks instead.
