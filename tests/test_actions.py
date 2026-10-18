@@ -9,9 +9,9 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import (Action, candidates, inventory_relief, nether_expedition_complete,
-                           NETHER_HOPELESS_AFTER, resolve, tech_tree_complete,
-                           WATER_RESCUE_AFTER)
+from mlaya.actions import (Action, _armor_to_wear, candidates, inventory_relief,
+                           nether_expedition_complete, NETHER_HOPELESS_AFTER, resolve,
+                           tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import BlockHit, GameState, frame_obsidian_cells
 
 
@@ -2577,6 +2577,63 @@ class LeavePortalTest(unittest.TestCase):
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                   -197, -45, -98, 1.0)]}
         self.assertEqual(candidates(g), ["leave_portal"])
+
+
+class GoldHelmetSlotTest(unittest.TestCase):
+    """In the Nether the helmet slot belongs to the gold helmet.
+
+    `swap_to_gold_helmet` wears the gold piece so piglins stay neutral and leaves the diamond
+    helmet in the pack. Read as "a better piece is waiting for a bare slot", `equip_armor` puts it
+    straight back on the head and the two steps undo each other (live, run36: alternating for
+    eight ticks, every action a success, no progress at all).
+    """
+
+    BASE = (-197, -47, -98)
+    NETHER = "minecraft:the_nether"
+
+    def _in_the_nether(self, helmet: str, **inv) -> GameState:
+        g = gs(pos=(12.5, 65.0, -3.5), dimension=self.NETHER, inventory=dict(inv),
+               tools={"pickaxe": "diamond", "sword": "diamond"}, offhand="shield",
+               health=20.0, food=18.0)
+        g.armor = {slot: {"item": f"diamond_{slot}"} for slot in
+                   ("helmet", "chestplate", "leggings", "boots")}
+        g.armor["helmet"] = {"item": helmet}
+        g.base = self.BASE
+        g.nether_entered = True
+        return g
+
+    def test_the_diamond_helmet_is_left_in_the_pack_in_the_nether(self) -> None:
+        # The swap has just freed it; wearing it again is what the ping-pong was.
+        g = self._in_the_nether("golden_helmet", golden_helmet=1, diamond_helmet=1)
+        self.assertNotIn("diamond_helmet", _armor_to_wear(g))
+        self.assertNotIn("equip_armor", candidates(g))
+
+    def test_the_other_slots_still_go_on_in_the_nether(self) -> None:
+        # The helmet is the swap's business; a diamond chestplate waiting under an iron one is
+        # plain `equip_armor` work and must not be skipped along with it.
+        g = self._in_the_nether("golden_helmet", golden_helmet=1,
+                                diamond_chestplate=1)
+        g.armor["chestplate"] = {"item": "iron_chestplate"}
+        self.assertIn("diamond_chestplate", _armor_to_wear(g))
+
+    def test_the_overworld_still_wears_the_better_helmet(self) -> None:
+        # Home, a diamond helmet waiting under the gold one is a better piece in a bare slot and
+        # nothing else claims that slot, so it goes on.
+        g = self._in_the_nether("golden_helmet", diamond_helmet=1)
+        g.dimension = "minecraft:overworld"
+        self.assertIn("diamond_helmet", _armor_to_wear(g))
+
+    def test_the_gold_helmet_keeps_the_slot_while_it_is_on_the_head(self) -> None:
+        # Once it is worn, the gold piece owns the slot for the trip: the diamond helmet waits in
+        # the pack until the bot is home again.
+        g = self._in_the_nether("golden_helmet", diamond_helmet=1)
+        self.assertNotIn("diamond_helmet", _armor_to_wear(g))
+
+    def test_without_a_gold_helmet_the_nether_keeps_the_diamond_one(self) -> None:
+        # No gold piece carried and none worn: there is no swap in progress, so a better helmet
+        # waiting for its slot is plain `equip_armor` work.
+        g = self._in_the_nether("iron_helmet", diamond_helmet=1)
+        self.assertIn("diamond_helmet", _armor_to_wear(g))
 
 
 class NavigateArgumentsTest(unittest.TestCase):

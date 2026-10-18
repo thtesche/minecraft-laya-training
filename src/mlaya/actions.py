@@ -655,10 +655,20 @@ def _armor_to_wear(gs: GameState) -> list[str]:
     The diamond set is crafted on top of the iron one, so a diamond chestplate worn while the
     iron one sits back in the pack must not be traded away: only a *better* piece is worn, and
     the iron piece it displaced is skipped rather than re-equipped on every tick.
+
+    The helmet slot has a second owner. In the Nether the gold helmet replaces the diamond one
+    (`swap_to_gold_helmet`, so piglins stay neutral) and the swap leaves the diamond helmet in
+    the pack; read as "a better piece is waiting", that puts it straight back on the head and the
+    two steps undo each other every tick (live, run36: `equip_armor` and `swap_to_gold_helmet`
+    alternating, each action succeeding, none of them progress). So the helmet is skipped there
+    while the gold piece is to hand, and the swap owns that slot for the whole trip.
     """
     inv = gs.inventory
     out: list[str] = []
-    for slot, _ in IRON_ARMOR:
+    slots = [slot for slot, _ in IRON_ARMOR]
+    if _in_nether(gs) and (inv.get(GOLD_HELMET_ITEM, 0) > 0 or _worn(gs, GOLD_HELMET_ITEM)):
+        slots = [slot for slot in slots if slot != "helmet"]
+    for slot in slots:
         worn = (gs.armor.get(slot) or {}).get("item")
         for tier in ("netherite", "diamond", "iron"):
             item = f"{tier}_{slot}"
