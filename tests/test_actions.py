@@ -12,7 +12,8 @@ import unittest
 from mlaya.actions import (Action, _armor_to_wear, candidates, inventory_relief,
                            nether_expedition_complete, NETHER_HOPELESS_AFTER, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
-from mlaya.perception import BlockHit, GameState, frame_obsidian_cells
+from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
+                              parse_frontier_heading, parse_resources)
 
 
 def gs(**kw) -> GameState:
@@ -2577,6 +2578,84 @@ class LeavePortalTest(unittest.TestCase):
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                   -197, -45, -98, 1.0)]}
         self.assertEqual(candidates(g), ["leave_portal"])
+
+
+class NetherFrontierHeadingTest(unittest.TestCase):
+    """The fortress search walks the world's unexplored edge, and keeps the axis as its fallback.
+
+    A compass line is a bet on which way the fortresses are striped, and the sources disagree
+    (east-west here, north-south there) while four Nether runs never found a fortress to measure.
+    The server already knows which chunks it has observed, so it can name the edge instead: walking
+    that heading covers new ground and turns by itself, which is the grid the bot never had.
+    """
+
+    NETHER = "minecraft:the_nether"
+
+    def _down(self, x: float, arrival_x: float = 0.0, heading=None) -> GameState:
+        g = gs(pos=(x, 65.0, 0.0), dimension=self.NETHER, health=20.0, food=18.0)
+        g.base = (-197, -47, -98)
+        g.nether_entered = True
+        g.nether_arrival = (arrival_x, 65, 0)
+        g.frontier_heading = heading
+        return g
+
+    def test_the_search_walks_the_unobserved_edge_when_the_server_names_one(self) -> None:
+        # Live, run43: the bot came in at x=33 and ended at x=-33, on one heading for the whole
+        # trip. North is the heading the frontier read reported for the run's own chunk table.
+        g = self._down(10.0, heading=0.0)
+        a = resolve("explore", g)
+        self.assertEqual(a.tool, "explore_frontier")
+        self.assertEqual(a.args["heading"], 0.0)
+
+    def test_a_heading_in_any_direction_is_followed_verbatim(self) -> None:
+        for heading in (0.0, 45.0, 137.5, 180.0, 254.0, 315.0):
+            a = resolve("explore", self._down(10.0, heading=heading))
+            self.assertEqual(a.args["heading"], heading)
+
+    def test_the_frontier_answers_in_both_directions_where_the_axis_march_would_not(self) -> None:
+        # The axis march is binary: past the arrival cell it always goes west. The frontier is not,
+        # so this heading is reachable only through the new read.
+        east_of_arrival = self._down(120.0, arrival_x=0.0, heading=180.0)
+        self.assertEqual(resolve("explore", east_of_arrival).args["heading"], 180.0)
+
+    def test_a_tick_without_a_frontier_read_falls_back_to_the_axis_march(self) -> None:
+        east = self._down(120.0, arrival_x=0.0)
+        self.assertEqual(resolve("explore", east).args["heading"], 270.0)
+        west = self._down(-120.0, arrival_x=0.0)
+        self.assertEqual(resolve("explore", west).args["heading"], 90.0)
+
+    def test_a_fortress_still_wins_over_the_heading(self) -> None:
+        g = self._down(10.0, heading=0.0)
+        g.resources = {"nether_bricks": [BlockHit("nether_bricks", "nether_bricks",
+                                                 31, 64, -8, 16.0)]}
+        self.assertEqual(resolve("explore", g).tool, "navigate")
+
+
+class FrontierHeadingParseTest(unittest.TestCase):
+    """`frontier_navigation` arrives as `query.rows`, a list of row lists of one number."""
+
+    def test_the_nearest_row_reads_as_a_compass_heading(self) -> None:
+        payload = {"response": {"data": {"result": {"query": {
+            "columns": ["heading_degrees"], "rows": [[254.0]], "returnedRows": 1}}}}}
+        self.assertEqual(parse_frontier_heading(payload), 254.0)
+
+    def test_a_heading_is_wrapped_into_the_compass_rose(self) -> None:
+        payload = {"response": {"data": {"result": {"query": {
+            "columns": ["heading_degrees"], "rows": [[361.5]], "returnedRows": 1}}}}}
+        self.assertEqual(parse_frontier_heading(payload), 1.5)
+
+    def test_no_rows_is_no_heading_rather_than_a_guess(self) -> None:
+        # Either the ground around the bot is fully observed or the read failed. Both are the
+        # caller's to answer with a fallback, so this is None and never a made-up direction.
+        payload = {"response": {"data": {"result": {"query": {
+            "columns": ["heading_degrees"], "rows": [], "returnedRows": 0}}}}}
+        self.assertIsNone(parse_frontier_heading(payload))
+
+    def test_a_failed_or_shapeless_answer_is_no_heading(self) -> None:
+        self.assertIsNone(parse_frontier_heading({}))
+        self.assertIsNone(parse_frontier_heading({"response": {"data": {"result": {"error": "x"}}}}))
+        self.assertIsNone(parse_frontier_heading({"response": {"data": {"result": {"query": {
+            "rows": [["eastish"]]}}}}}))
 
 
 class NetherSearchHeadingTest(unittest.TestCase):

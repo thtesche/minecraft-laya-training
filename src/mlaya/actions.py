@@ -1012,13 +1012,21 @@ def _fortress_hit(gs: GameState):
 
 
 def _nether_search_heading(gs: GameState) -> float:
-    """Compass heading for the fortress search: due east or due west along the X axis.
+    """Compass heading for the fortress search: the world's unexplored edge, else due east or west.
 
-    Nether fortresses spawn in parallel east-west stripes, so a straight line along that axis
-    crosses them; a search that wanders crosses none. The direction is chosen from where the bot
-    stands relative to where it came in - east until it is past that point, then west - which
-    sweeps the stripes in a boustrophedon without any state of its own to keep.
+    The server remembers which chunks it has observed, so it can name where the unexplored starts
+    and point a compass heading at it (`FRONTIER_HEADING_SQL`). Walking that heading is the grid
+    search: the frontier moves as the bot covers it, so successive headings turn, sweep and turn
+    again -- coverage of the ground nobody has looked at, without a waypoint list or a leg length
+    to keep, and without betting on an axis. The stripes were described east-west in one source and
+    north-south in another and the loop had no measurement, since it never found a fortress.
+
+    The axis march is the fallback for a tick without a frontier read (no rows, or the read
+    failed): east until the bot is level with where it came in, then west. That sweeps one line,
+    which is worse, but it is a line rather than standing still.
     """
+    if gs.frontier_heading is not None:
+        return gs.frontier_heading
     if gs.nether_arrival is None or gs.pos is None:
         return 90.0
     return 270.0 if gs.pos[0] >= gs.nether_arrival[0] else 90.0

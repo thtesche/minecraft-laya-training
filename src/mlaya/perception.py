@@ -57,6 +57,23 @@ CHAIN_NAMES = ("lava", "chest", "furnace", "gold_ore")
 # actually loaded -- a fortress can sit hundreds of blocks off, and these names are what gives
 # `explore` a heading to walk toward instead of wandering at random.
 NETHER_CHAIN_NAMES = ("nether_bricks", "nether_brick_fence", "nether_brick_stairs", "spawner")
+# How far the Nether group reads. `view_blocks.find` has no radius of its own - it returns the
+# nearest hits of the asked kinds *anywhere loaded* - so this bound is the loop's, and 64 m threw
+# away exactly what the group exists for: a fortress standing 70 m off was found by the server,
+# listed in the answer, and dropped here, so `explore` marched past it on open lava sea. Four
+# Nether runs never saw a fortress and this is the most likely reason. The bound is now wider than
+# any plausible view distance, which is the honest shape for a landmark group: read what the world
+# has loaded and let distance decide whether it is worth walking to, rather than deciding first.
+FORTRESS_RADIUS = 256.0
+# The server already tracks which chunks it has seen and which of them still border unobserved
+# ground (`frontier_chunks.is_frontier`), joined against the live bot to a compass heading in
+# `frontier_navigation`. The nearest such chunk is where the unexplored starts, which is the whole
+# point of a search: the fortress bricks say what to walk to once it is in sight, this says where
+# to walk to make it come in sight. Asking for it beats betting on an axis - the stripes were
+# described east-west in one source and north-south in the next, and the loop had no measurement
+# either way, because it never found a fortress to measure on.
+FRONTIER_HEADING_SQL = ("SELECT heading_degrees FROM frontier_navigation "
+                        "WHERE is_frontier = 1 ORDER BY distance_blocks ASC LIMIT 1")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava",)
 RESOURCE_RADIUS = 64.0
@@ -128,6 +145,27 @@ def coerce(data: Any, text: str | None) -> dict:
 
 def _num(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def parse_frontier_heading(payload: Any) -> float | None:
+    """Compass heading to the nearest unobserved chunk edge, or None when there is none.
+
+    `frontier_navigation` is the server's own join of the remembered chunks against the live bot,
+    so it is already filtered to the bot's dimension and already a heading rather than a position:
+    `explore_frontier` takes exactly this and walks it. No rows means the world is either fully
+    remembered around the bot or the read failed, and both are the caller's problem to answer with
+    a fallback, so this is None and not a guess.
+    """
+    rows = get(payload, "response", "data", "result", "query", "rows")
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        cells = row if isinstance(row, list) else [row]
+        for cell in cells:
+            heading = _num(cell)
+            if heading is not None:
+                return round(heading % 360.0, 1)
+    return None
 
 
 def _iter_items(container: Any):
@@ -237,6 +275,10 @@ class GameState:
     death_dim: str | None = None
     activity_owner: str | None = None
     active_action: str | None = None
+    # Compass heading to the nearest unobserved chunk edge, read from the server's frontier in the
+    # Nether only (see `FRONTIER_HEADING_SQL`). None means "no frontier read this tick": the
+    # fortress search then falls back to its own axis march.
+    frontier_heading: float | None = None
     events: list[str] = field(default_factory=list)
     unread: int = 0
     survivors: list[str] = field(default_factory=list)
@@ -1078,10 +1120,26 @@ async def build(executor) -> GameState:
                 "scan the nether bricks that lead to a fortress and the spawners inside it",
             )
             payload = coerce(blocks.data, blocks.text)
-            gs.resources.update(parse_resources(payload, RESOURCE_LIMIT))
+            # Read to `FORTRESS_RADIUS`, not the 64 m of every other group: this one exists to
+            # spot a fortress from far off, and 64 m is a proximity bound for a resource the bot
+            # walks to. Same answer, wider keep.
+            gs.resources.update(parse_resources(payload, RESOURCE_LIMIT, FORTRESS_RADIUS))
             gs.resource_found.update(parse_resource_counts(payload))
         except Exception:
             pass
+        # The heading is a second read, off the server's own bookkeeping rather than the bot's
+        # reasoning about stripes: it is what turns the search from one compass line into
+        # coverage of the ground nobody has looked at yet. The bricks read above say what to walk
+        # to; this says where to walk to make them show up.
+        try:
+            frontier = await executor.read(
+                "query_bot_data",
+                {"sql": FRONTIER_HEADING_SQL},
+                "read the compass heading to the nearest chunk edge the world has not observed",
+            )
+            gs.frontier_heading = parse_frontier_heading(coerce(frontier.data, frontier.text))
+        except Exception:
+            gs.frontier_heading = None
     return gs
 
 

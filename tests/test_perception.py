@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.perception import (GROUND_NAMES, RESCUE_GROUND_NAMES, RESCUE_RADIUS, BlockHit,
+from mlaya.perception import (FORTRESS_RADIUS, GROUND_NAMES, RESCUE_GROUND_NAMES,
+                              RESCUE_RADIUS, RESOURCE_LIMIT, BlockHit,
                               frame_obsidian_cells, frame_volume, parse_block_above, parse_box,
-                              parse_cells, parse_ground_height, parse_portal_corner,
-                              parse_refused_cells, parse_resource_counts, parse_resources,
-                              parse_status, parse_surface_height, portal_interior)
+                              parse_cells, parse_ground_height, parse_frontier_heading,
+                              parse_portal_corner, parse_refused_cells, parse_resource_counts,
+                              parse_resources, parse_status, parse_surface_height,
+                              portal_interior, build)
 
 
 def _status(situation: dict) -> dict:
@@ -51,6 +53,103 @@ class ResourceParseRadiusTest(unittest.TestCase):
     def test_the_rescue_radius_keeps_the_shore(self) -> None:
         kept = parse_resources(self._DATA, radius=RESCUE_RADIUS)
         self.assertEqual([h.distance for h in kept["grass_block"]], [65.1, 66.0])
+
+
+class FortressRadiusTest(unittest.TestCase):
+    """The Nether landmark group is read to `FORTRESS_RADIUS`, not the 64 m every other group uses.
+
+    `view_blocks.find` has no radius of its own -- it returns the nearest hits *anywhere loaded* --
+    so the 64 m keep was the loop's, and it discarded the one thing this group exists for. A
+    fortress 70 m off was in the answer and thrown away, which is why `explore` kept marching on
+    open lava sea and four Nether runs never saw a fortress at all.
+    """
+
+    _DATA = {"response": {"data": {"result": {"blocks": {"find": [
+        {"name": "nether_bricks", "found": 12, "listed": [
+            {"x": 118, "y": 64, "z": -96, "name": "nether_bricks", "distance": 70.0,
+             "above": "air", "below": "netherrack"},
+            {"x": 140, "y": 64, "z": -96, "name": "nether_bricks", "distance": 220.0,
+             "above": "air", "below": "netherrack"},
+            {"x": 400, "y": 64, "z": -96, "name": "nether_bricks", "distance": 400.0,
+             "above": "air", "below": "netherrack"},
+        ]},
+    ]}}}}}
+
+    def test_the_resource_radius_would_have_dropped_the_whole_fortress(self) -> None:
+        self.assertEqual(parse_resources(self._DATA, RESOURCE_LIMIT), {})
+
+    def test_the_fortress_radius_keeps_a_fortress_at_seventy_and_two_hundred_metres(self) -> None:
+        kept = parse_resources(self._DATA, RESOURCE_LIMIT, FORTRESS_RADIUS)
+        self.assertEqual([h.distance for h in kept["nether_bricks"]], [70.0, 220.0])
+
+    def test_the_bound_is_wider_than_any_plausible_view_distance(self) -> None:
+        # The honest shape for a landmark group: read what the world has loaded and let distance
+        # decide whether it is worth walking to, instead of deciding by proximity first.
+        self.assertGreaterEqual(FORTRESS_RADIUS, 256.0)
+
+
+class NetherSearchReadsTest(unittest.IsolatedAsyncioTestCase):
+    """The Nether reads are wired the way the two fixes need, and only down there.
+
+    The wiring is where both bugs lived: the landmark group was read with the 64 m bound of every
+    other group, and nothing asked the server where its unexplored ground was. The Overworld must
+    stay untouched -- the frontier read costs a call and the Overworld's own `explore` branch is
+    working -- so the gate is the observed dimension.
+    """
+
+    class _Read:
+        def __init__(self, data):
+            self.data = data
+            self.text = None
+
+    class _Mcp:
+        """Answers the reads `build` makes, recording which tools were asked for."""
+
+        def __init__(self, dimension: str):
+            self.dimension = dimension
+            self.calls: list = []
+            self.frontier_heading = 254.0
+
+        async def read(self, tool: str, args: dict, why: str):
+            self.calls.append(tool)
+            if tool == "view_status":
+                return NetherSearchReadsTest._Read({"response": {"data": {"result": {
+                    "situation": {"dimension": self.dimension, "position": {"x": 10.5, "y": 65.0,
+                                                                         "z": 4.5},
+                                  "health": 20, "food": 18, "inventory": [], "mobs": []}}}}})
+            if tool == "view_blocks":
+                names = args["find"]["block_names"]
+                if "nether_bricks" in names:
+                    return NetherSearchReadsTest._Read({"response": {"data": {"result": {
+                        "blocks": {"find": [{"name": "nether_bricks", "found": 1, "listed": [
+                            {"x": 80, "y": 64, "z": 4, "name": "nether_bricks",
+                             "distance": 70.0, "above": "air", "below": "netherrack"}]}]}}}}})
+                return NetherSearchReadsTest._Read({})
+            if tool == "query_bot_data":
+                rows = [[self.frontier_heading]] if self.frontier_heading is not None else []
+                return NetherSearchReadsTest._Read({"response": {"data": {"result": {"query": {
+                    "columns": ["heading_degrees"], "rows": rows}}}}})
+            return NetherSearchReadsTest._Read({})
+
+    async def test_the_fortress_seventy_metres_out_reaches_the_state_in_the_nether(self) -> None:
+        mcp = self._Mcp("minecraft:the_nether")
+        gs = await build(mcp)
+        self.assertEqual([h.distance for h in gs.resources["nether_bricks"]], [70.0])
+
+    async def test_the_frontier_heading_reaches_the_state_in_the_nether(self) -> None:
+        gs = await build(self._Mcp("minecraft:the_nether"))
+        self.assertEqual(gs.frontier_heading, 254.0)
+
+    async def test_a_world_with_no_unobserved_edge_leaves_the_fallback_in_place(self) -> None:
+        mcp = self._Mcp("minecraft:the_nether")
+        mcp.frontier_heading = None
+        self.assertIsNone((await build(mcp)).frontier_heading)
+
+    async def test_the_overworld_costs_no_frontier_read(self) -> None:
+        mcp = self._Mcp("minecraft:overworld")
+        gs = await build(mcp)
+        self.assertNotIn("query_bot_data", mcp.calls)
+        self.assertIsNone(gs.frontier_heading)
 
 
 class RescueGroundCastTest(unittest.TestCase):
