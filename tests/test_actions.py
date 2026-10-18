@@ -2740,6 +2740,30 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertNotIn("stow_blaze_powder", candidates(g))
         self.assertIsNone(resolve("stow_blaze_powder", g))
 
+    def test_a_wandered_bot_is_walked_home_to_depart(self) -> None:
+        # Nothing else pulls a stocked bot back once the frame is up, the bed is down and the
+        # chest is empty: the gate is base-gated, so without this the trip can never start.
+        g = self._home()
+        g.pos = (-250.5, 40.0, -120.5)
+        self.assertIn("go_home", candidates(g))
+
+    def test_an_unstocked_bot_is_not_walked_home_for_the_gate(self) -> None:
+        # The walk home is only owed to the trip once the trip can actually leave.
+        g = self._home(cobblestone=12)
+        g.pos = (-250.5, 40.0, -120.5)
+        self.assertNotIn("go_home", candidates(g))
+
+    def test_a_short_arrow_reserve_is_topped_up(self) -> None:
+        # Sticks run out one per arrow and nothing else gathers them, so the arrow step used to
+        # drop out at the three the bow left behind and the expedition left on eight arrows.
+        g = self._home(flint_and_steel=1, bow=1, arrow=8, golden_helmet=1,
+                       cooked_mutton=64, white_bed=1, flint=2, feather=12)
+        g.resources = dict(g.resources)
+        g.resources.pop("nether_portal")  # the frame stands unlit: the prep window
+        g.resources["obsidian"] = [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)]
+        self.assertNotIn("craft_arrows", candidates(g))
+        self.assertIn("get_wood", candidates(g))
+
     def test_the_goal_is_the_powder_in_the_chest(self) -> None:
         # Still carried is not done: the point of the trip is that the haul is safe at home.
         g = self._home(blaze_powder=18)

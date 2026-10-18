@@ -1020,6 +1020,20 @@ def _nether_hopeless(gs: GameState) -> bool:
         and gs.resource_found.get("nether_bricks", 0) == 0
 
 
+def _nether_departure_ready(gs: GameState) -> bool:
+    """Whether the Overworld gate is the bot's next job and it has to be standing at the base.
+
+    `enter_portal` is base-gated, and none of the base steps reach a bot that wandered off once
+    the expedition is stocked: the frame is already up (`_base_steps_ready`'s build clause needs an
+    unlit gate), the bed is already at the base, and the chest has nothing to store. So a bot that
+    drifts off after stocking the trip had no way back and the departure could never happen
+    (live, run30: fully stocked, portal burning, bot 40 m off in a hole, `enter_portal` never
+    offered and no step willing to walk it home).
+    """
+    return (not nether_expedition_complete(gs) and not gs.nether_entered
+            and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs))
+
+
 def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
     """The nearest `nether_portal` block cell in reach, the Nether exit as much as the way in."""
     hits = gs.resources.get(PORTAL_BLOCK) or []
@@ -1095,7 +1109,9 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
         return []
     inv = gs.inventory
     table = _has(inv, "crafting_table")
-    sticks = _can_sticks(inv, _logs(inv), _planks(inv))
+    logs = _logs(inv)
+    planks = _planks(inv)
+    sticks = _can_sticks(inv, logs, planks)
     out: list[str] = []
     # Bow: three string from spiders and three sticks, crafted at the table.
     if not _has(inv, BOW_ITEM):
@@ -1112,6 +1128,13 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
                 out.append("get_flint")
             if not _has(inv, FEATHER_ITEM) and gs.mob_nearest("chicken") is not None:
                 out.append("hunt_feather")
+            # Sticks run out long before the arrow reserve does - one per arrow - and nothing else
+            # in the chain gathers them, so the step silently dropped out at the three sticks the
+            # bow left behind and the expedition departed on half the arrows it is meant to
+            # carry (live, run30: 8 arrows, nothing on offer, and no way to top them up).
+            if (table and _has(inv, FLINT_ITEM) and _has(inv, FEATHER_ITEM) and not sticks
+                    and logs == 0 and planks == 0):
+                out.append("get_wood")
     # Gold helmet: mine the ore, smelt it, craft the piece (worn later, in the Nether).
     if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
         if inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS:
@@ -1963,7 +1986,9 @@ def candidates(gs: GameState) -> list[str]:
             # climbs back out first: `surface_up` probes the surface and walks up to it, and only
             # then is `establish_base` offered.
             out.append("establish_base" if _at_surface(gs) else "surface_up")
-        elif not _at_base(gs) and _base_steps_ready(gs):
+        elif not _at_base(gs) and (_base_steps_ready(gs) or _nether_departure_ready(gs)):
+            # Either some base step is waiting, or the Nether gate is lit, stocked and the bot's
+            # next job - which only it can do standing on the base.
             out.append("go_home")
 
     # --- Overworld -> Nether gate ---
@@ -2079,8 +2104,7 @@ def candidates(gs: GameState) -> list[str]:
                 out.append("leave_nether")
         else:
             # Overworld side: the gate is the way in, and it opens once the expedition is stocked.
-            if not gs.nether_entered and _overworld(gs) and _portal_lit(gs) \
-                    and _expedition_ready(gs):
+            if _at_base(gs) and _nether_departure_ready(gs):
                 out.append("enter_portal")
             if gs.nether_entered and not _in_nether(gs):
                 if _worn(gs, GOLD_HELMET_ITEM) and (_has(inv, "diamond_helmet")
@@ -2519,8 +2543,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "craft the gold helmet that keeps piglins neutral in the Nether")
     if label == "enter_portal":
         cell = _exit_portal_cell(gs)
-        if (cell is None or not _overworld(gs) or not _portal_lit(gs)
-                or gs.nether_entered or not _expedition_ready(gs)):
+        if cell is None or not _nether_departure_ready(gs) or not _at_base(gs):
             return None
         x, y, z = cell
         return Action(label, "enter_nether_portal", {"x": x, "y": y, "z": z},
