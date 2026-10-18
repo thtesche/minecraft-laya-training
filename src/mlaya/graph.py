@@ -1222,7 +1222,7 @@ class Agent:
         delta = vmod.diff(before, after)
         self._note_build(action, _ok, delta)
         self._note_stow(action, _ok, delta)
-        progressed = vmod.progressed(action.label, delta)
+        progressed = vmod.progressed(action.label, delta, _ok)
         self._track_stuck(action.label, _ok, _text, progressed)
         # After the stuck guard: it owns the countdown and the offer window, and a wandering
         # action is not a refusal, so the two runs of counts do not disturb each other.

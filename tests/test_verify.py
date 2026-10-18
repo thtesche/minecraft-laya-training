@@ -25,6 +25,48 @@ def _hit(name: str) -> list[BlockHit]:
     return [BlockHit(name, name, 0, -58, 0, 3.0)]
 
 
+class CollectSmeltedProgressTest(unittest.TestCase):
+    """A refusal is not the quiet first half of a drain.
+
+    Draining the base furnace is two calls: a look into it, which changes nothing, and the
+    reach-in, which lands the output in the pack. So an empty inventory delta counts as progress
+    on a call that succeeded -- but a *refusal* leaves the delta empty too, and reading that as
+    progress reset the stuck count on every attempt. Live, run49: `collect_smelted` answered
+    `[CONTAINER_NOT_PRESENT] The loaded target block is furnace, not a supported container` 26
+    times running and was never dropped from the offer, because it never looked stuck.
+    """
+
+    REFUSAL = "[CONTAINER_NOT_PRESENT] The loaded target block is furnace, not a supported container"
+
+    def test_the_quiet_look_into_an_open_furnace_is_progress(self) -> None:
+        self.assertTrue(progressed("collect_smelted", diff(gs(), gs()), ok=True))
+
+    def test_the_items_landing_in_the_pack_are_progress(self) -> None:
+        d = diff(gs(inventory={"beef": 2}), gs(inventory={"beef": 2, "cooked_beef": 1}))
+        self.assertTrue(progressed("collect_smelted", d))
+
+    def test_a_refusal_is_not_progress_however_empty_the_delta(self) -> None:
+        d = diff(gs(), gs())
+        self.assertEqual(d["inventory_delta"], {})
+        self.assertFalse(progressed("collect_smelted", d, ok=False))
+
+    def test_four_refusals_in_a_row_then_get_dropped(self) -> None:
+        # The shape that used to be impossible: the same code, counted four times, reaches the
+        # threshold. `_track_stuck` is what reads this verdict, so the guard is what this pins.
+        from mlaya.graph import Agent, STUCK_REPEATS
+        agent = Agent.__new__(Agent)
+        agent._stuck_reps = {}
+        agent._stuck_code = {}
+        agent._stuck_off = {}
+        agent.log = []
+        d = diff(gs(), gs())
+        for _ in range(STUCK_REPEATS):
+            ok = False
+            agent._track_stuck("collect_smelted", ok, self.REFUSAL,
+                               progressed("collect_smelted", d, ok))
+        self.assertIn("collect_smelted", agent._stuck_off)
+
+
 class NetherProgressTest(unittest.TestCase):
     def test_craft_bucket_needs_a_bucket(self) -> None:
         d = diff(gs(inventory={"iron_ingot": 3}), gs(inventory={"bucket": 1}))

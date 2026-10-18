@@ -61,7 +61,7 @@ INVENTORY_LABELS = {
 }
 
 
-def progressed(label: str, d: dict) -> bool:
+def progressed(label: str, d: dict, ok: bool = True) -> bool:
     inv_up = any(v > 0 for v in d["inventory_delta"].values())
     armor_up = bool(d.get("armor_delta"))
     offhand_up = bool(d.get("offhand_delta"))
@@ -145,9 +145,14 @@ def progressed(label: str, d: dict) -> bool:
     if label in ("stow_surplus", "drop_junk"):
         return any(v < 0 for v in d["inventory_delta"].values())
     if label == "collect_smelted":
-        # The look before the reach-in has nothing to show; the drain itself is the items landing
-        # in the pack, and an empty furnace reporting success is progress on a wasted step.
-        return not d["inventory_delta"] or any(v > 0 for v in d["inventory_delta"].values())
+        # The drain itself is the items landing in the pack. The look before the reach-in has
+        # nothing to show, and that empty delta is progress only when the call actually succeeded:
+        # a *refusal* leaves the delta empty too, and reading that as progress reset the stuck
+        # count on every attempt, so a step the server refused 26 times running was never dropped
+        # (live, run49: `[CONTAINER_NOT_PRESENT] The loaded target block is furnace, not a
+        # supported container`, offered again on every tick).
+        return (any(v > 0 for v in d["inventory_delta"].values())
+                or (ok and not d["inventory_delta"]))
     if label == "explore":
         return (d["pos_delta"] or 0) > 2
     return False
