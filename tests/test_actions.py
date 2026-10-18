@@ -1871,6 +1871,37 @@ class NetherGateTest(unittest.TestCase):
         g.phase = "night"
         self.assertNotIn("place_bed", candidates(g))
 
+    def test_place_bed_lays_from_the_cell_the_bot_already_stands_on(self) -> None:
+        # live, run29: the lit gate put `_bed_stance` one cell north of the bot. `navigate` settles
+        # inside its arrival tolerance, so the bot never crossed that cell boundary and 17
+        # identical `navigate` ticks left the carried bed unlaid, with the run unable to finish.
+        # The bot's own cell clears the gate just as well, so the bed goes down from where it is.
+        g = self._at_home(self._geared(white_bed=1), base=(226, 63, 222))
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  x, y, 222, 3.0)
+                                         for x in (228, 229) for y in (64, 65, 66)]}
+        g.phase = "night"
+        g.pos = (225.62, 64.0, 221.48)
+        self.assertIn("place_bed", candidates(g))
+        a = resolve("place_bed", g)
+        self.assertEqual(a.tool, "sleep")
+        self.assertEqual(a.args, {})
+
+    def test_place_bed_still_walks_off_a_cell_the_gate_reaches(self) -> None:
+        # The bot's own cell is *not* clear of the gate - a bed laid from it would sit within
+        # `BED_PORTAL_CLEARANCE` and respawn the bot into the portal - so the walk to a stance
+        # that is clear is still what `place_bed` orders.
+        g = self._at_home(self._geared(white_bed=1), base=(226, 63, 222))
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  x, y, 222, 3.0)
+                                         for x in (228, 229) for y in (64, 65, 66)]}
+        g.phase = "night"
+        g.pos = (227.5, 64.0, 221.5)  # one cell east, next to the opening
+        self.assertIn("place_bed", candidates(g))
+        a = resolve("place_bed", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertNotEqual((a.args["x"], a.args["y"], a.args["z"]), (227, 64, 221))
+
     def test_place_bed_lays_the_carried_bed_at_a_base_without_one(self) -> None:
         # A bed standing *away* from the base is no gate bed: the carried bed goes down at the
         # base even while the leftover stands (the leftover is `take_bed`'s job, and the bot

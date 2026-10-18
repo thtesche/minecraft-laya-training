@@ -266,7 +266,9 @@ REGEN_HUNGER = 18.0
 #     from spiders, feathers from chickens, flint from gravel, sticks from wood.
 #   * a gold helmet -- one worn piece of gold armour is all it takes to keep piglins neutral; it
 #     is carried until the Nether trip (worn it would displace the diamond helmet).
-#   * a deep cobblestone stack for a ghast-proof shelter around the arrival portal and for bridging.
+#   * a deep cobblestone stack for bridging over lava and gaps in the Nether. It is deliberately
+#     *not* spent on a shelter around the arrival portal (decided 2026-10-18, docs/nether-prep.md
+#     "(B) After arrival"): the exit stays unprotected for now, the way back is what matters.
 # Every step is offered only while it can actually progress, so a material with no source (no
 # spider, no chicken, no gold ore loaded) drops that step out and never blocks the run.
 BOW_ITEM = "bow"
@@ -770,25 +772,51 @@ def _bed_needs_moving(gs: GameState) -> bool:
     return _bed_off_base(gs) or _bed_bad_spot(gs)
 
 
+def _clear_of_gate(cell: tuple[int, int, int], portal: list) -> bool:
+    """Whether a bed may be laid with the bot standing on `cell`.
+
+    The `sleep` server lays the carried bed on the flat footprint beside the bot, so the cell
+    the bot occupies and its four orthogonal neighbours - the two cells a bed can reach from it
+    - must all keep `BED_PORTAL_CLEARANCE` from the lit gate.
+    """
+    x, _, z = cell
+    cells = ((x, z), (x - 1, z), (x + 1, z), (x, z - 1), (x, z + 1))
+    return all(_gate_gap((cx, cell[1], cz), portal) >= BED_PORTAL_CLEARANCE
+               for cx, cz in cells)
+
+
 def _bed_stance(gs: GameState) -> tuple[int, int, int] | None:
     """The feet cell the bot must stand on for `place_bed`, clear of the gate, or None.
 
-    See `_BED_STANCE_OFFSETS`. The base anchor is tried first; where the frame's western column
-    sits one block east of it that anchor fails (its neighbour is the frame) and the stance steps
-    one block west, off the gate's plan-view footprint. None with no base, or when no offset
-    within the base box is clear - `place_bed` then stands down rather than lay the bed against
-    the gate.
+    See `_BED_STANCE_OFFSETS`. The bot's *own* cell is tried first, because it needs no walk at
+    all. Asking the bot to step into a different legal neighbour is not safe to do: `navigate`
+    settles inside its arrival tolerance, so a bot already close enough to a neighbouring stance
+    reports arrival without ever crossing that cell's boundary (live, run29: the lit gate put the
+    stance at `(225,64,222)`, the bot stood on the equally legal `(225,64,221)`, and 17 identical
+    `navigate` ticks left the carried bed unlaid and the run unable to finish). The clearance test
+    is the same either way (`_clear_of_gate`), so a bed laid from the cell the bot already holds is
+    exactly as clear of the gate as one laid after a walk.
+
+    Otherwise the offsets are tried nearest-first from the base anchor, which leaves a base whose
+    gate is already far enough untouched. None with no base, or when no cell within the base box
+    is clear - `place_bed` then stands down rather than lay the bed against the gate.
     """
     if gs.base is None:
         return None
     bx, by, bz = gs.base
     portal = gs.resources.get(PORTAL_BLOCK) or []
+    if gs.pos is not None:
+        cell = (math.floor(gs.pos[0]), math.floor(gs.pos[1]), math.floor(gs.pos[2]))
+        # Inside the base box only: the bot must stay where `_at_base` holds and the bed must land
+        # within that box (`_bed_off_base` would otherwise take the fresh bed straight back up).
+        if (abs(cell[0] - bx) <= BASE_RADIUS and abs(cell[2] - bz) <= BASE_RADIUS
+                and abs(cell[1] - (by + 1)) <= BASE_RADIUS + 1
+                and _clear_of_gate(cell, portal)):
+            return cell
     for dx, dz in _BED_STANCE_OFFSETS:
-        sx, sz = bx + dx, bz + dz
-        cells = ((sx, sz), (sx - 1, sz), (sx + 1, sz), (sx, sz - 1), (sx, sz + 1))
-        if all(_gate_gap((cx, by + 1, cz), portal) >= BED_PORTAL_CLEARANCE
-               for cx, cz in cells):
-            return (sx, by + 1, sz)
+        cell = (bx + dx, by + 1, bz + dz)
+        if _clear_of_gate(cell, portal):
+            return cell
     return None
 
 
@@ -987,7 +1015,8 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
                 out.append("smelt_gold")
         elif _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
             out.append("mine_gold")
-    # Cobblestone: a deep stack for the ghast-proof shelter around the arrival portal.
+    # Cobblestone: a deep stack for bridging over lava and gaps in the Nether (the arrival portal
+    # is deliberately left unprotected, docs/nether-prep.md "(B) After arrival").
     if inv.get("cobblestone", 0) < NETHER_COBBLE and _can_mine(gs, "stone"):
         out.append("mine_stone")
     return out

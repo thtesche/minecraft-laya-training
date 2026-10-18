@@ -84,8 +84,11 @@ Nether terrain is already provided for in the server reflex.
 
 ## (B) After arrival
 
-1. **Shelter** of cobblestone around the arrival portal (a shell, the portal as the door), so that ghasts
-   do not shoot the frame apart. Cobblestone has blast resistance 6 and withstands ghast fireballs.
+1. **No shelter around the arrival portal** — decided 2026-10-18, the portal stays **unprotected**.
+   The first Nether visit does not build a cobblestone shell around the exit portal (the portal as
+   the door). Instead the bot keeps the way back clear, treats the exit as a hot spot it uses to
+   refuel and get out, and spends the cobblestone stack on bridging instead. Revisit only if ghasts
+   break the exit apart in practice.
 2. Keep the **way back** open (light/secure the portal first).
 3. **Safety gate in the Nether** (see below).
 
@@ -126,8 +129,8 @@ Nether terrain is already provided for in the server reflex.
   lit gate, so the intended crossing needs an explicit intent the rescue respects.
 - **Armour swap on entry:** diamond helmet off, gold helmet on (`_swap_to_gold_helmet`), so that
   piglins stay neutral. The diamond helmet stays in the pack for the way back.
-- Build the **shelter**, secure the **way back**, then the first Nether resource (blaze/netherrack) as
-  the goal of the following chain.
+- Build **no** shelter around the arrival portal (decided 2026-10-18, see (B)), secure the **way
+  back**, then the first Nether resource (blaze/netherrack) as the goal of the following chain.
 
 ## Decided: the gold helmet replaces the diamond helmet
 
