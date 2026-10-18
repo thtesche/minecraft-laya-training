@@ -2539,7 +2539,11 @@ class LeavePortalTest(unittest.TestCase):
                                                   -196, -46, -98, 0.6)]}
         a = resolve("leave_portal", g)
         self.assertEqual(a.tool, "navigate")
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-196.5, -46.0, -97.5))
+        # Whole block cells: `navigate` validates `x` and `z` as integers, and a float was refused
+        # at the door, so the rescue never fired and the run froze on the spot (run35).
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -98))
+        for axis in ("x", "z"):
+            self.assertIsInstance(a.args[axis], int)
         # Never dig or scaffold: the rescue must not damage the frame around the opening.
         self.assertFalse(a.args["dig"])
         self.assertFalse(a.args["scaffold"])
@@ -2573,6 +2577,49 @@ class LeavePortalTest(unittest.TestCase):
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                   -197, -45, -98, 1.0)]}
         self.assertEqual(candidates(g), ["leave_portal"])
+
+
+class NavigateArgumentsTest(unittest.TestCase):
+    """Every `navigate` call must name whole block cells.
+
+    The server validates `x` and `z` as integers and refuses a float before it looks at anything
+    else. A float is not a small inaccuracy here: the call never runs, and where the step owns
+    the tick - `leave_portal` does, through `_in_portal` - the run freezes silently (live, run35:
+    23 identical `[expected int, received number at x]` refusals with no other candidate).
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _base_state(self, **inv) -> GameState:
+        g = at_home(geared(furnace=1, crafting_table=1, cobblestone=64, **inv), base=self.BASE)
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 18.0
+        return g
+
+    def _navigations(self, g: GameState) -> list:
+        """Every label that resolves to a `navigate`, with the state as it stands."""
+        from mlaya.actions import candidates
+        return [a for a in (resolve(label, g) for label in candidates(g))
+                if a is not None and a.tool == "navigate"]
+
+    def test_a_base_state_navigates_only_to_whole_cells(self) -> None:
+        g = self._base_state(coal=8, beef=3)
+        for action in self._navigations(g):
+            with self.subTest(label=action.label):
+                self.assertIsInstance(action.args["x"], int)
+                self.assertIsInstance(action.args["z"], int)
+
+    def test_the_portal_rescue_navigates_to_a_whole_cell(self) -> None:
+        # The rescue's own target: the base cell centre, which has to go out as that cell.
+        g = self._base_state()
+        g.pos = (-195.5, -46.0, -97.5)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  -196, -46, -98, 0.6)]}
+        a = resolve("leave_portal", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertIsInstance(a.args["x"], int)
+        self.assertIsInstance(a.args["z"], int)
 
 
 class CookFoodReachTest(unittest.TestCase):

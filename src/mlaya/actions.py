@@ -2540,7 +2540,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         target = _leave_portal_target(gs)
         if target is None:
             return None
-        tx, ty, tz = target
+        # `navigate` takes whole block cells (`x` and `z` are integers); the step-out target is a
+        # cell centre. Sending the float was refused at argument validation, every time, so the
+        # rescue that owns the tick could never fire - and because `_in_portal` hands it the tick
+        # outright, the run froze on the spot (live, run35: `[Invalid arguments for tool navigate:
+        # expected int, received number at x]`, 23 identical ticks with no other candidate).
+        tx, ty, tz = (math.floor(v) for v in target)
         return Action(label, "navigate",
                       {"x": tx, "y": ty, "z": tz, "dig": False, "scaffold": False},
                       "step out of the lit portal the body is standing in, before it teleports")
