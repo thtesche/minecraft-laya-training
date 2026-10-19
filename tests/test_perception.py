@@ -217,6 +217,60 @@ class LoggedStateRoundTripTest(unittest.TestCase):
         self.assertIsNone(g.pos)
 
 
+class BlindWorldTest(unittest.IsolatedAsyncioTestCase):
+    """A `view_status` with no position stops the run instead of feeding it empty decisions.
+
+    Live, run72: the Minecraft connection ended, the transport said so, and the loop kept going.
+    Four ticks were logged in two seconds - all `get_wood`, all refused, all at `position: None`
+    and `health: None`, with the *previous* base still on the state. Every distance predicate read
+    false, the candidate list collapsed to whatever survives without a single fact, and the run
+    decided four times about a world it could not see.
+
+    The MCP layer was hardened in `b5b1981` and this is the case it does not cover: a transport
+    that answers, with nothing in it.
+    """
+
+    class _Read:
+        def __init__(self, data=None, text=""):
+            self.data, self.text = data, text
+
+    class _Exec:
+        def __init__(self, data):
+            self.data = data
+
+        async def read(self, tool, args, why):
+            return BlindWorldTest._Read(self.data)
+
+    async def test_a_status_without_a_position_stops_the_run(self) -> None:
+        from mlaya import perception
+        with self.assertRaises(perception.PerceptionBlind):
+            await perception.build(self._Exec(None))
+
+    async def test_the_message_names_the_cause_rather_than_the_symptom(self) -> None:
+        from mlaya import perception
+        with self.assertRaises(perception.PerceptionBlind) as caught:
+            await perception.build(self._Exec(None))
+        self.assertIn("without a position", str(caught.exception))
+
+    async def test_a_real_status_still_builds(self) -> None:
+        from mlaya import perception
+        payload = {"response": {"data": {"result": {"situation": {
+            "position": {"x": 1.0, "y": 64.0, "z": 2.0, "onGround": True},
+            "vitals": {"health": 20.0, "food": 18.0},
+        }}}}}
+        gs = await perception.build(self._Exec(payload))
+        self.assertEqual(gs.pos, (1.0, 64.0, 2.0))
+
+    def test_the_cli_turns_it_into_one_line(self) -> None:
+        # Not a traceback: the user should not have to read a stack to find a sentence about
+        # sockets.
+        from mlaya import cli
+        import inspect
+        src = inspect.getsource(cli.cmd_run)
+        self.assertIn("perception_blind", src)
+        self.assertIn("return 2", src)
+
+
 class RememberedStockParseTest(unittest.TestCase):
     """The chest's contents, read out of the server's container database.
 

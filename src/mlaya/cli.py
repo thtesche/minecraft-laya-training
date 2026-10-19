@@ -79,10 +79,17 @@ async def cmd_run(args) -> int:
     if getattr(args, "ignore_goal", False):
         settings.loop.stop_when_complete = False
     await _health(settings)
-    async with MCPExecutor(settings.mcp) as executor:
-        policy = await survival.apply_policy(executor, "apply policy at run start")
-        agent = Agent(settings, executor)
-        final = await agent.run()
+    try:
+        async with MCPExecutor(settings.mcp) as executor:
+            policy = await survival.apply_policy(executor, "apply policy at run start")
+            agent = Agent(settings, executor)
+            final = await agent.run()
+    except perception.PerceptionBlind as exc:
+        # One line, not a traceback: the world stopped being readable and the run stopped with it.
+        # Anything else would send the user looking through a stack for a sentence about sockets.
+        print(json.dumps({"error": "perception_blind", "detail": str(exc),
+                          "log": str(settings.log_path())}, ensure_ascii=False))
+        return 2
     print(json.dumps({
         "iterations": final.get("iteration"),
         "stop": final.get("stop"),

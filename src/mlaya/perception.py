@@ -1323,6 +1323,21 @@ def _age_seconds(now_iso: Any, then_iso: Any) -> float | None:
     return None
 
 
+class PerceptionBlind(RuntimeError):
+    """The world could not be read, so there is nothing to decide from.
+
+    Raised rather than returned. A `view_status` that answers with no position is the shape a dead
+    Minecraft connection leaves behind, and everything downstream copes with it silently: `pos`,
+    `health` and `food` stay None, every distance predicate reads false, and the candidate list
+    collapses to whatever survives without any fact - so the loop keeps deciding. Live, run72: the
+    connection ended, `read` reported it, and the next four ticks were logged in two seconds at
+    `position: None`, `health: None`, all four `get_wood`, all four refusals.
+
+    Deciding from an empty state is worse than stopping. The run has nothing to act on and every
+    action it takes is a guess about a world it cannot see.
+    """
+
+
 async def build(executor) -> GameState:
     """Perceive through the MCP read tools (ungated, cheap)."""
     status = await executor.read("view_status", {}, "read live bot vitals and position")
@@ -1330,6 +1345,10 @@ async def build(executor) -> GameState:
     # Walk the event backlog to the newest events; reactions only use fresh ones.
     events, unread, preview = await _drain_events(executor)
     gs = parse_status(status_data)
+    if gs.pos is None:
+        raise PerceptionBlind(
+            "view_status answered without a position; the Minecraft connection is gone or the "
+            f"server is not answering (text: {(status.text or '')[:120]!r})")
     gs.events = _summaries(events)
     gs.unread = unread
     gs.notifications = _previews(preview)
