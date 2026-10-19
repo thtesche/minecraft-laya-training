@@ -3614,6 +3614,88 @@ class SmokerBesideTheFurnaceTest(unittest.TestCase):
         self.assertNotIn("x", cook.args)
 
 
+class NightSendsItHomeTest(unittest.TestCase):
+    """Home is where the bed is. That counts as a reason to be there with no work waiting.
+
+    The sleep rule went in first and measured nothing: over nineteen night ticks in run67 the bot
+    held ten or eleven metres from the base - `mine_stone` at sixty-one - and slept on none of
+    them. `_sleep_ready` demands standing on the base with a lit gate, and `go_home` was only
+    ever offered when base *work* was waiting or the Nether crossing was ready. Neither was true
+    at night, so the candidates were `explore` and `craft_arrows`, and a skeleton found the bot
+    eleven metres from home with a full diamond kit it never got to use.
+
+    A half-measure: the rule was right and its precondition was impossible. Home is a place, not
+    a to-do list.
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _out_at_night(self, **inv) -> GameState:
+        g = lit_portal(at_home(geared(flint_and_steel=1, white_bed=1, oak_log=8, coal=4, **inv)))
+        bx, by, bz = self.BASE
+        g.chest_pos = (bx + 2, by, bz + 2)
+        g.furnace_pos = (bx, by + 1, bz - 1)
+        g.resources = {"white_bed": [BlockHit("white_bed", 3.0, bx - 3, by + 1, bz + 2, 3.0)],
+                       "nether_portal": [BlockHit("nether_portal", 4.0,
+                                                  bx + 2, by + 1, bz + 1, 4.0)]}
+        g.resource_found = {"nether_portal": 6}
+        g.phase = "night"
+        g.food = 20.0
+        g.pos = (bx + 11.5, by + 1.0, bz)          # eleven metres out, as live
+        return g
+
+    def test_eleven_metres_out_at_night_the_walk_home_is_offered(self) -> None:
+        # The live case, to the metre. Nothing is owed at the base and no crossing is ready, so
+        # before this change the list was `explore`.
+        g = self._out_at_night()
+        self.assertIn("go_home", candidates(g))
+
+    def test_the_walk_home_actually_targets_the_base(self) -> None:
+        g = self._out_at_night()
+        a = resolve("go_home", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["z"]), (self.BASE[0], self.BASE[2]))
+
+    def test_daytime_is_unchanged(self) -> None:
+        # In daylight there is a reason to be out, and no reason invented here.
+        g = self._out_at_night()
+        g.phase = "day"
+        self.assertNotIn("go_home", candidates(g))
+
+    def test_the_night_reason_carries_it_on_its_own(self) -> None:
+        # The live state, isolated: no base work owed, no crossing ready, and only the bed
+        # making the walk worth taking. Daytime removes exactly that one reason.
+        from mlaya.actions import _base_steps_ready, _nether_departure_ready, _go_home_wanted
+        g = self._out_at_night()
+        self.assertFalse(_base_steps_ready(g))
+        self.assertFalse(_nether_departure_ready(g))
+        self.assertTrue(_go_home_wanted(g))
+        g.phase = "day"
+        self.assertFalse(_go_home_wanted(g))
+
+    def test_a_missing_bed_is_its_own_reason_to_come_home(self) -> None:
+        # Not a counterexample but a second door: with the bed gone, `place_bed` becomes an owed
+        # base step, so the walk is wanted for a different reason - and stays wanted.
+        from mlaya.actions import _base_steps_ready
+        g = self._out_at_night()
+        g.resources = {"nether_portal": g.resources["nether_portal"]}
+        self.assertTrue(_base_steps_ready(g))
+        self.assertIn("go_home", candidates(g))
+
+    def test_standing_on_the_base_needs_no_walk(self) -> None:
+        g = self._out_at_night()
+        g.pos = (self.BASE[0] + 0.5, self.BASE[1] + 1.0, self.BASE[2] + 0.5)
+        self.assertNotIn("go_home", candidates(g))
+
+    def test_arriving_home_is_what_unlocks_the_sleep(self) -> None:
+        # The whole point, asserted end to end: away from the base the walk is offered, and on it
+        # sleep is the only thing on the list.
+        away = self._out_at_night()
+        self.assertIn("go_home", candidates(away))
+        away.pos = (self.BASE[0] + 0.5, self.BASE[1] + 1.0, self.BASE[2] + 0.5)
+        self.assertEqual(candidates(away), ["sleep"])
+
+
 class NightIsAClockNotACandidateTest(unittest.TestCase):
     """At night, with a bed underfoot, the run has nothing to choose between.
 

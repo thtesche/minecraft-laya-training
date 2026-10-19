@@ -1522,6 +1522,24 @@ def _surplus_besides_keep(gs: GameState, inv: dict[str, int]) -> list[str]:
     return [n for n in inv if inv.get(n, 0) > 0 and n not in keep and n not in JUNK_ITEMS]
 
 
+def _go_home_wanted(gs: GameState) -> bool:
+    """One reason-list for `go_home`, so the candidate gate and `resolve` cannot disagree.
+
+    Two gates answering the same question differently is how a step gets offered and then refused
+    on the same tick - and the refusal looks exactly like a dead end, which is what sends the loop
+    to System 2 to explain itself. That is what happened to `craft_pickaxe_spare` in run53, and it
+    was already true here for the crossing: `candidates` offered `go_home` when
+    `_nether_departure_ready` held, while `resolve` knew only about `_base_steps_ready`.
+
+    Three reasons, in the order they matter:
+      some base step is waiting
+      the Nether gate is lit and stocked, and the bot's next job only it can do standing there
+      it is night and the bed is at the base
+    """
+    return (_base_steps_ready(gs) or _nether_departure_ready(gs)
+            or (gs.phase == "night" and _bed_at_base(gs)))
+
+
 def _junk_carried(inv: dict[str, int]) -> list[str]:
     """Carried low-value blocks no recipe wants, in the fixed shedding order."""
     return [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]
@@ -2465,9 +2483,17 @@ def candidates(gs: GameState) -> list[str]:
             # climbs back out first: `surface_up` probes the surface and walks up to it, and only
             # then is `establish_base` offered.
             out.append("establish_base" if _at_surface(gs) else "surface_up")
-        elif not _at_base(gs) and (_base_steps_ready(gs) or _nether_departure_ready(gs)):
-            # Either some base step is waiting, or the Nether gate is lit, stocked and the bot's
-            # next job - which only it can do standing on the base.
+        elif not _at_base(gs) and _go_home_wanted(gs):
+            # Three reasons to walk home: some base step is waiting, or the Nether gate is lit,
+            # stocked and the bot's next job - which only it can do standing on the base - or it
+            # is night and the bed is at the base.
+            #
+            # The third one was missing, and it made the sleep rule dead code. Live, run67: over
+            # nineteen night ticks the bot held ten or eleven metres from the base - `mine_stone`
+            # at sixty-one - and slept on none of them, because `_sleep_ready` demands standing on
+            # the base with a lit gate. The candidates on those ticks were `explore` and
+            # `craft_arrows`, and a skeleton found it eleven metres from home. Home is where the
+            # bed is; that counts as a reason to be there on its own, with no work waiting.
             out.append("go_home")
 
     # --- Overworld -> Nether gate ---
@@ -3303,7 +3329,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": tx, "y": ty + 1, "z": tz, "dig": True, "scaffold": True},
                       f"walk up to the surface at {tx},{ty + 1},{tz} and set the base")
     if label == "go_home":
-        if gs.base is None or _at_base(gs) or not _base_steps_ready(gs):
+        if gs.base is None or _at_base(gs) or not _go_home_wanted(gs):
             return None
         bx, by, bz = gs.base
         return Action(label, "navigate",
