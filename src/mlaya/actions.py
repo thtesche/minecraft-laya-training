@@ -735,8 +735,23 @@ def _gear_ready(gs: GameState) -> bool:
 
 
 def _portal_lit(gs: GameState) -> bool:
-    """A lit nether portal block is loaded nearby (the frame is on and the gate is open)."""
-    return gs.resource_distance(PORTAL_BLOCK) is not None
+    """A lit nether portal is standing - the frame is on and the gate is open.
+
+    The raw `resource_found` count counts every hit in a loaded chunk, not just those inside
+    `RESOURCE_RADIUS`, and that second reading is what this needs. The proximity read alone makes
+    the flag a statement about where the bot is standing rather than about the world: live, run58,
+    `portal_lit` came back false while the gate stood lit at `(228,64,222)` and the bot cooked at
+    `(357,70,362)`. Two of the gates read this as a fact - `light_portal` is offered when it is
+    false - so a bot 190 m out believed it had an unlit gate and would have set about lighting one
+    that was already burning. That is run22's shape again, in a different costume.
+
+    What it is not: a latch. A gate whose chunk has unloaded still reads false, and the honest fix
+    for that is a remembered flag of the kind `_frame_complete` and `powder_stowed` already are.
+    Scoped deliberately, because this is the difference between a claim the loop can make and one
+    it should remember.
+    """
+    return (gs.resource_distance(PORTAL_BLOCK) is not None
+            or gs.resource_found.get(PORTAL_BLOCK, 0) > 0)
 
 
 def _portal_built(gs: GameState) -> bool:

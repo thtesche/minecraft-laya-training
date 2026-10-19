@@ -9,8 +9,9 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import (_all_nether_prep_steps, _in_portal, _leave_portal_target, Action,
-                         _armor_to_wear, candidates, inventory_relief,
+from mlaya.actions import (_all_nether_prep_steps, _in_portal, _leave_portal_target,
+                         _portal_lit, Action, _armor_to_wear, candidates,
+                         inventory_relief,
                            nether_expedition_complete, NETHER_HOPELESS_AFTER, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
@@ -3460,6 +3461,53 @@ class BaseFurnaceIsAnOptimisationTest(unittest.TestCase):
         early.armor = {}
         self.assertNotIn("place_furnace", candidates(early))
         self.assertNotIn("go_home", candidates(self._kit(furnace_pos=self.FURNACE)))
+
+
+class PortalLitIsAWorldFactTest(unittest.TestCase):
+    """A lit gate stays lit however far the bot has walked from it.
+
+    The flag was a 64 m proximity read, which makes it a statement about where the bot stands
+    rather than about the world - and two gates read it as a fact. `light_portal` is offered when
+    it reads false, so a bot 190 m out believed it had an unlit gate and would have set about
+    lighting one that was already burning. That is run22's shape in a different costume.
+
+    The state carries two readings of the same block: the radius-filtered hits and `resource_found`,
+    the raw count over every loaded chunk. The diamonds and the gold already use the second for
+    exactly this reason - a deposit too far to list still proves the ore is there.
+    """
+
+    BASE = (226, 63, 222)
+    GATE = (228, 64, 222)
+
+    def _far_away(self):
+        """At (357,70,362), 190 m off, with the gate outside the scan radius but in a loaded chunk."""
+        g = at_home(geared(flint_and_steel=1, cobblestone=64, obsidian=10, diamond_pickaxe=2,
+                            golden_helmet=1, bow=1, arrow=16, cooked_mutton=64, white_bed=1),
+                    base=self.BASE)
+        g.pos = (357.0, 70.0, 362.0)
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 18.0
+        g.phase = "day"
+        g.resources = {}                                   # nothing inside RESOURCE_RADIUS
+        g.resource_found = {"nether_portal": 6}           # six blocks, counted in a loaded chunk
+        return g
+
+    def test_the_gate_is_lit_from_across_the_map(self) -> None:
+        self.assertTrue(_portal_lit(self._far_away()))
+
+    def test_light_portal_is_not_offered_for_a_gate_that_already_burns(self) -> None:
+        g = self._far_away()
+        g.obsidian = 10
+        self.assertNotIn("light_portal", candidates(g))
+
+    def test_a_gate_nobody_has_seen_is_not_claimed(self) -> None:
+        # The other half: the count has to mean something. No portal in the scan and none counted
+        # is an unlit gate, and the frame clause still owes the walk home.
+        g = self._far_away()
+        g.resource_found = {}
+        self.assertFalse(_portal_lit(g))
+        self.assertIn("go_home", candidates(g))
 
 
 class LeavePortalDimensionTest(unittest.TestCase):
