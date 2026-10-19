@@ -1429,6 +1429,27 @@ def _furnace_site(gs: GameState) -> tuple[int, int, int] | None:
     return cell
 
 
+def _furnace_worth_placing(gs: GameState) -> bool:
+    """Whether standing the carried furnace at the base is the next thing to do there.
+
+    One predicate for both halves of that job, so the two cannot disagree. `candidates` offers
+    `place_furnace` at the base and `go_home` away from it; `_base_steps_ready` separately owes
+    the walk home. Those were two independent copies of the same question, and they answered it
+    differently: `go_home` fired on the first condition, `place_furnace` on the second, so the bot
+    was walked home for a step that was then never offered - 341 of 377 records carrying a furnace
+    and not one `place_furnace` to show for it (live, run53).
+
+    The furnace is an optimisation, not a requirement: `_smelt_args` falls back to a temporary
+    workstation, so cooking and smelting work anywhere with the carried furnace. That is why the
+    window is the lull (`_nether_idle`) - before it the bot is busy with the chain - and why it
+    needs no second gate: a walk home is owed exactly when the placement can follow it.
+    """
+    inv = gs.inventory
+    return (_nether_idle(gs) and gs.base is not None and not _furnace_ready(gs)
+            and not gs.furnace_blocked and _has(inv, "furnace")
+            and _furnace_site(gs) is not None)
+
+
 def _furnace_ready(gs: GameState) -> bool:
     """A furnace stands at the base (its coordinates are remembered).
 
@@ -1657,8 +1678,10 @@ def _base_steps_ready(gs: GameState) -> bool:
         return True
     # In the lull, a carried furnace belongs at the base: walking back lets `place_furnace`
     # stand it there, after which cooking reuses it rather than tearing a temporary one down.
-    if (_nether_idle(gs) and not _furnace_ready(gs) and not gs.furnace_blocked
-            and _has(inv, "furnace") and _furnace_site(gs) is not None):
+    # The same predicate the offer reads, so the walk is never owed for a step that would not
+    # follow it (see `_furnace_worth_placing`: run53 walked home 341 records over a furnace and
+    # was never offered the placement).
+    if _furnace_worth_placing(gs):
         return True
     if not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs):
         return True
@@ -2044,9 +2067,7 @@ def candidates(gs: GameState) -> list[str]:
     # A furnace that stands at the base is what stops `smelt_item` placing and tearing a
     # temporary workstation down on every call. In the lull the carried furnace is stood at the
     # base once (walking home first if the bot is away), after which cooking reuses its cell.
-    if (_nether_idle(gs) and gs.base is not None and not _furnace_ready(gs)
-            and not gs.furnace_blocked and _has(inv, "furnace")
-            and _furnace_site(gs) is not None):
+    if _furnace_worth_placing(gs):
         out.append("place_furnace" if _at_base(gs) else "go_home")
     if ((_has(inv, "furnace") or _furnace_ready(gs)) and _first_cookable(inv) and not eating
             and _furnace_room(gs) and _food_source_in_reach(gs)):

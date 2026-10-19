@@ -3369,6 +3369,81 @@ class BurningGateUnstockedPrepTest(unittest.TestCase):
         self.assertEqual(resolve("leave_portal", g).tool, "navigate")
 
 
+class BaseFurnaceIsAnOptimisationTest(unittest.TestCase):
+    """Cooking and smelting never need the base; only draining a standing furnace does.
+
+    `_smelt_args` names the standing furnace's cell when there is one and falls back to the
+    carried furnace as a temporary workstation otherwise - which is the older behaviour the user
+    remembered, and it still works. So the base furnace is an *optimisation* (reuse instead of
+    set up and tear down on every call), never a precondition. What it does buy is `collect_smelted`,
+    and that one does need the base: a temporary workstation is gone by the time the drain looks
+    for it.
+    """
+
+    BASE = (226, 63, 222)
+    FURNACE = (229, 62, 222)
+
+    def _kit(self, furnace_pos=None, at_base=False):
+        stock = dict(crafting_table=1, coal=4, raw_iron=3, beef=2, furnace=1)
+        g = at_home(geared(**stock), base=self.BASE) if at_base else gs(**{
+            "inventory": dict(stock), "tools": {"pickaxe": "diamond", "sword": "diamond"},
+            "armor": {s: {"item": f"diamond_{s}"}
+                      for s in ("helmet", "chestplate", "leggings", "boots")},
+            "offhand": "shield", "dimension": "minecraft:overworld",
+            "health": 20.0, "food": 18.0})
+        if not at_base:
+            g.base = self.BASE
+            g.pos = (150.0, 64.0, 150.0)      # a long way from home, mid-run
+        g.furnace_pos = furnace_pos
+        g.furnace_blocked = False
+        g.phase = "day"
+        # The frame stands: `_nether_idle` keys on it, and it is what makes the base furnace an
+        # optimisation rather than chain work. Ten obsidian in the pack plus the frame plane, as
+        # the live base at (226,63,222) has it.
+        stock["obsidian"] = 10
+        g.inventory["obsidian"] = 10
+        # The frame plane sits two blocks east of the base, on z == bz - that is what
+        # `_portal_frame_started` checks, and where the live base has it.
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", 228, y, 222, 2.0)
+                                     for y in range(64, 70)],
+                       "furnace": [BlockHit("furnace", "furnace", *self.FURNACE, 4.5)]}
+        return g
+
+    def test_a_cook_away_from_the_base_uses_the_carried_furnace(self) -> None:
+        a = resolve("smelt_iron", self._kit())
+        self.assertIsNotNone(a)
+        self.assertTrue(a.args["temporary_workstation"])
+        self.assertNotIn("x", a.args)         # no base cell named
+
+    def test_a_cook_at_the_base_reuses_the_standing_furnace(self) -> None:
+        a = resolve("smelt_iron", self._kit(furnace_pos=self.FURNACE, at_base=True))
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FURNACE)
+        self.assertNotIn("temporary_workstation", a.args)
+
+    def test_the_drain_is_the_one_thing_that_needs_the_standing_furnace(self) -> None:
+        # There is nothing at the base to drain when the furnace was carried and temporary.
+        away = self._kit()
+        self.assertIsNone(resolve("collect_smelted", away))
+        home = self._kit(furnace_pos=self.FURNACE, at_base=True)
+        home.furnace_occupied = True
+        home.furnace_contents = {"cooked_beef": 1}
+        self.assertIsNotNone(resolve("collect_smelted", home))
+
+    def test_the_walk_home_is_owed_exactly_when_the_placement_can_follow_it(self) -> None:
+        # The half-open contract this closes: `go_home` and `place_furnace` were two copies of one
+        # question. Run53 carried a furnace for 341 records and was never offered the placement,
+        # because the walk was owed on conditions the placement did not read.
+        away = self._kit()
+        self.assertIn("go_home", candidates(away))
+        away.phase = "night"                     # `_nether_idle` still holds: it keys on the kit
+        self.assertIn("place_furnace", candidates(self._kit(at_base=True)))
+        # The lull closed: the chain owns the bot, so neither the walk nor the placement is asked.
+        early = self._kit(at_base=True)
+        early.armor = {}
+        self.assertNotIn("place_furnace", candidates(early))
+        self.assertNotIn("go_home", candidates(self._kit(furnace_pos=self.FURNACE)))
+
+
 class LeavePortalDimensionTest(unittest.TestCase):
     """Stepping out of the Nether's own arrival portal must aim at a cell in the Nether.
 
