@@ -598,13 +598,28 @@ class Agent:
         at = self._portal_base_scanned
         if at is not None and abs(at[0] - px) + abs(at[1] - pz) < 8.0:
             return
-        self._portal_base_scanned = (px, pz)
         try:
             corner = await perception.scan_portal_corner(self.mcp)
         except Exception:
             return
         if corner is None:
+            # A scan that found nothing must not burn the position. The throttle above is
+            # measured from the cell the bot stood on when it last looked, so recording a *failed*
+            # look locks out every look from the eight cells around it - and the one cell that has
+            # to see the gate is the one the bot walks to after `_settle_home_anchor` drops its
+            # guess. Live, run59: the run started with no base and no chest, so `_walk_home_to_memory`
+            # named the remembered chest's cell, the bot walked there, the guess was retired, and
+            # `_adopt_portal_base` then declined to look again - the throttle remembered the cell
+            # from the failed scan at spawn, four metres away. So the lit gate and the chest at
+            # `(226,63,222)` were never re-adopted, and `establish_base` raised a second base
+            # `(229,62,226)`, eight metres from the run's own burning portal.
+            #
+            # Recorded on success only, which is also when the throttle earns its keep: a base that
+            # was adopted is set, and line 593 short-circuits the whole method. What the throttle
+            # still prevents is a second look while the bot stands on a cell it has already read,
+            # and a scan that finds nothing costs 2 ms.
             return
+        self._portal_base_scanned = (px, pz)
         self.base = (corner[0] - 2, corner[1] - 1, corner[2])
         self._base_adopted = True
 

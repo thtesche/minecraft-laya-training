@@ -2210,6 +2210,45 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(agent.base)
         self.assertFalse(agent._base_adopted)
 
+    async def test_a_scan_that_found_nothing_does_not_lock_out_the_next_one(self) -> None:
+        # Live, run59. The throttle is measured from the cell the bot last looked from, so a
+        # *failed* look used to burn that cell - and with it every look from the eight cells
+        # around it. The run started with no base, so it walked home, retired its guess, and then
+        # `_adopt_portal_base` declined to look again because it had already looked four metres
+        # away. The lit gate went unnamed and a second base was raised beside it.
+        agent = self._agent(self._NONE)
+        await agent._adopt_portal_base(self._geared())
+        self.assertIsNone(agent.base)
+        self.assertIsNone(agent._portal_base_scanned)     # a failed look is not a look
+
+        # Same cell, gate now in view: the base is found.
+        agent.mcp = self._Mcp(self._FIND)
+        await agent._adopt_portal_base(self._geared())
+        self.assertEqual(agent.base, (-156, 62, 257))
+
+    async def test_the_throttle_still_holds_after_a_scan_that_did_find_the_gate(self) -> None:
+        # The other half: the guard is not simply gone. A cell that was read successfully is not
+        # re-read while the bot stands on it - and it is read again as soon as it walks off.
+        agent = self._agent(self._FIND)
+        near = self._geared()
+        await agent._adopt_portal_base(near)
+        self.assertEqual(agent.base, (-156, 62, 257))
+
+        agent.base = None                     # the anchor retired the guess
+        agent.mcp.calls.clear()
+        await agent._adopt_portal_base(near)  # same cell, within 8
+        self.assertEqual(agent.mcp.calls, [])
+
+        far = gs(pos=(-178.5, 68.0, 341.5),         # 12 blocks on, same kit
+                 tools={"pickaxe": "diamond", "sword": "diamond"},
+                 inventory={"crafting_table": 1},
+                 armor={slot: {"item": f"diamond_{slot}"}
+                        for slot in ("helmet", "chestplate", "leggings", "boots")},
+                 offhand="shield")
+        await agent._adopt_portal_base(far)
+        self.assertEqual(len(agent.mcp.calls), 1)
+        self.assertEqual(agent.base, (-156, 62, 257))
+
     async def test_skips_once_a_base_is_set(self) -> None:
         agent = self._agent(self._FIND)
         agent.base = (-1, 2, 3)
