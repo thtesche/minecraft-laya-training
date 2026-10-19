@@ -17,8 +17,9 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
                           tech_tree_complete)
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, HOME_ANCHOR_TICKS, PORTAL_INTENT_TICKS, STUCK_COOLDOWN,
-                         STUCK_REPEATS, WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
+from mlaya.graph import (Agent, HOME_ANCHOR_TICKS, IDLE_REPEATS, PASS_TIME_LABELS,
+                         PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS, WANDER_RATIO,
+                         WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
 from mlaya.perception import BlockHit, GameState
 
@@ -758,6 +759,94 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         agent._settle_home_anchor(gs(pos=(12.0, 62.0, 463.0), base=(229, 61, 225)))
         self.assertEqual(agent._home_ticks, HOME_ANCHOR_TICKS - 1)
         self.assertEqual(agent.base, (229, 61, 225))
+
+
+class IdleOfferGuardTest(unittest.TestCase):
+    """A step that keeps succeeding at nothing is dropped like any other unending offer.
+
+    `_track_stuck` counts refusals and `_track_wander` counts walking that arrives nowhere. Neither
+    sees a step the server reports as *succeeded* while the world does not change: live, run54, the
+    bot standing in the Nether's arrival portal where the rescue owns the tick outright, and
+    `leave_portal` answered ok 299 times in four minutes without moving a centimetre - the target
+    cell is one step out and the call succeeds where it stands. 299 iterations, no refusals, no
+    walking, nothing.
+    """
+
+    class _Delta(dict):
+        pass
+
+    def _agent(self):
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._stuck_off = {}
+        agent._idle_reps = {}
+        agent.log = []
+        return agent
+
+    @staticmethod
+    def _nothing() -> dict:
+        return {"inventory_delta": {}, "armor_delta": [], "offhand_delta": [],
+                "food_delta": 0, "pos_delta": 0, "phase_changed": False,
+                "dimension_changed": False}
+
+    def _some_change(self, **over) -> dict:
+        d = self._nothing()
+        d.update(over)
+        return d
+
+    def test_three_successful_ticks_that_change_nothing_drop_the_label(self) -> None:
+        agent = self._agent()
+        for _ in range(IDLE_REPEATS):
+            agent._track_idle("leave_portal", self._nothing())
+        self.assertEqual(agent._stuck_off.get("leave_portal"), STUCK_COOLDOWN)
+        self.assertEqual([r["reason"] for r in agent.log], ["idle_offer_dropped"])
+
+    def test_one_tick_that_moved_the_bot_is_not_an_idle_tick(self) -> None:
+        # A short walk is progress even under the two blocks `place_bed` counts, so the position
+        # is compared exactly rather than by a threshold.
+        agent = self._agent()
+        for _ in range(IDLE_REPEATS + 2):
+            agent._track_idle("leave_portal", self._some_change(pos_delta=1.0))
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_a_run_of_idle_ticks_broken_by_one_change_starts_over(self) -> None:
+        agent = self._agent()
+        agent._track_idle("leave_portal", self._nothing())
+        agent._track_idle("leave_portal", self._nothing())
+        agent._track_idle("leave_portal", self._some_change(inventory_delta={"beef": 1}))
+        self.assertEqual(agent._idle_reps, {})
+        for _ in range(IDLE_REPEATS):
+            agent._track_idle("leave_portal", self._nothing())
+        self.assertIn("leave_portal", agent._stuck_off)
+
+    def test_each_kind_of_change_clears_the_count(self) -> None:
+        for delta in (self._some_change(armor_delta=["helmet"]),
+                      self._some_change(offhand_delta=["shield"]),
+                      self._some_change(food_delta=4),
+                      self._some_change(pos_delta=2.0),
+                      self._some_change(phase_changed=True),
+                      self._some_change(dimension_changed=True)):
+            agent = self._agent()
+            agent._track_idle("go_home", self._nothing())
+            agent._track_idle("go_home", delta)
+            self.assertEqual(agent._idle_reps, {}, delta)
+
+    def test_the_steps_that_exist_to_pass_time_are_exempt(self) -> None:
+        # A lull really does change nothing. Dropping these would end the run's waiting with
+        # nothing to do instead of waiting - the opposite of what the guard is for.
+        for label in PASS_TIME_LABELS:
+            agent = self._agent()
+            for _ in range(IDLE_REPEATS * 3):
+                agent._track_idle(label, self._nothing())
+            self.assertEqual(agent._stuck_off, {}, label)
+
+    def test_a_label_already_withheld_is_not_counted_again(self) -> None:
+        # Same reasoning as the other two guards: while the offer leaves a label out, its ticks
+        # say nothing about it.
+        agent = self._agent()
+        agent._stuck_off["leave_portal"] = STUCK_COOLDOWN
+        for _ in range(IDLE_REPEATS * 2):
+            agent._track_idle("leave_portal", self._nothing())
+        self.assertEqual(agent._idle_reps, {})
 
 
 class WanderGuardTest(unittest.TestCase):

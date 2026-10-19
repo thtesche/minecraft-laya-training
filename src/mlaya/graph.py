@@ -103,6 +103,12 @@ WANDER_REPEATS = 2
 # every base step, and the run would look for a portal around a site it never chose.
 HOME_ANCHOR_TICKS = 60
 
+# The idle guard: a label that succeeds at nothing, `IDLE_REPEATS` ticks running. See
+# `_track_idle`. `PASS_TIME_LABELS` are the steps whose job is to change nothing - a lull, a night
+# sleep - so exempting them keeps the guard from ending a wait with no work to do instead.
+IDLE_REPEATS = 3
+PASS_TIME_LABELS = ("wait", "sleep")
+
 _CODE_RE = re.compile(r"\[([A-Z][A-Z_]+)\]")
 
 # The two lines the server prints into every settled result's final progress
@@ -286,6 +292,9 @@ class Agent:
         # (see `_walk_home_to_memory`/`_settle_home_anchor` and `HOME_ANCHOR_TICKS`).
         self._home_anchor: tuple[int, int, int] | None = None
         self._home_ticks: int = 0
+        # The idle guard's own count per label (`_track_idle`), separate again: a step that
+        # succeeds at nothing is neither a refusal nor a wander, and must not disturb either run.
+        self._idle_reps: dict[str, int] = {}
         # Death cells whose recovery walk already reached them and found nothing
         # (`[NO_MATCHING_ITEMS]` and the other final codes): `_can_recover` stops offering the
         # walk there, so the bot does not stand at an emptied death site until the window runs
@@ -950,6 +959,49 @@ class Agent:
                          "label": label, "walked": round(float(travelled), 1),
                          "net": round(float(net), 1), "ticks": STUCK_COOLDOWN})
 
+    def _track_idle(self, label: str, delta: dict) -> None:
+        """Withhold a label that keeps succeeding at nothing (`IDLE_REPEATS`/`PASS_TIME_LABELS`).
+
+        `_track_stuck` counts refusals and `_track_wander` counts walking that arrives nowhere.
+        Neither can see a step the server reports as *succeeded* while the world does not change at
+        all, so nothing ever accumulates: live, run54 - the bot standing in the Nether's arrival
+        portal, where the rescue owns the tick outright, and `leave_portal` answered ok 299 times in
+        four minutes without moving a centimetre, because the target cell is one step out and the
+        call succeeds where it stands. 299 iterations, none of them refusals, none of them walking.
+
+        "Nothing changed" is read from the whole tick, not from `progressed`: no item gained or
+        lost, nothing worn or held differently, no food, no movement, no phase and no dimension. A
+        short walk is progress even when it is under the two blocks `place_bed` counts, so the
+        position is compared exactly.
+
+        The steps whose whole purpose is to pass time are exempt, because a lull really does change
+        nothing and dropping them would end the run's waiting with nothing to do instead. Everything
+        else that succeeds and achieves nothing is a step that is not doing its job, and the window
+        is the same countdown as the other two guards so it returns on its own.
+        """
+        if label in PASS_TIME_LABELS:
+            self._idle_reps.pop(label, None)
+            return
+        if label in self._stuck_off:
+            return
+        changed = (any(delta.get("inventory_delta") or {})
+                   or delta.get("armor_delta") or delta.get("offhand_delta")
+                   or (delta.get("food_delta") or 0) != 0
+                   or (delta.get("pos_delta") or 0) != 0
+                   or delta.get("phase_changed")
+                   or delta.get("dimension_changed"))
+        if changed:
+            self._idle_reps.pop(label, None)
+            return
+        self._idle_reps[label] = self._idle_reps.get(label, 0) + 1
+        if self._idle_reps[label] < IDLE_REPEATS:
+            return
+        self._idle_reps[label] = 0
+        self._stuck_off[label] = STUCK_COOLDOWN
+        self.log.append({"stage": "policy", "reason": "idle_offer_dropped",
+                         "label": label, "ticks": IDLE_REPEATS,
+                         "window": STUCK_COOLDOWN})
+
     def _note_surface(self, action, ok: bool, text: str | None,
                       pos: tuple[float, float, float] | None) -> None:
         """Learn the surface cell from a `surface_up` probe or climb.
@@ -1254,6 +1306,7 @@ class Agent:
         # After the stuck guard: it owns the countdown and the offer window, and a wandering
         # action is not a refusal, so the two runs of counts do not disturb each other.
         self._track_wander(action.label, res)
+        self._track_idle(action.label, delta)
         record = {
             "stage": "action",
             "iteration": state.get("iteration", 0),

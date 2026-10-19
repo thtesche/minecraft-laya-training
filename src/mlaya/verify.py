@@ -32,6 +32,10 @@ def diff(before: GameState, after: GameState) -> dict:
         "on_ground": after.on_ground,
         "in_water": after.in_water,
         "phase": after.phase,
+        # Day/night is a change of the world like any other, and `wait`/`sleep` are the steps that
+        # live for it. The idle guard needs it beside the dimension flag: a lull that ends is a
+        # tick where something happened.
+        "phase_changed": before.phase != after.phase,
         "sleeping": after.sleeping,
         # World-block milestones the inventory cannot show: lighting touches no stack, and a
         # placed bed leaves the pack but exists as a block. The portal frame itself is judged
