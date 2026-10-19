@@ -795,7 +795,14 @@ def _leave_portal_target(gs: GameState) -> tuple[float, float, float] | None:
         bx, by, bz = gs.base
         if (bx, by + 1, bz) not in portal and (bx, by + 2, bz) not in portal:
             return (bx + 0.5, by + 1, bz + 0.5)
-    for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0), (0, -2), (0, 2), (-2, 0), (2, 0)):
+    # The neighbours start at *two* cells, not one. `navigate` calls the goal reached when the body
+    # is within `range` of it - one block by default - so a target one cell away is satisfied by
+    # standing exactly where it already stands: the call answers success in five milliseconds
+    # without moving anything. Live, run54 and run55 burned 299 then 345 ticks of `leave_portal`
+    # all reporting ok, the body on the same obsidian inside the gate, the run a step from the
+    # iteration limit. With the target two cells out the identical call walks - measured: the body
+    # went from z 34.5 to z 33.66, clear of the portal blocks, which all sit on z 34.
+    for dx, dz in ((0, -2), (0, 2), (-2, 0), (2, 0), (0, -3), (0, 3), (-3, 0), (3, 0)):
         if (fx + dx, fy, fz + dz) not in portal:
             return (fx + dx + 0.5, fy, fz + dz + 0.5)
     return None

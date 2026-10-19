@@ -3471,9 +3471,22 @@ class LeavePortalDimensionTest(unittest.TestCase):
         target = _leave_portal_target(self._gate((33.43, 55.0, 34.5), self.NETHER))
         self.assertIsNotNone(target)
         # A neighbour of the arrival cell, never the 190-block-away Overworld base.
-        self.assertLess(abs(target[0] - 33.5) + abs(target[2] - 34.5), 4.0)
+        self.assertLess(abs(target[0] - 33.5) + abs(target[2] - 34.5), 8.0)
         a = resolve("leave_portal", self._gate((33.43, 55.0, 34.5), self.NETHER))
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (33, 55, 33))
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (33, 55, 32))
+
+    def test_the_step_out_target_is_out_of_reach_of_standing_still(self) -> None:
+        # The whole bug. `navigate` calls the goal reached inside `range` (one block by default),
+        # so a target one cell out is satisfied by the body not moving at all: 299 then 345 ticks
+        # of `leave_portal` answering ok with the body on the same obsidian inside the gate. The
+        # target has to be further away than the arrival it is escaping.
+        g = self._gate((33.43, 55.0, 34.5), self.NETHER)
+        target = _leave_portal_target(g)
+        start = g.pos
+        self.assertGreater(abs(target[0] - start[0]) + abs(target[2] - start[2]), 1.0)
+        # Measured, and worth pinning: two cells out is what actually walked the body clear of the
+        # gate (z 34.5 -> 33.66, the portal blocks all sitting on z 34).
+        self.assertEqual((int(target[0]), int(target[2])), (33, 32))
 
     def test_the_overworld_gate_still_steps_out_to_the_base(self) -> None:
         g = gs(pos=(226.5, 64.0, 222.5), dimension=self.OVERWORLD, base=(226, 63, 222))
