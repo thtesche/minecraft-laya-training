@@ -3219,6 +3219,67 @@ class NetherExpeditionTest(unittest.TestCase):
         g.mobs = [("blaze", "hostile", 1, 90.0)]
         self.assertNotIn("leave_nether", candidates(g))
 
+    # --- the fortress search is a first-class step down there ---
+    def test_the_fortress_search_is_offered_first_class(self) -> None:
+        # In the Nether, with no blaze in reach and nothing to turn back for, the step the trip
+        # is for is the search for the fortress. It is offered on its own, the way `mine_diamond`
+        # is in the Overworld - not buried in the `explore` fallback (live: `explore` was offered
+        # on 1 of 2499 Nether ticks, because the tech-tree candidates kept the list non-empty).
+        g = self._down(blaze_rod=2)
+        self.assertIn("explore", candidates(g))
+
+    def test_the_fortress_search_is_not_offered_overworld(self) -> None:
+        # The first-class `explore` is a Nether step; the Overworld keeps its own fallback.
+        g = self._home()
+        g.nether_entered = True
+        self.assertNotIn("explore", candidates(g))
+
+    def test_the_tech_tree_is_not_offered_in_the_nether(self) -> None:
+        # A pack full of netherrack reads as an incomplete tech tree (no cobble, no table), so
+        # without the Overworld gate the Nether offered `craft_table`/`mine_stone` every tick and
+        # the search never ran. None of the surface work may be on offer down there.
+        g = self._down(netherrack=64, oak_log=16)
+        for label in ("craft_table", "mine_stone", "craft_pickaxe", "craft_furnace",
+                      "craft_chest", "get_wood", "mine_iron", "mine_coal", "mine_diamond"):
+            self.assertNotIn(label, candidates(g), label)
+
+    def test_the_nether_prep_steps_are_not_offered_down_there(self) -> None:
+        # `_nether_idle` (the prep's scope) is true in the Nether - the kit is done, the frame is
+        # up - so the prep would dig from a base that does not exist down there.
+        g = self._down(string=0, feather=0)
+        g.inventory.pop("bow", None)
+        g.inventory.pop("arrow", None)
+        for label in ("craft_bow", "hunt_string", "craft_arrows", "get_flint", "hunt_feather"):
+            self.assertNotIn(label, candidates(g), label)
+
+    def test_a_pack_full_of_droppable_junk_sheds_before_it_leaves(self) -> None:
+        # "Out of room" is a reason to turn back only when the room is full of something that
+        # cannot be dropped. A pack of netherrack frees itself with `drop_junk`, so the bot sheds
+        # it and keeps searching instead of coming home with nothing (live: 34/36 of netherrack,
+        # `leave_nether` offered every tick).
+        g = self._down(netherrack=256, cooked_mutton=32)
+        g.slots_used = 34
+        self.assertIn("drop_junk", candidates(g))
+        self.assertIn("explore", candidates(g))
+        self.assertNotIn("leave_nether", candidates(g))
+
+    def test_a_pack_full_of_undroppable_loot_still_leaves(self) -> None:
+        # The same full-pack test with something that cannot be dropped (blaze rods over the
+        # hoard cap is still loot, not junk): the trip ends and the bot comes home with it.
+        g = self._down(blaze_rod=9)
+        g.slots_used = 34
+        self.assertIn("leave_nether", candidates(g))
+
+    def test_explore_walks_to_a_visible_spawner(self) -> None:
+        # The search closes in on the bricks once they are in view, the way a dig closes in on
+        # the ore: `explore`'s Nether branch navigates to the nearest fortress landmark.
+        g = self._down(blaze_rod=2)
+        g.resources = {"spawner": [BlockHit("spawner", "spawner", 40, 66, 10, 30.0)]}
+        self.assertIn("explore", candidates(g))
+        a = resolve("explore", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (40, 66, 10))
+
     # --- home again ---
     def test_the_diamond_helmet_goes_back_on(self) -> None:
         g = self._home(blaze_rod=9, diamond_helmet=1)

@@ -2441,99 +2441,100 @@ def candidates(gs: GameState) -> list[str]:
     if _nether_idle(gs) and _overworld(gs) and not _has_bed(inv) and _bed_needs_moving(gs):
         out.append("take_bed")
 
-    # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
-    need_wood = (tier == 0 or not table
-                 or (not bed and (wool >= 3 or string >= 12))
-                 or (_pickaxe_due_for_spare(gs) and not _can_sticks(inv, logs, planks)))
-    if logs == 0 and planks == 0 and need_wood and _overworld(gs):
-        # Overworld only, like `craft_bed` and `place_bed`: the Nether has no trees, so a chop-a-tree
-        # step can never succeed there and burns every tick it is offered. The bed chain is what
-        # asks for wood most often (wool in the pack, no bed yet), which is why it kept winning the
-        # offer over `leave_nether` - live, run42 spent all 600 iterations on `get_wood` in the
-        # Nether and came home with nothing.
-        out.append("get_wood")
-    if (logs >= 1 or planks >= 5) and tier == 0:
-        out.append("craft_pickaxe")
-    if (logs >= 1 or planks >= 4) and not table:
-        out.append("craft_table")
-    if tier >= 1 and tier < STONE_PICK_TIER and table and cobble >= 3 and _can_sticks(inv, logs, planks):
-        out.append("craft_stone_pickaxe")
-    if tier >= 1 and table and not furnace and cobble >= 8:
-        out.append("craft_furnace")
-    if (tier >= 1 and table and gs.smoker_pos is None and _at_base(gs)
-            and _plank_units(inv) >= SMOKER_PLANKS and inv.get("coal", 0) >= 1
-            and _first_cookable(inv) is not None):
-        out.append("craft_smoker")
-    if furnace and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs) and _furnace_room(gs):
-        out.append("smelt_iron")
-    if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
-        out.append("craft_iron_pickaxe")
-    # Bed chain: a bed lets `sleep` skip the night and set the respawn point. Overworld only, with
-    # `sleep` and `place_bed`: a bed cannot be laid in the Nether (`place_bed` is refused there),
-    # so crafting one down there spends wool and a slot on something the trip cannot use (live,
-    # run37: `craft_bed` offered while hunting for blaze rods).
-    if not bed and _overworld(gs):
-        if table and (wool >= 3 or string >= 12) and (logs >= 1 or planks >= 3):
-            out.append("craft_bed")
-        elif wool < 3 and string < 12:
-            if gs.mob_nearest("sheep") is not None:
-                out.append("hunt_wool")
-            elif _safe_spider_hunt(gs):
-                out.append("hunt_string")
-    # Iron is wanted for the pickaxe, again to rebuild one that is nearly worn, and for the
-    # shield. A stone pickaxe is already enough to mine it (wood is not - it breaks the ore),
-    # so this no longer stops at the iron tier; the upper bound was what left a worn iron
-    # pickaxe with no way back. `_iron_goal` is the one place that decides how much.
-    if raw_iron + iron < _iron_goal(gs) and _can_mine(gs, "iron_ore") \
-            and gs.resource_distance("iron_ore") is not None:
-        out.append("mine_iron")
-    if (raw_iron >= 1 or _first_cookable(inv)) and coal < 1 and charcoal < 1 \
-            and _can_mine(gs, "coal_ore") and gs.resource_distance("coal_ore") is not None:
-        # The gate used to be `raw_iron >= 1`, which made coal iron-only fuel and left every cooked
-        # meal burning a log: `_furnace_fuel` smelts eight items per coal and one per log, and live
-        # the run went 4, 9, 17, 25, 32, 36, 44, 52, 55, 62, 69 oak logs with `raw_iron` at 0 and
-        # `coal` at 0 on every single tick - while `coal_ore` sat inside the scan radius on all
-        # thirty of them. Whatever is about to be smelted now counts, not just ore.
-        out.append("mine_coal")
-    # Shield (6 planks + 1 iron ingot, 3x3 so it needs the table): it only blocks while it sits
-    # in the off-hand, so the craft is immediately followed by `equip_shield`. Gated behind the
-    # iron pickaxe so it never spends the first ingots the pickaxe needs.
-    if (not _has_shield(gs) and table and tier >= IRON_PICK_TIER
-            and _plank_units(inv) >= SHIELD_PLANKS and iron >= SHIELD_IRON):
-        out.append("craft_shield")
-    if _has(inv, SHIELD_ITEM) and not _offhand(gs, SHIELD_ITEM):
-        out.append("equip_shield")
-    # The rest of the pre-diamond combat kit: an iron sword and a full iron armour set, so the
-    # dive to the diamonds is not the unarmed, unarmoured trip that got the bot killed (live,
-    # run12). Gated behind the iron pickaxe, like the shield, so it never spends the first
-    # ingots that pickaxe needs; the armour is built one piece at a time, most protection first.
-    if (table and tier >= IRON_PICK_TIER and not _has_iron_sword(gs)
-            and iron >= IRON_SWORD_INGOTS and _can_sticks(inv, logs, planks)):
-        out.append("craft_iron_sword")
-    iron_armor_nxt = _next_iron_armor_item(gs)
-    if (table and tier >= IRON_PICK_TIER and iron_armor_nxt is not None
-            and iron >= iron_armor_nxt[1]):
-        out.append("craft_" + iron_armor_nxt[0])
-    # A crafted armour piece sits in the inventory until it is worn; `equip` slots armour even
-    # without a destination, so one batch puts the whole set on. Wear it before crafting more.
-    if _armor_to_wear(gs):
-        out.append("equip_armor")
-    # Diamond milestones, one at a time: pickaxe (three diamonds), then the sword (two, and only
-    # once the pickaxe exists - bounding that away deadlocked the sword), then the armour set
-    # (24, most protection per diamond first). `_next_diamond_item` names the next piece and its
-    # cost, so the dig count and the craft gate share one source.
-    # The dig itself waits for the combat kit (`_combat_ready`): the diamonds are what the
-    # whole trip is for, and it is the trip that killed the unarmed bot.
-    # `_can_mine` refuses a dig on an almost-broken pickaxe: breaking mid-action has the server
-    # finish the ore with the swapped-in lower tier, destroying it without a drop.
-    nxt = _next_diamond_item(gs)
-    if nxt is not None:
-        item, cost = nxt
-        if diamond < cost:
-            if _mine_diamond_wanted(gs):
-                out.append("mine_diamond")
-        elif _diamond_craft_ready(gs, item):
-            out.append("craft_" + item)
+    if not _in_nether(gs):
+        # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
+        need_wood = (tier == 0 or not table
+                     or (not bed and (wool >= 3 or string >= 12))
+                     or (_pickaxe_due_for_spare(gs) and not _can_sticks(inv, logs, planks)))
+        if logs == 0 and planks == 0 and need_wood and _overworld(gs):
+            # Overworld only, like `craft_bed` and `place_bed`: the Nether has no trees, so a chop-a-tree
+            # step can never succeed there and burns every tick it is offered. The bed chain is what
+            # asks for wood most often (wool in the pack, no bed yet), which is why it kept winning the
+            # offer over `leave_nether` - live, run42 spent all 600 iterations on `get_wood` in the
+            # Nether and came home with nothing.
+            out.append("get_wood")
+        if (logs >= 1 or planks >= 5) and tier == 0:
+            out.append("craft_pickaxe")
+        if (logs >= 1 or planks >= 4) and not table:
+            out.append("craft_table")
+        if tier >= 1 and tier < STONE_PICK_TIER and table and cobble >= 3 and _can_sticks(inv, logs, planks):
+            out.append("craft_stone_pickaxe")
+        if tier >= 1 and table and not furnace and cobble >= 8:
+            out.append("craft_furnace")
+        if (tier >= 1 and table and gs.smoker_pos is None and _at_base(gs)
+                and _plank_units(inv) >= SMOKER_PLANKS and inv.get("coal", 0) >= 1
+                and _first_cookable(inv) is not None):
+            out.append("craft_smoker")
+        if furnace and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs) and _furnace_room(gs):
+            out.append("smelt_iron")
+        if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
+            out.append("craft_iron_pickaxe")
+        # Bed chain: a bed lets `sleep` skip the night and set the respawn point. Overworld only, with
+        # `sleep` and `place_bed`: a bed cannot be laid in the Nether (`place_bed` is refused there),
+        # so crafting one down there spends wool and a slot on something the trip cannot use (live,
+        # run37: `craft_bed` offered while hunting for blaze rods).
+        if not bed and _overworld(gs):
+            if table and (wool >= 3 or string >= 12) and (logs >= 1 or planks >= 3):
+                out.append("craft_bed")
+            elif wool < 3 and string < 12:
+                if gs.mob_nearest("sheep") is not None:
+                    out.append("hunt_wool")
+                elif _safe_spider_hunt(gs):
+                    out.append("hunt_string")
+        # Iron is wanted for the pickaxe, again to rebuild one that is nearly worn, and for the
+        # shield. A stone pickaxe is already enough to mine it (wood is not - it breaks the ore),
+        # so this no longer stops at the iron tier; the upper bound was what left a worn iron
+        # pickaxe with no way back. `_iron_goal` is the one place that decides how much.
+        if raw_iron + iron < _iron_goal(gs) and _can_mine(gs, "iron_ore") \
+                and gs.resource_distance("iron_ore") is not None:
+            out.append("mine_iron")
+        if (raw_iron >= 1 or _first_cookable(inv)) and coal < 1 and charcoal < 1 \
+                and _can_mine(gs, "coal_ore") and gs.resource_distance("coal_ore") is not None:
+            # The gate used to be `raw_iron >= 1`, which made coal iron-only fuel and left every cooked
+            # meal burning a log: `_furnace_fuel` smelts eight items per coal and one per log, and live
+            # the run went 4, 9, 17, 25, 32, 36, 44, 52, 55, 62, 69 oak logs with `raw_iron` at 0 and
+            # `coal` at 0 on every single tick - while `coal_ore` sat inside the scan radius on all
+            # thirty of them. Whatever is about to be smelted now counts, not just ore.
+            out.append("mine_coal")
+        # Shield (6 planks + 1 iron ingot, 3x3 so it needs the table): it only blocks while it sits
+        # in the off-hand, so the craft is immediately followed by `equip_shield`. Gated behind the
+        # iron pickaxe so it never spends the first ingots the pickaxe needs.
+        if (not _has_shield(gs) and table and tier >= IRON_PICK_TIER
+                and _plank_units(inv) >= SHIELD_PLANKS and iron >= SHIELD_IRON):
+            out.append("craft_shield")
+        if _has(inv, SHIELD_ITEM) and not _offhand(gs, SHIELD_ITEM):
+            out.append("equip_shield")
+        # The rest of the pre-diamond combat kit: an iron sword and a full iron armour set, so the
+        # dive to the diamonds is not the unarmed, unarmoured trip that got the bot killed (live,
+        # run12). Gated behind the iron pickaxe, like the shield, so it never spends the first
+        # ingots that pickaxe needs; the armour is built one piece at a time, most protection first.
+        if (table and tier >= IRON_PICK_TIER and not _has_iron_sword(gs)
+                and iron >= IRON_SWORD_INGOTS and _can_sticks(inv, logs, planks)):
+            out.append("craft_iron_sword")
+        iron_armor_nxt = _next_iron_armor_item(gs)
+        if (table and tier >= IRON_PICK_TIER and iron_armor_nxt is not None
+                and iron >= iron_armor_nxt[1]):
+            out.append("craft_" + iron_armor_nxt[0])
+        # A crafted armour piece sits in the inventory until it is worn; `equip` slots armour even
+        # without a destination, so one batch puts the whole set on. Wear it before crafting more.
+        if _armor_to_wear(gs):
+            out.append("equip_armor")
+        # Diamond milestones, one at a time: pickaxe (three diamonds), then the sword (two, and only
+        # once the pickaxe exists - bounding that away deadlocked the sword), then the armour set
+        # (24, most protection per diamond first). `_next_diamond_item` names the next piece and its
+        # cost, so the dig count and the craft gate share one source.
+        # The dig itself waits for the combat kit (`_combat_ready`): the diamonds are what the
+        # whole trip is for, and it is the trip that killed the unarmed bot.
+        # `_can_mine` refuses a dig on an almost-broken pickaxe: breaking mid-action has the server
+        # finish the ore with the swapped-in lower tier, destroying it without a drop.
+        nxt = _next_diamond_item(gs)
+        if nxt is not None:
+            item, cost = nxt
+            if diamond < cost:
+                if _mine_diamond_wanted(gs):
+                    out.append("mine_diamond")
+            elif _diamond_craft_ready(gs, item):
+                out.append("craft_" + item)
 
     # --- Home base ---
     # One surface anchor owns the bed, the portal frame and the chest. It is established once
@@ -2659,6 +2660,12 @@ def candidates(gs: GameState) -> list[str]:
             # trip is fought around them.
             if _gold_helmet_needed(gs):
                 out.append("swap_to_gold_helmet")
+            # A pack full of droppable junk (netherrack) reads as "out of room" and would send the
+            # bot home with nothing. The junk frees itself with `drop_junk`; the room does not. So
+            # while the pack is full of something that can be dropped, the bot sheds it and keeps
+            # searching instead of turning back (live: the pack sat at 34/36 of netherrack and
+            # `_nether_must_return` fired on the slots, `leave_nether` offered every tick).
+            junk_full = (gs.slots_used >= INVENTORY_NEAR_FULL and _droppable(gs, inv))
             rods = _blaze_rods(inv)
             if rods >= BLAZE_RODS:
                 # The haul is complete; every extra blaze down there is another fireball between
@@ -2666,10 +2673,25 @@ def candidates(gs: GameState) -> list[str]:
                 out.append("leave_nether")
             elif _safe_blaze_hunt(gs):
                 out.append("hunt_blaze")
-            elif _nether_must_return(gs) or _nether_hopeless(gs):
+            elif (_nether_must_return(gs) and not junk_full) or _nether_hopeless(gs):
                 # Out of health, out of room, or out of chances: come home with what was got
                 # rather than die down there. The rods in the pack are already worth the trip.
+                # "Out of room" is suppressed while the room is full of droppable junk: that is
+                # `drop_junk`'s job, not a reason to abandon the trip.
                 out.append("leave_nether")
+            else:
+                # No blaze in reach, no reason to turn back: the fortress search. It is offered
+                # first-class here, the way `mine_diamond` is in the Overworld - not buried in
+                # the `explore` fallback, which a pack full of netherrack (the tech tree reading
+                # as incomplete) kept from ever firing, so the bot never marched to the bricks
+                # it could see (live: `found: 0` for every fortress block, `explore` offered on
+                # 1 of 2499 Nether ticks). `explore`'s Nether branch walks to the spawner/bricks
+                # when they are in view and marches the frontier toward them when they are not.
+                if junk_full:
+                    # Shed the netherrack first, so the next tick's slots are free and the march
+                    # does not start from a full pack. Offered ahead of `explore` on purpose.
+                    out.append("drop_junk")
+                out.append("explore")
         else:
             # Overworld side: the gate is the way in, and it opens once the expedition is stocked.
             if _spare_pickaxe_missing(gs):
@@ -2728,7 +2750,10 @@ def candidates(gs: GameState) -> list[str]:
         # dropping it on the ground over a cap is a different decision.
         out.append("stow_surplus")
 
-    if cobble < 12 and _can_mine(gs, "stone"):
+    # Overworld only: the cobble a tech tree spends belongs to the surface, and a pack full of
+    # netherrack reads as short of it, so without this the Nether offered `mine_stone` on every
+    # tick and the `explore` fallback (the only thing that marched toward a fortress) never fired.
+    if cobble < 12 and _can_mine(gs, "stone") and _overworld(gs):
         out.append("mine_stone")
 
     # --- Nether prep (the daytime lull once the gate frame stands) ---
@@ -2736,7 +2761,10 @@ def candidates(gs: GameState) -> list[str]:
     # gate frame stands (still unlit: the gate only lights when all of this is done). `_nether_prep_steps`
     # is the single source for both this list and the
     # completion gate, so the offered steps and `tech_tree_complete` never disagree.
-    out.extend(_nether_prep_steps(gs))
+    # Offered Overworld only: `_nether_idle` (its scope) is true down there too, and a prep step
+    # that digs from the base has no base in the Nether to dig from.
+    if _overworld(gs):
+        out.extend(_nether_prep_steps(gs))
 
     # The same label can arrive twice (the light `mine_stone` above and the deep lull stack in
     # `_nether_prep_steps`); keep the first occurrence so the priority order is stable.

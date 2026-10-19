@@ -75,7 +75,7 @@ FORTRESS_RADIUS = 256.0
 FRONTIER_HEADING_SQL = ("SELECT heading_degrees FROM frontier_navigation "
                         "WHERE is_frontier = 1 ORDER BY distance_blocks ASC LIMIT 1")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
-NAMED_RESOURCES = RESOURCE_NAMES + ("lava",)
+NAMED_RESOURCES = RESOURCE_NAMES + ("lava", "spawner", "nether_bricks", "nether_brick_fence", "nether_brick_stairs")
 RESOURCE_RADIUS = 64.0
 # How far the water rescue looks for dry land. The shore it needs to swim to is the one
 # reach the *last* live stranding missed: the nearest dry ground sat 65.1 m off, a whisker
