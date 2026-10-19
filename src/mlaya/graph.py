@@ -239,6 +239,7 @@ class Agent:
         self.chest_pos: tuple[int, int, int] | None = None
         self.banked: dict[str, int] = {}
         self._stock_read: tuple[float, float, float] | None = None
+        self._stock_warned = False
         # The furnace stood at the base (`place_furnace`), remembered so `cook_food`/`smelt_gold`
         # reuse its cell instead of placing a temporary workstation each call. Re-adopted from a
         # scan after a restart, like the chest.
@@ -539,11 +540,19 @@ class Agent:
             if dx < 16.0:
                 return
         try:
-            stock = await perception.parse_remembered_stock(
-                await self.mcp.read("query_bot_data",
-                                    {"query": perception.REMEMBERED_STOCK_SQL},
-                                    "read what the chest at the base last held"))
-        except Exception:
+            res = await self.mcp.read("query_bot_data",
+                                    {"sql": perception.REMEMBERED_STOCK_SQL},
+                                    "read what the chest at the base last held")
+            stock = perception.parse_remembered_stock(perception.coerce(res.data, res.text))
+        except Exception as exc:
+            # Loudly, once, and only while it has never worked. Swallowed, a wrong argument name
+            # and a genuinely empty chest look identical - both leave `banked` empty - and the read
+            # would then quietly fail to prevent the hunt it exists to prevent. Logged rather than
+            # raised: a chest that cannot be read is not a reason to stop the run.
+            if not self._stock_warned:
+                self._stock_warned = True
+                self.log.append({"stage": "policy", "reason": "chest_stock_unreadable",
+                                 "error": str(exc)[:160]})
             return
         self._stock_read = gs.pos
         if stock is None:
