@@ -3371,6 +3371,98 @@ class DiamondsForTheSparePickaxeTest(unittest.TestCase):
                                  resolve("mine_diamond", g) is not None)
 
 
+class GoHomeIsAnOverworldOnlyStepTest(unittest.TestCase):
+    """`go_home` names the base's coordinates, and `base` is one field for both worlds.
+
+    Live, run70: the bot crossed into the Nether and `go_home` offered itself 24 times, navigating
+    to the *Overworld* base cell - `(226,63,222)` read as a Nether coordinate, 778 m from where the
+    body actually stood. The pathfinder found *a* path to *some* Nether cell with those numbers
+    and reported success, so the run counted it as progress and marched further out.
+
+    Then the loop: `go_home` succeeds and moves the body, `leave_nether` fails with
+    `[NAVIGATION_STOPPED]`, and the pair alternates - `go_home` ok, `leave_nether` refused, from
+    tick 30 to 47 without a fortress in sight and without a blaze rod in the pack.
+
+    `_leave_portal_target` already carries this guard for exactly this reason and writes down why
+    it was added after run53. `go_home` is the same mistake in the neighbouring label: the
+    diagnosis existed, in the same file, and was not applied.
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _live_nether_tick(self) -> GameState:
+        """The exact state run70 offered `go_home` from: Overworld base (226,63,222) still held,
+        a base step genuinely owed, no bed in the Nether's sight, and the body at (207,207) - a
+        Nether cell the Overworld's coordinates happen to name."""
+        g = at_home(geared(golden_helmet=0, diamond_pickaxe=2, flint_and_steel=1,
+                           cobblestone=64, white_bed=1, cooked_mutton=24), base=(226, 63, 222))
+        g.dimension = "minecraft:the_nether"
+        g.nether_entered = True
+        g.nether_arrival = (33, 55, 34)
+        g.pos = (207.5, 49.0, 207.5)
+        # run70 had re-adopted this base from the lit gate, which is the first clause of
+        # `_base_steps_ready` - so a base step really was owed, and that is precisely why the walk
+        # was offered.
+        g.base_adopted = True
+        return g
+
+    def test_no_offer_from_the_nether(self) -> None:
+        from mlaya.actions import _go_home_wanted, _base_steps_ready
+        g = self._live_nether_tick()
+        # The premise, so the test cannot pass for the wrong reason: a base step really is owed,
+        # which is exactly why the walk was offered - and why it was wrong.
+        self.assertTrue(_base_steps_ready(g))
+        self.assertFalse(_go_home_wanted(g))
+        self.assertNotIn("go_home", candidates(g))
+
+    def test_and_no_resolve_even_if_something_forced_the_label(self) -> None:
+        self.assertIsNone(resolve("go_home", self._live_nether_tick()))
+
+    def test_the_nether_way_home_is_the_portal_not_a_walk(self) -> None:
+        # What replaces it: `leave_nether` crosses through the arrival cell.
+        g = at_home(geared(white_bed=1))
+        g.dimension = "minecraft:the_nether"
+        g.nether_entered = True
+        g.nether_arrival = (33, 55, 34)
+        g.pos = (33.5, 55.0, 34.5)
+        self.assertNotIn("go_home", candidates(g))
+
+    def test_the_overworld_still_walks_home(self) -> None:
+        # Night, thirty metres out, bed at the base: the live reason. Nothing is owed at the base
+        # and no crossing is ready - thirty metres from home for no work is the case the run70
+        # fix has to keep working, and the only thing that makes it wanted is the bed.
+        from mlaya.actions import _go_home_wanted
+        bx, by, bz = self.BASE
+        g = at_home(geared(white_bed=1))
+        g.dimension = "minecraft:overworld"
+        g.phase = "night"
+        g.resources = {"white_bed": [BlockHit("white_bed", 3.0, bx - 3, by + 1, bz + 2, 3.0)]}
+        g.pos = (bx + 30.5, by + 1.0, bz)
+        self.assertTrue(_go_home_wanted(g))
+        a = resolve("go_home", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["z"]), (self.BASE[0], self.BASE[2]))
+
+    def test_the_two_gates_agree_across_the_dimension(self) -> None:
+        # Daytime and thirty metres out with no chest at the base: a base step is genuinely owed,
+        # so the walk is the right answer and both gates must say so - in the Overworld, and must
+        # both refuse it in the Nether, where those coordinates name somewhere else entirely.
+        for dim in ("minecraft:overworld", "minecraft:the_nether"):
+            with self.subTest(dimension=dim):
+                if dim == "minecraft:the_nether":
+                    g = self._live_nether_tick()
+                else:
+                    # The same owed base step, in the dimension where the coordinates mean it.
+                    g = at_home(geared(golden_helmet=0, diamond_pickaxe=2, flint_and_steel=1,
+                                       cobblestone=64, white_bed=1, cooked_mutton=24))
+                    g.dimension = "minecraft:overworld"
+                    g.phase = "day"
+                    g.base_adopted = True
+                    g.pos = (226.5 + 30.0, 64.0, 222.0)
+                self.assertEqual("go_home" in candidates(g),
+                                 resolve("go_home", g) is not None)
+
+
 class TheOfferAndTheResolveMustAgreeTest(unittest.TestCase):
     """Four labels have now been offered and refused on the same tick. This is the shape.
 

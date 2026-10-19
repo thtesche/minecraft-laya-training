@@ -1557,6 +1557,14 @@ def _go_home_wanted(gs: GameState) -> bool:
       the Nether gate is lit and stocked, and the bot's next job only it can do standing there
       it is night and the bed is at the base
     """
+    # Never in the Nether. `base` is one field for both worlds, so its coordinates name a
+    # different place down there - 778 m from where the bot actually stood, live, run70. The
+    # Nether's way home is `leave_nether`, which crosses through the arrival portal; `navigate`
+    # to an Overworld cell is not that, and the pathfinder "succeeds" at it because a path to
+    # *some* Nether cell with those numbers exists. The same guard `_leave_portal_target` carries
+    # for the same reason, written down there after run53.
+    if _in_nether(gs):
+        return False
     return (_base_steps_ready(gs) or _nether_departure_ready(gs)
             or (gs.phase == "night" and _bed_at_base(gs)))
 
@@ -3375,7 +3383,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": tx, "y": ty + 1, "z": tz, "dig": True, "scaffold": True},
                       f"walk up to the surface at {tx},{ty + 1},{tz} and set the base")
     if label == "go_home":
-        if gs.base is None or _at_base(gs) or not _go_home_wanted(gs):
+        if (gs.base is None or _at_base(gs) or _in_nether(gs)
+                or not _go_home_wanted(gs)):
             return None
         bx, by, bz = gs.base
         return Action(label, "navigate",
