@@ -678,6 +678,14 @@ class GameState:
             "resources": {n: [h.as_dict() for h in hits[:2]] for n, hits in self.resources.items() if hits},
             "resource_found": self.resource_found,
             "banked": self.banked,
+            # The Nether crossing and the cell it arrived on. Loop-owned, and a field that is
+            # not logged cannot be diagnosed after the fact - which is the whole of run60's
+            # "leave_nether is offered and refused" reading: `nether_arrival` is what
+            # `resolve` asks for when no portal block is in the scan, so a rebuilt tick could
+            # never answer it and looked like a broken gate rather than a missing field.
+            "nether_entered": self.nether_entered,
+            "nether_arrival": self.nether_arrival,
+            "nether_ticks": self.nether_ticks,
             "mobs": self.mobs,
         }
 
@@ -701,7 +709,8 @@ class GameState:
                       "dimension", "slots_used", "tools", "tool_meta", "armor", "offhand",
                       "hostiles", "players", "death_pos", "drops", "base", "chest_pos",
                       "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
-                      "sleeping", "resource_found", "mobs", "banked"):
+                      "sleeping", "resource_found", "mobs", "banked",
+                      "nether_entered", "nether_arrival", "nether_ticks"):
             value = data.get(field)
             if value is not None:
                 setattr(gs, field, value)

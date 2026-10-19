@@ -3371,6 +3371,88 @@ class DiamondsForTheSparePickaxeTest(unittest.TestCase):
                                  resolve("mine_diamond", g) is not None)
 
 
+class TheOfferAndTheResolveMustAgreeTest(unittest.TestCase):
+    """Four labels have now been offered and refused on the same tick. This is the shape.
+
+    An offered label that `resolve` cannot answer looks exactly like a dead end, and costs a model
+    call per tick while it lasts. Four instances, all found by measuring which labels were offered
+    and could not be built:
+
+      craft_pickaxe_spare  six escalations, 08:38-08:49, stopped when that fix went in
+      go_home              the crossing reason existed in `candidates` and not in `resolve`
+      mine_diamond         62 escalations, 08:51-12:38, the same disease one line above
+      hunt_string, drop_junk   offered through the wider guard, resolved through the stricter one
+
+    `drop_junk` was mine, from today: the whitelist went into `_sheddable`, which gates the offer,
+    but the resolve still named only `JUNK_ITEMS`. The whitelist may only ever feed the chest,
+    because a drop is not undoable - so the drop gate has to name what the drop will name.
+    """
+
+    BASE = (-197, -47, -98)
+
+    def test_a_string_hunt_offered_through_the_wide_guard_resolves(self) -> None:
+        # A spider at 14 m with a friend: refused by the strict bed-chain guard, allowed by the
+        # bow's own rule. The offer used the wide one and the resolve the strict one, so eight
+        # ticks went to System 2 for a hunt that was fine.
+        from mlaya.actions import _safe_spider_hunt, _safe_string_hunt
+        g = at_home(geared(string=2, stick=4))
+        g.health = 20.0
+        g.mobs = [("spider", "hostile", 14.0, 14.0), ("zombie", "hostile", 15.0, 15.0)]
+        self.assertTrue(_safe_string_hunt(g))
+        self.assertFalse(_safe_spider_hunt(g))
+        self.assertIsNotNone(resolve("hunt_string", g))
+
+    def test_a_hurt_bot_is_still_refused(self) -> None:
+        # The wide guard does not mean no guard: below 16 health a spider is not worth it.
+        g = at_home(geared(string=2, stick=4))
+        g.health = 12.0
+        g.mobs = [("spider", "hostile", 6.0, 6.0)]
+        self.assertNotIn("hunt_string", candidates(g))
+
+    def test_the_whitelist_never_reaches_the_ground(self) -> None:
+        from mlaya.actions import _droppable, _surplus_besides_keep
+        # A full pack, no chest in reach, and the only thing spare is an unnamed item.
+        # Only an unnamed item is spare. `tuff` would not do: it is on `JUNK_ITEMS`, so it is
+        # legitimately droppable and the test would prove nothing.
+        g = at_home(geared(oak_sapling=3))
+        g.chest_pos = None
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertTrue(_surplus_besides_keep(g, g.inventory))
+        self.assertFalse(_droppable(g, g.inventory))
+        self.assertNotIn("drop_junk", candidates(g))
+
+    def test_named_junk_still_reaches_the_ground_without_a_chest(self) -> None:
+        g = at_home(geared(tuff=64))
+        g.chest_pos = None
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertIn("drop_junk", candidates(g))
+        a = resolve("drop_junk", g)
+        self.assertEqual(a.tool, "drop_item")
+        self.assertIn("tuff", [i["item_name"] for i in a.args["items"]])
+
+    def test_the_same_whitelist_item_goes_to_the_chest_when_there_is_one(self) -> None:
+        # The whole point of the split: same item, same moment, different fate - recoverable or
+        # not. With a chest standing there the item is banked, and nothing is dropped.
+        g = at_home(geared(tuff=64, oak_sapling=3))
+        g.chest_pos = (self.BASE[0] + 2, self.BASE[1], self.BASE[2] + 2)
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertIn("stow_surplus", candidates(g))
+        self.assertNotIn("drop_junk", candidates(g))
+        a = resolve("stow_surplus", g)
+        self.assertIn("oak_sapling", [i["item_name"] for i in a.args["items"]])
+
+    def test_the_nether_arrival_is_in_the_logged_state(self) -> None:
+        # Not a label but the same lesson: `leave_nether` asks `resolve` for the cell it arrived
+        # on when no portal block is in scan, and that cell was not written to the log - so a
+        # rebuilt tick could never answer it and read as a broken gate rather than a missing field.
+        from mlaya.perception import GameState
+        gs = GameState(nether_entered=True, nether_arrival=(33, 55, 34), nether_ticks=4)
+        rebuilt = GameState.from_state(gs.as_state())
+        self.assertEqual(rebuilt.nether_arrival, (33, 55, 34))
+        self.assertTrue(rebuilt.nether_entered)
+        self.assertEqual(rebuilt.nether_ticks, 4)
+
+
 class BurningGateUnstockedPrepTest(unittest.TestCase):
     """A gate that is already burning must not hold the prep hostage, and must not let the bot in.
 

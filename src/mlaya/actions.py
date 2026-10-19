@@ -1604,6 +1604,18 @@ def _spare_gear(gs: GameState, inv: dict[str, int]) -> list[str]:
     return out
 
 
+def _droppable(gs: GameState, inv: dict[str, int]) -> bool:
+    """What may go on the ground: named junk, spare gear, a crossed cap. Never the whitelist.
+
+    The one-way rule of `KEEP_MATERIALS` - it feeds `stow_surplus` and nothing else - is not a
+    preference, it is what makes the whitelist safe. A wrongly shed item lands in a chest three
+    steps away and costs one `withdraw`; the same item dropped is gone for good. So the gate that
+    offers `drop_junk` has to name exactly the items its resolve will name, and the whitelist is
+    not among them.
+    """
+    return bool(_junk_carried(inv) or _spare_gear(gs, inv) or _hoard_surplus(inv))
+
+
 def _sheddable(gs: GameState, inv: dict[str, int]) -> bool:
     return bool(_junk_carried(inv) or _hoard_surplus(inv) or _spare_gear(gs, inv)
                 or _surplus_besides_keep(gs, inv))
@@ -2665,11 +2677,15 @@ def candidates(gs: GameState) -> list[str]:
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
             out.append("craft_chest")
     at_chest = gs.base is not None and _chest_ready(gs) and _at_base(gs)
-    if gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(gs, inv):
+    if gs.slots_used >= INVENTORY_NEAR_FULL:
         if at_chest:
-            out.append("stow_surplus")
-        else:
+            if _sheddable(gs, inv):
+                out.append("stow_surplus")
+        elif _droppable(gs, inv):
             # No chest to hold it: shed the surplus on the ground rather than stall the gather.
+            # `_droppable`, not `_sheddable` - the whitelist may only ever feed the chest, because
+            # a drop is not undoable. Asking `_sheddable` here offered `drop_junk` for items the
+            # resolve then refused to name, which is an escalation per tick.
             out.append("drop_junk")
     elif at_chest and (_junk_carried(inv) or _hoard_surplus(inv)
                         or _surplus_besides_keep(gs, inv)):
@@ -3090,7 +3106,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "collect white wool from a sheep for a bed")
     if label == "hunt_string":
         goal = _string_goal(gs)
-        if goal <= 0 or inv.get("string", 0) >= goal or not _safe_spider_hunt(gs):
+        # The widest guard that offers this label, not the strictest. `_safe_string_hunt` is the
+        # bow's own rule (one spider, wider reach, a little company) and the bed chain offers
+        # through it too; `resolve` used to require the stricter `_safe_spider_hunt` instead, so
+        # every offer the bow chain made was refused on the same tick and escalated.
+        if goal <= 0 or inv.get("string", 0) >= goal or not _safe_string_hunt(gs):
             return None
         return Action(label, "collect_mob_drop",
                       {"mob_name": "spider", "drop_name": "string",
