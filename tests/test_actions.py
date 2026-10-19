@@ -3155,11 +3155,28 @@ class NetherExpeditionTest(unittest.TestCase):
 
     def test_with_no_portal_in_the_scan_the_bot_walks_back_to_its_arrival(self) -> None:
         # The exit portal only reaches the state while it is loaded. The cell the bot arrived on
-        # is where it stands, so that is the heading home.
+        # is where the way home is, so a bot still out in the Nether walks there first.
         g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] + 40.5, float(self.EXIT[1]), self.EXIT[2] + 40.5)
         a = resolve("leave_nether", g)
         self.assertEqual(a.tool, "navigate")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+
+    def test_standing_on_the_arrival_cell_crosses_instead_of_walking(self) -> None:
+        # `navigate` into an active portal is refused outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED]
+        # Use enter_nether_portal to enter this active portal` - and the scan does not always list
+        # the block the body is standing in. Live, run70: no `nether_portal` hit at all at
+        # (226,49,222) and ten identical refusals, so the bot stood in its own gateway for the rest
+        # of the run. Arrival first, then the crossing, is the server's own two-step.
+        g = self._down(blaze_rod=9)
+        self.assertEqual(resolve("leave_nether", g).tool, "enter_nether_portal")
+        # And the boundary is the arrival cell itself: `navigate` is only refused by the portal,
+        # so two cells out it is still a walk - and the walk's own `range` is 2, which is why the
+        # crossing starts where the walk stops.
+        g.pos = (self.EXIT[0] + 2.5, float(self.EXIT[1]), self.EXIT[2])
+        self.assertEqual(resolve("leave_nether", g).tool, "navigate")
+        g.pos = (self.EXIT[0] + 1.5, float(self.EXIT[1]), self.EXIT[2])
+        self.assertEqual(resolve("leave_nether", g).tool, "enter_nether_portal")
 
     def test_a_badly_hurt_bot_goes_home_rods_or_not(self) -> None:
         # Dying down there drops the kit and the haul both; the rods in the pack are already

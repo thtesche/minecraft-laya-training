@@ -3204,6 +3204,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if gs.nether_arrival is None:
             return None
         ax, ay, az = gs.nether_arrival
+        # Already standing on it: cross, do not walk. `navigate` into an active portal is refused
+        # outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED] Use enter_nether_portal to enter this
+        # active portal` - and the scan does not always list the block the body is standing in
+        # (live, run70: no `nether_portal` hit at all at (226,49,222), and ten identical
+        # refusals, so the bot stood in its own gateway for the rest of the run). Arrival first,
+        # then the crossing, is the server's own two-step.
+        if gs.pos is not None and math.dist((gs.pos[0], gs.pos[2]), (ax, az)) <= 2.0:
+            return Action(label, "enter_nether_portal", {"x": ax, "y": ay, "z": az},
+                          "cross back through the Nether exit portal with the rods")
         return Action(label, "navigate",
                       {"x": ax, "y": ay, "z": az, "range": 2, "dig": True, "scaffold": True},
                       "walk back to where the Nether trip started, where the exit portal stands")
