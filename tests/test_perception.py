@@ -9,7 +9,7 @@ from mlaya.perception import (FORTRESS_RADIUS, GROUND_NAMES, RESCUE_GROUND_NAMES
                               parse_frontier_heading,
                               parse_portal_corner, parse_refused_cells, parse_resource_counts,
                               parse_resources, parse_status, parse_surface_height,
-                              portal_interior, build)
+                              portal_interior, build, GameState)
 
 
 def _status(situation: dict) -> dict:
@@ -151,6 +151,69 @@ class NetherSearchReadsTest(unittest.IsolatedAsyncioTestCase):
         gs = await build(mcp)
         self.assertNotIn("query_bot_data", mcp.calls)
         self.assertIsNone(gs.frontier_heading)
+
+
+class LoggedStateRoundTripTest(unittest.TestCase):
+    """A recorded tick can be questioned directly, which is what was missing.
+
+    run53 carried a furnace for 341 of 377 records and `place_furnace` never ran. The decision log
+    could not say why: it held no `furnace_pos`, no `furnace_blocked` and no occupied flag, so the
+    state had to be reconstructed by hand to ask a predicate about it - three attempts here, three
+    different missing fields. The furnace facts are logged now, and `from_state` is the inverse, so
+    the question gets asked on the tick that was recorded instead of on a guess at it.
+    """
+
+    def _state(self) -> GameState:
+        g = GameState()
+        g.inventory = {"furnace": 1, "coal": 4, "diamond_pickaxe": 2}
+        g.tools = {"pickaxe": "diamond", "sword": "diamond"}
+        g.pos = (225.5, 64.0, 223.5)
+        g.dimension = "minecraft:overworld"
+        g.phase = "day"
+        g.base = (226, 63, 222)
+        g.chest_pos = (229, 62, 224)
+        g.furnace_pos = (229, 62, 222)
+        g.furnace_occupied = True
+        g.furnace_contents = {"cooked_beef": 1}
+        g.furnace_blocked = False
+        g.base_adopted = False
+        g.resources = {"furnace": [BlockHit("furnace", "furnace", 229, 62, 222, 4.5)],
+                        "white_bed": [BlockHit("white_bed", "white_bed", 226, 64, 223, 2.5)],
+                        "obsidian": [BlockHit("obsidian", "obsidian", 228, 64, 222, 2.0)]}
+        return g
+
+    def test_the_furnace_facts_are_in_the_logged_state(self) -> None:
+        logged = self._state().as_state()
+        self.assertEqual(logged["furnace_pos"], (229, 62, 222))
+        self.assertTrue(logged["furnace_occupied"])
+        self.assertEqual(logged["furnace_contents"], {"cooked_beef": 1})
+        self.assertFalse(logged["furnace_blocked"])
+
+    def test_a_logged_state_rebuilds_into_the_one_that_was_recorded(self) -> None:
+        original = self._state()
+        rebuilt = GameState.from_state(original.as_state())
+        for field in ("inventory", "tools", "pos", "dimension", "phase", "base", "chest_pos",
+                      "furnace_pos", "furnace_occupied", "furnace_contents",
+                      "furnace_blocked", "base_adopted"):
+            self.assertEqual(getattr(rebuilt, field), getattr(original, field), field)
+
+    def test_the_rebuilt_state_answers_the_questions_the_run_asked(self) -> None:
+        # The predicates that decided the furnace's fate, asked on the recorded tick.
+        from mlaya.actions import _furnace_needs_draining, _furnace_ready, _furnace_site
+        g = GameState.from_state(self._state().as_state())
+        self.assertTrue(_furnace_ready(g))
+        self.assertTrue(_furnace_needs_draining(g))
+        self.assertEqual(_furnace_site(g), (226, 64, 221))
+        # Resources come back as hits, so a spatial predicate reads the same as it does live.
+        self.assertEqual([h.pos for h in g.resources["furnace"]], [(229, 62, 222)])
+
+    def test_an_older_or_hand_written_state_still_yields_a_usable_one(self) -> None:
+        g = GameState.from_state({"inventory": {"furnace": 1}, "base": (0, 63, 0)})
+        self.assertEqual(g.inventory, {"furnace": 1})
+        self.assertIsNone(g.furnace_pos)
+        self.assertFalse(g.furnace_occupied)
+        self.assertEqual(g.resources, {})
+        self.assertIsNone(g.pos)
 
 
 class FurnaceContentsParseTest(unittest.TestCase):

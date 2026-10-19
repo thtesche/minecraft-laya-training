@@ -551,7 +551,20 @@ class GameState:
         return min(ds) if ds else None
 
     def as_state(self) -> dict:
-        """Structured view for logging and System-2 prompts (never sent raw to Laya)."""
+        """Structured view for logging and System-2 prompts (never sent raw to Laya).
+
+        The furnace's own facts are in here because they are loop-owned facts of the same kind as
+        `base` and `chest_pos`, and their absence made a live question unanswerable: run53 carried a
+        furnace for 341 of 377 records and `place_furnace` never ran, and the decision log could not
+        say why, because it held no `furnace_pos`, no `furnace_blocked` and no `occupied` flag. A
+        field that is not logged cannot be diagnosed after the fact, and the state cannot be
+        rebuilt from the log to ask a predicate about it either - `from_state` is that inverse, so
+        the question is asked on the recorded tick instead of on a reconstruction of it.
+
+        Note the one name that is not the attribute's: the position is logged as `"position"` while
+        the field is `pos`, which is exactly the sort of gap that made three attempts to rebuild a
+        tick fail. `from_state` reads the log's vocabulary, so callers never hand-map it.
+        """
         return {
             "health": self.health,
             "food": self.food,
@@ -575,6 +588,10 @@ class GameState:
             "base": self.base,
             "chest_pos": self.chest_pos,
             "base_adopted": self.base_adopted,
+            "furnace_pos": self.furnace_pos,
+            "furnace_occupied": self.furnace_occupied,
+            "furnace_contents": dict(self.furnace_contents),
+            "furnace_blocked": self.furnace_blocked,
             "events": self.events,
             "unread": self.unread,
             "notifications": self.notifications,
@@ -584,8 +601,50 @@ class GameState:
             "mobs": self.mobs,
         }
 
+    @classmethod
+    def from_state(cls, data: dict) -> "GameState":
+        """Rebuild a state from a logged one, so a recorded tick can be questioned directly.
+
+        The inverse of `as_state`, tolerant of what it does not find: an old log entry, or a
+        hand-written fixture, still yields a usable state with the dataclass defaults. That is the
+        point. "Why did the bot never place the furnace" was unanswerable not because the code was
+        hard to read but because the log held none of the furnace's facts and the state had to be
+        reconstructed by hand - three attempts, three different missing fields. Asking the
+        predicate on the tick that was actually recorded is not the same thing as guessing at it.
+
+        Resources come back as `BlockHit`s, so `actions` predicates (`_furnace_site`,
+        `_portal_frame_started`, `_bed_bad_spot`) read the same way on a logged tick as on a live
+        one. The one name translation - the logged `"position"` for the field `pos` - happens here.
+        """
+        gs = cls()
+        for field in ("health", "food", "phase", "raining", "on_ground", "in_water",
+                      "dimension", "slots_used", "tools", "tool_meta", "armor", "offhand",
+                      "hostiles", "players", "death_pos", "drops", "base", "chest_pos",
+                      "base_adopted", "furnace_pos", "furnace_occupied", "furnace_blocked",
+                      "sleeping", "resource_found", "mobs"):
+            value = data.get(field)
+            if value is not None:
+                setattr(gs, field, value)
+        gs.pos = data.get("position")
+        gs.inventory = dict(data.get("inventory") or {})
+        gs.furnace_contents = dict(data.get("furnace_contents") or {})
+        gs.events = list(data.get("events") or [])
+        gs.notifications = list(data.get("notifications") or [])
+        gs.resources = {}
+        for name, hits in (data.get("resources") or {}).items():
+            rebuilt = []
+            for hit in hits or []:
+                if not isinstance(hit, dict) or "x" not in hit:
+                    continue
+                rebuilt.append(BlockHit(
+                    query=hit.get("query", name), name=hit.get("name", name),
+                    x=int(hit["x"]), y=int(hit["y"]), z=int(hit["z"]),
+                    distance=float(hit.get("distance") or 0.0),
+                    above=hit.get("above"), below=hit.get("below"), level=hit.get("level")))
+            gs.resources[name] = rebuilt
+        return gs
+
     def narrative(self) -> str:
-        """Compact natural-language state. Must stay small: Laya truncates long states."""
         parts: list[str] = []
         if self.dimension:
             parts.append(f"in the {self.dimension}")
