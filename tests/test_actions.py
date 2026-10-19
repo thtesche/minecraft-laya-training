@@ -3285,6 +3285,92 @@ class NetherExpeditionTest(unittest.TestCase):
             self.assertNotIn(label, out)
 
 
+class DiamondsForTheSparePickaxeTest(unittest.TestCase):
+    """The two gates for `mine_diamond` asked different questions, sixty-two times.
+
+    Live: 62 escalations on `mine_diamond` between 08:51 and 12:38, one per tick, each handing a
+    step to System 2 that provably could not run. `craft_pickaxe_spare` above it had six of the
+    same between 08:38 and 08:49 and stopped the moment that fix went in, so the shape was known
+    and simply not applied one line further up.
+
+    The disagreement was not a missing check but a missing *reason*. The offer came from the
+    Nether branch: the trip needs two pickaxes and the bot carries one, so the diamonds are wanted
+    for the spare. `resolve` only knew the tech-tree order, which is finished - pickaxe, sword and
+    the whole armour set - so it read "no next diamond item" and refused. Both reasons now live in
+    `_mine_diamond_wanted`, and `resolve` names the same two when it counts.
+    """
+
+    BASE = (-197, -47, -98)
+    GATE = (-195, 63, -97)
+
+    def _stocked_but_for_the_pickaxe(self, **inv):
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, white_bed=1,
+                     golden_helmet=1, cooked_mutton=64, diamond_pickaxe=1, raw_gold=5,
+                     diamond_sword=1, stick=4)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 18.0
+        g.nether_entered = False
+        g.resources = {
+            "nether_portal": [BlockHit("nether_portal", "nether_portal", *self.GATE, 2.0)],
+            "white_bed": [BlockHit("white_bed", "white_bed", 225, 64, 223, 2.5)],
+            "obsidian": [BlockHit("obsidian", "obsidian", 226, 64, 221, 2.0),
+                         BlockHit("obsidian", "obsidian", 226, 65, 221, 2.0),
+                         BlockHit("obsidian", "obsidian", 226, 66, 221, 2.0),
+                         BlockHit("obsidian", "obsidian", 226, 67, 221, 2.0)],
+            "diamond_ore": [BlockHit("diamond_ore", "diamond_ore", 190, 12, 190, 49.0)],
+        }
+        g.resource_found = {"diamond_ore": 5, "nether_portal": 6}
+        return g
+
+    def test_the_tech_tree_is_finished_and_the_dig_is_still_offered(self) -> None:
+        # Pickaxe, sword and the whole armour set are done. The only diamonds left in the world are
+        # the ones the trip needs, and the offer must say so.
+        from mlaya.actions import _next_diamond_item
+        g = self._stocked_but_for_the_pickaxe()
+        self.assertIsNone(_next_diamond_item(g))
+        self.assertIn("mine_diamond", candidates(g))
+
+    def test_and_this_time_the_label_resolves(self) -> None:
+        g = self._stocked_but_for_the_pickaxe()
+        a = resolve("mine_diamond", g)
+        self.assertIsNotNone(a)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "diamond_ore")
+
+    def test_it_asks_for_what_the_spare_pickaxe_still_costs(self) -> None:
+        g = self._stocked_but_for_the_pickaxe()
+        self.assertEqual(resolve("mine_diamond", g).args["count"], 3)
+        g.inventory["diamond"] = 2
+        self.assertEqual(resolve("mine_diamond", g).args["count"], 1)
+
+    def test_with_both_pickaxes_nothing_is_wanted(self) -> None:
+        from mlaya.actions import _mine_diamond_wanted
+        g = self._stocked_but_for_the_pickaxe(diamond_pickaxe=2)
+        self.assertFalse(_mine_diamond_wanted(g))
+        self.assertIsNone(resolve("mine_diamond", g))
+
+    def test_no_ore_in_reach_means_no_offer(self) -> None:
+        from mlaya.actions import _mine_diamond_wanted
+        g = self._stocked_but_for_the_pickaxe()
+        g.resources.pop("diamond_ore")
+        g.resource_found.pop("diamond_ore")
+        self.assertFalse(_mine_diamond_wanted(g))
+        self.assertNotIn("mine_diamond", candidates(g))
+
+    def test_the_two_gates_cannot_drift_apart_again(self) -> None:
+        # The shape that has now cost three escalations - `craft_pickaxe_spare`, `go_home` for the
+        # crossing, `mine_diamond`. For every label the offer makes, the resolve must answer.
+        from mlaya.actions import _mine_diamond_wanted
+        for pickaxes in (1, 2):
+            with self.subTest(diamond_pickaxes=pickaxes):
+                g = self._stocked_but_for_the_pickaxe(diamond_pickaxe=pickaxes)
+                self.assertEqual("mine_diamond" in candidates(g),
+                                 resolve("mine_diamond", g) is not None)
+
+
 class BurningGateUnstockedPrepTest(unittest.TestCase):
     """A gate that is already burning must not hold the prep hostage, and must not let the bot in.
 

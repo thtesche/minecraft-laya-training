@@ -1212,6 +1212,9 @@ def _spare_pickaxe_wanted(gs: GameState) -> bool:
             and inv.get("diamond_pickaxe", 0) < NETHER_PICKAXES)
 
 
+SPARE_PICKAXE_COST = 3        # a diamond pickaxe, like the tech-tree one
+
+
 def _spare_pickaxe_craftable(gs: GameState) -> bool:
     """Wanted *and* buildable right now: three diamonds and two sticks.
 
@@ -1219,8 +1222,26 @@ def _spare_pickaxe_craftable(gs: GameState) -> bool:
     `tier < DIAMOND_PICK_TIER`, and it was never offered at all.
     """
     inv = gs.inventory
-    return (_spare_pickaxe_wanted(gs) and inv.get("diamond", 0) >= 3
+    return (_spare_pickaxe_wanted(gs) and inv.get("diamond", 0) >= SPARE_PICKAXE_COST
             and _can_sticks(inv, _logs(inv), _planks(inv)))
+
+
+def _mine_diamond_wanted(gs: GameState) -> bool:
+    """One answer to "is digging for diamonds the next thing", for both gates to use.
+
+    `candidates` and `resolve` answered this differently, and the tick that found out was
+    escalated to System 2 - an offered label that cannot be resolved looks exactly like a dead
+    end, and costs a model call per second for a step that provably cannot run.
+
+    The disagreement was not a missing check but a missing *reason*. The offer came from the
+    Nether branch: the trip needs two pickaxes and the bot carries one, so the diamonds are wanted
+    for the spare. `resolve` only knew the tech-tree order, which is finished - pickaxe, sword and
+    the whole armour set done - so it read "no next diamond item" and refused. Both are now in
+    this one predicate, and `resolve` names the same two reasons when it counts the diamonds.
+    """
+    return (_can_mine(gs, "diamond_ore") and _combat_ready(gs)
+            and _diamond_ore_available(gs)
+            and (_next_diamond_item(gs) is not None or _spare_pickaxe_wanted(gs)))
 
 
 def _nether_departure_ready(gs: GameState) -> bool:
@@ -2466,8 +2487,7 @@ def candidates(gs: GameState) -> list[str]:
     if nxt is not None:
         item, cost = nxt
         if diamond < cost:
-            if (_combat_ready(gs) and _can_mine(gs, "diamond_ore")
-                    and _diamond_ore_available(gs)):
+            if _mine_diamond_wanted(gs):
                 out.append("mine_diamond")
         elif _diamond_craft_ready(gs, item):
             out.append("craft_" + item)
@@ -2611,8 +2631,7 @@ def candidates(gs: GameState) -> list[str]:
             # Overworld side: the gate is the way in, and it opens once the expedition is stocked.
             if _spare_pickaxe_missing(gs):
                 out.append("craft_pickaxe_spare")
-            elif (_spare_pickaxe_wanted(gs) and _can_mine(gs, "diamond_ore")
-                    and _diamond_ore_available(gs)):
+            elif _mine_diamond_wanted(gs):
                 # The trip needs the second pickaxe and the pack cannot pay for it yet, so the
                 # next step is the digging - asked for in the offer, where it is visible, instead
                 # of leaving an unbuildable label to be escalated away by System 2 every tick.
@@ -2756,9 +2775,16 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if not _combat_ready(gs):
             return None
         nxt = _next_diamond_item(gs)
-        if nxt is None:  # pickaxe, sword and the whole armour set are done
+        if nxt is not None:
+            cost = nxt[1]
+        elif _spare_pickaxe_wanted(gs):
+            # The tech tree is finished - pickaxe, sword and the whole armour set - but the trip
+            # still needs its second pickaxe, and that is a diamond reason too. Before this the
+            # offer named it and the resolve refused it, every tick, into System 2.
+            cost = SPARE_PICKAXE_COST
+        else:
             return None
-        count = max(1, nxt[1] - inv.get("diamond", 0))
+        count = max(1, cost - inv.get("diamond", 0))
         return Action(label, "collect_block", {"block_name": "diamond_ore", "count": count},
                       "mine diamond ore for diamond tools and armour")
     if label == "craft_pickaxe":
