@@ -2335,7 +2335,22 @@ def candidates(gs: GameState) -> list[str]:
     # bed actually standing there once the gate is lit. `place_bed` owns the base bed, `take_bed`
     # brings a leftover home.
     if gs.phase == "night" and not gs.sleeping and _overworld(gs) and _sleep_ready(gs):
-        out.append("sleep")
+        # Sleeping is not a step among others, it is the clock. A night costs about forty decisions
+        # at eighteen seconds each; a sleep costs one. So at night, with a bed underfoot, nothing
+        # else on this list is time-critical: the work will still be waiting at dawn, and every
+        # tick spent on it instead is a tick standing in the dark next to mobs the reflex would
+        # otherwise have to fight on its own.
+        #
+        # Live: 462 night ticks, 175 of them sleep-ready, `sleep` offered on 164 - and taken nine
+        # times, half of those refused because `hostile_reflex` or `hunger_reflex` already owned
+        # the body. The bot chose `craft_arrows` four ticks running with a bed under it.
+        #
+        # Safe to own the tick outright, because everything time-critical has already returned by
+        # the time this line is reached: the portal and water rescues return above it, and the
+        # event-driven reactions - recovering drops before they despawn, replacing a pickaxe that
+        # is about to break, gear at a fresh death site - return right here, the tick before. What
+        # is left on `out` is work with no deadline.
+        return (["eat_food"] if eating else []) + ["sleep"]
 
     # A bed standing away from the base is a leftover the new base did not bring along. Take it
     # up in the lull and lay it again beside the portal: the respawn point belongs at the gate,

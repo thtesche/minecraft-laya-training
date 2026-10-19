@@ -3614,6 +3614,86 @@ class SmokerBesideTheFurnaceTest(unittest.TestCase):
         self.assertNotIn("x", cook.args)
 
 
+class NightIsAClockNotACandidateTest(unittest.TestCase):
+    """At night, with a bed underfoot, the run has nothing to choose between.
+
+    Live, across 462 night ticks: 175 were sleep-ready, `sleep` was offered on 164, and it was
+    taken nine times - four of those refused because `hostile_reflex` or `hunger_reflex` already
+    owned the body. The bot chose `craft_arrows` on four ticks running with a bed under it.
+
+    A night costs about forty decisions at eighteen seconds; a sleep costs one. Everything on that
+    list has no deadline - it is all still waiting at dawn - while every tick spent on it is a
+    tick standing in the dark beside mobs the reflex would otherwise have met in bed.
+
+    Owning the tick outright is safe because everything genuinely time-critical has already
+    returned by this point: the portal and water rescues above, and the event-driven reactions
+    immediately before - drops before they despawn, a pickaxe about to break, gear at a death
+    site. Those are `return`s, not appends, and that is the reason this can be a `return` too.
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _night_at_base(self, **inv) -> GameState:
+        g = lit_portal(at_home(geared(flint_and_steel=1, white_bed=1, oak_log=8, **inv)))
+        g.chest_pos = (self.BASE[0] + 2, self.BASE[1], self.BASE[2] + 2)
+        g.furnace_pos = (self.BASE[0], self.BASE[1] + 1, self.BASE[2] - 1)
+        # A bed *standing* at the base, not carried: `_bed_at_base` reads the scan.
+        bx, by, bz = self.BASE
+        # The bed has to stand clear of the lit gate: a bed within BED_PORTAL_CLEARANCE of a
+        # burning portal respawns the bot into it, and `_bed_bad_spot` refuses it as the gate bed.
+        g.resources = {"white_bed": [BlockHit("white_bed", 3.0, bx - 3, by + 1, bz + 2, 3.0)],
+                       "nether_portal": [BlockHit("nether_portal", 4.0,
+                                                  bx + 2, by + 1, bz + 1, 4.0)]}
+        # `_portal_lit` reads both readings of a block: the radius-filtered hits and the raw
+        # `resource_found` count. The gate being lit is what moves the bed to the base.
+        g.resource_found = {"nether_portal": 6}
+        g.phase = "night"
+        g.food = 20.0
+        return g
+
+    def test_nothing_competes_with_sleep_at_night(self) -> None:
+        # The live case: the arrow bench is right there and the bed is right here.
+        g = self._night_at_base(stick=12, flint=6, feather=8, coal=4, beef=4)
+        self.assertEqual(candidates(g), ["sleep"])
+
+    def test_a_hungry_bot_eats_and_then_sleeps(self) -> None:
+        g = self._night_at_base(cooked_mutton=4)
+        g.food = 9.0
+        self.assertEqual(candidates(g), ["eat_food", "sleep"])
+
+    def test_drops_still_outrank_sleep_before_they_despawn(self) -> None:
+        # The reflex killed something and its items evaporate in minutes. A sleep would throw them
+        # away for the sake of a night that is going to pass anyway.
+        g = self._night_at_base()
+        g.drops = 2
+        self.assertEqual(candidates(g), ["collect_drops"])
+
+    def test_a_pickaxe_about_to_break_still_outranks_sleep(self) -> None:
+        # The reaction the mine depends on: a pickaxe that breaks mid-run takes the bot down to
+        # stone and the whole chain with it. It has to be able to interrupt the night.
+        g = self._night_at_base()
+        g.tools = {"pickaxe": "stone", "sword": "stone"}
+        g.tool_meta = {"pickaxe": {"item": "stone_pickaxe", "tier": "stone",
+                                   "left": 15.0, "max": 131.0}}
+        g.inventory = {"crafting_table": 1, "cobblestone": 3, "acacia_log": 1}
+        self.assertEqual(candidates(g), ["replace_tool"])
+
+    def test_daytime_is_untouched(self) -> None:
+        g = self._night_at_base(coal=4)
+        g.phase = "day"
+        self.assertNotIn("sleep", candidates(g))
+
+    def test_no_bed_means_no_clock(self) -> None:
+        g = self._night_at_base()
+        g.resources = {}
+        self.assertNotIn("sleep", candidates(g))
+
+    def test_the_nether_has_no_nights(self) -> None:
+        g = self._night_at_base()
+        g.dimension = "minecraft:the_nether"
+        self.assertNotIn("sleep", candidates(g))
+
+
 class CoalIsCookingFuelTooTest(unittest.TestCase):
     """Coal smelts eight items; a log smelts one. That is the whole difference.
 
