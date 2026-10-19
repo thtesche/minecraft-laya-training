@@ -12,7 +12,7 @@ import unittest
 from mlaya.actions import (_all_nether_prep_steps, _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          INVENTORY_NEAR_FULL, inventory_relief,
-                           nether_expedition_complete, NETHER_HOPELESS_AFTER, resolve,
+                           nether_expedition_complete, NETHER_SEARCH_M, NETHER_HOPELESS_TICKS, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources)
@@ -3193,7 +3193,7 @@ class NetherExpeditionTest(unittest.TestCase):
     def test_a_bot_with_nothing_left_to_find_goes_home(self) -> None:
         # Hunted out, and the walk has shown no fortress anywhere: continuing is not a plan.
         g = self._down(blaze_rod=2)
-        g.nether_ticks = NETHER_HOPELESS_AFTER
+        g.nether_travel = NETHER_SEARCH_M
         self.assertIn("leave_nether", candidates(g))
 
     def test_open_nether_on_arrival_is_not_the_end_of_the_hunt(self) -> None:
@@ -3202,12 +3202,12 @@ class NetherExpeditionTest(unittest.TestCase):
         g = self._down(blaze_rod=2)
         g.nether_ticks = 1
         self.assertNotIn("leave_nether", candidates(g))
-        g.nether_ticks = NETHER_HOPELESS_AFTER - 1
+        g.nether_travel = NETHER_SEARCH_M - 1
         self.assertNotIn("leave_nether", candidates(g))
 
     def test_a_fortress_in_sight_keeps_the_hunt_open(self) -> None:
         g = self._down(blaze_rod=2)
-        g.nether_ticks = NETHER_HOPELESS_AFTER + 10
+        g.nether_travel = NETHER_SEARCH_M + 10
         g.resources = {"nether_bricks": [BlockHit("nether_bricks", "nether_bricks",
                                                    40, 66, 10, 30.0)]}
         self.assertNotIn("leave_nether", candidates(g))
@@ -3215,7 +3215,7 @@ class NetherExpeditionTest(unittest.TestCase):
     def test_a_blaze_seen_but_out_of_reach_keeps_the_hunt_open(self) -> None:
         # A blaze 90 m off is not a hunt to start, but it is a reason to close in, not to leave.
         g = self._down(blaze_rod=2)
-        g.nether_ticks = NETHER_HOPELESS_AFTER + 10
+        g.nether_travel = NETHER_SEARCH_M + 10
         g.mobs = [("blaze", "hostile", 1, 90.0)]
         self.assertNotIn("leave_nether", candidates(g))
 

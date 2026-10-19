@@ -364,6 +364,8 @@ class Agent:
         self._nether_entered = False
         self._nether_arrival: tuple[int, int, int] | None = None
         self._nether_ticks = 0
+        self._nether_travel = 0.0
+        self._nether_last_pos: tuple[float, float] | None = None   # (x, z) of the last tick
         # The blaze powder reached the chest at the Overworld portal (`_note_stow`): the phase-3
         # goal. Latched on the deposit's own success, the same shape as `_frame_complete`.
         self._powder_stowed = False
@@ -376,6 +378,7 @@ class Agent:
         gs.surface = self.surface
         gs.chest_pos = self.chest_pos
         gs.banked = dict(self.banked)
+        gs.nether_travel = self._nether_travel
         gs.furnace_pos = self.furnace_pos
         gs.smoker_pos = self.smoker_pos
         gs.base_adopted = self._base_adopted
@@ -611,11 +614,26 @@ class Agent:
             self._nether_ticks += 1
             if not self._nether_entered:
                 self._nether_entered = True
+                self._nether_travel = 0.0
                 if gs.pos is not None:
                     self._nether_arrival = (math.floor(gs.pos[0]), math.floor(gs.pos[1]),
                                             math.floor(gs.pos[2]))
+            elif gs.pos is not None and self._nether_last_pos is not None:
+                # Ground covered since the crossing, which is the only thing a search budget can
+                # honestly be spent on. `nether_ticks` counted decisions, and a decision is not
+                # search: live, run70, nineteen of the twenty-four ticks that ended the hunt were
+                # `body owner: hostile_reflex` - the bot stood at 108 m from its own portal and
+                # was shot at, and the search had not begun.
+                self._nether_travel += math.dist((gs.pos[0], gs.pos[2]),
+                                                 self._nether_last_pos)
+            if gs.pos is not None:
+                self._nether_last_pos = (gs.pos[0], gs.pos[2])
         else:
             self._nether_ticks = 0
+            self._nether_last_pos = None
+            # Reset on the way home as well as on arrival. Left alone, the next trip would start
+            # with the last trip's ground already counted and end its search before it began.
+            self._nether_travel = 0.0
 
     async def _adopt_portal_base(self, gs) -> None:
         """Re-anchor the home base on a lit portal a previous run left standing, once.

@@ -186,9 +186,16 @@ BLAZE_HUNT_HEALTH = 14.0
 # and well before it is hungry; both thresholds are checked on the state, never guessed at runtime.
 NETHER_RETURN_HEALTH = 8.0
 NETHER_RETURN_FOOD = 8.0
-# How long the bot has to be down there before "no blaze and no fortress anywhere" counts as the
-# end of the hunt rather than as open Nether seen for the first time (`_nether_hopeless`).
-NETHER_HOPELESS_AFTER = 24
+# How far the bot has to search before "no blaze and no fortress anywhere" counts as the end of
+# the hunt rather than as open Nether seen for the first time (`_nether_hopeless`).
+#
+# Metres, not decisions. `NETHER_HOPELESS_AFTER = 24` counted ticks, and a tick is not search:
+# live, run70, nineteen of the twenty-four ticks that ended the hunt were `body owner:
+# hostile_reflex` - the bot stood at 108 m from its own portal and was shot at, and the budget
+# was spent on being shot at. Four hundred metres is roughly what a fortress costs to walk to
+# from a portal; the tick ceiling below is the backstop for a bot that can never move at all.
+NETHER_SEARCH_M = 400.0
+NETHER_HOPELESS_TICKS = 120
 # How far a lone spider may be for a *single* string (`_safe_string_hunt`, repairing the Nether
 # bow). Wider than the bed-chain's spider guard, which is about three strings at once.
 STRING_HUNT_RANGE = 24.0
@@ -1178,7 +1185,11 @@ def _nether_hopeless(gs: GameState) -> bool:
         return False
     if gs.resource_found.get("nether_bricks", 0) > 0:
         return False
-    return gs.nether_ticks >= NETHER_HOPELESS_AFTER
+    if gs.nether_travel >= NETHER_SEARCH_M:
+        return True
+    # The backstop. Search is bounded by ground covered, but a bot pinned by the combat reflex
+    # covers none, and something has to end the trip anyway.
+    return gs.nether_ticks >= NETHER_HOPELESS_TICKS
 
 
 def _spare_pickaxe_missing(gs: GameState) -> bool:

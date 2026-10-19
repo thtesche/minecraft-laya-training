@@ -480,6 +480,10 @@ class GameState:
     # The food station at the base. A smoker processes food only - it cannot smelt the iron
     # the tech tree needs - so it stands *beside* the furnace rather than replacing it.
     smoker_pos: tuple[int, int, int] | None = None
+    # Ground covered since the crossing, in metres. The search budget is spent in this unit rather
+    # than in decisions, because a decision is not search: run70 spent nineteen of twenty-four
+    # ticks pinned by the combat reflex, standing still, and the hunt ended with 108 m covered.
+    nether_travel: float = 0.0
     # True while the base was re-adopted from the world (a lit portal a previous run left) and the
     # bot has not reached it yet. It is what justifies walking home once (`go_home`) so a restart
     # finishes at the portal it built instead of drifting off to explore.
@@ -686,6 +690,7 @@ class GameState:
             "nether_entered": self.nether_entered,
             "nether_arrival": self.nether_arrival,
             "nether_ticks": self.nether_ticks,
+            "nether_travel": self.nether_travel,
             "mobs": self.mobs,
         }
 
@@ -710,7 +715,7 @@ class GameState:
                       "hostiles", "players", "death_pos", "drops", "base", "chest_pos",
                       "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "banked",
-                      "nether_entered", "nether_arrival", "nether_ticks"):
+                      "nether_entered", "nether_arrival", "nether_ticks", "nether_travel"):
             value = data.get(field)
             if value is not None:
                 setattr(gs, field, value)

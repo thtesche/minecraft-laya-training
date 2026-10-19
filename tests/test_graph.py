@@ -115,6 +115,8 @@ class WaterTicksTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._nether_ticks = 0
@@ -381,6 +383,8 @@ class PourSkipTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -477,6 +481,8 @@ class StanceSkipTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -567,6 +573,8 @@ class StuckOfferTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -1098,6 +1106,8 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -1193,6 +1203,8 @@ class FrameRefusalTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._nether_ticks = 0
@@ -1275,6 +1287,8 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -1518,6 +1532,8 @@ class DropHoleTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -1589,6 +1605,8 @@ class ChestSupportTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -1663,6 +1681,8 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -1841,6 +1861,8 @@ class ChestLidTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -2003,6 +2025,8 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         return agent
@@ -2115,6 +2139,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -2632,6 +2658,8 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -2727,6 +2755,8 @@ class FrameRefusalTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._nether_ticks = 0
@@ -2809,6 +2839,8 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -3052,6 +3084,8 @@ class DropHoleTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -3123,6 +3157,8 @@ class ChestSupportTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -3197,6 +3233,8 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -3375,6 +3413,8 @@ class ChestLidTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -3537,6 +3577,8 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         return agent
@@ -3649,6 +3691,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -3970,6 +4014,8 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._powder_stowed = False
@@ -4086,6 +4132,72 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.mcp.calls, [])
 
 
+class SearchIsPaidForInMetresTest(unittest.IsolatedAsyncioTestCase):
+    """A search budget has to be spent on searching.
+
+    `_nether_hopeless` counted decisions - twenty-four of them - and a decision is not search.
+    Live, run70: nineteen of the twenty-four ticks that ended the hunt were `body owner:
+    hostile_reflex`. The bot stood at 108 m from its own portal and was shot at, and the budget
+    was spent on being shot at. The hunt ended with zero blaze rods and no fortress in sight, on
+    a trip that had barely begun.
+
+    The unit is now ground covered, `nether_travel`, accumulated since the crossing and reset with
+    it. `NETHER_HOPELESS_TICKS` stays as the backstop, because a bot the reflex has pinned covers
+    no ground at all and something still has to end the trip.
+    """
+
+    async def test_standing_still_never_spends_the_budget(self) -> None:
+        agent = self._agent()
+        g = gs(pos=(40.5, 70.0, -9.5), dimension="minecraft:the_nether")
+        agent._note_dimension(g)
+        for _ in range(60):
+            agent._note_dimension(g)          # the same cell: pinned by the reflex, no ground
+        self.assertEqual(agent._nether_travel, 0.0)
+        self.assertEqual(agent._nether_ticks, 61)
+
+    async def test_walking_accumulates_ground_covered(self) -> None:
+        agent = self._agent()
+        agent._note_dimension(gs(pos=(40.5, 70.0, -9.5), dimension="minecraft:the_nether"))
+        agent._note_dimension(gs(pos=(60.5, 70.0, -9.5), dimension="minecraft:the_nether"))
+        agent._note_dimension(gs(pos=(80.5, 70.0, -9.5), dimension="minecraft:the_nether"))
+        self.assertAlmostEqual(agent._nether_travel, 40.0)
+
+    async def test_the_meter_counter_is_in_the_logged_state(self) -> None:
+        # Without this the whole thing is unfalsifiable: there would be no way to say afterwards
+        # whether the bot searched or stood still. The same rule as the furnace facts.
+        from mlaya.perception import GameState
+        from mlaya.actions import _nether_hopeless, NETHER_SEARCH_M
+        g = GameState(nether_travel=NETHER_SEARCH_M + 1)
+        rebuilt = GameState.from_state(g.as_state())
+        self.assertEqual(rebuilt.nether_travel, NETHER_SEARCH_M + 1)
+        self.assertTrue(_nether_hopeless(rebuilt))
+        g.nether_travel = 0.0
+        self.assertFalse(_nether_hopeless(GameState.from_state(g.as_state())))
+
+    async def test_the_counter_resets_on_the_way_home(self) -> None:
+        agent = self._agent()
+        agent._nether_travel = 300.0
+        agent._nether_last_pos = (10.0, 10.0)
+        agent._note_dimension(gs(pos=(1.0, 64.0, 1.0), dimension="minecraft:overworld"))
+        self.assertEqual(agent._nether_travel, 0.0)
+        self.assertIsNone(agent._nether_last_pos)
+
+    def _agent(self):
+        from mlaya.graph import Agent
+        from mlaya.config import Settings
+        agent = Agent.__new__(Agent)
+        agent.settings = Settings()
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
+        agent._nether_ticks = 0
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
+        agent._nether_arrival = None
+        return agent
+
+
 class NetherCrossingTest(unittest.TestCase):
     """The loop side of the Nether trip: the intended crossing, and the trip's goal.
 
@@ -4125,6 +4237,8 @@ class NetherCrossingTest(unittest.TestCase):
         agent._frame_names = {}
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
         agent._nether_ticks = 0
