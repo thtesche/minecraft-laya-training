@@ -11,7 +11,7 @@ import unittest
 
 from mlaya.actions import (_all_nether_prep_steps, _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
-                         inventory_relief,
+                         INVENTORY_NEAR_FULL, inventory_relief,
                            nether_expedition_complete, NETHER_HOPELESS_AFTER, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
@@ -3508,6 +3508,98 @@ class PortalLitIsAWorldFactTest(unittest.TestCase):
         g.resource_found = {}
         self.assertFalse(_portal_lit(g))
         self.assertIn("go_home", candidates(g))
+
+
+class PackDisciplineTest(unittest.TestCase):
+    """The pack is thirty slots of twenty-nine stacks, so the problem is types, not volume.
+
+    Two live findings put here. A stack of 68 cobblestone costs two slots for the sake of four
+    blocks, and `HOARD_KEEP` capped it at 64 - but the cap only ever fired inside the *full pack*
+    branch, so with the chest known and the bot standing on the base it drifted 60, 65, 67, 68, 72
+    and nothing noticed. And the pack held six items no recipe wants that `JUNK_ITEMS` never named
+    (`oak_sapling`, `crying_obsidian`, `light_gray_wool`, `leather`, `stone_bricks`,
+    `stone_brick_slab`) - a blacklist can only name the rubbish it already thought of.
+
+    The whitelist is deliberately one-way: it only ever feeds the chest. A wrong guess lands in a
+    container three steps away whose contents the server keeps in its own database, and costs one
+    `withdraw` later. `drop_junk` still goes by `JUNK_ITEMS` alone, because a drop is not undoable.
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-195, -46, -97)
+
+    def _at_chest(self, **inv) -> GameState:
+        g = at_home(geared(**inv))
+        g.chest_pos = self.CHEST
+        g.slots_used = 12          # plenty of room: this is not a relief case
+        return g
+
+    def test_a_stack_over_its_cap_is_stowed_without_a_full_pack(self) -> None:
+        g = self._at_chest(cobblestone=68)
+        self.assertLess(g.slots_used, INVENTORY_NEAR_FULL)
+        self.assertIn("stow_surplus", candidates(g))
+        a = resolve("stow_surplus", g)
+        self.assertEqual(a.args["operation"], "deposit")
+        self.assertIn({"item_name": "cobblestone", "count": 4}, a.args["items"])
+
+    def test_a_stack_at_its_cap_is_left_alone(self) -> None:
+        # The whole point of the cap: 64 blocks is one slot, and taking the stack below that would
+        # mean mining for material the expedition needs.
+        g = self._at_chest(cobblestone=64)
+        self.assertNotIn("stow_surplus", candidates(g))
+
+    def test_an_overfull_stack_with_no_chest_is_left_on_the_ground(self) -> None:
+        # Dropping over a cap is a different decision from dropping for space: there is no
+        # `[INVENTORY_FULL]` to relieve and nothing to gain from losing blocks to the world.
+        g = at_home(geared(cobblestone=68))
+        g.chest_pos = None
+        self.assertNotIn("stow_surplus", candidates(g))
+        self.assertNotIn("drop_junk", candidates(g))
+
+    def test_the_whitelists_unnamed_items_at_the_chest(self) -> None:
+        for name in ("oak_sapling", "crying_obsidian", "light_gray_wool", "leather",
+                     "stone_bricks", "stone_brick_slab"):
+            with self.subTest(item=name):
+                g = self._at_chest(**{name: 3})
+                self.assertIn("stow_surplus", candidates(g))
+                a = resolve("stow_surplus", g)
+                self.assertIn({"item_name": name, "count": 3}, a.args["items"])
+
+    def test_the_whitelist_never_names_what_the_run_still_needs(self) -> None:
+        # Every one of these has cost the run a step when it went missing: the obsidian for the
+        # frame, the bow kit for the Nether, the food for the crossing, the bed, the fuel.
+        g = self._at_chest(obsidian=10, string=2, feather=12, flint=1, stick=6, iron_ingot=2,
+                           cooked_mutton=30, oak_log=9, gravel=14, diamond=2, white_wool=6,
+                           white_bed=1, crafting_table=1, bucket=1, flint_and_steel=1)
+        self.assertNotIn("stow_surplus", candidates(g))
+
+    def test_the_pickaxe_is_kept_even_before_the_inventory_is_parsed(self) -> None:
+        # `tool_meta` is empty until the inventory is parsed, and a whitelist that filed the
+        # diamond pickaxe as surplus in that state would bank the run's best pickaxe. `tools`
+        # carries class and tier at all times, so `diamond` + `pickaxe` reconstructs the name.
+        g = self._at_chest(oak_sapling=2, diamond_pickaxe=1)
+        g.tool_meta = {}
+        g.tools = {"pickaxe": "diamond", "sword": "diamond"}
+        a = resolve("stow_surplus", g)
+        self.assertNotIn("diamond_pickaxe", [i["item_name"] for i in a.args["items"]])
+
+    def test_the_pickaxe_in_hand_is_never_surplus(self) -> None:
+        # Gear is not written out by hand: whatever the bot has on or in hand is kept whatever it
+        # is called. This is what stops a whitelist from shedding the pickaxe it is mining with.
+        g = self._at_chest(oak_sapling=2)
+        g.tool_meta = {"pickaxe": {"item": "stone_pickaxe", "tier": "stone"}}
+        a = resolve("stow_surplus", g)
+        self.assertNotIn("stone_pickaxe", [i["item_name"] for i in a.args["items"]])
+
+    def test_a_full_pack_still_falls_back_to_dropping_without_a_chest(self) -> None:
+        # The old relief path is untouched: away from the base there is no undo, so the
+        # whitelist does not apply and only the blacklist may shed.
+        g = at_home(geared(tuff=64))
+        g.chest_pos = None
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertIn("drop_junk", candidates(g))
+        a = resolve("drop_junk", g)
+        self.assertNotIn("oak_sapling", a.args.get("items", [])[0]["item_name"] if a.args.get("items") else [])
 
 
 class BankedFoodEndsTheHuntTest(unittest.TestCase):

@@ -1450,6 +1450,75 @@ def _expedition_ready(gs: GameState) -> bool:
             and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES)
 
 
+# What stays in the pack while a chest stands open behind it.
+#
+# `JUNK_ITEMS` above is a blacklist, and a blacklist can only name the rubbish it already thought
+# of: live, the pack held `oak_sapling`, `crying_obsidian`, `light_gray_wool`, `leather`,
+# `stone_bricks` and `stone_brick_slab` - six slots, every one of them unusable, none of them on
+# the list. The other half is that a blacklist only ever grows when someone notices, while a
+# whitelist is the direction the problem runs in: anything *not* named here is surplus by default.
+#
+# So this is a whitelist, and it is deliberately conservative - every entry is an item that costs
+# a slot to replace or a trip to fetch. The two rules that keep it from being dangerous:
+#
+#   * It only ever feeds `stow_surplus`, a deposit. Wrongly shedding puts the item in the chest,
+#     a few blocks away and readable from the server's own database - not in a disposal pit.
+#   * Away from the base the whitelist does not apply at all; `drop_junk` still goes by
+#     `JUNK_ITEMS` alone, because a drop is not undoable.
+KEEP_MATERIALS = frozenset({
+    # Bauzeug. Cobblestone is capped at `NETHER_COBBLE` separately - one stack, one slot.
+    "cobblestone", "stone", "diorite", "andesite", "granite", "tuff", "dirt", "coarse_dirt",
+    "obsidian", "gravel", "sand", "clay",
+    # Holz, als Brennstoff und als Bretter. `cook_food` burns a log per item.
+    "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log",
+    "oak_planks", "birch_planks", "spruce_planks", "planks",
+    # Stationen und Werkzeug, die man nicht nachbauen kann, ohne die Kette zu verlieren.
+    "crafting_table", "furnace", "chest", "bucket", "shield", "flint_and_steel", "bow",
+    # Bogen und Pfeile.
+    "arrow", "string", "feather", "flint", "stick",
+    # Verarbeitetes und Erze.
+    "iron_ingot", "gold_ingot", "copper_ingot", "diamond", "emerald", "lapis_lazuli",
+    "coal", "charcoal", "redstone",
+    # Nether-Vorbereitung.
+    "blaze_rod", "blaze_powder", "raw_gold", "raw_iron", "netherite_scrap", "ancient_debris",
+    # Betten. The item is `white_bed`, not `bed` - writing `bed` here kept nothing and would have
+    # filed the run's only bed as surplus, which is the exact failure this whitelist has to not
+    # have. The wrong colours of *wool* are not kept, but a bed always is: it cannot be made
+    # again without a sheep in reach, and the Nether prep stands down until one is laid.
+    "white_bed", "red_bed", "blue_bed", "black_bed", "white_wool", "red_wool", "blue_wool",
+    "black_wool",
+})
+
+
+def _keep_in_pack(gs: GameState) -> frozenset[str]:
+    """`KEEP_MATERIALS`, plus everything the bot is wearing, holding or has decided to keep.
+
+    Gear is not written out by hand: an item the bot has on or in hand is in this set whatever it
+    is called, which is what keeps a whitelist from ever shedding the pickaxe it is mining with.
+
+    Gear is read from *two* fields on purpose. `tool_meta` names the exact item, but it is empty
+    whenever the inventory has not been parsed yet, and a whitelist that filed `diamond_pickaxe`
+    as surplus in that state would bank the run's best pickaxe. `tools` maps class to tier and is
+    always present, so `diamond` + `pickaxe` reconstructs the name. Either field alone is a hole.
+    """
+    held = {meta.get("item") for meta in list(gs.armor.values()) + list(gs.tool_meta.values())}
+    held |= {f"{tier}_{cls}" for cls, tier in (gs.tools or {}).items()
+             if tier and tier != "none"}
+    return KEEP_MATERIALS | set(EDIBLE) | set(_GEAR_KEEP) | {n for n in held if n}
+
+
+def _surplus_besides_keep(gs: GameState, inv: dict[str, int]) -> list[str]:
+    """Carried items that are neither on the whitelist nor worth naming twice.
+
+    Only ever handed to the chest, never to the drop: the chest is three steps away and the
+    server keeps its contents in its own database, so a wrong guess here costs one `withdraw`
+    later. That asymmetry is the whole reason this function exists next to `JUNK_ITEMS` rather
+    than replacing it.
+    """
+    keep = _keep_in_pack(gs)
+    return [n for n in inv if inv.get(n, 0) > 0 and n not in keep and n not in JUNK_ITEMS]
+
+
 def _junk_carried(inv: dict[str, int]) -> list[str]:
     """Carried low-value blocks no recipe wants, in the fixed shedding order."""
     return [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]
@@ -1494,7 +1563,8 @@ def _spare_gear(gs: GameState, inv: dict[str, int]) -> list[str]:
 
 
 def _sheddable(gs: GameState, inv: dict[str, int]) -> bool:
-    return bool(_junk_carried(inv) or _hoard_surplus(inv) or _spare_gear(gs, inv))
+    return bool(_junk_carried(inv) or _hoard_surplus(inv) or _spare_gear(gs, inv)
+                or _surplus_besides_keep(gs, inv))
 
 
 def _chest_ready(gs: GameState) -> bool:
@@ -2462,12 +2532,22 @@ def candidates(gs: GameState) -> list[str]:
             out.append("place_chest")
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
             out.append("craft_chest")
+    at_chest = gs.base is not None and _chest_ready(gs) and _at_base(gs)
     if gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(gs, inv):
-        if gs.base is not None and _chest_ready(gs) and _at_base(gs):
+        if at_chest:
             out.append("stow_surplus")
-        elif gs.base is None or not _chest_ready(gs):
+        else:
             # No chest to hold it: shed the surplus on the ground rather than stall the gather.
             out.append("drop_junk")
+    elif at_chest and (_junk_carried(inv) or _hoard_surplus(inv)
+                        or _surplus_besides_keep(gs, inv)):
+        # A stack that crossed its cap with room to spare, and a chest standing right there.
+        # Live, cobblestone drifted 60, 65, 67, 68, 72 with `chest_pos` known and the bot on
+        # the base the whole time, because `HOARD_KEEP` capped at 64 only ever fired *inside*
+        # the full-pack branch above. A stack of 68 costs two slots for the sake of four blocks,
+        # and nothing in the loop ever noticed. With no chest in reach the surplus is left alone:
+        # dropping it on the ground over a cap is a different decision.
+        out.append("stow_surplus")
 
     if cobble < 12 and _can_mine(gs, "stone"):
         out.append("mine_stone")
@@ -3149,7 +3229,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "place the carried furnace at the home base so cooking reuses it")
     if label == "stow_surplus":
         items = [{"item_name": n, "count": inv[n]}
-                 for n in _junk_carried(inv) + _spare_gear(gs, inv)]
+                 for n in _junk_carried(inv) + _surplus_besides_keep(gs, inv)
+                 + _spare_gear(gs, inv)]
         items += _hoard_surplus(inv)
         if not _chest_ready(gs) or not items:
             return None
