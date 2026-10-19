@@ -3346,10 +3346,11 @@ class BurningGateUnstockedPrepTest(unittest.TestCase):
         self.assertNotIn("light_portal", candidates(g))
 
     def test_the_spare_pickaxe_is_asked_for_once_the_other_prep_is_banked(self) -> None:
-        # Order on purpose: `_spare_pickaxe_missing` reads `_expedition_prepared`, so the pickaxe
-        # is the last thing before the crossing and not something to chase before the helmet is on.
+        # Order on purpose: it reads `_expedition_prepared`, so the pickaxe is the last thing
+        # before the crossing and not something to chase before the helmet is on. And it is asked
+        # for only when it can be built - see the corrected test beside it.
         self.assertIn("craft_pickaxe_spare",
-                      candidates(self._burning_gate(diamond_pickaxe=1)))
+                      candidates(self._burning_gate(diamond_pickaxe=1, diamond=3, stick=4)))
 
     def test_the_crossing_stays_shut_while_the_spare_is_missing(self) -> None:
         self.assertNotIn("enter_portal",
@@ -3525,7 +3526,8 @@ class ExpeditionSparePickaxeTest(unittest.TestCase):
         self.assertNotIn("enter_portal", candidates(g))
 
     def test_a_stocked_trip_with_one_pickaxe_asks_for_the_second(self) -> None:
-        g = self._stocked()
+        # Three diamonds are what makes it askable; below that it asks for the digging instead.
+        g = self._stocked(diamond=3, stick=4)
         self.assertIn("craft_pickaxe_spare", candidates(g))
         self.assertNotIn("enter_portal", candidates(g))
 
@@ -3534,12 +3536,31 @@ class ExpeditionSparePickaxeTest(unittest.TestCase):
         self.assertIn("enter_portal", candidates(g))
         self.assertNotIn("craft_pickaxe_spare", candidates(g))
 
-    def test_the_spare_is_offered_before_the_diamonds_are_in_the_pack(self) -> None:
-        # The gate is already lit at that point, so the run stands at its own portal waiting. The
-        # step has to outrank idling there, and `mine_diamond` then fills the gap.
+    def test_the_spare_is_not_offered_before_the_diamonds_are_in_the_pack(self) -> None:
+        # Corrected, and the reason is a live cost rather than a taste. An offer the resolver
+        # cannot satisfy is what escalates the tick to System 2: run57 spent four model calls a
+        # second on this label with one diamond in the pack, each handed to a model that then chose
+        # `place_bed` or `get_wood`. The offer has to describe something that can happen, and the
+        # diamonds still in the ground are not it.
         g = self._stocked(diamond=0)
-        self.assertIn("craft_pickaxe_spare", candidates(g))
+        self.assertNotIn("craft_pickaxe_spare", candidates(g))
         self.assertIsNone(resolve("craft_pickaxe_spare", g))
+
+    def test_the_missing_diamonds_are_asked_for_as_their_own_step(self) -> None:
+        # The other half, and it has to be explicit: `_next_diamond_item` returns None once the
+        # armour and the first pickaxe are done, so the tech tree never asks for diamonds again.
+        # Without this the expedition would have had no step at all for what it needs.
+        g = self._stocked(diamond=0)
+        g.resources["diamond_ore"] = [BlockHit("diamond_ore", "diamond_ore", -193, -40, -95, 3.0)]
+        self.assertIn("mine_diamond", candidates(g))
+
+    def test_no_diamond_step_without_a_mineable_deposit(self) -> None:
+        # Nothing loaded and nothing reachable: then the spare is simply not asked for, and the run
+        # goes on with what it can do rather than escalating the same label every tick.
+        g = self._stocked(diamond=0)
+        g.resources.pop("diamond_ore", None)
+        g.resource_found.pop("diamond_ore", None)
+        self.assertNotIn("mine_diamond", candidates(g))
 
     def test_the_spare_needs_three_diamonds_and_two_sticks(self) -> None:
         a = resolve("craft_pickaxe_spare", self._stocked(diamond=3, stick=4))

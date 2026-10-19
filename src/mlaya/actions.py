@@ -1121,19 +1121,45 @@ def _nether_hopeless(gs: GameState) -> bool:
 
 
 def _spare_pickaxe_missing(gs: GameState) -> bool:
-    """Whether the trip is stocked enough to start mining diamonds for the second pickaxe.
+    """The trip is stocked enough to start mining diamonds for the second pickaxe.
 
-    Offered the moment the expedition is otherwise prepared and the pack holds fewer than
-    `NETHER_PICKAXES`, whether or not the diamonds are already in it: the gate is already lit at
-    that point, so the run stands at its own portal waiting, and the mining step that fills the
-    gap is the same one the tech tree used to make the first. `craft_diamond_pickaxe` could not do
-    this job - it is a chain step that fires only while `tier < DIAMOND_PICK_TIER`, and it was
-    never offered at all, so there was no path to a second diamond pickaxe in the first place.
+    `craft_pickaxe_spare` only, and only when it can actually be built. Offering it before the
+    diamonds were in the pack meant an unresolvable label, which is what escalates the tick to
+    System 2: live, run57 burned four model calls per second on a step that could not run, each one
+    handed off to a model that then chose `place_bed` or `get_wood`.
+
+    The digging is the other half, and the tech tree never asks for it once the armour and the first
+    pickaxe are done - `_next_diamond_item` returns None then - so without an explicit `mine_diamond`
+    the expedition would have had no step at all for the diamonds it needs.
+    """
+    return _spare_pickaxe_craftable(gs)
+
+
+def _spare_pickaxe_wanted(gs: GameState) -> bool:
+    """Whether the banked trip still needs its second pickaxe (`NETHER_PICKAXES`).
+
+    Split from "is it buildable" because the two have to be different questions. Offered while the
+    diamonds were still in the ground, the label could not be resolved - and an unresolvable label
+    is exactly what escalates the tick to System 2, one model call per second for a step that
+    provably cannot run. Live, run57: four escalations on `craft_pickaxe_spare` with one diamond in
+    the pack, each handed to a model that then chose `place_bed` or `get_wood`. The right answer was
+    neither: the offer should have said "go and mine diamonds".
     """
     inv = gs.inventory
     return (_overworld(gs) and not gs.nether_entered
             and _expedition_prepared(gs)
             and inv.get("diamond_pickaxe", 0) < NETHER_PICKAXES)
+
+
+def _spare_pickaxe_craftable(gs: GameState) -> bool:
+    """Wanted *and* buildable right now: three diamonds and two sticks.
+
+    `craft_diamond_pickaxe` could not do this job - it is a chain step that fires only while
+    `tier < DIAMOND_PICK_TIER`, and it was never offered at all.
+    """
+    inv = gs.inventory
+    return (_spare_pickaxe_wanted(gs) and inv.get("diamond", 0) >= 3
+            and _can_sticks(inv, _logs(inv), _planks(inv)))
 
 
 def _nether_departure_ready(gs: GameState) -> bool:
@@ -2335,6 +2361,12 @@ def candidates(gs: GameState) -> list[str]:
             # Overworld side: the gate is the way in, and it opens once the expedition is stocked.
             if _spare_pickaxe_missing(gs):
                 out.append("craft_pickaxe_spare")
+            elif (_spare_pickaxe_wanted(gs) and _can_mine(gs, "diamond_ore")
+                    and _diamond_ore_available(gs)):
+                # The trip needs the second pickaxe and the pack cannot pay for it yet, so the
+                # next step is the digging - asked for in the offer, where it is visible, instead
+                # of leaving an unbuildable label to be escalated away by System 2 every tick.
+                out.append("mine_diamond")
             if _at_base(gs) and _nether_departure_ready(gs):
                 out.append("enter_portal")
             if gs.nether_entered and not _in_nether(gs):
