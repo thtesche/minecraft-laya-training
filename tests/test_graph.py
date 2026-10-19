@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import unittest
 
-from mlaya.actions import Action, candidates, resolve
+from mlaya.actions import (Action, candidates, nether_expedition_complete, resolve,
+                          tech_tree_complete)
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, HOME_ANCHOR_TICKS, PORTAL_INTENT_TICKS, STUCK_COOLDOWN,
@@ -1738,7 +1739,14 @@ class ChestLidTest(unittest.TestCase):
 
 
 class GoalStopTest(unittest.TestCase):
-    """The run ends early once the tech tree is complete, unless that is switched off."""
+    """The run ends early once *every* phase is done, unless that is switched off.
+
+    The Overworld goal closes one tick before the crossing it prepares - lit portal, gear worn,
+    bed at the base, prep banked, food reserve met, with `enter_portal` in the offer right behind
+    it. Read as a goal on its own it ended every run there, so the Nether only ever ran from a
+    wrecked state, the one where the gate had already been broken by a death (live, run29:
+    `{"iterations": 180, "stop": "goal"}`, expedition never started).
+    """
 
     def _agent(self, stop_when_complete: bool = True) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
@@ -1765,8 +1773,16 @@ class GoalStopTest(unittest.TestCase):
                   })
 
     def test_the_goal_ends_the_run_early(self) -> None:
-        self.assertEqual(self._agent()._stop_state(self._complete(), 3),
+        g = self._complete()
+        g.powder_stowed = True          # the expedition is what the overworld goal was preparing
+        self.assertEqual(self._agent()._stop_state(g, 3),
                          {"done": True, "stop": "goal"})
+
+    def test_the_overworld_goal_alone_keeps_the_run_going(self) -> None:
+        # The whole point: this is the state the loop reaches one tick before `enter_portal`, and
+        # ending there is what kept every run out of the Nether.
+        g = self._complete()
+        self.assertEqual(self._agent()._stop_state(g, 3), {"done": False, "stop": ""})
 
     def test_an_incomplete_run_keeps_going(self) -> None:
         self.assertEqual(self._agent()._stop_state(gs(), 3), {"done": False, "stop": ""})
@@ -1775,8 +1791,160 @@ class GoalStopTest(unittest.TestCase):
         self.assertEqual(self._agent()._stop_state(gs(), 10), {"done": True, "stop": "limit"})
 
     def test_the_goal_stop_can_be_switched_off(self) -> None:
-        self.assertEqual(self._agent(stop_when_complete=False)._stop_state(self._complete(), 3),
+        g = self._complete()
+        g.powder_stowed = True
+        self.assertEqual(self._agent(stop_when_complete=False)._stop_state(g, 3),
                          {"done": False, "stop": ""})
+
+
+class ExpeditionDepartureChainTest(unittest.TestCase):
+    """From a base found again after a death to a stocked crossing, in one chain.
+
+    This is the question the run has to answer before it can go through the gate, and it is a
+    chain rather than a predicate: every step is offered only while its predecessor is done, so a
+    gap anywhere shows up as the next step missing rather than as a failure at the gate. The state
+    is the live one - base (226,63,222), chest (229,62,224), gate at (228,64,222), ten obsidian,
+    the full diamond kit worn - because the numbers are what the gates compare against.
+    """
+
+    BASE = (226, 63, 222)
+    CHEST = (229, 62, 224)
+    GATE = (228, 64, 222)
+    NETHER = "minecraft:the_nether"
+    OVERWORLD = "minecraft:overworld"
+
+    def _standing(self, **inv):
+        """The bot at its base with the expedition already banked, short of what it lacks."""
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64,
+                     golden_helmet=1, cooked_mutton=64, white_bed=1, diamond_pickaxe=2,
+                     diamond=3, stick=4)
+        stock.update(inv)
+        # The full diamond kit worn and the shield in the off-hand (`_gear_ready`), not merely
+        # carried: the expedition gate asks for the armour on the body.
+        g = GameState()
+        g.inventory = dict(stock)
+        g.tools = {"pickaxe": "diamond", "sword": "diamond"}
+        g.armor = {slot: {"item": f"diamond_{slot}"}
+                   for slot in ("helmet", "chestplate", "leggings", "boots")}
+        g.offhand = "shield"
+        # Stand the bot on its base, so the base-only steps are eligible (`_at_base`).
+        g.base = self.BASE
+        g.pos = (self.BASE[0] + 0.5, self.BASE[1] + 1.0, self.BASE[2] + 0.5)
+        g.resources = {
+            "nether_portal": [BlockHit("nether_portal", "nether_portal", *self.GATE, 2.0)],
+            "obsidian": [BlockHit("obsidian", "obsidian", 226, 64, 221, 2.0)],
+            "white_bed": [BlockHit("white_bed", "white_bed", 225, 64, 223, 2.5)],
+            "furnace": [BlockHit("furnace", "furnace", 229, 62, 222, 4.5)],
+        }
+        g.dimension = self.OVERWORLD
+        g.chest_pos = self.CHEST
+        g.furnace_pos = (229, 62, 222)
+        g.health = 20.0
+        g.food = 18.0
+        return g
+
+    def _agent(self):
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.settings = Settings()
+        agent.base = None
+        agent.surface = None
+        agent.chest_pos = None
+        agent.furnace_pos = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._furnace_blocked = False
+        agent._furnace_contents = {}
+        agent._furnace_occupied = False
+        agent._powder_stowed = False
+        agent._home_anchor = None
+        agent._home_ticks = 0
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._recover_written_off = set()
+        agent._water_ticks = 0
+        agent._drop_hole_blocked = False
+        agent._chest_blocked = False
+        agent._blocked_cell = None
+        agent._chest_above = None
+        agent._portal_blocked = []
+        agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_ticks = 0
+        agent._nether_arrival = None
+        return agent
+
+    def test_the_gate_is_offered_and_is_the_crossing(self) -> None:
+        g = self._standing()
+        out = candidates(g)
+        self.assertIn("enter_portal", out)
+        a = resolve("enter_portal", g)
+        self.assertEqual(a.tool, "enter_nether_portal")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.GATE)
+        # The server pauses a crossing below 32 arrows and this run banks 16, so the crossing
+        # would otherwise be refused forever (live, run41).
+        self.assertTrue(a.args["allow_low_supplies"])
+
+    def test_the_second_pickaxe_is_the_only_thing_between_the_base_and_the_gate(self) -> None:
+        # One pickaxe is not a banked expedition: it breaks in the Nether and nothing is
+        # recoverable there (`_can_recover` refuses the dimension on purpose).
+        g = self._standing(diamond_pickaxe=1)
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertIn("craft_pickaxe_spare", candidates(g))
+
+    def test_the_spare_is_built_from_what_the_run_can_mine(self) -> None:
+        g = self._standing(diamond_pickaxe=1, diamond=3, stick=4)
+        a = resolve("craft_pickaxe_spare", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_pickaxe"}])
+
+    def test_a_walked_away_bot_is_brought_back_for_the_crossing(self) -> None:
+        # The gate is base-gated and nothing else pulls a stocked bot home, which is how run30
+        # sat fully stocked and lit with `enter_portal` never offered.
+        g = self._standing()
+        g.pos = (-250.5, 40.0, -120.5)
+        self.assertIn("go_home", candidates(g))
+
+    def test_the_run_is_not_finished_by_standing_at_the_gate(self) -> None:
+        # The state one tick before the crossing: the overworld goal holds, the expedition has
+        # not happened, and the run has to keep going. Ending here is what kept every run out of
+        # the Nether (run29, `{"stop": "goal"}` at iteration 180).
+        agent = self._agent()
+        g = agent._inject(self._standing())
+        self.assertTrue(tech_tree_complete(g))
+        self.assertFalse(nether_expedition_complete(g))
+        self.assertFalse(agent._goal_reached(g))
+        self.assertEqual(agent._stop_state(g, 3), {"done": False, "stop": ""})
+
+    def test_the_run_finishes_when_the_powder_is_home_and_the_base_is_in_order(self) -> None:
+        agent = self._agent()
+        agent._powder_stowed = True
+        g = agent._inject(self._standing())
+        self.assertTrue(agent._goal_reached(g))
+        self.assertEqual(agent._stop_state(g, 3), {"done": True, "stop": "goal"})
+
+    def test_the_search_down_there_walks_the_unexplored_edge(self) -> None:
+        # The crossing is only the start of the trip: down there the step is the fortress search,
+        # and it follows the world's frontier rather than a fixed compass line.
+        g = gs(pos=(10.5, 65.0, 4.5), dimension=self.NETHER, health=20.0, food=18.0,
+               inventory={"diamond_pickaxe": 2}, tools={"pickaxe": "diamond", "sword": "diamond"},
+               armor={s: {"item": f"diamond_{s}"} for s in
+                      ("helmet", "chestplate", "leggings", "boots")},
+               offhand="shield", base=self.BASE)
+        g.nether_entered = True
+        g.nether_arrival = (10, 65, 4)
+        g.frontier_heading = 180.0
+        g.golden_helmet = True
+        a = resolve("explore", g)
+        self.assertEqual(a.tool, "explore_frontier")
+        self.assertEqual(a.args["heading"], 180.0)
 
 
 class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
@@ -2257,11 +2425,15 @@ class NetherCrossingTest(unittest.TestCase):
         agent._note_stow(deposit, True, {"inventory_delta": {}})
         self.assertFalse(agent._powder_stowed)
 
-    def test_the_stowed_expedition_ends_the_run(self) -> None:
+    def test_the_stowed_expedition_alone_keeps_the_run_going(self) -> None:
+        # `powder_stowed` is a latch that only ever sets, while `tech_tree_complete` reads the
+        # live world - a creepers' bed or a dropped tool turns it false again. So the run carries
+        # on past the deposit until the home base is in order too, and stops on the first tick
+        # where both hold. Leaving the world tidy is part of finishing a playthrough.
         agent = self._agent()
         agent.settings.loop.stop_when_complete = True
         agent._powder_stowed = True
-        self.assertTrue(agent._goal_reached(agent._inject(gs())))
+        self.assertFalse(agent._goal_reached(agent._inject(gs())))
 
 
 if __name__ == "__main__":

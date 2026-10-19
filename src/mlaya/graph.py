@@ -770,9 +770,28 @@ class Agent:
         return {"before": gs, "iteration": iteration, **stop}
 
     def _goal_reached(self, gs) -> bool:
-        """Whether the run's goal is reached (see `actions.tech_tree_complete`)."""
+        """Whether the run is finished: every phase, not the first one that closes.
+
+        `tech_tree_complete` is the *first* phase and it closes one tick before the crossing it
+        prepares: lit portal, gear worn, bed at the base, prep banked, food reserve met - and
+        `enter_portal` sitting in the offer right behind it. Read as a goal on its own it ended
+        every run exactly there, which is why the Nether only ever ran from a wrecked state: the
+        goal had to be *broken* (a death, lost gear, a re-based home) to keep the loop going
+        (live, run29: `{"iterations": 180, "stop": "goal"}` with the expedition never started, and
+        runs 42-47 crossing only because run43's death had already undone the gate).
+
+        So the phases are an AND, not an OR. The order of play is Overworld, then the Nether trip,
+        then whatever comes after it; a run that stops on its first finished phase is not a
+        playthrough. The asymmetry is deliberate and worth keeping: `nether_expedition_complete`
+        reads a latch that only ever sets (`gs.powder_stowed`), while `tech_tree_complete` reads
+        the live world and can go false again - a creepers' bed, a dropped tool. So the run may
+        continue past the deposit until the home base is in order too, and it will stop on the
+        first tick where both hold. The cost is that a run which never finds a fortress no longer
+        stops early; it runs to the iteration limit and says `"stop": "limit"`, which is the
+        honest report for an unfinished playthrough.
+        """
         return (bool(self.settings.loop.stop_when_complete)
-                and (tech_tree_complete(gs) or nether_expedition_complete(gs)))
+                and tech_tree_complete(gs) and nether_expedition_complete(gs))
 
     def _stop_state(self, gs, iteration: int) -> dict:
         """`done`/`stop` for the next state: the goal ends the run early, else the limit does."""
