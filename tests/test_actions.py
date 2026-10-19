@@ -3270,6 +3270,52 @@ class NetherExpeditionTest(unittest.TestCase):
         g.slots_used = 34
         self.assertIn("leave_nether", candidates(g))
 
+    def test_the_walk_off_is_offered_while_the_drop_is_pending(self) -> None:
+        # A junk drop that landed on open ground (no pit) is not finished until the bot has
+        # walked off it, so while that walk is pending the offer is the walk alone - it owns the
+        # tick, ahead of the search and the tech tree.
+        g = self._down(netherrack=128)
+        g.drop_open_pending = True
+        g.drop_pos = (g.pos[0], g.pos[1], g.pos[2])
+        self.assertEqual(candidates(g), ["step_away_drops"])
+
+    def _agent_with_pending_drop(self):
+        from mlaya.config import Settings
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.settings = Settings()
+        agent._drop_open_pending = True
+        agent._drop_pos = (12.5, 65.0, -3.5)
+        agent._step_away_fails = 0
+        return agent
+
+    def test_a_step_that_succeeds_closes_the_walk_off(self) -> None:
+        # The happy path: the 3-block step goes through and the latch clears, so the offer is
+        # gone and the bot is free to make its next choice.
+        agent = self._agent_with_pending_drop()
+        agent._note_step_away(Action("step_away_drops", "navigate", {}, ""), True)
+        self.assertFalse(agent._drop_open_pending)
+        self.assertIsNone(agent._drop_pos)
+
+    def test_a_step_that_keeps_failing_releases_the_walk_off(self) -> None:
+        # The walk off is a 3-block navigate that rough Nether terrain can refuse on every try.
+        # A refusal keeps the junk at the bot's feet, so the latch must survive a couple of them
+        # (the pathfinder may find footing soon) - but not all of them, or the bot is wedged on
+        # the one failing candidate forever (live, run73: a fortress in view, `step_away_drops`
+        # refused on every tick). After `STEP_AWAY_GIVE_UP` refusals the walk off is given up and
+        # the bot moves on; the junk stays dropped because the bot marches away from it, not over
+        # it.
+        from mlaya.graph import STEP_AWAY_GIVE_UP
+        agent = self._agent_with_pending_drop()
+        act = Action("step_away_drops", "navigate", {}, "")
+        for i in range(STEP_AWAY_GIVE_UP - 1):
+            agent._note_step_away(act, False)
+            self.assertTrue(agent._drop_open_pending, f"latch must survive refusal {i + 1}")
+        agent._note_step_away(act, False)
+        self.assertFalse(agent._drop_open_pending)
+        self.assertIsNone(agent._drop_pos)
+        self.assertEqual(agent._step_away_fails, 0)
+
     def test_explore_walks_to_a_visible_spawner(self) -> None:
         # The search closes in on the bricks once they are in view, the way a dig closes in on
         # the ore: `explore`'s Nether branch navigates to the nearest fortress landmark.

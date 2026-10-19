@@ -109,6 +109,14 @@ HOME_ANCHOR_TICKS = 60
 IDLE_REPEATS = 3
 PASS_TIME_LABELS = ("wait", "sleep")
 
+# The walk off a junk dropped on open ground is a 3-block `navigate`. A refusal keeps the latch
+# set (the junk is still at the bot's feet), so a step that keeps failing - rough Nether terrain
+# the 3-block navigate cannot cross - would otherwise wedge the bot on that one candidate forever
+# (live, run73: a fortress in view, `step_away_drops` refused on every tick). After this many
+# consecutive refusals the walk off is given up and the bot moves on; the junk stays dropped,
+# because the bot marches away from it, not over it, so the auto-pickup never reaches it.
+STEP_AWAY_GIVE_UP = 3
+
 _CODE_RE = re.compile(r"\[([A-Z][A-Z_]+)\]")
 
 # The two lines the server prints into every settled result's final progress
@@ -314,6 +322,9 @@ class Agent:
         # After dropping junk on open ground (no pit), step away so items aren't re-collected.
         self._drop_open_pending = False
         self._drop_pos: tuple[float,float,float]|None = None
+        # Consecutive refused `step_away_drops` since the last drop; `STEP_AWAY_GIVE_UP` of them
+        # releases the walk off so a step that cannot be made cannot wedge the bot.
+        self._step_away_fails = 0
         # A `place_chest` the base's ground refused (`[PLACE_NO_SUPPORT]`): no solid block
         # touches the cell beside the base, so the chest cannot stand there. Retrying can only
         # fail again, so the chain is dropped and the relief falls back to `drop_junk` (live,
@@ -1133,6 +1144,7 @@ class Agent:
             # coordinates that mean nothing here.
             self._drop_open_pending = False
             self._drop_pos = None
+            self._step_away_fails = 0
 
     def _note_stow(self, action, ok: bool, delta: dict) -> None:
         """Remember that the blaze powder reached the chest at the portal (the phase-3 goal).
@@ -1246,6 +1258,7 @@ class Agent:
             if self._drop_hole_blocked and gs is not None and gs.pos is not None:
                 self._drop_open_pending = True
                 self._drop_pos = (gs.pos[0], gs.pos[1], gs.pos[2])
+                self._step_away_fails = 0
             return
         if "DROP_HOLE_UNAVAILABLE" in (text or ""):
             self._drop_hole_blocked = True
@@ -1253,12 +1266,26 @@ class Agent:
     def _note_step_away(self, action, ok: bool) -> None:
         """Close the walk-off once the bot has actually made it, so the offer disappears.
 
-        Only on success. A refused `step_away_drops` still has junk at the bot's feet, and
-        dropping the flag there would leave the drop unfinished with nothing left to finish it.
+        On success the junk is safely off the bot's feet and the latch clears. A refusal keeps
+        it: the junk is still there, and dropping the flag would leave the drop unfinished with
+        nothing left to finish it. But a step that keeps failing (rough Nether terrain the 3-block
+        navigate cannot cross) would wedge the bot on that one candidate forever, so after
+        `STEP_AWAY_GIVE_UP` consecutive refusals the walk off is given up and the latch clears -
+        the bot moves on, and the junk stays dropped because the bot marches away from it, not
+        over it.
         """
-        if ok and action.label == "step_away_drops":
+        if action.label != "step_away_drops":
+            return
+        if ok:
             self._drop_open_pending = False
             self._drop_pos = None
+            self._step_away_fails = 0
+            return
+        self._step_away_fails += 1
+        if self._step_away_fails >= STEP_AWAY_GIVE_UP:
+            self._drop_open_pending = False
+            self._drop_pos = None
+            self._step_away_fails = 0
 
     def _note_chest(self, action, ok: bool, text: str | None) -> None:
         """Remember that the base's ground cannot hold the chest, so the chain is dropped.
