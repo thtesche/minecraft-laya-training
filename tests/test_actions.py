@@ -3575,6 +3575,40 @@ class BankedFoodEndsTheHuntTest(unittest.TestCase):
         g.dimension = "minecraft:the_nether"
         self.assertNotIn("take_stored_food", candidates(g))
 
+    def test_a_chest_of_rotten_flesh_does_not_end_the_hunt(self) -> None:
+        # The live chest: 96 rotten flesh and nothing else. `EDIBLE` has to stay that broad,
+        # because the reflex will eat this rather than starve - but a *reserve* is a different
+        # question, and one list cannot answer both. Counting it withheld the hunt that fetches
+        # the right sort, which is worse than the hunting it replaced.
+        g = self._hungry_at_base(carried=0)
+        g.banked = {"rotten_flesh": 96}
+        self.assertIn("hunt_food", candidates(g))
+
+    def test_the_emergency_pile_is_still_taken_when_it_is_all_there_is(self) -> None:
+        # Falling back is not the same as pretending it is a reserve: `_provisioned` stays at 0,
+        # so the hunt continues while the pack is topped up with what exists.
+        g = self._hungry_at_base(carried=0)
+        g.banked = {"rotten_flesh": 96}
+        a = resolve("take_stored_food", g)
+        self.assertEqual(a.args["items"], [{"item_name": "rotten_flesh", "count": 16}])
+        from mlaya.actions import _provisioned
+        self.assertEqual(_provisioned(g), 0)
+
+    def test_provisions_are_preferred_over_the_emergency_pile(self) -> None:
+        g = self._hungry_at_base(carried=0)
+        g.banked = {"rotten_flesh": 96, "cooked_mutton": 8}
+        a = resolve("take_stored_food", g)
+        self.assertEqual(a.args["items"], [{"item_name": "cooked_mutton", "count": 8}])
+
+    def test_provisions_are_a_strict_subset_of_what_is_edible(self) -> None:
+        # Three named exclusions, each for a reason in the constant's comment: rotten flesh (4
+        # hunger, mostly poison), dried kelp (1 hunger per stack), mushroom stew (does not stack,
+        # so 64 of them are 64 slots).
+        from mlaya.actions import EDIBLE, PROVISIONS
+        self.assertTrue(PROVISIONS < EDIBLE)
+        self.assertEqual(set(EDIBLE) - set(PROVISIONS),
+                         {"rotten_flesh", "dried_kelp", "mushroom_stew"})
+
     def test_the_reserve_the_crossing_needs_is_still_counted_in_the_pack(self) -> None:
         # 64 banked and an empty pack must NOT count as a stocked expedition.
         from mlaya.actions import _food_reserve_met

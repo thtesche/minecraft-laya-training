@@ -99,6 +99,18 @@ EDIBLE = {
     "chicken", "mutton", "rabbit", "cod", "salmon",
 }
 
+# `EDIBLE` answers "can this be eaten at all", and it has to stay that broad: the reflex will eat
+# rotten flesh rather than starve. But a *reserve* is a different question, and one list cannot
+# answer both. Live: the chest at the base held 96 rotten flesh and nothing else, so the first cut
+# of the banked-chest read read that as a full larder and withheld every hunt - a Nether crossing
+# stocked with emergency food, which is worse than the hunting it replaced.
+#
+# So the three items that cannot carry a trip are named rather than counted:
+#   rotten_flesh    4 hunger, and most of it poisons
+#   dried_kelp       1 hunger, for a whole stack
+#   mushroom_stew    6 hunger but it does not stack: 64 of them are 64 slots
+PROVISIONS = frozenset(EDIBLE) - {"rotten_flesh", "dried_kelp", "mushroom_stew"}
+
 # Pickaxe tier by registry prefix (tools[] reports e.g. {"class": "pickaxe", "tier": "wooden"}).
 TIER = {"none": 0, "wooden": 1, "golden": 1, "stone": 2, "iron": 3, "diamond": 4, "netherite": 5}
 STONE_PICK_TIER = 2
@@ -1007,18 +1019,35 @@ def _food_source_in_reach(gs: GameState) -> bool:
             or (gs.mob_nearest("zombie") or float("inf")) <= ZOMBIE_HUNT_RANGE)
 
 
+def _provision_count(counts: dict[str, int]) -> int:
+    """How many of these items can actually feed a trip, as opposed to merely be eaten."""
+    return sum(c for n, c in counts.items() if n in PROVISIONS)
+
+
 def _total_edible(gs: GameState) -> int:
     """Every edible item the bot can lay hands on: the pack plus what the chest last held.
 
     This is the number that decides whether a hunt is worth walking for, and it was the pack
-    alone. The bot stood at its own base with a chest full of cooked mutton and hunted anyway,
-    because `_edible_count(inventory)` cannot see across the room from the pack into the chest.
+    alone. The bot stood at its own base with a chest full of food and hunted anyway, because
+    `_edible_count(inventory)` cannot see across the room from the pack into the chest.
 
     The two must not be folded into one. What stops a hunt is the total; what has to come along
     into the Nether is the pack, and the chest is at the base - so `_food_reserve_met` still counts
     carried food only, and `take_stored_food` is what refills the pack from the bank.
     """
     return _edible_count(gs.inventory) + sum(gs.banked.values())
+
+
+def _provisioned(gs: GameState) -> int:
+    """Provisions carried plus banked: the count that answers "is a hunt still worth walking?".
+
+    Carried and banked are one number here, because a hunt can serve either - what goes into the
+    pack is decided afterwards, by `take_stored_food`. What is *not* one number is the two kinds
+    of food. The chest at the base held 96 rotten flesh and nothing else, and counting it as a
+    reserve withheld the hunt that fetches the right sort - a crossing stocked with emergency
+    food is worse than the hunting it replaced.
+    """
+    return _provision_count(gs.inventory) + _provision_count(gs.banked)
 
 
 def _food_reserve_met(gs: GameState) -> bool:
@@ -2156,7 +2185,7 @@ def candidates(gs: GameState) -> list[str]:
     # Food reserve: bank edible items. At full hunger the reflex cannot eat, so gathered drops
     # accumulate; when hunger drops it spends them. Never compete with eating: feed to 20 first,
     # bank after. The goal deepens to the Nether target once the gate frame stands.
-    if (_total_edible(gs) < _food_goal(gs) and not eating
+    if (_provisioned(gs) < _food_goal(gs) and not eating
             and _food_target(gs) is not None):
         out.append("hunt_food")
     if (_edible_count(inv) < _food_goal(gs) and gs.banked
@@ -2947,12 +2976,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         want = _food_goal(gs) - _edible_count(inv)
         if want <= 0 or not gs.banked:
             return None
+        # Provisions first, and only the emergency pile if that is all the chest has. A pack of 64
+        # rotten flesh is not a larder, and taking it would look like the reserve being met.
+        stored = {n: c for n, c in gs.banked.items() if n in PROVISIONS} or dict(gs.banked)
         # Named from what the chest last held, not from a wish list: a `withdraw` naming an item
         # the chest does not hold takes nothing out, and the tick is then a refusal that looks
         # exactly like a working chest.
         items: list[dict] = []
         left = want
-        for name, count in gs.banked.items():
+        for name, count in stored.items():
             if left <= 0:
                 break
             take = min(int(count), left, 64)
@@ -2967,7 +2999,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       f"take {sum(i['count'] for i in items)} edible items out of the chest at the "
                       "base so the pack is fed for the next trip without hunting again")
     if label == "hunt_food":
-        if _total_edible(gs) >= _food_goal(gs):
+        if _provisioned(gs) >= _food_goal(gs):
             return None
         target = _food_target(gs)
         if not target:
