@@ -3421,6 +3421,23 @@ class BaseFurnaceIsAnOptimisationTest(unittest.TestCase):
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FURNACE)
         self.assertNotIn("temporary_workstation", a.args)
 
+    def test_a_cook_far_from_the_base_never_names_the_base_cell(self) -> None:
+        # Knowing the cell is not standing at it. Live, run58: a `cook_food` at (357,70,362) with
+        # `furnace_pos` (229,62,222) in the state - a smelt aimed 190 m away, answered ok. Away
+        # from the base the carried furnace is the branch that was always there and always worked.
+        g = self._kit(furnace_pos=self.FURNACE)      # away: pos is (150,64,150)
+        a = resolve("smelt_iron", g)
+        self.assertIsNotNone(a)
+        self.assertTrue(a.args["temporary_workstation"])
+        self.assertNotIn("x", a.args)
+
+    def test_a_cook_one_step_outside_the_base_still_uses_a_temporary_furnace(self) -> None:
+        # `_at_base` is the test, not the distance: the cell has to be reachable to be worth naming.
+        g = self._kit(furnace_pos=self.FURNACE, at_base=True)
+        g.pos = (self.BASE[0] + 0.5 + 12.0, float(self.BASE[1] + 1), self.BASE[2] + 0.5)
+        a = resolve("smelt_iron", g)
+        self.assertTrue(a.args["temporary_workstation"])
+
     def test_the_drain_is_the_one_thing_that_needs_the_standing_furnace(self) -> None:
         # There is nothing at the base to drain when the furnace was carried and temporary.
         away = self._kit()

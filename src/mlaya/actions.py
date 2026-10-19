@@ -1505,13 +1505,19 @@ def _furnace_room(gs: GameState) -> bool:
 
 
 def _smelt_args(gs: GameState, item_name: str, count: int, fuel_name: str) -> dict:
-    """The `smelt_item` arguments: the base furnace's coordinates, or a temporary workstation.
+    """The `smelt_item` arguments: the base furnace's cell, or a temporary workstation.
 
-    With a furnace standing at the base the call names its exact cell and reuses it; otherwise
-    it falls back to the carried furnace placed and recovered for this one call.
+    With a furnace standing at the base *and the bot standing there too*, the call names its exact
+    cell and reuses it; otherwise the carried furnace is placed and recovered for this one call.
+
+    Both conditions, not one. Knowing the cell is not the same as standing at it, and naming a
+    furnace 190 m away sends the cook to a target the bot has no reason to walk to: live, run58, a
+    `cook_food` at `(357,70,362)` with `furnace_pos` `(229,62,222)` in the state - a smelt aimed at
+    the base from the far side of the map, answered ok. The temporary workstation is the branch that
+    was always there and always worked, so away from the base it is simply the right one.
     """
     args: dict = {"item_name": item_name, "count": count, "fuel_item_name": fuel_name}
-    if gs.furnace_pos is not None:
+    if gs.furnace_pos is not None and _at_base(gs):
         fx, fy, fz = gs.furnace_pos
         args.update({"x": fx, "y": fy, "z": fz})
     else:
