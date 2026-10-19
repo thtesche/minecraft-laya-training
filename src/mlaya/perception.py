@@ -168,6 +168,66 @@ REMEMBERED_HOME_SQL = (
 EAT_HUNGER = 14.0
 REGEN_HUNGER = 18.0
 
+# What counts as food worth banking, for the reader that has to decide it from a chest snapshot.
+# The same list `actions.EDIBLE` uses, kept here because the agent reads the chest before the
+# candidate list exists; `actions` still gates on its own copy, and a test holds the two together.
+EDIBLE_NAMES = frozenset({
+    "bread", "apple", "cooked_beef", "cooked_porkchop", "cooked_chicken",
+    "cooked_mutton", "cooked_rabbit", "cooked_cod", "cooked_salmon", "carrot",
+    "potato", "baked_potato", "beetroot", "melon_slice", "sweet_berries",
+    "rotten_flesh", "dried_kelp", "cookie", "mushroom_stew", "beef", "porkchop",
+    "chicken", "mutton", "rabbit", "cod", "salmon",
+})
+
+
+REMEMBERED_STOCK_SQL = (
+    "SELECT block_x, block_y, block_z, contents_json FROM observed_containers "
+    "WHERE block_name = 'chest' AND dimension = 'overworld' "
+    "ORDER BY observed_at DESC LIMIT 1")
+
+
+def parse_remembered_stock(payload: Any) -> tuple[tuple[int, int, int], dict[str, int]] | None:
+    """What the newest chest last held, as counts per item, or None if there is nothing to read.
+
+    The same database read as `parse_remembered_home` with one column more: the server records a
+    full `contents_json` for every container it has seen (`contents: [{slot, item, count}]`), and
+    the home query left it unread. That unread column is why the loop hunted with a full chest
+    standing at its own base - `hunt_food` counts `_edible_count(inventory)`, the pack only, so
+    food banked at home was invisible to it and every hunt looked like a shortfall.
+
+    A read of the database is not a read of the world: it answers from the Nether, from 300
+    blocks away, and after a restart, and it costs no `use_container` inspection on the tick. It
+    is also a *snapshot from the last observation*, not a live count, which is the right shape
+    here: what the chest held when the bot last touched it is exactly what the bot put there, and
+    the loop is the only writer.
+    """
+    rows = get(payload, "response", "data", "result", "query", "rows")
+    if not isinstance(rows, list) or not rows:
+        return None
+    row = rows[0]
+    cells = row if isinstance(row, list) else [row]
+    if len(cells) < 4:
+        return None
+    x, y, z = (_num(cells[0]), _num(cells[1]), _num(cells[2]))
+    if x is None or y is None or z is None:
+        return None
+    raw = cells[3]
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+    counts: dict[str, int] = {}
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("item")
+            n = _num(entry.get("count"))
+            if isinstance(name, str) and name and n is not None and n > 0:
+                counts[name] = counts.get(name, 0) + int(n)
+    return (int(x), int(y), int(z)), counts
+
 
 def parse_remembered_home(payload: Any) -> tuple[int, int, int] | None:
     """The cell of the newest chest this bot has ever opened, or None if it has opened none.
@@ -471,6 +531,13 @@ class GameState:
     # out of scan range, so without the raw count the loop could never dig down to the diamond
     # armour piece it still needs once one is lost.
     resource_found: dict[str, int] = field(default_factory=dict)
+
+    # How many of each edible item the Overworld chest last held, from the server's container
+    # database. Carried and banked are deliberately two fields and not one: the chest is at the
+    # base and is worth nothing in the Nether, so what stops a hunt is the total while what has to
+    # be carried across is the pack. Folding them into one number deadlocks the run - stop hunting,
+    # and then nothing can put food in the pack.
+    banked: dict[str, int] = field(default_factory=dict)
     # A level, clear surface cell to raise the home base on, proposed by a one-off
     # `view_blocks box` scan while `base` is still unset. The loop owns the base, so this is
     # only the *site proposal*; `None` means no flat site was found and the base pick falls
@@ -606,6 +673,7 @@ class GameState:
             "sleeping": self.sleeping,
             "resources": {n: [h.as_dict() for h in hits[:2]] for n, hits in self.resources.items() if hits},
             "resource_found": self.resource_found,
+            "banked": self.banked,
             "mobs": self.mobs,
         }
 
@@ -629,7 +697,7 @@ class GameState:
                       "dimension", "slots_used", "tools", "tool_meta", "armor", "offhand",
                       "hostiles", "players", "death_pos", "drops", "base", "chest_pos",
                       "base_adopted", "furnace_pos", "furnace_occupied", "furnace_blocked",
-                      "sleeping", "resource_found", "mobs"):
+                      "sleeping", "resource_found", "mobs", "banked"):
             value = data.get(field)
             if value is not None:
                 setattr(gs, field, value)

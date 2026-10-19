@@ -87,6 +87,7 @@ class WaterTicksTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent.build_site = None
         agent._base_adopted = False
@@ -409,6 +410,7 @@ class PourSkipTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent._pour_skip = {(-129, 66, -30)}
         self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
 
@@ -476,6 +478,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._powder_stowed = False
         agent.furnace_pos = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.base = None
         agent.surface = None
         agent.build_site = None
@@ -564,6 +567,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._powder_stowed = False
         agent.furnace_pos = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.base = None
         agent.surface = None
         agent.build_site = None
@@ -669,6 +673,7 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent._home_anchor = None
         agent._home_ticks = 0
@@ -743,6 +748,7 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         agent = self._agent(_home_anchor=(229, 62, 224), _home_ticks=HOME_ANCHOR_TICKS)
         agent.base = (229, 61, 225)
         agent.chest_pos = (229, 62, 224)
+        agent.banked = {}
         agent._settle_home_anchor(gs(pos=(229.5, 61.0, 225.5), base=(229, 61, 225)))
         self.assertEqual(agent.chest_pos, (229, 62, 224))
 
@@ -1089,6 +1095,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent.build_site = None
         agent._base_adopted = False
@@ -1152,6 +1159,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent.build_site = None
         agent._base_adopted = False
@@ -1261,6 +1269,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._powder_stowed = False
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent.build_site = None
         agent._base_adopted = False
@@ -1525,6 +1534,7 @@ class DropHoleTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._stuck_code = {}
@@ -1594,6 +1604,7 @@ class ChestSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._stuck_code = {}
@@ -1630,6 +1641,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent.furnace_pos = None
         agent.chest_pos = None
+        agent.banked = {}
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -1665,6 +1677,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = (-197, -46, -99)
         agent._pour_skip = set()
         agent._stance_skip = set()
@@ -1795,6 +1808,7 @@ class ChestLidTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -1938,6 +1952,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent.build_site = None
         agent._base_adopted = False
@@ -2066,6 +2081,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)
         agent.base = (-197, -47, -98)
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -2176,6 +2192,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -2280,6 +2297,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         # live, run43 died in the Nether and would have re-based on open ground, chest included.
         agent = self._agent(self._FIND)
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent._furnace_blocked = False
         await agent._adopt_portal_base(gs(pos=(-178.5, 68.0, 329.5),
@@ -2377,6 +2395,7 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.base = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -2442,6 +2461,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent.banked = {}
         agent.furnace_pos = None
         agent.build_site = None
         agent._base_adopted = False

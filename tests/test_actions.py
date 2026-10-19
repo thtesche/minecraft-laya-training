@@ -3510,6 +3510,81 @@ class PortalLitIsAWorldFactTest(unittest.TestCase):
         self.assertIn("go_home", candidates(g))
 
 
+class BankedFoodEndsTheHuntTest(unittest.TestCase):
+    """A chest full of food means no hunt, and the pack is refilled from that chest.
+
+    The bot stood at its own base with a chest full of cooked mutton and hunted anyway, because
+    `hunt_food` counted `_edible_count(inventory)` - the pack, and nothing else. Food banked at
+    home was invisible to the only gate that decides whether a hunt is worth walking for.
+
+    Carried and banked stay two numbers, deliberately. The chest is at the base and worth nothing
+    in the Nether, so what stops a hunt is the *total* while what has to come along is the *pack*.
+    Folding them into one would deadlock the run in the other direction: stop hunting, and then
+    nothing could put food in the pack for the crossing.
+
+    The server records a full `contents_json` for every container it has seen, and the home query
+    was leaving that column unread. Now it is read, filtered to edibles, and logged.
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-195, -46, -97)
+
+    def _hungry_at_base(self, carried: int = 0, banked: int = 0) -> GameState:
+        g = at_home(geared(cooked_mutton=carried))
+        g.food = 12.0                     # hungry: the hunt is not competing with eating
+        g.phase = "day"
+        g.mobs = [("cow", "cow", 8.0, 8.0)]
+        g.chest_pos = self.CHEST
+        g.banked = {"cooked_mutton": banked} if banked else {}
+        return g
+
+    def test_a_full_chest_ends_the_hunt(self) -> None:
+        g = self._hungry_at_base(carried=0, banked=32)
+        self.assertNotIn("hunt_food", candidates(g))
+
+    def test_an_empty_chest_still_offers_the_hunt(self) -> None:
+        g = self._hungry_at_base(carried=0, banked=0)
+        self.assertIn("hunt_food", candidates(g))
+
+    def test_the_chest_is_where_the_pack_is_filled_from(self) -> None:
+        # The other half, and the reason the two numbers are kept apart: a banked reserve that
+        # stops the hunt would starve the crossing if nothing could carry it into the Nether.
+        g = self._hungry_at_base(carried=0, banked=32)
+        self.assertIn("take_stored_food", candidates(g))
+        a = resolve("take_stored_food", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "withdraw")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.CHEST)
+
+    def test_the_withdraw_names_what_the_chest_actually_holds(self) -> None:
+        # A `withdraw` naming an item the chest does not hold takes nothing out, and the refusal
+        # then looks exactly like a working chest.
+        g = self._hungry_at_base(carried=0, banked=9)
+        g.banked = {"cooked_mutton": 9}
+        a = resolve("take_stored_food", g)
+        self.assertEqual(a.args["items"], [{"item_name": "cooked_mutton", "count": 9}])
+
+    def test_a_full_pack_is_not_asked_to_carry_more(self) -> None:
+        g = self._hungry_at_base(carried=64, banked=32)
+        self.assertNotIn("take_stored_food", candidates(g))
+
+    def test_the_chest_in_the_nether_is_not_a_source(self) -> None:
+        # `gs.chest_pos` is the Overworld chest; a withdraw aimed at it from the Nether is a
+        # navigation failure wearing a policy's clothes.
+        g = self._hungry_at_base(carried=0, banked=32)
+        g.dimension = "minecraft:the_nether"
+        self.assertNotIn("take_stored_food", candidates(g))
+
+    def test_the_reserve_the_crossing_needs_is_still_counted_in_the_pack(self) -> None:
+        # 64 banked and an empty pack must NOT count as a stocked expedition.
+        from mlaya.actions import _food_reserve_met
+        g = self._hungry_at_base(carried=0, banked=64)
+        g.nether_idle = True
+        self.assertFalse(_food_reserve_met(g))
+        g.inventory["cooked_mutton"] = 64
+        self.assertTrue(_food_reserve_met(g))
+
+
 class LeavePortalDimensionTest(unittest.TestCase):
     """Stepping out of the Nether's own arrival portal must aim at a cell in the Nether.
 

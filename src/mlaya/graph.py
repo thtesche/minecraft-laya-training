@@ -237,6 +237,8 @@ class Agent:
         # placed chest there. Both are per-run only and injected into each GameState.
         self.base: tuple[int, int, int] | None = None
         self.chest_pos: tuple[int, int, int] | None = None
+        self.banked: dict[str, int] = {}
+        self._stock_read: tuple[float, float, float] | None = None
         # The furnace stood at the base (`place_furnace`), remembered so `cook_food`/`smelt_gold`
         # reuse its cell instead of placing a temporary workstation each call. Re-adopted from a
         # scan after a restart, like the chest.
@@ -371,6 +373,7 @@ class Agent:
         gs.base = self.base
         gs.surface = self.surface
         gs.chest_pos = self.chest_pos
+        gs.banked = dict(self.banked)
         gs.furnace_pos = self.furnace_pos
         gs.base_adopted = self._base_adopted
         gs.build_site = self.build_site
@@ -469,6 +472,7 @@ class Agent:
         await self._adopt_portal_base(gs)
         await self._scan_bed_site(gs)
         await self._walk_home_to_memory(gs)
+        await self._note_stocked_chest(gs)
         self._note_dimension(gs)
         gs = self._inject(gs)
         await self._scan_build_site(gs)
@@ -517,6 +521,36 @@ class Agent:
         self._home_ticks = HOME_ANCHOR_TICKS
         self.chest_pos = home
         self.base = (home[0], home[1] - 1, home[2] + 1)
+
+    async def _note_stocked_chest(self, gs) -> None:
+        """Read what the Overworld chest last held, and keep only the edibles.
+
+        The same database read `_walk_home_to_memory` makes, one column wider. It is a read of the
+        server's memory rather than of the world, so it answers from the Nether, from 300 blocks
+        away and after a restart, and it costs no `use_container` inspection on the tick.
+
+        Edibles only: the count exists to answer "is there food banked?", and every other item in
+        the chest would be carried into every state, the narrative and every logged tick for
+        nothing. A snapshot from the last observation is the right shape - the loop is the only
+        writer, so what the chest held when the bot last touched it is what the bot put there.
+        """
+        if self._stock_read is not None and gs.pos is not None:
+            dx = abs(self._stock_read[0] - gs.pos[0]) + abs(self._stock_read[2] - gs.pos[2])
+            if dx < 16.0:
+                return
+        try:
+            stock = await perception.parse_remembered_stock(
+                await self.mcp.read("query_bot_data",
+                                    {"query": perception.REMEMBERED_STOCK_SQL},
+                                    "read what the chest at the base last held"))
+        except Exception:
+            return
+        self._stock_read = gs.pos
+        if stock is None:
+            self.banked.clear()
+            return
+        _cell, counts = stock
+        self.banked = {n: int(c) for n, c in counts.items() if n in perception.EDIBLE_NAMES}
 
     def _settle_home_anchor(self, gs) -> None:
         """Retire the provisional base once the bot stands on it, or when the window runs out.

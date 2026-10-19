@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import unittest
 
-from mlaya.perception import (FORTRESS_RADIUS, GROUND_NAMES, RESCUE_GROUND_NAMES,
+from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_NAMES, RESCUE_GROUND_NAMES,
                               RESCUE_RADIUS, RESOURCE_LIMIT, BlockHit,
                               frame_obsidian_cells, frame_volume, parse_block_above, parse_box,
                               parse_cells, parse_furnace_contents, parse_ground_height,
-                              parse_frontier_heading,
+                              parse_frontier_heading, parse_remembered_stock,
                               parse_portal_corner, parse_refused_cells, parse_resource_counts,
                               parse_resources, parse_status, parse_surface_height,
                               portal_interior, build, GameState)
@@ -214,6 +215,59 @@ class LoggedStateRoundTripTest(unittest.TestCase):
         self.assertFalse(g.furnace_occupied)
         self.assertEqual(g.resources, {})
         self.assertIsNone(g.pos)
+
+
+class RememberedStockParseTest(unittest.TestCase):
+    """The chest's contents, read out of the server's container database.
+
+    `parse_remembered_home` already read this table for the cell and left `contents_json` unread.
+    That unread column is the whole reason a bot with a full chest still hunted: `hunt_food`
+    counts the pack, and food banked at home was not in any number it could see.
+
+    The server's shape is `contents: [{slot, item, count}]`, stored as a JSON string in the
+    column, so the parser takes both the string and the already-decoded list.
+    """
+
+    @staticmethod
+    def _row(cell, contents):
+        """A `query_bot_data` answer carrying one row: three cells plus the contents column."""
+        return {"response": {"data": {"result": {"query": {"rows": [list(cell) + [contents]]}}}}}
+
+    def test_reads_the_cell_and_counts_every_slot(self) -> None:
+        payload = self._row((229, 62, 224), json.dumps([
+            {"slot": 4, "item": "cooked_mutton", "count": 21},
+            {"slot": 7, "item": "obsidian", "count": 10},
+            {"slot": 9, "item": "beef", "count": 3},
+            {"slot": 11, "item": "cooked_mutton", "count": 5},
+        ]))
+        cell, counts = parse_remembered_stock(payload)
+        self.assertEqual(cell, (229, 62, 224))
+        # Two mutton stacks in different slots are one item of twenty-six.
+        self.assertEqual(counts["cooked_mutton"], 26)
+        self.assertEqual(counts["beef"], 3)
+        self.assertEqual(counts["obsidian"], 10)
+
+    def test_an_already_decoded_list_is_taken_as_well(self) -> None:
+        payload = self._row((1, 2, 3), [{"slot": 0, "item": "bread", "count": 4}])
+        self.assertEqual(parse_remembered_stock(payload)[1], {"bread": 4})
+
+    def test_an_empty_chest_is_a_fact_not_a_failure(self) -> None:
+        self.assertEqual(parse_remembered_stock(self._row((1, 2, 3), "[]")), ((1, 2, 3), {}))
+
+    def test_no_row_means_no_chest_was_ever_opened(self) -> None:
+        empty = {"response": {"data": {"result": {"query": {"rows": []}}}}}
+        self.assertIsNone(parse_remembered_stock(empty))
+
+    def test_unreadable_json_is_not_guessed_at(self) -> None:
+        # A half-written or foreign contents column must read as unknown, never as an empty chest:
+        # "no food banked" would offer the hunt, which is the thing this read exists to prevent.
+        self.assertIsNone(parse_remembered_stock(self._row((1, 2, 3), "{not json")))
+
+    def test_the_edible_list_is_the_one_the_candidates_use(self) -> None:
+        # Two copies of "what counts as food" is how the reader and the gate drift apart: the
+        # chest would be filtered with one list and counted with the other.
+        from mlaya.actions import EDIBLE
+        self.assertEqual(set(EDIBLE_NAMES), set(EDIBLE))
 
 
 class NarrativeSaysWhatTheRulesDoTest(unittest.TestCase):

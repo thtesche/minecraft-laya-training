@@ -44,7 +44,8 @@ CRITERIA: dict[str, str] = {
     "craft_bed": "craft a bed from white wool (or string) and planks at a crafting table",
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
-    "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the gate frame stands, stock the deeper Nether reserve",
+    "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the gate frame stands, stock the deeper Nether reserve - the chest at the base counts towards this, so a full chest means no hunt at all",
+    "take_stored_food": "take cooked food out of the chest at the base and put it in the pack, so the Nether trip is fed from what is already banked rather than hunted again",
     "cook_food": "cook carried raw meat in the furnace at the base (or the carried furnace, set up just for the batch) so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
     "collect_smelted": "take what a cook left sitting in the furnace at the base back into the pack, so the next cook can start",
     # Nether prep, stocked in the daytime lull once the gate frame stands (see `_nether_prep_steps`).
@@ -1004,6 +1005,20 @@ def _food_source_in_reach(gs: GameState) -> bool:
     """
     return (_nearest_food_mob(gs, FOOD_HUNT_RANGE_DAY) is not None
             or (gs.mob_nearest("zombie") or float("inf")) <= ZOMBIE_HUNT_RANGE)
+
+
+def _total_edible(gs: GameState) -> int:
+    """Every edible item the bot can lay hands on: the pack plus what the chest last held.
+
+    This is the number that decides whether a hunt is worth walking for, and it was the pack
+    alone. The bot stood at its own base with a chest full of cooked mutton and hunted anyway,
+    because `_edible_count(inventory)` cannot see across the room from the pack into the chest.
+
+    The two must not be folded into one. What stops a hunt is the total; what has to come along
+    into the Nether is the pack, and the chest is at the base - so `_food_reserve_met` still counts
+    carried food only, and `take_stored_food` is what refills the pack from the bank.
+    """
+    return _edible_count(gs.inventory) + sum(gs.banked.values())
 
 
 def _food_reserve_met(gs: GameState) -> bool:
@@ -2141,9 +2156,12 @@ def candidates(gs: GameState) -> list[str]:
     # Food reserve: bank edible items. At full hunger the reflex cannot eat, so gathered drops
     # accumulate; when hunger drops it spends them. Never compete with eating: feed to 20 first,
     # bank after. The goal deepens to the Nether target once the gate frame stands.
-    if (_edible_count(inv) < _food_goal(gs) and not eating
+    if (_total_edible(gs) < _food_goal(gs) and not eating
             and _food_target(gs) is not None):
         out.append("hunt_food")
+    if (_edible_count(inv) < _food_goal(gs) and gs.banked
+            and not _in_nether(gs) and _at_base(gs) and _chest_ready(gs)):
+        out.append("take_stored_food")
 
     wool = _wool(inv)
     string = inv.get("string", 0)
@@ -2923,8 +2941,33 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"operation": "deposit", "x": cx, "y": cy, "z": cz,
                        "items": [{"item_name": BLAZE_POWDER_ITEM, "count": powder}]},
                       f"deposit {powder} blaze powder into the chest at the portal")
+    if label == "take_stored_food":
+        if _in_nether(gs) or not _at_base(gs) or not _chest_ready(gs):
+            return None
+        want = _food_goal(gs) - _edible_count(inv)
+        if want <= 0 or not gs.banked:
+            return None
+        # Named from what the chest last held, not from a wish list: a `withdraw` naming an item
+        # the chest does not hold takes nothing out, and the tick is then a refusal that looks
+        # exactly like a working chest.
+        items: list[dict] = []
+        left = want
+        for name, count in gs.banked.items():
+            if left <= 0:
+                break
+            take = min(int(count), left, 64)
+            if take > 0:
+                items.append({"item_name": name, "count": take})
+                left -= take
+        if not items:
+            return None
+        cx, cy, cz = gs.chest_pos
+        return Action(label, "use_container",
+                      {"operation": "withdraw", "x": cx, "y": cy, "z": cz, "items": items},
+                      f"take {sum(i['count'] for i in items)} edible items out of the chest at the "
+                      "base so the pack is fed for the next trip without hunting again")
     if label == "hunt_food":
-        if _edible_count(inv) >= _food_goal(gs):
+        if _total_edible(gs) >= _food_goal(gs):
             return None
         target = _food_target(gs)
         if not target:
