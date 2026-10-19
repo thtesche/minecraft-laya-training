@@ -21,6 +21,8 @@ CRITERIA: dict[str, str] = {
     "craft_stone_pickaxe": "craft a stone pickaxe at a crafting table from cobblestone and sticks",
     "mine_iron": "mine iron ore for raw iron using the stone pickaxe the bot carries",
     "mine_coal": "mine coal ore to use as furnace fuel",
+    "craft_smoker": "craft a smoker from four planks and a coal, so food is smelted at double speed at the base while the furnace stays for ore",
+    "place_smoker": "stand the carried smoker beside the furnace at the base, so cooking reuses it",
     "craft_furnace": "craft a furnace at a crafting table from eight cobblestone",
     "smelt_iron": "smelt raw iron into iron ingots in the furnace the bot carries",
     "craft_iron_pickaxe": "craft an iron pickaxe at a crafting table from three iron ingots and sticks",
@@ -244,6 +246,7 @@ _GEAR_KEEP = ("golden_helmet",)
 # all stand there, and the bot walks back to it to deploy them. Eight planks make a chest, which
 # is how a full pack sheds surplus blocks without scattering them on the ground.
 CHEST_ITEM = "chest"
+SMOKER_PLANKS = 4        # smoker: four planks over one coal
 CHEST_PLANKS = 8
 # How close the bot must be to the base to lay blocks out there: feet within this many blocks
 # of the anchor in x/z (one more vertically, so a step up or down still counts).
@@ -1590,6 +1593,38 @@ def _furnace_site(gs: GameState) -> tuple[int, int, int] | None:
     return cell
 
 
+def _smoker_site(gs: GameState) -> tuple[int, int, int] | None:
+    """The cell the base smoker goes on: beside the furnace, clear of the chest and the frame.
+
+    The furnace takes `(bx, by+1, bz-1)`, the chest sits at `(bx, by+1, bz+1)` and the portal's
+    frame plane runs along `z == bz`, so the cell next to the furnace on the other side of x is
+    the one that is free of all three. The bed refusal is the furnace's: a bed on that cell would
+    answer `[PLACE_TARGET_OCCUPIED]`, and `make_room` would dig away the respawn bed to clear it.
+    """
+    if gs.base is None:
+        return None
+    bx, by, bz = gs.base
+    cell = (bx + 1, by + 1, bz - 1)
+    if any(hit.pos == cell for hit in gs.resources.get("white_bed", [])):
+        return None
+    return cell
+
+
+def _smoker_worth_placing(gs: GameState) -> bool:
+    """Whether standing a smoker at the base is the next thing to do there.
+
+    Food only, and only once there is food to cook and a way to light it. Cooking is the one
+    thing this run does in bulk - live, twenty cooked items in twenty ticks, one per tick at
+    eighteen seconds - and it is all food, so the station that doubles the smelt rate is worth a
+    recipe that costs four planks off the wood the run is already hoarding.
+    """
+    if gs.base is None or gs.smoker_pos is not None or not _at_base(gs):
+        return False
+    if _first_cookable(gs.inventory) is None:
+        return False
+    return _plank_units(gs.inventory) >= SMOKER_PLANKS and gs.inventory.get("coal", 0) >= 1
+
+
 def _furnace_worth_placing(gs: GameState) -> bool:
     """Whether standing the carried furnace at the base is the next thing to do there.
 
@@ -1632,10 +1667,25 @@ def _furnace_room(gs: GameState) -> bool:
     return gs.slots_used < INVENTORY_SLOTS
 
 
-def _smelt_args(gs: GameState, item_name: str, count: int, fuel_name: str) -> dict:
-    """The `smelt_item` arguments: the base furnace's cell, or a temporary workstation.
+def _cooking_station(gs: GameState) -> tuple[int, int, int] | None:
+    """The cell food should be smelted at: the smoker if one stands at the base, else the furnace.
 
-    With a furnace standing at the base *and the bot standing there too*, the call names its exact
+    A smoker is not a better furnace, it is a different one: it processes *food only* and runs at
+    double speed. The tech tree still needs the furnace for iron, so the smoker stands beside it
+    rather than replacing it - and that is the user's shape for the base, the bot coming home to
+    cook in bulk what it gathered out there, instead of cooking one item per tick wherever it
+    happens to stand.
+    """
+    if not _at_base(gs):
+        return None
+    return gs.smoker_pos if gs.smoker_pos is not None else gs.furnace_pos
+
+
+def _smelt_args(gs: GameState, item_name: str, count: int, fuel_name: str,
+                station: tuple[int, int, int] | None = None) -> dict:
+    """The `smelt_item` arguments: the cell of the station that suits this input, or a portable one.
+
+    With a station standing at the base *and the bot standing there too*, the call names its exact
     cell and reuses it; otherwise the carried furnace is placed and recovered for this one call.
 
     Both conditions, not one. Knowing the cell is not the same as standing at it, and naming a
@@ -1643,10 +1693,15 @@ def _smelt_args(gs: GameState, item_name: str, count: int, fuel_name: str) -> di
     `cook_food` at `(357,70,362)` with `furnace_pos` `(229,62,222)` in the state - a smelt aimed at
     the base from the far side of the map, answered ok. The temporary workstation is the branch that
     was always there and always worked, so away from the base it is simply the right one.
+
+    `station` is passed rather than inferred: iron has to go in the furnace and food in the
+    smoker, and a smoker would refuse the ore.
     """
     args: dict = {"item_name": item_name, "count": count, "fuel_item_name": fuel_name}
-    if gs.furnace_pos is not None and _at_base(gs):
-        fx, fy, fz = gs.furnace_pos
+    if station is None:
+        station = gs.furnace_pos if _at_base(gs) else None
+    if station is not None and _at_base(gs):
+        fx, fy, fz = station
         args.update({"x": fx, "y": fy, "z": fz})
     else:
         args["temporary_workstation"] = True
@@ -2237,6 +2292,12 @@ def candidates(gs: GameState) -> list[str]:
     # base once (walking home first if the bot is away), after which cooking reuses its cell.
     if _furnace_worth_placing(gs):
         out.append("place_furnace" if _at_base(gs) else "go_home")
+    # The smoker is the same idea one step on: it does not replace the furnace (ore still needs
+    # that one) but it doubles the rate for the only thing this run smelts in bulk. Offered at the
+    # base only, because the whole point is cooking *at* the base rather than wherever the bot
+    # happened to gather the meat.
+    if _smoker_worth_placing(gs) and _has(inv, "smoker"):
+        out.append("place_smoker")
     if ((_has(inv, "furnace") or _furnace_ready(gs)) and _first_cookable(inv) and not eating
             and _furnace_room(gs) and _food_source_in_reach(gs)):
         # Cook raw meat so it feeds far more hunger. Outside the Nether lull only coal/charcoal
@@ -2302,6 +2363,10 @@ def candidates(gs: GameState) -> list[str]:
         out.append("craft_stone_pickaxe")
     if tier >= 1 and table and not furnace and cobble >= 8:
         out.append("craft_furnace")
+    if (tier >= 1 and table and gs.smoker_pos is None and _at_base(gs)
+            and _plank_units(inv) >= SMOKER_PLANKS and inv.get("coal", 0) >= 1
+            and _first_cookable(inv) is not None):
+        out.append("craft_smoker")
     if furnace and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs) and _furnace_room(gs):
         out.append("smelt_iron")
     if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
@@ -2673,6 +2738,22 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": "stone_pickaxe"}], "temporary_workstation": True},
                       "craft a stone pickaxe at the carried crafting table")
+    if label == "craft_smoker":
+        if _plank_units(inv) < SMOKER_PLANKS or inv.get("coal", 0) < 1 \
+                or not _has(inv, "crafting_table"):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": "smoker"}], "temporary_workstation": True},
+                      "craft a smoker so food is cooked faster at the base")
+    if label == "place_smoker":
+        cell = _smoker_site(gs)
+        if (gs.smoker_pos is not None or not _smoker_worth_placing(gs) or cell is None
+                or not _has(inv, "smoker")):
+            return None
+        sx, sy, sz = cell
+        return Action(label, "place_block",
+                      {"block_name": "smoker", "x": sx, "y": sy, "z": sz},
+                      "place the carried smoker beside the furnace at the base")
     if label == "craft_furnace":
         if inv.get("cobblestone", 0) < 8 or not _has(inv, "crafting_table"):
             return None
@@ -3117,15 +3198,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "cook_food":
         raw = _first_cookable(inv)
         fuel = _furnace_fuel(inv)
-        if (not raw or not (_has(inv, "furnace") or _furnace_ready(gs)) or fuel is None
-                or not _furnace_room(gs)):
+        if not raw or fuel is None or not _furnace_room(gs):
+            return None
+        station = _cooking_station(gs)
+        if not (_has(inv, "furnace") or _furnace_ready(gs) or gs.smoker_pos is not None):
             return None
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
         if fuel[0] not in ("coal", "charcoal") and not _nether_idle(gs):
             return None
         fuel_name, capacity = fuel
         return Action(label, "smelt_item",
-                      _smelt_args(gs, raw, min(inv.get(raw, 0), 3, capacity), fuel_name),
+                      _smelt_args(gs, raw, min(inv.get(raw, 0), 3, capacity), fuel_name, station),
                       f"cook {raw} into {COOKED[raw]} using {fuel_name}")
     if label == "eat_food":
         food = _first_edible(inv)

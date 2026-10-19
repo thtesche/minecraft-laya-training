@@ -91,6 +91,7 @@ class WaterTicksTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent._pour_skip = set()
@@ -373,6 +374,7 @@ class PourSkipTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -479,6 +481,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._nether_arrival = None
         agent._powder_stowed = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.chest_pos = None
         agent.banked = {}
         agent.base = None
@@ -568,6 +571,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._nether_arrival = None
         agent._powder_stowed = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.chest_pos = None
         agent.banked = {}
         agent.base = None
@@ -677,6 +681,7 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._home_anchor = None
         agent._home_ticks = 0
         agent.log = []
@@ -1015,6 +1020,7 @@ class FurnaceDrainReadTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.log = []
         return agent
 
@@ -1057,6 +1063,7 @@ class FurnaceDrainReadTest(unittest.TestCase):
         agent = self._agent()
         agent._note_furnace(self._inspect(), True, "", self._Res(self.ANSWER))
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         state = gs(inventory={}, base=agent.furnace_pos, furnace_pos=agent.furnace_pos,
                    furnace_occupied=agent._furnace_occupied,
                    furnace_contents=dict(agent._furnace_contents))
@@ -1099,6 +1106,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -1163,6 +1171,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent._bed_base = None
@@ -1273,6 +1282,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent.surface = None
@@ -1501,6 +1511,7 @@ class DropHoleTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -1571,6 +1582,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -1642,6 +1654,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.chest_pos = None
         agent.banked = {}
         agent._portal_blocked = []
@@ -1681,6 +1694,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = (-197, -46, -99)
+        agent.smoker_pos = None
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._stuck_code = {}
@@ -1731,6 +1745,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = (-197, -47, -98)
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         agent._note_furnace(self._Action("cook_food", "smelt_item"), False,
                             "[FURNACE_NOT_EMPTY] The furnace has pre-existing output; "
                             "nothing was inserted.")
@@ -1743,6 +1758,7 @@ class FurnaceSupportTest(unittest.TestCase):
         # retry fixes: back to a carried furnace for the batch.
         agent = self._agent()
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         agent._note_furnace(self._Action("collect_smelted", "use_container"), False,
                             "[CONTAINER_OPERATION_UNSUPPORTED] furnace holds input, fuel and "
                             "output slots rather than storage...")
@@ -1753,6 +1769,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = (-197, -47, -98)
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         agent._furnace_occupied = True
         agent._note_furnace(self._Action("collect_smelted", "use_container"), True, "")
         self.assertFalse(agent._furnace_occupied)
@@ -1760,6 +1777,7 @@ class FurnaceSupportTest(unittest.TestCase):
     def test_a_normal_smelt_failure_leaves_the_furnace_standing(self) -> None:
         agent = self._agent()
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         agent._note_furnace(self._Action("cook_food", "smelt_item"), False,
                             "[SMELT_NO_FUEL] The furnace ran out of fuel.")
         self.assertFalse(agent._furnace_blocked)
@@ -1812,6 +1830,7 @@ class ChestLidTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -1956,6 +1975,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent._bed_base = None
@@ -2085,6 +2105,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._furnace_blocked = False
         agent._furnace_contents = {}
         agent._furnace_occupied = False
@@ -2153,6 +2174,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         self.assertEqual(agent._inject(gs()).portal_blocked, [(-195, -46, -98)])
 
@@ -2193,6 +2215,7 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._home_anchor = None
         agent._home_ticks = 0
         agent.log = []
@@ -2531,6 +2554,7 @@ class FurnaceDrainReadTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.log = []
         return agent
 
@@ -2573,6 +2597,7 @@ class FurnaceDrainReadTest(unittest.TestCase):
         agent = self._agent()
         agent._note_furnace(self._inspect(), True, "", self._Res(self.ANSWER))
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         state = gs(inventory={}, base=agent.furnace_pos, furnace_pos=agent.furnace_pos,
                    furnace_occupied=agent._furnace_occupied,
                    furnace_contents=dict(agent._furnace_contents))
@@ -2615,6 +2640,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -2679,6 +2705,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent._bed_base = None
@@ -2789,6 +2816,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent.surface = None
@@ -3017,6 +3045,7 @@ class DropHoleTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -3087,6 +3116,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -3158,6 +3188,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.chest_pos = None
         agent.banked = {}
         agent._portal_blocked = []
@@ -3197,6 +3228,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = (-197, -46, -99)
+        agent.smoker_pos = None
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._stuck_code = {}
@@ -3247,6 +3279,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = (-197, -47, -98)
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         agent._note_furnace(self._Action("cook_food", "smelt_item"), False,
                             "[FURNACE_NOT_EMPTY] The furnace has pre-existing output; "
                             "nothing was inserted.")
@@ -3259,6 +3292,7 @@ class FurnaceSupportTest(unittest.TestCase):
         # retry fixes: back to a carried furnace for the batch.
         agent = self._agent()
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         agent._note_furnace(self._Action("collect_smelted", "use_container"), False,
                             "[CONTAINER_OPERATION_UNSUPPORTED] furnace holds input, fuel and "
                             "output slots rather than storage...")
@@ -3269,6 +3303,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = (-197, -47, -98)
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         agent._furnace_occupied = True
         agent._note_furnace(self._Action("collect_smelted", "use_container"), True, "")
         self.assertFalse(agent._furnace_occupied)
@@ -3276,6 +3311,7 @@ class FurnaceSupportTest(unittest.TestCase):
     def test_a_normal_smelt_failure_leaves_the_furnace_standing(self) -> None:
         agent = self._agent()
         agent.furnace_pos = (229, 62, 222)
+        agent.smoker_pos = None
         agent._note_furnace(self._Action("cook_food", "smelt_item"), False,
                             "[SMELT_NO_FUEL] The furnace ran out of fuel.")
         self.assertFalse(agent._furnace_blocked)
@@ -3328,6 +3364,7 @@ class ChestLidTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -3472,6 +3509,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent._bed_base = None
@@ -3601,6 +3639,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._furnace_blocked = False
         agent._furnace_contents = {}
         agent._furnace_occupied = False
@@ -3669,6 +3708,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         self.assertEqual(agent._inject(gs()).portal_blocked, [(-195, -46, -98)])
 
@@ -3788,6 +3828,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._furnace_blocked = False
         agent._furnace_contents = {}
         agent._furnace_occupied = False
@@ -3893,6 +3934,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._furnace_blocked = False
         await agent._adopt_portal_base(gs(pos=(-178.5, 68.0, 329.5),
                                          inventory={"flint_and_steel": 1}))
@@ -3920,6 +3962,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._portal_blocked = []
         agent._frame_complete = False
@@ -3991,6 +4034,7 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent._furnace_blocked = False
         agent._furnace_contents = {}
         agent._furnace_occupied = False
@@ -4057,6 +4101,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent.chest_pos = None
         agent.banked = {}
         agent.furnace_pos = None
+        agent.smoker_pos = None
         agent.build_site = None
         agent._base_adopted = False
         agent._pour_skip = set()

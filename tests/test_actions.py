@@ -3510,6 +3510,110 @@ class PortalLitIsAWorldFactTest(unittest.TestCase):
         self.assertIn("go_home", candidates(g))
 
 
+class SmokerBesideTheFurnaceTest(unittest.TestCase):
+    """A smoker is not a better furnace, it is a different one, and it stands next to it.
+
+    The user proposed it: a food station at the base, so the bot comes home and cooks in bulk what
+    it gathered out there. The correction of the day was that a smoker processes food only - which
+    is exactly why it belongs *beside* the furnace rather than replacing it. The tech tree still
+    needs a furnace for iron, and a smoker would refuse the ore.
+
+    Cooking is the only smelting this run does in bulk - live, twenty cooked items in twenty ticks,
+    one per tick at eighteen seconds - and every one of them is food.
+    """
+
+    BASE = (-197, -47, -98)
+    FURNACE = (-197, -46, -99)
+    SMOKER = (-196, -46, -99)
+
+    def _base_with_raw_meat(self, **inv) -> GameState:
+        # Four planks off the wood the run already hoards: `_plank_units` counts a log as four.
+        g = at_home(geared(oak_log=12, **inv))
+        g.chest_pos = (self.BASE[0] + 2, self.BASE[1], self.BASE[2] + 2)
+        g.furnace_pos = self.FURNACE
+        g.smoker_pos = None
+        g.food = 20.0
+        return g
+
+    def test_the_smoker_stands_beside_the_furnace(self) -> None:
+        # The furnace takes (bx, by+1, bz-1), the chest sits at bz+1 and the portal's frame plane
+        # runs along z == bz. The one cell free of all three is next to the furnace on the other
+        # side of x - which is where the user wanted the bot to come back and cook.
+        from mlaya.actions import _smoker_site
+        g = self._base_with_raw_meat()
+        self.assertEqual(_smoker_site(g), self.SMOKER)
+        self.assertNotEqual(_smoker_site(g), g.furnace_pos)
+
+    def test_a_bed_on_that_cell_still_refuses(self) -> None:
+        from mlaya.actions import _smoker_site
+        g = self._base_with_raw_meat()
+        g.resources = {"white_bed": [BlockHit("white_bed", 1.0,
+                                              self.SMOKER[0], self.SMOKER[1],
+                                              self.SMOKER[2], 1.0)]}
+        self.assertIsNone(_smoker_site(g))
+
+    def test_it_is_built_once_there_is_food_a_coal_and_four_planks(self) -> None:
+        g = self._base_with_raw_meat(beef=12, coal=1)
+        self.assertIn("craft_smoker", candidates(g))
+        a = resolve("craft_smoker", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "smoker"}])
+
+    def test_without_coal_the_recipe_does_not_start(self) -> None:
+        # One coal goes into the smoker and two more into the fire, which is the whole reason
+        # `mine_coal` counts cookable meat now instead of ore alone.
+        g = self._base_with_raw_meat(beef=12)
+        self.assertNotIn("craft_smoker", candidates(g))
+
+    def test_without_food_waiting_there_is_nothing_to_speed_up(self) -> None:
+        g = self._base_with_raw_meat(cobblestone=40, coal=1)
+        self.assertNotIn("craft_smoker", candidates(g))
+
+    def test_craft_first_then_place_then_never_again(self) -> None:
+        # The order is the point: there is nothing to stand until the recipe has run, so
+        # `place_smoker` is not offered against a base the bot is merely standing next to.
+        g = self._base_with_raw_meat(beef=12, coal=1)
+        self.assertIn("craft_smoker", candidates(g))
+        self.assertNotIn("place_smoker", candidates(g))
+
+        g.inventory["smoker"] = 1                 # the recipe produced one
+        self.assertIn("place_smoker", candidates(g))
+        a = resolve("place_smoker", g)
+        self.assertEqual(a.tool, "place_block")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.SMOKER)
+
+        g.smoker_pos = self.SMOKER                 # and it is latched on that success
+        self.assertNotIn("place_smoker", candidates(g))
+        self.assertNotIn("craft_smoker", candidates(g))
+
+    def test_food_goes_into_the_smoker_and_ore_still_goes_into_the_furnace(self) -> None:
+        # The split that matters. A smoker would refuse raw iron, so passing its cell to
+        # `smelt_iron` would trade a faster cook for a tech tree that cannot finish.
+        g = self._base_with_raw_meat(beef=12, coal=3)
+        g.smoker_pos = self.SMOKER
+        cook = resolve("cook_food", g)
+        self.assertEqual((cook.args["x"], cook.args["y"], cook.args["z"]), self.SMOKER)
+
+        g.inventory["raw_iron"] = 3
+        iron = resolve("smelt_iron", g)
+        self.assertEqual((iron.args["x"], iron.args["y"], iron.args["z"]), self.FURNACE)
+
+    def test_without_a_smoker_food_still_cooks_in_the_furnace(self) -> None:
+        g = self._base_with_raw_meat(beef=12, coal=3)
+        cook = resolve("cook_food", g)
+        self.assertEqual((cook.args["x"], cook.args["y"], cook.args["z"]), self.FURNACE)
+
+    def test_away_from_the_base_neither_cell_is_named(self) -> None:
+        # Naming a station 190 m away is the run58 bug: the smelt goes somewhere the bot has no
+        # reason to walk to, and the portable furnace is the branch that always worked.
+        g = self._base_with_raw_meat(beef=12, coal=3)
+        g.smoker_pos = self.SMOKER
+        g.pos = (120.5, 64.0, 120.5)
+        cook = resolve("cook_food", g)
+        self.assertTrue(cook.args["temporary_workstation"])
+        self.assertNotIn("x", cook.args)
+
+
 class CoalIsCookingFuelTooTest(unittest.TestCase):
     """Coal smelts eight items; a log smelts one. That is the whole difference.
 

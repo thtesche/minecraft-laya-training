@@ -50,7 +50,7 @@ RESCUE_ABOVE = ("air", "cave_air")
 # the Nether-prep dig (the gold helmet that keeps piglins neutral): like the diamonds, a deposit
 # deep under the surface counts through `resource_found` so the `collect_block` tunnel is still
 # offered. Kept as its own `view_blocks find` group: that call takes at most eight names.
-CHAIN_NAMES = ("lava", "chest", "furnace", "gold_ore")
+CHAIN_NAMES = ("lava", "chest", "furnace", "smoker", "gold_ore")
 # The Nether's own scan group, read *only* in the Nether: the bricks a fortress is built from are
 # the one landmark that tells the bot a blaze spawner is plausibly near, and `spawner` names the
 # cage itself. Blazes are hostile, so they only reach the state through `view_status` once one is
@@ -477,6 +477,9 @@ class GameState:
     # `smelt_item` is given its exact coordinates and never places a temporary workstation, so
     # the furnace is not set up and torn down on every cooking call.
     furnace_pos: tuple[int, int, int] | None = None
+    # The food station at the base. A smoker processes food only - it cannot smelt the iron
+    # the tech tree needs - so it stands *beside* the furnace rather than replacing it.
+    smoker_pos: tuple[int, int, int] | None = None
     # True while the base was re-adopted from the world (a lit portal a previous run left) and the
     # bot has not reached it yet. It is what justifies walking home once (`go_home`) so a restart
     # finishes at the portal it built instead of drifting off to explore.
@@ -664,6 +667,7 @@ class GameState:
             "chest_pos": self.chest_pos,
             "base_adopted": self.base_adopted,
             "furnace_pos": self.furnace_pos,
+            "smoker_pos": self.smoker_pos,
             "furnace_occupied": self.furnace_occupied,
             "furnace_contents": dict(self.furnace_contents),
             "furnace_blocked": self.furnace_blocked,
@@ -696,7 +700,7 @@ class GameState:
         for field in ("health", "food", "phase", "raining", "on_ground", "in_water",
                       "dimension", "slots_used", "tools", "tool_meta", "armor", "offhand",
                       "hostiles", "players", "death_pos", "drops", "base", "chest_pos",
-                      "base_adopted", "furnace_pos", "furnace_occupied", "furnace_blocked",
+                      "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "banked"):
             value = data.get(field)
             if value is not None:

@@ -244,6 +244,7 @@ class Agent:
         # reuse its cell instead of placing a temporary workstation each call. Re-adopted from a
         # scan after a restart, like the chest.
         self.furnace_pos: tuple[int, int, int] | None = None
+        self.smoker_pos: tuple[int, int, int] | None = None
         # Whether `base` came from the world rather than from an `establish_base` this run: a lit
         # portal a previous run left standing (`_adopt_portal_base`). While the bot has not reached
         # it yet, `base_adopted` rides in the GameState and `go_home` walks it back, so a restart
@@ -376,6 +377,7 @@ class Agent:
         gs.chest_pos = self.chest_pos
         gs.banked = dict(self.banked)
         gs.furnace_pos = self.furnace_pos
+        gs.smoker_pos = self.smoker_pos
         gs.base_adopted = self._base_adopted
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
@@ -716,6 +718,14 @@ class Agent:
                         and abs(hit.z - bz) <= ADOPT_CHEST_RADIUS
                         and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS):
                     self.chest_pos = hit.pos
+                    break
+        if self.smoker_pos is None and self.base is not None:
+            bx, by, bz = self.base
+            for hit in gs.resources.get("smoker", []):
+                if (abs(hit.x - bx) <= ADOPT_CHEST_RADIUS
+                        and abs(hit.z - bz) <= ADOPT_CHEST_RADIUS
+                        and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS):
+                    self.smoker_pos = hit.pos
                     break
         if self.furnace_pos is None and self.base is not None and not self._furnace_blocked:
             bx, by, bz = self.base
@@ -1350,6 +1360,12 @@ class Agent:
             elif action.label == "place_furnace" and "x" in action.args:
                 self.furnace_pos = (int(action.args["x"]), int(action.args["y"]),
                                     int(action.args["z"]))
+            elif action.label == "place_smoker" and "x" in action.args:
+                # Latched on the placement's own success, the same shape as the furnace's. A
+                # smoker that answered `[PLACE_TARGET_OCCUPIED]` is not standing, and a remembered
+                # cell that is not there would send every later cook to an empty space.
+                self.smoker_pos = (int(action.args["x"]), int(action.args["y"]),
+                                   int(action.args["z"]))
         after = await self._observe()
         # `surface_up` answers itself through the position it lands on (a resolved probe) or
         # through the height the server names when it refuses to guess (an ambiguous column);
