@@ -109,12 +109,19 @@ def _gated_id(res: ToolResult) -> tuple[str, str | None]:
 class MCPExecutor:
     """Streamable-HTTP MCP client with the foreground gating state machine."""
 
+    # How a malformed response is answered. A read is side-effect free and retried; a foreground
+    # action is not retried, because it may already be running out there.
+    _READ_ATTEMPTS = 3
+    _RETRY_BACKOFF_S = 1.0
+    _MAX_TRANSPORT_FAILURES = 5
+
     def __init__(self, cfg: MCPConfig):
         self.cfg = cfg
         self._stack: AsyncExitStack | None = None
         self._sess: ClientSession | None = None
         self._lock = asyncio.Lock()
         self._read_timeout = cfg.tool_timeout_ms / 1000
+        self._transport_failures = 0
 
     async def __aenter__(self) -> "MCPExecutor":
         self._stack = AsyncExitStack()
@@ -144,16 +151,64 @@ class MCPExecutor:
         return f"{self.cfg.submission_prefix}{tool}-{uuid.uuid4().hex[:8]}"
 
     async def read(self, tool: str, args: dict, rationale: str) -> ToolResult:
-        """Ungated read (view_status, read_recent_events, view_blocks, query_bot_data)."""
+        """Ungated read (view_status, read_recent_events, view_blocks, query_bot_data).
+
+        Retried, because a read has no effect on the world: there is nothing to double up and
+        nothing to leave half-done, so a blip costs a retry and nothing else. Run59 died on
+        `MCPError: Unexpected content type:` - one malformed HTTP response on the way to
+        `view_blocks`, and a 600-tick run gone with it. After the last attempt the error is
+        re-raised rather than swallowed: a server that cannot be read from is not a server the
+        run should keep talking to, and the loop needs perception to decide anything at all.
+        """
         payload = {**args, "rationale": clip(rationale), "response_format": "json"}
-        return _extract(await self._raw_call(tool, payload))
+        for attempt in range(self._READ_ATTEMPTS):
+            try:
+                res = _extract(await self._raw_call(tool, payload))
+            except Exception:
+                if attempt == self._READ_ATTEMPTS - 1:
+                    self._transport_failures += 1
+                    self._check_transport()
+                    raise
+                await asyncio.sleep(self._RETRY_BACKOFF_S * (attempt + 1))
+                continue
+            self._transport_failures = 0
+            return res
+        raise AssertionError("unreachable")
+
+    def _check_transport(self) -> None:
+        """Let a run die loudly once the transport has failed outright, never quietly forever.
+
+        A contained write leaves the tick recorded as a refusal, which is what keeps a single
+        blip from ending the run. If the server is genuinely gone, every tick would then fail the
+        same way and the run would spin to its tick limit with no error to show for it. Five in a
+        row is a dead server, not weather.
+        """
+        if self._transport_failures >= self._MAX_TRANSPORT_FAILURES:
+            raise RuntimeError(
+                f"[TRANSPORT_DOWN] {self._transport_failures} consecutive transport failures; "
+                "the server is not answering")
 
     async def call(self, tool: str, args: dict, rationale: str) -> ToolResult:
-        """Foreground action: serialised, with submission_id and result retrieval."""
+        """Foreground action: serialised, with submission_id and result retrieval.
+
+        A transport failure here is contained rather than retried, and the asymmetry is the whole
+        point. The request may well have reached the server: `read` can be repeated because a
+        read changes nothing, while a foreground action is already running out there and a second
+        submission - which would carry a second `submission_id`, since `_payload` mints a fresh
+        one per attempt - could start a second one. So the tick is recorded as a refusal and the
+        run carries on; the next tick's perception shows what the world actually did.
+        """
         async with self._lock:
             res = ToolResult(False, "", None, None, False)
             for _ in range(3):
-                res = _extract(await self._raw_call(tool, self._payload(tool, args, rationale)))
+                try:
+                    res = _extract(await self._raw_call(tool, self._payload(tool, args, rationale)))
+                except Exception as exc:
+                    self._transport_failures += 1
+                    self._check_transport()
+                    return ToolResult(False, f"[TRANSPORT] {clip(str(exc), 160)}", None, None,
+                                      True, status="transport")
+                self._transport_failures = 0
                 _, pending = _gated_id(res)
                 if pending:
                     # The refusal means *our* action never started, so draining the named result

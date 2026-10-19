@@ -93,5 +93,70 @@ class DrainTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([n for n, _ in calls], ["drop_item"])
 
 
+class TransportTest(unittest.IsolatedAsyncioTestCase):
+    """A malformed HTTP response is answered, not obeyed.
+
+    Live, run59: `MCPError: Unexpected content type:` on the way to `view_blocks` ended a
+    600-tick run outright. `_raw_call` had no exception handling at all, so one unreadable
+    response took the process down.
+
+    The asymmetry is the whole design. A read has no effect on the world, so it is retried - there
+    is nothing to double up. A foreground action may already be running out there, and `_payload`
+    mints a fresh `submission_id` per attempt, so a resubmission could start a second one. That
+    one is contained instead: the tick is recorded as a refusal and the run goes on.
+    """
+
+    def _exec(self, script: list, failures: int = 0) -> tuple[MCPExecutor, list]:
+        ex = MCPExecutor(MCPConfig())
+        ex._RETRY_BACKOFF_S = 0.0          # no waiting in tests
+        calls: list[tuple[str, dict]] = []
+
+        left = [failures]
+
+        async def fake(name: str, args: dict):
+            calls.append((name, args))
+            if left[0] > 0:
+                left[0] -= 1
+                raise RuntimeError("Unexpected content type:")
+            return script.pop(0)
+
+        ex._raw_call = fake  # type: ignore[assignment]
+        return ex, calls
+
+    async def test_a_read_survives_one_malformed_response(self) -> None:
+        ex, calls = self._exec([_settled(MINE)], failures=1)
+        res = await ex.read("view_status", {}, "test")
+        self.assertTrue(res.ok)
+        self.assertEqual(len(calls), 2)      # asked again, got an answer
+
+    async def test_a_read_that_never_answers_still_raises(self) -> None:
+        # Contained forever would be worse: perception is what every decision is made from, and a
+        # run talking to a server that cannot answer it is a run spinning to its tick limit.
+        ex, calls = self._exec([], failures=99)
+        with self.assertRaises(RuntimeError):
+            await ex.read("view_status", {}, "test")
+        self.assertEqual(len(calls), MCPExecutor._READ_ATTEMPTS)
+
+    async def test_a_write_that_loses_its_answer_is_never_submitted_twice(self) -> None:
+        ex, calls = self._exec([], failures=99)
+        res = await ex.call("drop_item", {}, "test")
+        self.assertFalse(res.ok)
+        self.assertTrue(res.text.startswith("[TRANSPORT]"))
+        # One call. A second submission would carry a second submission_id and could start a
+        # second drop for a request the server may already have accepted.
+        self.assertEqual([n for n, _ in calls], ["drop_item"])
+
+    async def test_five_blind_writes_end_the_run_loudly(self) -> None:
+        # The containment must not become a spin: a dead server fails every tick the same way,
+        # and a run that reaches its tick limit with nothing to show for it hides the cause.
+        ex, calls = self._exec([], failures=99)
+        for _ in range(MCPExecutor._MAX_TRANSPORT_FAILURES - 1):
+            self.assertFalse((await ex.call("drop_item", {}, "test")).ok)
+        with self.assertRaises(RuntimeError) as caught:
+            await ex.call("drop_item", {}, "test")
+        self.assertIn("[TRANSPORT_DOWN]", str(caught.exception))
+        self.assertEqual(len(calls), MCPExecutor._MAX_TRANSPORT_FAILURES)
+
+
 if __name__ == "__main__":
     unittest.main()
