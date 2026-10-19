@@ -3510,6 +3510,63 @@ class PortalLitIsAWorldFactTest(unittest.TestCase):
         self.assertIn("go_home", candidates(g))
 
 
+class CoalIsCookingFuelTooTest(unittest.TestCase):
+    """Coal smelts eight items; a log smelts one. That is the whole difference.
+
+    `mine_coal` used to be gated on `raw_iron >= 1`, which made coal iron-only fuel. Live: the run
+    went 4, 9, 17, 25, 32, 36, 44, 52, 55, 62, 69 oak logs - burned one per cooked meal - with
+    `raw_iron` at 0 and `coal` at 0 on every tick of the window, while `coal_ore` sat inside the
+    scan radius on all thirty of them. Not a missing idea: a gate that never opened.
+
+    Whatever is about to be smelted now counts, not just ore. The smoker was considered and left
+    out: it processes food only, and the carried furnace already covers both cases through
+    `temporary_workstation`.
+    """
+
+    def _state(self, **inv) -> GameState:
+        g = at_home(geared(**inv))
+        g.tools = {"pickaxe": "stone", "sword": "stone"}
+        g.resources = {"coal_ore": [BlockHit("coal_ore", 12.0, 12, 40, 41, 12.0)]}
+        g.resource_found = {"coal_ore": 9}
+        return g
+
+    def test_raw_meat_in_the_pack_mints_the_coal_to_cook_it(self) -> None:
+        # The live case: no iron anywhere, a stack of beef, and coal ore ten steps away.
+        g = self._state(beef=20)
+        self.assertNotIn("raw_iron", g.inventory)
+        self.assertIn("mine_coal", candidates(g))
+
+    def test_cooking_fuel_already_carried_stops_the_mining(self) -> None:
+        for name in ("coal", "charcoal"):
+            with self.subTest(fuel=name):
+                g = self._state(beef=20, **{name: 3})
+                self.assertNotIn("mine_coal", candidates(g))
+
+    def test_iron_still_mints_its_own_fuel(self) -> None:
+        # The original gate is untouched: ore needs a fire just as much as meat does.
+        g = self._state(raw_iron=3)
+        self.assertIn("mine_coal", candidates(g))
+
+    def test_nothing_to_smelt_means_no_coal_run(self) -> None:
+        # Neither a meal nor ore: coal would be a slot for nothing.
+        g = self._state(cobblestone=30)
+        self.assertNotIn("mine_coal", candidates(g))
+
+    def test_no_coal_ore_in_reach_means_no_coal_run(self) -> None:
+        g = self._state(beef=20)
+        g.resources = {}
+        g.resource_found = {}
+        self.assertNotIn("mine_coal", candidates(g))
+
+    def test_coal_is_not_surplus_the_next_tick(self) -> None:
+        # It has to survive to the furnace. The whitelist would otherwise bank it on the very next
+        # tick - it is a stack with no recipe behind it - and the run would be back to logs.
+        from mlaya.actions import _surplus_besides_keep
+        g = self._state(coal=3)
+        self.assertNotIn("coal", _surplus_besides_keep(g, g.inventory))
+        self.assertIsNone(resolve("stow_surplus", g))   # nothing worth banking at all
+
+
 class PackDisciplineTest(unittest.TestCase):
     """The pack is thirty slots of twenty-nine stacks, so the problem is types, not volume.
 

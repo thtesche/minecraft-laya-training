@@ -2178,6 +2178,7 @@ def candidates(gs: GameState) -> list[str]:
     table = _has(inv, "crafting_table")
     furnace = _has(inv, "furnace") or _furnace_ready(gs)
     coal = inv.get("coal", 0)
+    charcoal = inv.get("charcoal", 0)
     raw_iron = inv.get("raw_iron", 0)
     iron = inv.get("iron_ingot", 0)
     diamond = inv.get("diamond", 0)
@@ -2324,7 +2325,13 @@ def candidates(gs: GameState) -> list[str]:
     if raw_iron + iron < _iron_goal(gs) and _can_mine(gs, "iron_ore") \
             and gs.resource_distance("iron_ore") is not None:
         out.append("mine_iron")
-    if raw_iron >= 1 and coal < 1 and _can_mine(gs, "coal_ore") and gs.resource_distance("coal_ore") is not None:
+    if (raw_iron >= 1 or _first_cookable(inv)) and coal < 1 and charcoal < 1 \
+            and _can_mine(gs, "coal_ore") and gs.resource_distance("coal_ore") is not None:
+        # The gate used to be `raw_iron >= 1`, which made coal iron-only fuel and left every cooked
+        # meal burning a log: `_furnace_fuel` smelts eight items per coal and one per log, and live
+        # the run went 4, 9, 17, 25, 32, 36, 44, 52, 55, 62, 69 oak logs with `raw_iron` at 0 and
+        # `coal` at 0 on every single tick - while `coal_ore` sat inside the scan radius on all
+        # thirty of them. Whatever is about to be smelted now counts, not just ore.
         out.append("mine_coal")
     # Shield (6 planks + 1 iron ingot, 3x3 so it needs the table): it only blocks while it sits
     # in the off-hand, so the craft is immediately followed by `equip_shield`. Gated behind the
