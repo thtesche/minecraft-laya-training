@@ -84,6 +84,7 @@ CRITERIA: dict[str, str] = {
     "place_bed": "place the carried bed beside the gate frame so the respawn point sits at the gate",
     "take_bed": "take the standing respawn bed back up when it lies away from the base, so it can be laid beside the portal",
     "drop_junk": "drop low-value blocks from the full pack so a gathering action has room again",
+    "step_away_drops": "walk a few blocks off the junk just dropped on open ground, so the bot cannot pick it up again",
     "enter_portal": "step into the lit gate and cross into the Nether for the blaze rods",
     "swap_to_gold_helmet": "wear the gold helmet instead of the diamond one, so piglins stay neutral in the Nether",
     "hunt_blaze": "kill a blaze and take its blaze rod, nine of which make eighteen blaze powder",
@@ -2341,6 +2342,17 @@ def candidates(gs: GameState) -> list[str]:
     if gs.in_water and not gs.on_ground and gs.water_ticks >= WATER_RESCUE_AFTER:
         return ["escape_water"]
 
+    # --- junk dropped on open ground, before it can be picked back up ---
+    # When the terrain refused a disposal pit, `drop_junk` drops onto the ground where the bot
+    # stands, and dropped items are picked up again by walking within reach of them. The pit
+    # path already ends with the server plugging the hole and stepping back; the open drop has
+    # no such ending, so it would undo itself on the very next step (live: no run has yet had
+    # this offer, so the walk back is untested until one does).
+    if gs.drop_open_pending and gs.pos is not None and gs.drop_pos is not None:
+        dx, dz = gs.pos[0] - gs.drop_pos[0], gs.pos[2] - gs.drop_pos[2]
+        if dx * dx + dz * dz < 3.0 * 3.0:
+            return ["step_away_drops"]
+
     # --- event-driven reactions (M2d) ---
     # A tool about to break, a mob the reflex just killed (its drops despawn in minutes),
     # or gear lying at a fresh death site are all time-sensitive, so the top reaction
@@ -3452,6 +3464,19 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "use_container",
                       {"operation": "deposit", "x": cx, "y": cy, "z": cz, "items": items[:12]},
                       "deposit the surplus blocks into the chest at the base")
+    if label == "step_away_drops":
+        if not gs.drop_open_pending or gs.drop_pos is None or gs.pos is None:
+            return None
+        # Walk off the drop, straight away from the cell the junk landed on. Three blocks is the
+        # reach items are gathered over again, so standing that far away ends the pickup risk;
+        # the pathfinder finds footing on that line rather than the line being assumed walkable.
+        dx, dz = gs.drop_pos[0] - gs.pos[0], gs.drop_pos[2] - gs.pos[2]
+        angle = math.atan2(-dz, -dx)
+        tx, tz = gs.pos[0] + 3.0 * math.cos(angle), gs.pos[2] + 3.0 * math.sin(angle)
+        return Action(label, "navigate",
+                      {"x": tx, "y": gs.pos[1], "z": tz, "range": 1, "dig": True,
+                       "scaffold": True},
+                      "step away from the junk dropped on open ground, so it stays dropped")
     if label == "drop_junk":
         items = [{"item_name": n} for n in _junk_carried(inv) + _spare_gear(gs, inv)]
         items += _hoard_surplus(inv)

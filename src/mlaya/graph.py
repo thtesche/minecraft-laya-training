@@ -311,6 +311,9 @@ class Agent:
         # then on the relief drops the surplus on the open ground instead. That still frees the
         # slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall on it.
         self._drop_hole_blocked = False
+        # After dropping junk on open ground (no pit), step away so items aren't re-collected.
+        self._drop_open_pending = False
+        self._drop_pos: tuple[float,float,float]|None = None
         # A `place_chest` the base's ground refused (`[PLACE_NO_SUPPORT]`): no solid block
         # touches the cell beside the base, so the chest cannot stand there. Retrying can only
         # fail again, so the chain is dropped and the relief falls back to `drop_junk` (live,
@@ -392,6 +395,8 @@ class Agent:
         self._water_ticks = self._water_ticks + 1 if (gs.in_water and not gs.on_ground) else 0
         gs.water_ticks = self._water_ticks
         gs.drop_hole_blocked = self._drop_hole_blocked
+        gs.drop_open_pending = self._drop_open_pending
+        gs.drop_pos = self._drop_pos
         gs.chest_blocked = self._chest_blocked
         gs.furnace_blocked = self._furnace_blocked
         gs.furnace_contents = dict(self._furnace_contents)
@@ -1123,6 +1128,11 @@ class Agent:
         """
         if action.label in ("enter_portal", "leave_nether"):
             self._enter_intent_ticks = PORTAL_INTENT_TICKS
+            # The junk left on open ground is in the other dimension now: the walk-back belongs to
+            # the cell it landed in, and offering it from across a gate would aim the bot at
+            # coordinates that mean nothing here.
+            self._drop_open_pending = False
+            self._drop_pos = None
 
     def _note_stow(self, action, ok: bool, delta: dict) -> None:
         """Remember that the blaze powder reached the chest at the portal (the phase-3 goal).
@@ -1216,19 +1226,39 @@ class Agent:
             return
         self.base = (bx, y, bz)
 
-    def _note_drop(self, action, ok: bool, text: str | None) -> None:
-        """Remember that no disposal pit can be dug where the bot stands, so the next drop does
-        not ask for one.
+    def _note_drop(self, action, ok: bool, text: str | None, gs=None) -> None:
+        """Remember where a `drop_junk` left its junk on open ground, so the next tick walks off
+        it.
 
-        `[DROP_HOLE_UNAVAILABLE]` says no adjacent terrain can be excavated into a dry, enclosed
-        pit. That is a property of the ground, not of the attempt (live, obsidian run: a 1-wide
-        tunnel answered it on every tick while `drop_junk` retried in place). Dropping on the open
-        ground instead still frees the slot, which is all the relief is for.
+        Two facts are kept apart, because only one of them is about the ground. A refused pit
+        (`[DROP_HOLE_UNAVAILABLE]`) is a property of the terrain and latches for the rest of the
+        run -- the drop then goes onto open ground, where it still frees the slot. But an open
+        drop lands under the bot's own feet, and dropped items are gathered again by walking over
+        them, so that drop is not finished when the tool returns: it is finished three blocks
+        away. `drop_open_pending` carries that unfinished step until `step_away_drops` closes it.
+
+        The position is recorded on the drop itself rather than read later, because by the time
+        the walk-back runs the bot has already started moving off it.
         """
-        if ok or action.label != "drop_junk":
+        if action.label != "drop_junk":
+            return
+        if ok:
+            if self._drop_hole_blocked and gs is not None and gs.pos is not None:
+                self._drop_open_pending = True
+                self._drop_pos = (gs.pos[0], gs.pos[1], gs.pos[2])
             return
         if "DROP_HOLE_UNAVAILABLE" in (text or ""):
             self._drop_hole_blocked = True
+
+    def _note_step_away(self, action, ok: bool) -> None:
+        """Close the walk-off once the bot has actually made it, so the offer disappears.
+
+        Only on success. A refused `step_away_drops` still has junk at the bot's feet, and
+        dropping the flag there would leave the drop unfinished with nothing left to finish it.
+        """
+        if ok and action.label == "step_away_drops":
+            self._drop_open_pending = False
+            self._drop_pos = None
 
     def _note_chest(self, action, ok: bool, text: str | None) -> None:
         """Remember that the base's ground cannot hold the chest, so the chain is dropped.
@@ -1352,7 +1382,7 @@ class Agent:
         self._note_pour(action, _ok, _text)
         self._note_stance(action, _ok, _text)
         self._note_base(action, _ok, _text)
-        self._note_drop(action, _ok, _text)
+        self._note_drop(action, _ok, _text, before)
         self._note_chest(action, _ok, _text)
         self._note_chest_lid(action, _ok, _text)
         self._note_furnace(action, _ok, _text, res)
@@ -1366,6 +1396,7 @@ class Agent:
             # A failed deposit means the chest is full; stop offering it as the relief.
             self._stow_blocked = not _ok
         if _ok:
+            self._note_step_away(action, _ok)
             # `establish_base` reports the surface cell through its navigate target; the base
             # anchor is the ground block under the feet it walked to. `place_chest` names the
             # cell it placed into, remembered so `use_container` can reach it later.

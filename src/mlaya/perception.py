@@ -502,6 +502,8 @@ class GameState:
     # from then on the drop goes onto the open ground instead of into a dug hole. Both free the
     # slots the relief is for, and the open drop cannot fail, so the loop cannot stall on it.
     drop_hole_blocked: bool = False
+    drop_open_pending: bool = False
+    drop_pos: tuple[float,float,float] | None = None
     # A `place_chest` the terrain refused for want of a supporting block (`[PLACE_NO_SUPPORT]`):
     # no solid block touches the cell beside the base, so the chest cannot stand there. That is
     # a property of the base's ground, so the loop gives the chest chain up and lets the
