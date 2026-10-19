@@ -777,16 +777,21 @@ def _in_portal(gs: GameState) -> bool:
 def _leave_portal_target(gs: GameState) -> tuple[float, float, float] | None:
     """A standable cell just outside the gate the bot stands in, or None.
 
-    The home base is the natural step-out (the frame plane sits two blocks east of it), so it
-    wins when it is clear of the portal; otherwise the nearest horizontal neighbour that is not
-    itself a portal block. No digging: the frame around the opening must not be damaged by the
-    rescue.
+    The home base is the natural step-out (the frame plane sits two blocks east of it), so it wins
+    when it is clear of the portal; otherwise the nearest horizontal neighbour that is not itself a
+    portal block. No digging: the frame around the opening must not be damaged by the rescue.
+
+    The base is only a step-out in the dimension it is in. `base` is one field for both worlds, so
+    a bot standing in the Nether's own arrival portal was sent toward the *Overworld* base's
+    coordinates - which the pathfinder can never reach from there. That refusal is total and
+    repeats: `[NAVIGATION_STOPPED] ... no path found, visited 101 nodes` twenty times running,
+    with `leave_portal` owning the tick outright, so the expedition never started (live, run53).
     """
     if gs.pos is None:
         return None
     fx, fy, fz = (math.floor(v) for v in gs.pos)
     portal = {hit.pos for hit in gs.resources.get(PORTAL_BLOCK, [])}
-    if gs.base is not None:
+    if gs.base is not None and _overworld(gs):
         bx, by, bz = gs.base
         if (bx, by + 1, bz) not in portal and (bx, by + 2, bz) not in portal:
             return (bx + 0.5, by + 1, bz + 0.5)
@@ -1134,14 +1139,18 @@ def _nether_departure_ready(gs: GameState) -> bool:
     (live, run30: fully stocked, portal burning, bot 40 m off in a hole, `enter_portal` never
     offered and no step willing to walk it home).
 
-    The spare pickaxe (`NETHER_PICKAXES`) is checked here rather than in `_expedition_ready`, so it
-    gates the crossing and not the gate-lighting: a run that has stocked the trip and lit the portal
-    stands at its own gate for a few ticks while the second pickaxe is made, which is a wait it can
-    see the end of, rather than a portal that stays dark until three more diamonds are dug.
+    The spare pickaxe (`NETHER_PICKAXES`) rides on `_expedition_ready`, which gates the *lighting*,
+    not only this step. That is the opposite of where I first put it, and the live run is what
+    corrected it: a lit portal is an open door, and the pathfinder walks it like any other block,
+    so a gate that burns before the kit is complete is a gate the bot can cross *by accident* -
+    which is exactly what happened. It stood in its own gate while cooking, the teleport fired
+    mid-action, and it went down with one pickaxe and no crossing step at all (live, run53:
+    `cook_food` at it1782388155 in the Overworld, `the_nether` at it1782388156, with
+    `enter_portal` never executed). Keeping the gate dark until the trip is stocked means any
+    crossing - planned or accidental - carries the kit.
     """
     return (not nether_expedition_complete(gs) and not gs.nether_entered
-            and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
-            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES)
+            and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs))
 
 
 def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
@@ -1335,7 +1344,8 @@ def _expedition_ready(gs: GameState) -> bool:
     So the gate lights once a bed is *at hand*, and only when it can be laid at once. After that
     the completion gate needs only the bed at the base.
     """
-    return _expedition_prepared(gs) and (_bed_at_base(gs) or gs.phase == "night")
+    return (_expedition_prepared(gs) and (_bed_at_base(gs) or gs.phase == "night")
+            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES)
 
 
 def _junk_carried(inv: dict[str, int]) -> list[str]:

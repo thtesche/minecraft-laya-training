@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import (Action, _armor_to_wear, candidates, inventory_relief,
+from mlaya.actions import (_leave_portal_target, Action, _armor_to_wear, candidates, inventory_relief,
                            nether_expedition_complete, NETHER_HOPELESS_AFTER, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
@@ -1248,7 +1248,12 @@ class NetherGateTest(unittest.TestCase):
 
     @staticmethod
     def _geared(**inv) -> GameState:
-        base = {"crafting_table": 1}
+        # Two pickaxes: the gate no longer lights without the spare (`NETHER_PICKAXES` rides on
+        # `_expedition_ready`), because a burning gate is an open door the pathfinder walks
+        # through like any other block - a bot standing in its own gate crosses whether or not
+        # it meant to (live, run53: teleported mid-`cook_food` with one pickaxe, `enter_portal`
+        # never run).
+        base = {"crafting_table": 1, "diamond_pickaxe": 2}
         base.update(inv)
         g = gs(tools={"pickaxe": "diamond", "sword": "diamond"}, inventory=base)
         g.armor = {slot: {"item": f"diamond_{slot}"}
@@ -3278,6 +3283,44 @@ class NetherExpeditionTest(unittest.TestCase):
             self.assertNotIn(label, out)
 
 
+class LeavePortalDimensionTest(unittest.TestCase):
+    """Stepping out of the Nether's own arrival portal must aim at a cell in the Nether.
+
+    `base` is one field for both worlds, and `_leave_portal_target` preferred it as the natural
+    step-out. In the Nether that sent the bot toward *Overworld* coordinates, which the pathfinder
+    can never reach - a total, repeating refusal, on a step that owns the tick outright, so the
+    expedition never started: `[NAVIGATION_STOPPED] ... no path found, visited 101 nodes` twenty
+    times running (live, run53, arriving at (33,55,34)).
+    """
+
+    NETHER = "minecraft:the_nether"
+    OVERWORLD = "minecraft:overworld"
+
+    @staticmethod
+    def _gate(pos, dim):
+        g = gs(pos=pos, dimension=dim, base=(226, 63, 222))
+        g.resources = {"nether_portal": [
+            BlockHit("nether_portal", "nether_portal", 33, 55, 34, 0.0),
+            BlockHit("nether_portal", "nether_portal", 32, 55, 34, 1.0),
+            BlockHit("nether_portal", "nether_portal", 33, 56, 34, 1.0),
+        ]}
+        return g
+
+    def test_the_nether_arrival_steps_out_beside_itself(self) -> None:
+        target = _leave_portal_target(self._gate((33.43, 55.0, 34.5), self.NETHER))
+        self.assertIsNotNone(target)
+        # A neighbour of the arrival cell, never the 190-block-away Overworld base.
+        self.assertLess(abs(target[0] - 33.5) + abs(target[2] - 34.5), 4.0)
+        a = resolve("leave_portal", self._gate((33.43, 55.0, 34.5), self.NETHER))
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (33, 55, 33))
+
+    def test_the_overworld_gate_still_steps_out_to_the_base(self) -> None:
+        g = gs(pos=(226.5, 64.0, 222.5), dimension=self.OVERWORLD, base=(226, 63, 222))
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                   228, 64, 222, 2.0)]}
+        self.assertEqual(_leave_portal_target(g), (226.5, 64, 222.5))
+
+
 class ExpeditionSparePickaxeTest(unittest.TestCase):
     """The trip carries two pickaxes, and the gate stays shut until it does.
 
@@ -3342,6 +3385,26 @@ class ExpeditionSparePickaxeTest(unittest.TestCase):
         g.dimension = "minecraft:the_nether"
         g.nether_entered = True
         self.assertNotIn("craft_pickaxe_spare", candidates(g))
+
+    def _unlit(self, **inv):
+        # The frame stands, the gate does not burn: that is the state `light_portal` decides on.
+        g = self._stocked(**inv)
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
+                       "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -100, 2.5)]}
+        return g
+
+    def test_the_gate_does_not_light_without_the_spare(self) -> None:
+        # This is the placement that matters, and the live run is what corrected it. The gate used
+        # to light on a stocked trip that still lacked the second pickaxe, and a burning gate is an
+        # open door the pathfinder walks like any other block - so the bot crossed *by accident*,
+        # teleported mid-action, with one pickaxe and no crossing step at all (live, run53:
+        # `cook_food` at it1782388155 in the Overworld, `the_nether` at it1782388156).
+        # Keeping the gate dark until the kit is complete means any crossing carries the kit.
+        self.assertNotIn("light_portal", candidates(self._unlit(diamond_pickaxe=1)))
+
+    def test_the_gate_lights_once_the_spare_is_banked(self) -> None:
+        self.assertIn("light_portal", candidates(self._unlit(diamond_pickaxe=2)))
+
 
     def test_the_chain_step_that_would_have_done_it_is_never_offered(self) -> None:
         # `craft_diamond_pickaxe` exists and would craft exactly this, but it is a chain step that
