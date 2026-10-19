@@ -216,6 +216,57 @@ class LoggedStateRoundTripTest(unittest.TestCase):
         self.assertIsNone(g.pos)
 
 
+class NarrativeSaysWhatTheRulesDoTest(unittest.TestCase):
+    """The narrative is the model's only view of the state, so its sentences have to mean something.
+
+    Two defects, both about the same thing - a sentence in the state text that no rule acts on.
+
+    Health and hunger mixed a category with a measurement in one slot: `health is full` beside
+    `hunger is 12/20`. One variable, two ways of being written, and the model has to serve both.
+    Each is now a number plus the band the candidates actually use, so the text cannot describe a
+    state the loop is not acting on.
+
+    The middle hunger band is the one worth naming: between `EAT_HUNGER` and `REGEN_HUNGER` a
+    wounded bot neither eats nor heals, and it waits there until something hits it. A three-way
+    "fine / middling / critical" wording folds that four-point gap into the top band.
+    """
+
+    def test_a_wounded_bot_says_its_health_in_one_way_not_two(self) -> None:
+        text = GameState(health=12.0, food=20.0).narrative()
+        self.assertIn("Health 12/20, wounded", text)
+        self.assertNotIn("Health is 12/20", text)
+
+    def test_hunger_names_the_band_the_gate_uses(self) -> None:
+        self.assertIn("Hunger 9/20, below the eating floor",
+                      GameState(health=20.0, food=9.0).narrative())
+        self.assertIn("Hunger 17/20, not regenerating",
+                      GameState(health=20.0, food=17.0).narrative())
+        self.assertIn("Hunger 19/20, regenerating",
+                      GameState(health=20.0, food=19.0).narrative())
+
+    def test_the_bands_are_the_gates_themselves_not_a_parallel_ladder(self) -> None:
+        # If these drift from `actions`, the narrative starts describing states the loop ignores.
+        from mlaya.actions import EAT_HUNGER, REGEN_HUNGER
+        from mlaya.perception import EAT_HUNGER as P_EAT, REGEN_HUNGER as P_REGEN
+        self.assertEqual(EAT_HUNGER, P_EAT)
+        self.assertEqual(REGEN_HUNGER, P_REGEN)
+
+    def test_a_full_barrel_still_reads_as_full(self) -> None:
+        # The bands are for the numbers, not a rewrite of the easy case.
+        text = GameState(health=20.0, food=20.0).narrative()
+        self.assertIn("Health is full", text)
+        self.assertIn("Hunger is full", text)
+
+    def test_another_player_is_not_in_the_state_text(self) -> None:
+        # Nothing in the candidate list has ever keyed on a second player - the goal is a solo
+        # playthrough - so the sentence spent the model's attention on noise. It stays on the
+        # state, so the log still records who was standing there.
+        gs = GameState(health=20.0, food=20.0)
+        gs.players = ["Sanskrita"]
+        self.assertNotIn("players nearby", gs.narrative())
+        self.assertEqual(gs.players, ["Sanskrita"])
+
+
 class FurnaceContentsParseTest(unittest.TestCase):
     """What a `use_container inspect` on a furnace reported.
 
@@ -528,7 +579,7 @@ class OffhandParseTest(unittest.TestCase):
         gs = parse_status(st)
         self.assertEqual(gs.offhand, "shield")
         self.assertNotIn("shield", gs.inventory)
-        self.assertIn("off-hand: shield", gs.narrative())
+        self.assertIn("Off-hand: shield", gs.narrative())
 
     def test_carried_shield_leaves_the_offhand_empty(self) -> None:
         st = _status({

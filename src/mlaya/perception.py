@@ -160,6 +160,14 @@ REMEMBERED_HOME_SQL = (
     "WHERE block_name = 'chest' AND dimension = 'overworld' "
     "ORDER BY observed_at DESC LIMIT 1")
 
+# Hunger floors, owned here because the narrative and the candidates must quote the same ones.
+# `EAT_HUNGER` is the survival floor the reflex has always used: the bot eats below it to keep
+# hunger off empty. `REGEN_HUNGER` is Minecraft's natural-regeneration threshold: health only
+# regenerates while food is at least 18, so a wounded bot whose food sits in the 14-17 gap eats
+# nothing and heals nothing until it is hit again. Hunger is 0-20.
+EAT_HUNGER = 14.0
+REGEN_HUNGER = 18.0
+
 
 def parse_remembered_home(payload: Any) -> tuple[int, int, int] | None:
     """The cell of the newest chest this bot has ever opened, or None if it has opened none.
@@ -649,9 +657,11 @@ class GameState:
         if self.dimension:
             parts.append(f"in the {self.dimension}")
         if self.health is not None:
-            parts.append("health is full" if self.health >= 20 else f"health is {self.health:g}/20")
+            parts.append("health is full" if self.health >= 20
+                         else f"health {self.health:g}/20, {_health_band(self.health)}")
         if self.food is not None:
-            parts.append("hunger is full" if self.food >= 20 else f"hunger is {self.food:g}/20")
+            parts.append("hunger is full" if self.food >= 20
+                         else f"hunger {self.food:g}/20, {_food_band(self.food)}")
         if self.phase:
             weather = " and raining" if self.raining else ""
             label = "daytime" if self.phase == "day" else self.phase
@@ -702,8 +712,10 @@ class GameState:
             parts.append(f"hostile mobs within 16 blocks: {desc}")
         else:
             parts.append("no hostile mobs within 16 blocks")
-        if self.players:
-            parts.append(f"players nearby: {', '.join(self.players[:3])}")
+        # `players nearby: ...` used to be a sentence here and is gone on purpose. No candidate and no
+        # rule has ever keyed on another player - the goal is a solo playthrough - so it was pure
+        # noise that spent the model's attention on a fact it has to learn to ignore. `players`
+        # stays on the state, so the log still records who was standing there.
         if self.last_death_cause:
             age = f" {self.last_death_age_s:.0f}s ago" if self.last_death_age_s is not None else ""
             parts.append(f"last death:{age} {self.last_death_cause}")
@@ -721,7 +733,11 @@ class GameState:
             head = "; ".join(self.notifications[:2])
             parts.append(f"unread notifications ({self.unread}): {head}" if head
                          else f"unread notifications: {self.unread}")
-        parts[0] = parts[0][:1].upper() + parts[0][1:]
+        # Every clause is capitalised, not just the first. Capitalising only `parts[0]` left "Health 12/20,
+        # wounded. hunger 9/20, below the eating floor." - the same category/measurement mix one level
+        # down, with a sentence break sitting where a reader expects a new subject.
+        for i, part in enumerate(parts):
+            parts[i] = part[:1].upper() + part[1:] if part else part
         return "You are a Minecraft bot. " + ". ".join(parts) + "."
 
 
@@ -1300,3 +1316,29 @@ async def build(executor) -> GameState:
 def _in_nether_dimension(dimension: Any) -> bool:
     """Whether a `view_status` dimension string names the Nether."""
     return "nether" in str(dimension or "").lower()
+
+
+def _health_band(health: float) -> str:
+    """What being below full health means, in the words the rules would use about it.
+
+    Only one band is claimed, because only one is true without knowing more: any damage is
+    damage. The number carries the rest, and a ladder here would put words in the narrative that
+    no rule in `actions` acts on.
+    """
+    return "wounded"
+
+
+def _food_band(food: float) -> str:
+    """The band a hunger value falls in, named after what the loop does with it.
+
+    These are the same two floors the candidates use - `EAT_HUNGER` and `REGEN_HUNGER` - so the
+    narrative cannot claim a state the loop is not acting on. The middle band is the one that
+    costs a bot its health: between the two floors it neither eats nor regenerates, and it sits
+    there until something hits it. A three-way "fine / middling / critical" wording folds that
+    four-point gap into the top band and hides it.
+    """
+    if food < EAT_HUNGER:
+        return "below the eating floor"
+    if food < REGEN_HUNGER:
+        return "not regenerating"
+    return "regenerating"

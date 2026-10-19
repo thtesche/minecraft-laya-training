@@ -3,8 +3,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .perception import (AIR_NAMES, INVENTORY_NEAR_FULL, INVENTORY_SLOTS, PORTAL_BLOCK,
-                         GameState, _in_nether_dimension, frame_obsidian_cells)
+from .perception import (AIR_NAMES, EAT_HUNGER, INVENTORY_NEAR_FULL, INVENTORY_SLOTS,
+                         PORTAL_BLOCK, REGEN_HUNGER, GameState, _in_nether_dimension,
+                         frame_obsidian_cells)
 from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
                       frontier_heading, nearest_ground)
 
@@ -284,13 +285,11 @@ FOOD_SATURATION = {
 FOOD_RESERVE = 16
 NETHER_FOOD_RESERVE = 64
 
-# Hunger floors for eating. `EAT_HUNGER` is the survival floor the reflex has always used; the
-# bot eats below it to keep hunger off empty. `REGEN_HUNGER` is Minecraft's natural-regeneration
-# threshold: health only regenerates while food is at least 18, so a wounded bot whose food sits
-# in the 14-17 gap eats nothing and heals nothing until it is hit again. Hunger is 0-20.
+# Hunger floors for eating live in `perception` now, so the narrative and these gates cannot
+# drift apart: the sentence that tells the model "not regenerating" has to mean the same number
+# as the gate that withholds nothing. EAT_HUNGER is the survival floor the reflex has always
+# used; REGEN_HUNGER is Minecraft's natural regeneration threshold.
 HEALTH_MAX = 20.0
-EAT_HUNGER = 14.0
-REGEN_HUNGER = 18.0
 
 # --- Nether prep (the daytime lull once the gate frame stands) ---
 # Beyond the deep food reserve, the expedition wants a ranged answer, a piglin pass and building
