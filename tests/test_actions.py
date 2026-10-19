@@ -9,7 +9,8 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import (_leave_portal_target, Action, _armor_to_wear, candidates, inventory_relief,
+from mlaya.actions import (_all_nether_prep_steps, _in_portal, _leave_portal_target, Action,
+                         _armor_to_wear, candidates, inventory_relief,
                            nether_expedition_complete, NETHER_HOPELESS_AFTER, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
@@ -3281,6 +3282,91 @@ class NetherExpeditionTest(unittest.TestCase):
         for label in ("enter_portal", "hunt_blaze", "leave_nether", "craft_blaze_powder",
                       "stow_blaze_powder"):
             self.assertNotIn(label, out)
+
+
+class BurningGateUnstockedPrepTest(unittest.TestCase):
+    """A gate that is already burning must not hold the prep hostage, and must not let the bot in.
+
+    The case the user named: the bot was already in the Nether once, came back (a death, a missing
+    resource), and finds the gate still burning. The lighting gate is then irrelevant - it is lit -
+    so the prep has to be free to run, and the crossing has to stay shut until it is stocked.
+
+    Pinned because the fix that put `NETHER_PICKAXES` on `_expedition_ready` could easily have cost
+    the first half: the prep steps key on `_expedition_prepared`, which never reads the gate, while
+    `enter_portal` still reads `_expedition_ready` on top of it.
+    """
+
+    BASE = (226, 63, 222)
+    GATE = (228, 64, 222)
+
+    def _burning_gate(self, **inv):
+        """Gate lit. The expedition is stockable in whatever `inv` says it is missing."""
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, white_bed=1,
+                     golden_helmet=1, cooked_mutton=64, diamond_pickaxe=2, raw_gold=5)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 18.0
+        # The frame plane sits two blocks west of the gate and stands: the prep chain is scoped to
+        # the window after the frame is up (`_nether_idle`), which is exactly the state a bot comes
+        # home to after a trip - gate burning, frame standing, helmet gone.
+        g.resources = {
+            "nether_portal": [BlockHit("nether_portal", "nether_portal", *self.GATE, 2.0)],
+            "white_bed": [BlockHit("white_bed", "white_bed", 225, 64, 223, 2.5)],
+            "obsidian": [BlockHit("obsidian", "obsidian", 226, 64, 221, 2.0),
+                         BlockHit("obsidian", "obsidian", 226, 65, 221, 2.0),
+                         BlockHit("obsidian", "obsidian", 226, 66, 221, 2.0),
+                         BlockHit("obsidian", "obsidian", 226, 67, 221, 2.0),
+                         BlockHit("obsidian", "obsidian", 226, 68, 221, 2.0),
+                         BlockHit("obsidian", "obsidian", 226, 69, 221, 2.0)],
+            "furnace": [BlockHit("furnace", "furnace", 229, 62, 222, 4.5)],
+            "gold_ore": [BlockHit("gold_ore", "gold_ore", 231, 60, 226, 8.0)],
+        }
+        g.furnace_pos = (229, 62, 222)   # the oven stands at the base, so no temporary one
+        return g
+
+    def test_a_burning_gate_does_not_stop_the_gold_chain(self) -> None:
+        g = self._burning_gate(golden_helmet=0, raw_gold=0)
+        self.assertIn("mine_gold", candidates(g))
+
+    def test_a_burning_gate_does_not_stop_the_gold_helmet(self) -> None:
+        # Five gold ingots and a table: the piece itself is reachable, so it is offered.
+        g = self._burning_gate(golden_helmet=0, gold_ingot=5)
+        self.assertIn("craft_gold_helmet", candidates(g))
+
+    def test_the_gate_stays_shut_when_the_helmet_step_is_unreachable(self) -> None:
+        # The sharp edge of the case the user named. With no coal there is no gold step in the
+        # prep list at all, the empty list read as "prep done", and the crossing opened - into the
+        # Nether, where piglins are hostile and the trip dies. The helmet is now read from the
+        # pack, so the gate stays shut whatever the prep list happens to say.
+        g = self._burning_gate(golden_helmet=0)
+        self.assertEqual(_all_nether_prep_steps(g), [])
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertNotIn("light_portal", candidates(g))
+
+    def test_the_spare_pickaxe_is_asked_for_once_the_other_prep_is_banked(self) -> None:
+        # Order on purpose: `_spare_pickaxe_missing` reads `_expedition_prepared`, so the pickaxe
+        # is the last thing before the crossing and not something to chase before the helmet is on.
+        self.assertIn("craft_pickaxe_spare",
+                      candidates(self._burning_gate(diamond_pickaxe=1)))
+
+    def test_the_crossing_stays_shut_while_the_spare_is_missing(self) -> None:
+        self.assertNotIn("enter_portal",
+                         candidates(self._burning_gate(diamond_pickaxe=1)))
+
+    def test_the_crossing_opens_on_a_burning_gate_once_the_kit_is_complete(self) -> None:
+        self.assertIn("enter_portal", candidates(self._burning_gate()))
+
+    def test_the_step_out_rescue_does_not_read_the_kit_at_all(self) -> None:
+        # The protection that covers this case once the gate is already lit. Standing in a burning
+        # gate teleports within seconds, so it owns the tick whatever the trip is missing - which
+        # is why it must depend neither on the lighting gate nor on the kit.
+        g = self._burning_gate(golden_helmet=0, diamond_pickaxe=1)
+        g.pos = (self.GATE[0] + 0.5, float(self.GATE[1]), self.GATE[2] + 0.5)
+        self.assertTrue(_in_portal(g))
+        self.assertIn("leave_portal", candidates(g))
+        self.assertEqual(resolve("leave_portal", g).tool, "navigate")
 
 
 class LeavePortalDimensionTest(unittest.TestCase):

@@ -1139,18 +1139,29 @@ def _nether_departure_ready(gs: GameState) -> bool:
     (live, run30: fully stocked, portal burning, bot 40 m off in a hole, `enter_portal` never
     offered and no step willing to walk it home).
 
+    The gold helmet is read from the pack, not through `_all_nether_prep_steps`. That list drops
+    any step whose material it cannot reach *right now*, so a bot with no coal has no gold step in
+    it, the empty list reads as "prep done", and the crossing opens - into the Nether, where piglins
+    are hostile and the trip dies. A burning gate is what makes this reachable: after a death down
+    there the bot comes home to a gate that already burns and may have lost the helmet on the way.
+
+    The bow is deliberately *not* treated this way, and the difference is supply, not importance:
+    string needs a spider in reach and run34 waited at its own gate for hours for one, while gold
+    ore is minable on demand (`mine_gold`). A gate that waits for gold waits for something that
+    always arrives; a gate that waits for a bow waits for luck.
+
     The spare pickaxe (`NETHER_PICKAXES`) rides on `_expedition_ready`, which gates the *lighting*,
-    not only this step. That is the opposite of where I first put it, and the live run is what
-    corrected it: a lit portal is an open door, and the pathfinder walks it like any other block,
-    so a gate that burns before the kit is complete is a gate the bot can cross *by accident* -
-    which is exactly what happened. It stood in its own gate while cooking, the teleport fired
-    mid-action, and it went down with one pickaxe and no crossing step at all (live, run53:
-    `cook_food` at it1782388155 in the Overworld, `the_nether` at it1782388156, with
-    `enter_portal` never executed). Keeping the gate dark until the trip is stocked means any
-    crossing - planned or accidental - carries the kit.
+    not only this step - the opposite of where I first put it, and the live run corrected it. A
+    burning portal is an open door and the pathfinder walks it like any other block, so a gate that
+    lights before the kit is complete is a gate the bot crosses *by accident*: run53 stood in its
+    own gate while cooking, the teleport fired mid-action, and it went down with one pickaxe and
+    no crossing step at all (`cook_food` at it1782388155 in the Overworld, `the_nether` at
+    it1782388156, `enter_portal` never executed). Keeping the gate dark until the trip is stocked
+    means any crossing - planned or accidental - carries the kit.
     """
     return (not nether_expedition_complete(gs) and not gs.nether_entered
-            and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs))
+            and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
+            and _has(gs.inventory, GOLD_HELMET_ITEM))
 
 
 def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
