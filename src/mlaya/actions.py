@@ -193,9 +193,17 @@ NETHER_RETURN_FOOD = 8.0
 # Metres, not decisions. `NETHER_HOPELESS_AFTER = 24` counted ticks, and a tick is not search:
 # live, run70, nineteen of the twenty-four ticks that ended the hunt were `body owner:
 # hostile_reflex` - the bot stood at 108 m from its own portal and was shot at, and the budget
-# was spent on being shot at. Four hundred metres is roughly what a fortress costs to walk to
-# from a portal; the tick ceiling below is the backstop for a bot that can never move at all.
-NETHER_SEARCH_M = 400.0
+# was spent on being shot at.
+#
+# 700, because the old world measured the cost: its nearest fortress stood 580 m straight from
+# the gate at (33,34) to (-300,513), and 400 stopped a hunt that had walked the whole way there
+# and was still owed the last 180 - `nether_travel` only counts metres covered, and hostile
+# avoidance, lava detours and reflex retreats make the walked line longer than the straight one
+# anyway. A fortress per region is the vanilla promise, so a few hundred metres is the ordinary
+# price and the long cases are not rare. The budget is a floor, not a leash: a fortress loaded
+# into scan suspends the judgement, and the health and food gates end a trip that fights badly
+# long before this number matters.
+NETHER_SEARCH_M = 700.0
 NETHER_HOPELESS_TICKS = 120
 # How far a lone spider may be for a *single* string (`_safe_string_hunt`, repairing the Nether
 # bow). Wider than the bed-chain's spider guard, which is about three strings at once.
