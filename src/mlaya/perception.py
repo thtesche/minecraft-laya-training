@@ -259,6 +259,49 @@ async def remembered_home(executor) -> tuple[int, int, int] | None:
     return parse_remembered_home(coerce(res.data, res.text))
 
 
+# The Nether side of the portal the last real crossing went through, as the server itself
+# remembers it. `nether_arrival` is per-run: a run that starts with the bot already down there
+# saw no crossing, and until run74 the loop recorded whatever cell the bot happened to stand
+# on as its "arrival" - (-469,57,421), bare basalt with no portal and no obsidian, 250 blocks
+# from the real gate, walked to and waited at until the bot died. The server writes a
+# `player_dimension_change` event with the position it delivered the bot at for every crossing,
+# and that read outlives the death, the restart and the distance: the same kind of anchor as
+# REMEMBERED_HOME_SQL, and the one way out. The position is the cell the bot stood on when the
+# gate let it go, which is where the exit portal stands.
+REMEMBERED_GATE_SQL = (
+    "SELECT CAST(json_extract(payload_json, '$.position.x') AS REAL), "
+    "CAST(json_extract(payload_json, '$.position.y') AS REAL), "
+    "CAST(json_extract(payload_json, '$.position.z') AS REAL) "
+    "FROM events WHERE event_type = 'player_dimension_change' "
+    "AND json_extract(payload_json, '$.to') = 'the_nether' "
+    "ORDER BY observed_at DESC LIMIT 1")
+
+
+def parse_remembered_gate(payload: Any) -> tuple[int, int, int] | None:
+    """The cell the bot last stood on as the Nether let it go, or None if it never crossed."""
+    rows = get(payload, "response", "data", "result", "query", "rows")
+    if not isinstance(rows, list) or not rows:
+        return None
+    row = rows[0]
+    cells = row if isinstance(row, list) else [row]
+    if len(cells) < 3:
+        return None
+    x, y, z = (_num(cells[0]), _num(cells[1]), _num(cells[2]))
+    if x is None or y is None or z is None:
+        return None
+    return (math.floor(x), math.floor(y), math.floor(z))
+
+
+async def remembered_gate(executor) -> tuple[int, int, int] | None:
+    """The Nether side of the last crossing, or None. A read of memory, not of the world."""
+    res = await executor.read(
+        "query_bot_data",
+        {"sql": REMEMBERED_GATE_SQL},
+        "recall the Nether side of the last crossing, the way out of the Nether",
+    )
+    return parse_remembered_gate(coerce(res.data, res.text))
+
+
 def _find_container(payload: Any) -> Any:
     """The innermost dict that carries a `contents` list, however the answer nested it.
 
@@ -602,6 +645,12 @@ class GameState:
     # that spot or right beside it, and a portal block only reaches the state while it is loaded -
     # so when the scan comes up empty this is the heading `leave_nether` walks instead.
     nether_arrival: tuple[int, int, int] | None = None
+    # The Nether side of the portal the last real crossing went through, the server's own memory
+    # (`perception.REMEMBERED_GATE_SQL`) rather than a world read: it outlives the death and the
+    # restart, so it is the way home `leave_nether` takes when the run *began* in the Nether and
+    # saw no crossing to record an arrival from. Run74 had neither and walked its bot to a
+    # non-portal: the cell it started on, not the gate at (33,55,34) it never knew about.
+    nether_gate: tuple[int, int, int] | None = None
     # The blaze powder reached the chest at the Overworld portal (Agent `_note_stow`). Reading the
     # chest back would cost a `use_container` inspection every tick, and the deposit is already
     # verified by the action's own result - the same latch shape as `frame_complete`.
@@ -691,6 +740,7 @@ class GameState:
             # never answer it and looked like a broken gate rather than a missing field.
             "nether_entered": self.nether_entered,
             "nether_arrival": self.nether_arrival,
+            "nether_gate": self.nether_gate,
             "nether_ticks": self.nether_ticks,
             "nether_travel": self.nether_travel,
             "mobs": self.mobs,
@@ -717,7 +767,8 @@ class GameState:
                       "hostiles", "players", "death_pos", "drops", "base", "chest_pos",
                       "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "banked",
-                      "nether_entered", "nether_arrival", "nether_ticks", "nether_travel"):
+                      "nether_entered", "nether_arrival", "nether_gate", "nether_ticks",
+                      "nether_travel"):
             value = data.get(field)
             if value is not None:
                 setattr(gs, field, value)

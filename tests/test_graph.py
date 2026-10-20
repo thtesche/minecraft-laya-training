@@ -121,6 +121,9 @@ class WaterTicksTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._water_ticks = 0
@@ -393,6 +396,9 @@ class PourSkipTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -493,6 +499,9 @@ class StanceSkipTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -587,6 +596,9 @@ class StuckOfferTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -1120,6 +1132,9 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent.base = None
         agent.surface = None
@@ -1221,6 +1236,9 @@ class FrameRefusalTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._water_ticks = 0
@@ -1307,6 +1325,9 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent.base = None
         agent.chest_pos = None
@@ -1554,6 +1575,9 @@ class DropHoleTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -1629,6 +1653,9 @@ class ChestSupportTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -1707,6 +1734,9 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -1889,6 +1919,9 @@ class ChestLidTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent.build_site = None
@@ -2057,6 +2090,9 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         return agent
 
     def test_the_gate_is_offered_and_is_the_crossing(self) -> None:
@@ -2171,6 +2207,9 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -2692,6 +2731,9 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent.base = None
         agent.surface = None
@@ -2793,6 +2835,9 @@ class FrameRefusalTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._water_ticks = 0
@@ -2879,6 +2924,9 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent.base = None
         agent.chest_pos = None
@@ -3126,6 +3174,9 @@ class DropHoleTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -3201,6 +3252,9 @@ class ChestSupportTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -3279,6 +3333,9 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -3461,6 +3518,9 @@ class ChestLidTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent.build_site = None
@@ -3629,6 +3689,9 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         return agent
 
     def test_the_gate_is_offered_and_is_the_crossing(self) -> None:
@@ -3743,6 +3806,9 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -4070,6 +4136,9 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._powder_stowed = False
         self.assertTrue(agent._inject(gs()).base_adopted)
 
@@ -4247,6 +4316,9 @@ class SearchIsPaidForInMetresTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_travel = 0.0
         agent._nether_last_pos = None
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         return agent
 
 
@@ -4295,6 +4367,9 @@ class NetherCrossingTest(unittest.TestCase):
         agent._nether_last_pos = None
         agent._nether_ticks = 0
         agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._water_ticks = 0
@@ -4341,14 +4416,43 @@ class NetherCrossingTest(unittest.TestCase):
 
     def test_arriving_in_the_nether_is_remembered_with_its_cell(self) -> None:
         # `leave_nether` needs the arrival cell whenever no exit portal block is loaded, and the
-        # crossing itself is only observed afterwards as a dimension change.
+        # crossing itself is only observed afterwards as a dimension change - overworld first,
+        # Nether after: that is what a crossing looks like from inside a run.
         agent = self._agent()
+        agent._note_dimension(gs(pos=(226.5, 64.0, 222.5), dimension="minecraft:overworld"))
         g = gs(pos=(12.5, 65.0, -3.5), dimension="minecraft:the_nether")
         agent._note_dimension(g)
         self.assertTrue(agent._nether_entered)
         self.assertEqual(agent._nether_arrival, (12, 65, -4))
         # Standing still down there must not walk the arrival cell along with the bot.
         agent._note_dimension(gs(pos=(40.5, 70.0, -9.5), dimension="minecraft:the_nether"))
+        self.assertEqual(agent._nether_arrival, (12, 65, -4))
+
+    def test_a_run_born_in_the_nether_records_no_arrival(self) -> None:
+        # A first tick reading Nether saw no crossing, and the cell it stands says nothing about
+        # a portal: it is wherever the last run left the bot. Live, run74: the loop recorded
+        # (-469,57,421) as the "arrival" - bare basalt with no obsidian anywhere near - walked
+        # the bot back to it from the fortress, and stood it there for `[PORTAL_TARGET] ...
+        # observed air` until the bot died. The cold start's way home is the server's memory
+        # (`_note_nether_gate`), not the start position.
+        agent = self._agent()
+        agent._note_dimension(gs(pos=(-469.2, 57.0, 421.5), dimension="minecraft:the_nether"))
+        self.assertTrue(agent._nether_entered)              # down there, that much is real
+        self.assertIsNone(agent._nether_arrival)            # but no crossing was ever seen
+        for _ in range(3):
+            agent._note_dimension(gs(pos=(-300.5, 63.0, 513.5), dimension="minecraft:the_nether"))
+        self.assertIsNone(agent._nether_arrival)
+
+    def test_the_next_crossing_records_its_own_arrival(self) -> None:
+        # The second trip matters too: a run that comes up in the Nether, walks its bot home
+        # and goes back down must know the gate it comes through now, not the cold start's
+        # nothing. The arrival follows every crossing the run watches over, ever since it
+        # stopped being the first Nether position seen.
+        agent = self._agent()
+        agent._note_dimension(gs(pos=(-469.2, 57.0, 421.5), dimension="minecraft:the_nether"))
+        self.assertIsNone(agent._nether_arrival)
+        agent._note_dimension(gs(pos=(226.5, 64.0, 222.5), dimension="minecraft:overworld"))
+        agent._note_dimension(gs(pos=(12.5, 65.0, -3.5), dimension="minecraft:the_nether"))
         self.assertEqual(agent._nether_arrival, (12, 65, -4))
 
     def test_the_nether_tick_count_resets_at_home(self) -> None:
@@ -4389,6 +4493,144 @@ class NetherCrossingTest(unittest.TestCase):
         agent.settings.loop.stop_when_complete = True
         agent._powder_stowed = True
         self.assertFalse(agent._goal_reached(agent._inject(gs())))
+
+
+class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
+    """A cold Nether run takes the way home from the server's own memory.
+
+    A run that starts with the bot in the Nether saw no crossing: the one that put the bot down
+    there happened while another process was running, and the graph resets with every restart.
+    Live, run74: the loop acted as if it knew anyway - it recorded the cell the bot happened to
+    stand on at the start as its "arrival", walked 250 blocks to that non-portal, and waited at
+    bare basalt for a gate that had never stood there, until the bot died. The server does hold
+    the real fact: every crossing gets a `player_dimension_change` event with the position it
+    delivered the bot at, kept in the database that outlives the death, the dimension change and
+    the restart (`perception.REMEMBERED_GATE_SQL`). The same shape as the remembered chest, for
+    the one way out.
+    """
+
+    class _Read:
+        def __init__(self, data):
+            self.data = data
+            self.text = None
+
+    class _Mcp:
+        def __init__(self, rows):
+            self.rows = rows
+            self.calls: list = []
+
+        async def read(self, tool, args, why):
+            self.calls.append((tool, args))
+            payload = {"response": {"data": {"result": {"query": {
+                "columns": ["x", "y", "z"], "rows": self.rows}}}}}
+            return RememberedGateTest._Read(payload)
+
+    ROWS = [[33.42975, 55, 34.5]]   # the live crossing into the (33,55,34) gate
+
+    async def test_a_cold_nether_run_reads_the_gate_once(self) -> None:
+        agent = self._agent()
+        mcp = self._Mcp(self.ROWS)
+        agent.mcp = mcp
+        await agent._note_nether_gate(gs(pos=(12.5, 65.0, -3.5),
+                                         dimension="minecraft:the_nether"))
+        self.assertEqual(agent._nether_gate, (33, 55, 34))
+        self.assertEqual(mcp.calls[0][0], "query_bot_data")
+        sql = mcp.calls[0][1]["sql"]
+        self.assertIn("player_dimension_change", sql)
+        self.assertIn("'the_nether'", sql)
+        # One read of the memory per run, not one per tick down there.
+        await agent._note_nether_gate(gs(pos=(13.5, 65.0, -3.5),
+                                         dimension="minecraft:the_nether"))
+        self.assertEqual(len(mcp.calls), 1)
+
+    async def test_the_overworld_owes_no_gate_read(self) -> None:
+        # The way out is used in the Nether; a tick at home must not spend the read.
+        agent = self._agent()
+        agent.mcp = self._Mcp(self.ROWS)
+        await agent._note_nether_gate(gs(pos=(226.5, 64.0, 222.5),
+                                         dimension="minecraft:overworld"))
+        self.assertEqual(agent.mcp.calls, [])
+        self.assertIsNone(agent._nether_gate)
+
+    async def test_a_world_that_never_crossed_has_no_gate(self) -> None:
+        agent = self._agent()
+        agent.mcp = self._Mcp([])
+        await agent._note_nether_gate(gs(pos=(12.5, 65.0, -3.5),
+                                         dimension="minecraft:the_nether"))
+        self.assertIsNone(agent._nether_gate)
+
+    async def test_a_failed_read_leaves_the_run_its_own_sources(self) -> None:
+        # Nothing is owed a gate: a scan the bot walks into, and the arrival of a crossing the
+        # run watched, are still its own. A database that will not answer must not strand the
+        # loop, and must not cost it another read on every tick either.
+        class _Boom:
+            async def read(self, *a):
+                raise RuntimeError("database gone")
+        agent = self._agent()
+        agent.mcp = _Boom()
+        await agent._note_nether_gate(gs(pos=(12.5, 65.0, -3.5),
+                                         dimension="minecraft:the_nether"))
+        self.assertIsNone(agent._nether_gate)
+        self.assertTrue(agent._gate_read)   # read once means once, even into the failure
+
+    async def test_the_gate_is_injected_into_the_state(self) -> None:
+        # A fact the candidates turn on has to be in the state the candidates read, and in the
+        # log afterwards: run74's wrong "arrival" was unanswerable from the recorded ticks.
+        agent = self._agent()
+        agent._nether_gate = (33, 55, 34)
+        self.assertEqual(agent._inject(gs()).nether_gate, (33, 55, 34))
+        rebuilt = GameState.from_state(agent._inject(gs()).as_state())
+        self.assertEqual(rebuilt.nether_gate, (33, 55, 34))
+
+    def _agent(self, **over):
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.base = None
+        agent.surface = None
+        agent.chest_pos = None
+        agent.banked = {}
+        agent.furnace_pos = None
+        agent.smoker_pos = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._recover_written_off = set()
+        agent._drop_hole_blocked = False
+        agent._drop_open_pending = False
+        agent._drop_pos = None
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._furnace_contents = {}
+        agent._furnace_occupied = False
+        agent._blocked_cell = None
+        agent._chest_above = None
+        agent._portal_blocked = []
+        agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
+        agent._nether_ticks = 0
+        agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
+        agent._powder_stowed = False
+        agent._water_ticks = 0
+        agent._home_anchor = None
+        agent._home_ticks = 0
+        agent.log = []
+        agent.mcp = None
+        for k, v in over.items():
+            setattr(agent, k, v)
+        return agent
 
 
 if __name__ == "__main__":

@@ -374,9 +374,17 @@ class Agent:
         self._enter_intent_ticks = 0
         # The Nether has been entered at least once, and where the bot landed doing it. The
         # Overworld gate is then closed (`enter_portal` stops being offered) and `leave_nether`
-        # has a cell to walk back to when no exit portal block is loaded in the scan.
+        # has a cell to walk back to when no exit portal block is loaded in the scan. The
+        # arrival is recorded off an observed crossing only: a first tick that reads Nether
+        # (`_last_dimension` is None) saw no crossing, and its position is wherever the last
+        # run left the bot, not a gate - which is exactly what run74 took for the way home.
+        # The server's own memory of the last crossing (`_nether_gate`) is what stands in for
+        # those runs instead, read once (`_note_nether_gate`).
         self._nether_entered = False
         self._nether_arrival: tuple[int, int, int] | None = None
+        self._last_dimension: str | None = None
+        self._nether_gate: tuple[int, int, int] | None = None
+        self._gate_read = False
         self._nether_ticks = 0
         self._nether_travel = 0.0
         self._nether_last_pos: tuple[float, float] | None = None   # (x, z) of the last tick
@@ -421,6 +429,7 @@ class Agent:
         gs.enter_intent = self._enter_intent_ticks > 0
         gs.nether_entered = self._nether_entered
         gs.nether_arrival = self._nether_arrival
+        gs.nether_gate = self._nether_gate
         gs.nether_ticks = self._nether_ticks
         gs.powder_stowed = self._powder_stowed
         return gs
@@ -494,6 +503,7 @@ class Agent:
         await self._adopt_portal_base(gs)
         await self._scan_bed_site(gs)
         await self._walk_home_to_memory(gs)
+        await self._note_nether_gate(gs)
         await self._note_stocked_chest(gs)
         self._note_dimension(gs)
         gs = self._inject(gs)
@@ -543,6 +553,31 @@ class Agent:
         self._home_ticks = HOME_ANCHOR_TICKS
         self.chest_pos = home
         self.base = (home[0], home[1] - 1, home[2] + 1)
+
+    async def _note_nether_gate(self, gs) -> None:
+        """Read the server's own memory of the last crossing, once, while the bot is in the Nether.
+
+        A run that starts with the bot in the Nether has no crossing to record the exit cell
+        from: the one that put the bot down there happened while another process was running,
+        and the graph resets with every restart. It is not without the fact though, because
+        the server is not: it writes a `player_dimension_change` event with the position it
+        delivered the bot at, in the database that outlives the death, the dimension change and
+        the restart (`perception.REMEMBERED_GATE_SQL`). That is the way home out of the Nether,
+        and the alternative is what run74 did with a "arrival" of its own making: 250 blocks of
+        walking to the cell it started on, then standing at bare basalt for a gate that was
+        never there, the bot dying down where no drop is ever coming back.
+
+        The same read of memory `_walk_home_to_memory` makes, once per run and paid only when
+        the bot stands where the answer is used: the overworld tick does not owe it.
+        """
+        if self._gate_read or "nether" not in str(gs.dimension or "").lower():
+            return
+        self._gate_read = True
+        try:
+            gate = await perception.remembered_gate(self.mcp)
+        except Exception:
+            return
+        self._nether_gate = gate
 
     async def _note_stocked_chest(self, gs) -> None:
         """Read what the Overworld chest last held, and keep only the edibles.
@@ -621,19 +656,29 @@ class Agent:
         - a gate the bot merely walked into must never keep the rescue switched off for good.
 
         Arrival is read off the observed dimension rather than off the action result, because that
-        is what actually puts the bot in the Nether, and the cell it stands in is where the exit
-        portal is.
+        is what actually puts the bot in the Nether — but only off a crossing the run observed:
+        a dimension that flips from not-Nether to Nether. A first tick that already reads Nether
+        saw no crossing, and the cell it stands on says nothing about a portal; it is wherever the
+        previous run left the bot, and treating it as the arrival is what run74 did: (-469,57,421)
+        of bare basalt, walked back to, mistaken for the way home until the bot died
+        (`_note_nether_gate` is the cold start's real source).
         """
+        dim = str(gs.dimension or "").lower()
+        crossed = "nether" in dim and self._last_dimension is not None \
+            and "nether" not in self._last_dimension
+        self._last_dimension = dim
         if self._enter_intent_ticks > 0:
             self._enter_intent_ticks -= 1
-        if "nether" in str(gs.dimension or "").lower():
+        if "nether" in dim:
             self._nether_ticks += 1
             if not self._nether_entered:
                 self._nether_entered = True
                 self._nether_travel = 0.0
-                if gs.pos is not None:
-                    self._nether_arrival = (math.floor(gs.pos[0]), math.floor(gs.pos[1]),
-                                            math.floor(gs.pos[2]))
+            if crossed and gs.pos is not None:
+                # Every crossing the run watches over is its own: after the bot comes home and
+                # goes back down, the next trip's exit cell is the one this line records.
+                self._nether_arrival = (math.floor(gs.pos[0]), math.floor(gs.pos[1]),
+                                        math.floor(gs.pos[2]))
             elif gs.pos is not None and self._nether_last_pos is not None:
                 # Ground covered since the crossing, which is the only thing a search budget can
                 # honestly be spent on. `nether_ticks` counted decisions, and a decision is not

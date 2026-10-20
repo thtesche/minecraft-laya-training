@@ -7,7 +7,8 @@ from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_NAMES, RESCU
                               RESCUE_RADIUS, RESOURCE_LIMIT, BlockHit,
                               frame_obsidian_cells, frame_volume, parse_block_above, parse_box,
                               parse_cells, parse_furnace_contents, parse_ground_height,
-                              parse_frontier_heading, parse_remembered_stock,
+                              parse_frontier_heading, parse_remembered_gate,
+                              parse_remembered_stock, REMEMBERED_GATE_SQL,
                               parse_portal_corner, parse_refused_cells, parse_resource_counts,
                               parse_resources, parse_status, parse_surface_height,
                               portal_interior, build, GameState)
@@ -322,6 +323,45 @@ class RememberedStockParseTest(unittest.TestCase):
         # chest would be filtered with one list and counted with the other.
         from mlaya.actions import EDIBLE
         self.assertEqual(set(EDIBLE_NAMES), set(EDIBLE))
+
+
+class RememberedGateParseTest(unittest.TestCase):
+    """The Nether side of the last crossing, read out of the server's event database.
+
+    A run that starts in the Nether saw no crossing, and the cell it stands on says nothing
+    about a portal (run74: (-469,57,421) of basalt taken for the "arrival", the bot starved at
+    it). The server records every `player_dimension_change` with the position it delivered the
+    bot at, in the database that outlives the death and the restart - the same kind of read as
+    the remembered chest, for the way out. `REMEMBERED_GATE_SQL` asks SQLite for the newest
+    arrival in the Nether; the parser floors it to the cell the gate stands in.
+    """
+
+    @staticmethod
+    def _row(cells):
+        return {"response": {"data": {"result": {"query": {"rows": [list(cells)]}}}}}
+
+    def test_the_arrival_position_becomes_its_cell(self) -> None:
+        # The live crossing at the base portal's Nether side: the delivered position is the
+        # cell centre, and the floor is the cell the portal block stands in.
+        row = self._row((33.42975141085543, 55, 34.5))
+        self.assertEqual(parse_remembered_gate(row), (33, 55, 34))
+
+    def test_negative_positions_floor_the_right_way(self) -> None:
+        # A delivery west of the origin must not round toward zero: the gate cell is what the
+        # walk is asked for, and int(-2.5) would put the bot a cell east of it.
+        self.assertEqual(parse_remembered_gate(self._row((-2.5, 31.0, -10.2))), (-3, 31, -11))
+
+    def test_no_row_is_no_crossing_not_a_guess(self) -> None:
+        empty = {"response": {"data": {"result": {"query": {"rows": []}}}}}
+        self.assertIsNone(parse_remembered_gate(empty))
+        self.assertIsNone(parse_remembered_gate({}))
+
+    def test_the_row_is_asked_of_the_events_the_server_writes(self) -> None:
+        # The read has to name the server's own crossing event, and the Nether side of it:
+        # `to`, not `from` - the from side is the cell the bot left.
+        self.assertIn("player_dimension_change", REMEMBERED_GATE_SQL)
+        self.assertIn("'the_nether'", REMEMBERED_GATE_SQL)
+        self.assertIn("$.to", REMEMBERED_GATE_SQL)
 
 
 class NarrativeSaysWhatTheRulesDoTest(unittest.TestCase):

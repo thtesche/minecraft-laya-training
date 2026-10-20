@@ -1111,14 +1111,16 @@ def _nether_search_heading(gs: GameState) -> float:
     north-south in another and the loop had no measurement, since it never found a fortress.
 
     The axis march is the fallback for a tick without a frontier read (no rows, or the read
-    failed): east until the bot is level with where it came in, then west. That sweeps one line,
-    which is worse, but it is a line rather than standing still.
+    failed): east until the bot is level with where the trip came in - or, when the run itself
+    saw no crossing, with where the server remembers the last one arriving (`_nether_way_home`) -
+    then west. That sweeps one line, which is worse, but it is a line rather than standing still.
     """
     if gs.frontier_heading is not None:
         return gs.frontier_heading
-    if gs.nether_arrival is None or gs.pos is None:
+    way_home = _nether_way_home(gs)
+    if way_home is None or gs.pos is None:
         return 90.0
-    return 270.0 if gs.pos[0] >= gs.nether_arrival[0] else 90.0
+    return 270.0 if gs.pos[0] >= way_home[0] else 90.0
 
 
 def _in_nether(gs: GameState) -> bool:
@@ -1295,6 +1297,23 @@ def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
     """The nearest `nether_portal` block cell in reach, the Nether exit as much as the way in."""
     hits = gs.resources.get(PORTAL_BLOCK) or []
     return hits[0].pos if hits else None
+
+
+def _nether_way_home(gs: GameState) -> tuple[int, int, int] | None:
+    """The cell the way out of the Nether stands on, when no portal block is loaded.
+
+    Two sources, and they are not equally honest. `nether_arrival` is what this run watched
+    cross - since run74 it is recorded off an observed dimension flip only, so it really is the
+    portal cell, but it dies with the run. `nether_gate` is the server's memory of the last
+    crossing (`perception.REMEMBERED_GATE_SQL`): it outlives the restart and the death, and it
+    is the only one that answers when a run begins in the Nether having seen no way in. Neither
+    answering means no way home is known, which is not a walk: run74's "arrival" was its own
+    start position, and the loop walked the bot 250 blocks to a cell of bare basalt and waited
+    there for a gate that never stood on it.
+    """
+    if gs.nether_arrival is not None:
+        return gs.nether_arrival
+    return gs.nether_gate
 
 
 def _furnace_needs_draining(gs: GameState) -> bool:
@@ -3250,11 +3269,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             x, y, z = cell
             return Action(label, "enter_nether_portal", {"x": x, "y": y, "z": z},
                           "cross back through the Nether exit portal with the rods")
-        # No portal block in the scan: the exit is the cell the bot arrived on, so the way home is
-        # that spot. Walk there first; the crossing itself waits until the portal is loaded again.
-        if gs.nether_arrival is None:
+        # No portal block in the scan: the way home is the cell the crossing left the bot
+        # standing on - this run watched that crossing (`nether_arrival`), or the server
+        # remembers it (`nether_gate`, `_note_nether_gate`). Walk there first; the crossing
+        # itself waits until the portal is loaded again. Neither known is no way home walked:
+        # run74 walked 250 blocks to its own start position and waited at a non-portal until
+        # the bot died - a guess is not the gate, and standing at the wrong cell is how the
+        # trip never came back.
+        home = _nether_way_home(gs)
+        if home is None:
             return None
-        ax, ay, az = gs.nether_arrival
+        ax, ay, az = home
         # Already standing on it: cross, do not walk. `navigate` into an active portal is refused
         # outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED] Use enter_nether_portal to enter this
         # active portal` - and the scan does not always list the block the body is standing in

@@ -3178,6 +3178,59 @@ class NetherExpeditionTest(unittest.TestCase):
         g.pos = (self.EXIT[0] + 1.5, float(self.EXIT[1]), self.EXIT[2])
         self.assertEqual(resolve("leave_nether", g).tool, "enter_nether_portal")
 
+    def test_a_run_born_in_the_nether_walks_the_remembered_gate(self) -> None:
+        # Cold start: this run never crossed, so there is no arrival - and the gate it did
+        # arrive through is not a block in the scan either, 500 blocks unloaded (live, run74:
+        # `view_blocks find nether_portal` answered `found=0` for the whole trip). What does
+        # answer is the server's memory of the last crossing (`perception.REMEMBERED_GATE_SQL`),
+        # outliving the death and the restart - run74 instead walked its own start position, a
+        # cell of bare basalt 250 blocks from the real gate, and died waiting there.
+        g = self._down(blaze_rod=9)
+        g.nether_arrival = None
+        g.nether_gate = self.EXIT
+        g.pos = (self.EXIT[0] + 40.5, float(self.EXIT[1]), self.EXIT[2] + 40.5)
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+        # Standing beside the remembered gate is the crossing, not the walk: the same two-step
+        # as the arrival, because `navigate` into an active portal is refused outright.
+        g.pos = (self.EXIT[0] + 1.5, float(self.EXIT[1]), self.EXIT[2])
+        self.assertEqual(resolve("leave_nether", g).tool, "enter_nether_portal")
+
+    def test_no_arrival_and_no_gate_walks_no_one_to_a_maybe_portal(self) -> None:
+        # Nothing knows the way in, so "walk back to where the trip started" would be a guess -
+        # run74's guess was its own start cell, and it starved at that non-portal. No cell is
+        # no offer: the scan, at least, may still find the gate somewhere the bot walks.
+        g = self._down(blaze_rod=9)
+        g.nether_arrival = None
+        g.nether_gate = None
+        self.assertIsNone(resolve("leave_nether", g))
+
+    def test_the_arrival_this_run_saw_outranks_the_remembered_gate(self) -> None:
+        # The gate is whatever the last crossing came through; the arrival is the portal this
+        # trip actually walked in - a stale row cannot outvote a fact the run watched itself.
+        g = self._down(blaze_rod=9)
+        g.nether_gate = (self.EXIT[0] + 60, self.EXIT[1], self.EXIT[2] + 60)
+        g.pos = (self.EXIT[0] + 40.5, float(self.EXIT[1]), self.EXIT[2] + 40.5)
+        a = resolve("leave_nether", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+
+    def test_the_axis_sweep_points_at_the_remembered_gate(self) -> None:
+        # Without the world's frontier compass, the fallback march should at least point back
+        # to the way out. Live, run74: its fake "arrival" stood west of the fortress, so the
+        # sweep ran away from the real gate - east of the gate now reads as east of the
+        # arrival, and the search walked the wrong way twice over.
+        from mlaya.actions import _nether_search_heading
+        g = self._down()
+        g.nether_arrival = None
+        g.nether_gate = self.EXIT
+        g.pos = (self.EXIT[0] + 200.5, 70.0, self.EXIT[2])    # east of the gate
+        self.assertEqual(_nether_search_heading(g), 270.0)    # due west: toward it
+        g.pos = (self.EXIT[0] - 200.5, 70.0, self.EXIT[2])    # west of it
+        self.assertEqual(_nether_search_heading(g), 90.0)     # due east
+        g.nether_gate = None                                  # nothing known: plain east
+        self.assertEqual(_nether_search_heading(g), 90.0)
+
     def test_a_badly_hurt_bot_goes_home_rods_or_not(self) -> None:
         # Dying down there drops the kit and the haul both; the rods in the pack are already
         # worth the walk back.
