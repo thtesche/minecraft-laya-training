@@ -6,6 +6,7 @@ from typing import Any
 
 from .actions import CRITERIA
 from .config import LLMConfig, LayaConfig
+from .perception import phase_persona
 
 # Two decisions per tick, one forward pass:
 #   in_danger  - binary gate; a reliable zero-shot signal. Yes -> defer to the survival policy.
@@ -241,8 +242,11 @@ def escalate_to_system2(
 
         client = OpenAI(base_url=cfg.base_url, api_key=api_key)
         system = (
-            "You are a Minecraft expert advising an autonomous bot. "
-            "Pick exactly one next action from allowed_actions and reply with JSON "
+            # The same phase sentence System 1 reads at the head of every state - System 2 is
+            # asked about this run, not about Minecraft in general, and should not have to
+            # re-derive mid-Nether from `state.dimension` whether the next thing is a pickaxe.
+            phase_persona(state) + ". You are the Minecraft expert advising this bot on its "
+            "next move. Pick exactly one next action from allowed_actions and reply with JSON "
             '{"action": <one allowed label or null>, "goal": <short string>, '
             '"note": <why, short>}.'
         )

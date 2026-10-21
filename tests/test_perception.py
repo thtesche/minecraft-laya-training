@@ -414,6 +414,107 @@ class NarrativeSaysWhatTheRulesDoTest(unittest.TestCase):
         self.assertNotIn("players nearby", gs.narrative())
         self.assertEqual(gs.players, ["Sanskrita"])
 
+    def test_a_cave_floor_does_not_read_as_the_surface(self) -> None:
+        # `onGround` is physics contact - true a hundred blocks under the sky too. run78 stood
+        # at y=-38 with "(on the ground)" in every tick, and that reads as "surface" to anyone.
+        # Say what the flag means, nothing more.
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (-35.0, -38.0, 93.0)
+        gs.on_ground = True
+        text = gs.narrative()
+        self.assertIn("standing on solid floor", text)
+        self.assertNotIn("(on the ground)", text)
+        gs.on_ground = False
+        self.assertIn("in the air", gs.narrative())
+
+    def test_death_is_gone_once_the_gear_is_lost_anyway(self) -> None:
+        # Outside `recover_drops`' own window there is nothing left to say about the death:
+        # run78 read a 14-hour-old death from the *previous* world on every tick (the server
+        # remembers deaths across world changes and restarts) while the label never fired.
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.death_pos = (-9.0, 72.0, 102.0)
+        gs.last_death_cause = "MineAI was slain by Zombie"
+        gs.last_death_age_s = 50462.0
+        self.assertNotIn("Last death", gs.narrative())
+
+    def test_the_open_window_names_the_site_it_asks_to_walk_back_to(self) -> None:
+        # Inside the window the sentence is useful - and only now, with the cell, which the old
+        # wording never gave and the recovery walk has to have.
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.death_pos = (-9.0, 72.0, 102.0)
+        gs.last_death_cause = "MineAI was slain by Zombie"
+        gs.last_death_age_s = 120.0
+        text = gs.narrative()
+        # The clause is capitalised by the narrative's own rule, like every other.
+        self.assertIn("Last death: 120s ago MineAI was slain by Zombie", text)
+        self.assertIn("z=102", text)
+        self.assertIn("can still be recovered", text)
+
+    def test_a_death_too_far_to_walk_is_not_offered_as_information(self) -> None:
+        # Same reach as the label itself: 320 m out the gear is gone on foot anyway.
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.death_pos = (900.0, 70.0, 0.0)
+        gs.last_death_cause = "MineAI was slain by Zombie"
+        gs.last_death_age_s = 60.0
+        self.assertNotIn("Last death", gs.narrative())
+
+
+class PhasePersonaTest(unittest.TestCase):
+    """One sentence, one phase, both model interfaces from the same truth.
+
+    The head is trained on exactly the rendering it meets at run time, so the phase has to be
+    said once, from what the world gives off, and reused verbatim by the System 2 brief. A run
+    still climbing may not claim to prepare for the nether, and a finished kit may not keep
+    saying "climb" while every step since the sword is the crossing.
+    """
+
+    def _kit(self, gs: GameState) -> GameState:
+        gs.dimension = "minecraft:overworld"
+        gs.tools = {"pickaxe": "diamond", "sword": "diamond", "shield": "other"}
+        gs.armor = {s: {"tier": "diamond", "item": f"diamond_{s}", "left": None, "max": None}
+                    for s in ("helmet", "chestplate", "leggings", "boots")}
+        return gs
+
+    def test_the_climb_reads_as_the_climb(self) -> None:
+        text = GameState(health=20.0, food=20.0).narrative()
+        self.assertTrue(text.startswith(
+            "You are a Minecraft player working toward a full diamond kit. "), text[:80])
+
+    def test_a_finished_kit_reads_as_the_crossing(self) -> None:
+        gs = self._kit(GameState(health=20.0, food=20.0))
+        self.assertIn("You are a Minecraft player preparing for the nether. ", gs.narrative())
+
+    def test_the_nether_and_the_end_own_their_work(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.dimension = "minecraft:the_nether"
+        self.assertIn("killing blazes for blaze rods", gs.narrative())
+        gs.dimension = "minecraft:the_end"
+        self.assertIn("fighting the ender dragon", gs.narrative())
+
+    def test_system_two_reads_the_same_sentence_from_the_state_dict(self) -> None:
+        # `escalate_to_system2` receives `gs.as_state()`, not the object: the sentence must
+        # survive the round trip or the two model faces get two different runs.
+        from mlaya.perception import phase_persona
+        state = {"dimension": "minecraft:overworld",
+                 "tools": {"pickaxe": "diamond", "sword": "diamond"},
+                 "armor": {s: {"tier": "diamond"}
+                           for s in ("helmet", "chestplate", "leggings", "boots")}}
+        self.assertEqual(phase_persona(state),
+                         "You are a Minecraft player preparing for the nether")
+        self.assertEqual(phase_persona({"dimension": "minecraft:overworld", "tools": {}, "armor": {}}),
+                         "You are a Minecraft player working toward a full diamond kit")
+
+    def test_no_phase_is_claimed_about_a_run_nothing_observed(self) -> None:
+        # Stronghold has no signal in the state yet, so no overworld field combination may
+        # produce it: a phase invented from a wish is a guess about the run in the prompt.
+        from mlaya.perception import PHASE_STRONGHOLD, phase_persona
+        self.assertEqual(phase_persona({"dimension": "minecraft:overworld"}),
+                         "You are a Minecraft player working toward a full diamond kit")
+        self.assertNotIn(PHASE_STRONGHOLD, phase_persona({"dimension": "minecraft:overworld"}))
+
 
 class FurnaceContentsParseTest(unittest.TestCase):
     """What a `use_container inspect` on a furnace reported.

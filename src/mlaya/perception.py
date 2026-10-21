@@ -454,6 +454,49 @@ class BlockHit:
                 "level": self.level}
 
 
+# One sentence naming what the run is working on, in front of every model-facing prompt:
+# it heads the System 1 state (the head is trained on exactly this rendering) and the
+# System 2 escalation. A generic "Minecraft bot" spends no attention - the framing has
+# to say which phase the bot is really in, because that changes what the next step is.
+
+PHASE_TECH = "You are a Minecraft player working toward a full diamond kit"
+PHASE_PREP = "You are a Minecraft player preparing for the nether"
+PHASE_NETHER = "You are a Minecraft player killing blazes for blaze rods"
+PHASE_STRONGHOLD = "You are a Minecraft player finding the stronghold"
+PHASE_END = "You are a Minecraft player fighting the ender dragon"
+
+
+def phase_persona(source) -> str:
+    """The phase sentence for both model interfaces, from one source of truth.
+
+    `source` is a `GameState` or its `as_state()` dict - System 1 renders it from the
+    object, System 2 escalates with the logged state dict, and neither may frame the run
+    differently than the other. The phases follow the world: the dimension owns nether
+    and end work; in the Overworld a finished diamond kit (worn, diamond pickaxe and
+    sword to hand) says the climb is over and only the crossing is left.
+    `PHASE_STRONGHOLD` is deliberately not wired up: nothing in the state knows where an
+    end portal stands, and a phase nothing observed would be a guess about the run. The
+    end expansion gives it a real trigger.
+    """
+    def field(name: str, default=None):
+        return source.get(name, default) if isinstance(source, dict) else getattr(source, name, default)
+    dim = str(field("dimension") or "").lower()
+    if "end" in dim:
+        return PHASE_END
+    if "nether" in dim:
+        return PHASE_NETHER
+    tools = field("tools") or {}
+    armor = field("armor") or {}
+
+    def worn(slot: str) -> bool:
+        meta = armor.get(slot) if isinstance(armor, dict) else None
+        return isinstance(meta, dict) and meta.get("tier") == "diamond"
+
+    kit = (all(worn(slot) for slot in ("helmet", "chestplate", "leggings", "boots"))
+           and tools.get("pickaxe") == "diamond" and tools.get("sword") == "diamond")
+    return PHASE_PREP if kit else PHASE_TECH
+
+
 @dataclass
 class GameState:
     health: float | None = None
@@ -808,7 +851,10 @@ class GameState:
             parts.append(f"it is {label}{weather}{asleep}")
         if self.pos:
             x, y, z = self.pos
-            where = "on the ground" if self.on_ground else "in the air"
+            # `onGround` is the server's physics contact flag - true on a cave floor a hundred
+            # blocks under the sky, which is why the run that mined at y=-38 read "(on the
+            # ground)" to a human as "surface". Say what the flag means, nothing more.
+            where = "standing on solid floor" if self.on_ground else "in the air"
             if self.in_water:
                 where = "in water"
             parts.append(f"at x={x:.0f}, y={y:.0f}, z={z:.0f} ({where})")
@@ -855,13 +901,21 @@ class GameState:
         # rule has ever keyed on another player - the goal is a solo playthrough - so it was pure
         # noise that spent the model's attention on a fact it has to learn to ignore. `players`
         # stays on the state, so the log still records who was standing there.
-        if self.last_death_cause:
-            age = f" {self.last_death_age_s:.0f}s ago" if self.last_death_age_s is not None else ""
-            parts.append(f"last death:{age} {self.last_death_cause}")
         if self.drops:
             parts.append(f"{self.drops} mob(s) the reflex killed dropped items nearby")
-        if self.death_pos and self.last_death_age_s is not None and self.last_death_age_s <= 90:
-            parts.append("gear dropped at the last death site can still be recovered")
+        # Death is narrative only while the gear is still recoverable - inside the very window
+        # `recover_drops` offers on (see `_can_recover`). Outside it the sentence is noise Laya
+        # cannot act on: live, run78 read a 14-hours-old death in the *previous* world on every
+        # single tick (the server remembers deaths across world changes and restarts), with
+        # nothing left to recover and no site in this world.
+        if self.death_pos is not None and self.last_death_age_s is not None and self.pos is not None:
+            from .actions import RECOVER_RANGE, RECOVER_WINDOW_S  # lazy: `actions` imports this module
+            if (self.last_death_age_s <= RECOVER_WINDOW_S
+                    and math.dist(self.pos, self.death_pos) <= RECOVER_RANGE):
+                dx, dy, dz = self.death_pos
+                cause = self.last_death_cause or "cause unreported"
+                parts.append(f"last death: {self.last_death_age_s:.0f}s ago {cause} "
+                             f"at x={dx:.0f}, y={dy:.0f}, z={dz:.0f}; gear dropped there can still be recovered")
         present = [(n, hits[0].distance) for n, hits in self.resources.items()
                    if hits and n in NAMED_RESOURCES]
         if present:
@@ -877,7 +931,7 @@ class GameState:
         # down, with a sentence break sitting where a reader expects a new subject.
         for i, part in enumerate(parts):
             parts[i] = part[:1].upper() + part[1:] if part else part
-        return "You are a Minecraft bot. " + ". ".join(parts) + "."
+        return phase_persona(self) + ". " + ". ".join(parts) + "."
 
 
 def _norm(text: Any, limit: int = 80) -> str:
