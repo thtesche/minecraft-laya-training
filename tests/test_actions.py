@@ -9,7 +9,8 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import (_all_nether_prep_steps, _in_portal, _leave_portal_target,
+from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _hoard_surplus,
+                         _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          INVENTORY_NEAR_FULL, inventory_relief,
                            nether_expedition_complete, NETHER_SEARCH_M, NETHER_HOPELESS_TICKS, resolve,
@@ -4633,6 +4634,117 @@ class ExpeditionSparePickaxeTest(unittest.TestCase):
         # at all. So there was no path to a second diamond pickaxe before this.
         self.assertNotIn("craft_diamond_pickaxe",
                          candidates(self._stocked(diamond=3, stick=4)))
+
+
+class PaidGoalEndsTheDiamondDigTest(unittest.TestCase):
+    """A diamond goal the pack can already pay for ends the dig - offer and resolve alike.
+
+    run77 ended on this exact hole: the spare-pickaxe branch offered `mine_diamond` from the
+    *want* question alone and never asked whether the pack could already pay, so from the
+    first crafted pickaxe on every single tick offered the dig - 140-odd diamonds mined one
+    per tick while the armour and the second pickaxe, both long since paid for, sat uncrafted.
+    The dig now has to stop exactly where the craft takes over; the craft itself is the step
+    that pays for the goal.
+    """
+
+    BASE = (-197, -47, -98)
+    GATE = (-195, -46, -98)
+
+    def _stocked(self, **inv) -> GameState:
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, golden_helmet=1,
+                     cooked_mutton=64, white_bed=1, diamond_sword=1, diamond_pickaxe=1)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                   *self.GATE, 2.0)],
+                       "obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
+                       "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -100, 2.5)],
+                       "diamond_ore": [BlockHit("diamond_ore", "diamond_ore",
+                                                -193, -40, -95, 3.0)]}
+        g.dimension = "minecraft:overworld"
+        return g
+
+    def test_a_paid_spare_stops_the_dig_offer_and_the_binding(self) -> None:
+        g = self._stocked(diamond=3, stick=4)
+        self.assertIn("craft_pickaxe_spare", candidates(g))
+        self.assertNotIn("mine_diamond", candidates(g))
+        self.assertIsNone(resolve("mine_diamond", g))
+
+    def test_the_dig_is_still_asked_while_the_spare_is_short(self) -> None:
+        g = self._stocked(diamond=1, stick=2)
+        self.assertIn("mine_diamond", candidates(g))
+        self.assertEqual(resolve("mine_diamond", g).args["count"], 2)
+
+
+class PaidArmourEndsTheDiamondDigTest(unittest.TestCase):
+    """The tech-tree half of the same rule: a payable armour piece outranks the dig.
+
+    Same run, same standstill one layer earlier: while boots and helmet were craftable from
+    the pile, `mine_diamond` was still offered from the spare branch and Laya picked it every
+    single tick - the offer had to stop competing with the craft it should have handed over to.
+    """
+
+    def _kit(self, **inv) -> GameState:
+        base = {"crafting_table": 1, "diamond_pickaxe": 1, "diamond_sword": 1,
+                "diamond_chestplate": 1, "diamond_leggings": 1, "diamond": 20}
+        base.update(inv)
+        return combat_ready(gs(tools={"pickaxe": "diamond"}, inventory=base,
+                               resources=_ore("diamond_ore")))
+
+    def test_paid_boots_stop_the_dig_offer(self) -> None:
+        g = self._kit()
+        self.assertIn("craft_diamond_boots", candidates(g))
+        self.assertNotIn("mine_diamond", candidates(g))
+        self.assertIsNone(resolve("mine_diamond", g))
+
+    def test_short_boots_are_still_dug_for(self) -> None:
+        g = self._kit(diamond=1)
+        self.assertIn("mine_diamond", candidates(g))
+        self.assertEqual(resolve("mine_diamond", g).args["count"], 3)
+
+    def test_no_dig_when_the_workstation_is_what_is_missing(self) -> None:
+        # Armour really is table-bound: diamonds will not dig one up, so the dig must not
+        # stand in for a step that goes looking for the workstation instead.
+        g = self._kit(crafting_table=0)
+        self.assertNotIn("mine_diamond", candidates(g))
+        self.assertIsNone(resolve("mine_diamond", g))
+
+
+class HoardSurplusKeepsGoalDiamondsTest(unittest.TestCase):
+    """run77's `drop_junk` shed 123 diamonds onto the ground while goals still wanted them.
+
+    The hoard cap counts what one wears, not what the next piece or the trip's second
+    pickaxe still wants - a goal outlives a stack, so diamonds with a purpose are never
+    surplus.
+    """
+
+    def test_diamonds_stay_while_a_goal_waits(self) -> None:
+        g = combat_ready(gs(tools={"pickaxe": "diamond"},
+                            inventory={"crafting_table": 1, "diamond": 190,
+                                       "diamond_pickaxe": 1, "diamond_sword": 1}))
+        self.assertTrue(_diamond_reason(g))
+        self.assertNotIn("diamond", {s["item_name"] for s in _hoard_surplus(g, g.inventory)})
+
+    def test_diamonds_are_surplus_once_every_reason_is_gone(self) -> None:
+        g = geared(diamond=190, diamond_pickaxe=2, diamond_sword=1)
+        self.assertFalse(_diamond_reason(g))
+        self.assertIn("diamond", {s["item_name"] for s in _hoard_surplus(g, g.inventory)})
+
+
+class StepAwayDropsWholeCellTest(unittest.TestCase):
+    """`navigate` takes whole cells: run77 stood 120 ticks in one validation error.
+
+    `step_away_drops` walked off a drop with float coordinates - `[expected int, received
+    number at x]` owned the tick forever, exactly the freeze `leave_portal` had already
+    learned to floor around.
+    """
+
+    def test_the_target_is_a_whole_cell(self) -> None:
+        g = gs(pos=(10.3, 64.7, 20.9), drop_pos=(10.0, 64.0, 17.0),
+               drop_open_pending=True)
+        a = resolve("step_away_drops", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertTrue(all(isinstance(a.args[k], int) for k in ("x", "y", "z")), a.args)
 
 
 if __name__ == "__main__":

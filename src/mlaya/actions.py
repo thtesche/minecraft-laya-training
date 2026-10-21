@@ -1248,6 +1248,36 @@ def _spare_pickaxe_craftable(gs: GameState) -> bool:
             and _can_sticks(inv, _logs(inv), _planks(inv)))
 
 
+def _diamond_reason(gs: GameState) -> bool:
+    """Whether carried diamonds still have a named purpose (a goal not built yet).
+
+    The purpose decides what is *not* surplus: run77 shed 123 diamonds in one `drop_junk`
+    while the next armour piece and the trip's second pickaxe were still waiting on them -
+    the hoard cap counts them as surplus over one stack, but a goal can outlive a stack.
+    """
+    return _next_diamond_item(gs) is not None or _spare_pickaxe_wanted(gs)
+
+
+def _diamond_dig_short(gs: GameState) -> bool:
+    """Whether the next diamond goal cannot be paid for yet - so digging earns something.
+
+    run77 was the counter-example: from the first crafted pickaxe on, `mine_diamond` stayed
+    offered on every tick - the spare-pickaxe branch asked the *want* question
+    (`_spare_pickaxe_wanted`) but never the *pay* question - and the bot mined 140-odd
+    diamonds one-per-tick while the armour and the second pickaxe it had already paid for
+    sat uncrafted. Digging is a step exactly while the goal is short of its diamonds; a
+    goal that is paid for but waiting on a workstation is not cured by more digging
+    either - the pack already holds what the dig would bring.
+    """
+    inv = gs.inventory
+    nxt = _next_diamond_item(gs)
+    if nxt is not None:
+        return inv.get("diamond", 0) < nxt[1]
+    if _spare_pickaxe_wanted(gs):
+        return inv.get("diamond", 0) < SPARE_PICKAXE_COST
+    return False
+
+
 def _mine_diamond_wanted(gs: GameState) -> bool:
     """One answer to "is digging for diamonds the next thing", for both gates to use.
 
@@ -1263,7 +1293,8 @@ def _mine_diamond_wanted(gs: GameState) -> bool:
     """
     return (_can_mine(gs, "diamond_ore") and _combat_ready(gs)
             and _diamond_ore_available(gs)
-            and (_next_diamond_item(gs) is not None or _spare_pickaxe_wanted(gs)))
+            and (_next_diamond_item(gs) is not None or _spare_pickaxe_wanted(gs))
+            and _diamond_dig_short(gs))
 
 
 def _nether_departure_ready(gs: GameState) -> bool:
@@ -1613,15 +1644,24 @@ def _junk_carried(inv: dict[str, int]) -> list[str]:
     return [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]
 
 
-def _hoard_surplus(inv: dict[str, int]) -> list[dict[str, int]]:
-    """Stacks carried far past their keep/cap; drop_item supports optional count."""
+def _hoard_surplus(gs: GameState, inv: dict[str, int]) -> list[dict[str, int]]:
+    """Stacks carried far past their keep/cap; drop_item supports optional count.
+
+    Diamonds with a purpose are never surplus: the cap knows how much one keeps wearing,
+    not how much the next piece or the trip's second pickaxe still wants. Without the
+    exception run77's `drop_junk` shed 123 diamonds onto the ground it then walked back
+    to a stack over a cap that counts wearing, not goals.
+    """
     out: list[dict[str, int]] = []
+    goal_named = _diamond_reason(gs)
     for name, keep in HOARD_KEEP.items():
         cnt = inv.get(name, 0)
         if cnt > keep:
             out.append({"item_name": name, "count": cnt - keep})
     for name, cnt in inv.items():
         if cnt > HOARD_CAP and name not in HOARD_KEEP:
+            if name == "diamond" and goal_named:
+                continue
             out.append({"item_name": name, "count": cnt - HOARD_CAP})
     return out
 
@@ -1660,11 +1700,11 @@ def _droppable(gs: GameState, inv: dict[str, int]) -> bool:
     offers `drop_junk` has to name exactly the items its resolve will name, and the whitelist is
     not among them.
     """
-    return bool(_junk_carried(inv) or _spare_gear(gs, inv) or _hoard_surplus(inv))
+    return bool(_junk_carried(inv) or _spare_gear(gs, inv) or _hoard_surplus(gs, inv))
 
 
 def _sheddable(gs: GameState, inv: dict[str, int]) -> bool:
-    return bool(_junk_carried(inv) or _hoard_surplus(inv) or _spare_gear(gs, inv)
+    return bool(_junk_carried(inv) or _hoard_surplus(gs, inv) or _spare_gear(gs, inv)
                 or _surplus_besides_keep(gs, inv))
 
 
@@ -2767,7 +2807,7 @@ def candidates(gs: GameState) -> list[str]:
             # a drop is not undoable. Asking `_sheddable` here offered `drop_junk` for items the
             # resolve then refused to name, which is an escalation per tick.
             out.append("drop_junk")
-    elif at_chest and (_junk_carried(inv) or _hoard_surplus(inv)
+    elif at_chest and (_junk_carried(inv) or _hoard_surplus(gs, inv)
                         or _surplus_besides_keep(gs, inv)):
         # A stack that crossed its cap with room to spare, and a chest standing right there.
         # Live, cobblestone drifted 60, 65, 67, 68, 72 with `chest_pos` known and the bot on
@@ -2875,6 +2915,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if not _can_mine(gs, "diamond_ore"):
             return None
         if not _combat_ready(gs):
+            return None
+        if not _diamond_dig_short(gs):
+            # The pack can pay for the next diamond goal right now: the dig would only
+            # pile up diamonds the run has no un-built reason for (run77's 140-diamond
+            # standstill), and the craft that pays for it is the tick's real step.
             return None
         nxt = _next_diamond_item(gs)
         if nxt is not None:
@@ -3510,7 +3555,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         items = [{"item_name": n, "count": inv[n]}
                  for n in _junk_carried(inv) + _surplus_besides_keep(gs, inv)
                  + _spare_gear(gs, inv)]
-        items += _hoard_surplus(inv)
+        items += _hoard_surplus(gs, inv)
         if not _chest_ready(gs) or not items:
             return None
         # A block sitting on the chest stops its lid (`[CHEST_BLOCKED]`): dig that exact cell
@@ -3533,14 +3578,19 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # the pathfinder finds footing on that line rather than the line being assumed walkable.
         dx, dz = gs.drop_pos[0] - gs.pos[0], gs.drop_pos[2] - gs.pos[2]
         angle = math.atan2(-dz, -dx)
-        tx, tz = gs.pos[0] + 3.0 * math.cos(angle), gs.pos[2] + 3.0 * math.sin(angle)
+        # `navigate` wants whole cells and says so with a validation error that owns the tick
+        # forever (live, run77: 120 identical `[expected int, received number at x]` refusals
+        # while the bot stood on the junk it had just dropped). Floor the float target here;
+        # the pathfinder still finds footing on that line.
+        tx = math.floor(gs.pos[0] + 3.0 * math.cos(angle))
+        tz = math.floor(gs.pos[2] + 3.0 * math.sin(angle))
         return Action(label, "navigate",
-                      {"x": tx, "y": gs.pos[1], "z": tz, "range": 1, "dig": True,
+                      {"x": tx, "y": math.floor(gs.pos[1]), "z": tz, "range": 1, "dig": True,
                        "scaffold": True},
                       "step away from the junk dropped on open ground, so it stays dropped")
     if label == "drop_junk":
         items = [{"item_name": n} for n in _junk_carried(inv) + _spare_gear(gs, inv)]
-        items += _hoard_surplus(inv)
+        items += _hoard_surplus(gs, inv)
         if not items:
             return None
         return Action(label, "drop_item",
