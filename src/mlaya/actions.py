@@ -21,7 +21,7 @@ CRITERIA: dict[str, str] = {
     "craft_stone_pickaxe": "craft a stone pickaxe at a crafting table from cobblestone and sticks",
     "mine_iron": "mine iron ore for raw iron using the stone pickaxe the bot carries",
     "mine_coal": "mine coal ore to use as furnace fuel",
-    "craft_smoker": "craft a smoker from four planks and a coal, so food is smelted at double speed at the base while the furnace stays for ore",
+    "craft_smoker": "craft a smoker from the carried furnace and four logs, so food is cooked at double speed at the base; a second carried furnace stays behind as the workstation",
     "place_smoker": "stand the carried smoker beside the furnace at the base, so cooking reuses it",
     "craft_furnace": "craft a furnace at a crafting table from eight cobblestone",
     "smelt_iron": "smelt raw iron into iron ingots in the furnace the bot carries",
@@ -262,7 +262,8 @@ _GEAR_KEEP = ("golden_helmet",)
 # all stand there, and the bot walks back to it to deploy them. Eight planks make a chest, which
 # is how a full pack sheds surplus blocks without scattering them on the ground.
 CHEST_ITEM = "chest"
-SMOKER_PLANKS = 4        # smoker: four planks over one coal
+SMOKER_LOGS = 4        # the server's smoker recipe: four logs *and* one carried furnace
+SMOKER_FURNACES = 2    # one goes into the craft; the second stays as station for cook and iron
 CHEST_PLANKS = 8
 # How close the bot must be to the base to lay blocks out there: feet within this many blocks
 # of the anchor in x/z (one more vertically, so a step up or down still counts).
@@ -1486,8 +1487,7 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
             if table:
                 out.append("craft_gold_helmet")
         elif _has(inv, RAW_GOLD):
-            if ((_has(inv, "furnace") or _furnace_ready(gs)) and _furnace_fuel(inv) is not None
-                    and _furnace_room(gs)):
+            if (_smelting_reach(gs) and _furnace_fuel(inv) is not None and _furnace_room(gs)):
                 out.append("smelt_gold")
         elif _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
             out.append("mine_gold")
@@ -1766,14 +1766,28 @@ def _smoker_worth_placing(gs: GameState) -> bool:
 
     Food only, and only once there is food to cook and a way to light it. Cooking is the one
     thing this run does in bulk - live, twenty cooked items in twenty ticks, one per tick at
-    eighteen seconds - and it is all food, so the station that doubles the smelt rate is worth a
-    recipe that costs four planks off the wood the run is already hoarding.
+    eighteen seconds - and it is all food, so the station that doubles the smelt rate is worth
+    the recipe. The materials are asked by `craft_smoker` alone (`_smoker_craft_ready`): the
+    placement step must not refuse a smoker it already carries because of a material question
+    it no longer answers.
     """
     if gs.base is None or gs.smoker_pos is not None or not _at_base(gs):
         return False
-    if _first_cookable(gs.inventory) is None:
-        return False
-    return _plank_units(gs.inventory) >= SMOKER_PLANKS and gs.inventory.get("coal", 0) >= 1
+    return _first_cookable(gs.inventory) is not None
+
+
+def _smoker_craft_ready(gs: GameState) -> bool:
+    """The server's smoker recipe: four logs *and* a carried furnace - and a second furnace.
+
+    "four planks and a coal" was never a smoker: live, run78 offered the craft with one log
+    carried and the server answered `[CRAFT_MATERIALS_MISSING] oak_log x3` - the recipe wants
+    four logs plus one furnace, and that furnace is a material too. Requiring a second carried
+    furnace is not greed but the cook chain: with the recipe's furnace consumed, the station
+    for `cook_food` and the iron of `smelt_iron` is gone with it.
+    """
+    inv = gs.inventory
+    return (_has(inv, "crafting_table") and _logs(inv) >= SMOKER_LOGS
+            and inv.get("furnace", 0) >= SMOKER_FURNACES)
 
 
 def _furnace_worth_placing(gs: GameState) -> bool:
@@ -1830,6 +1844,23 @@ def _cooking_station(gs: GameState) -> tuple[int, int, int] | None:
     if not _at_base(gs):
         return None
     return gs.smoker_pos if gs.smoker_pos is not None else gs.furnace_pos
+
+
+def _cooking_reach(gs: GameState) -> bool:
+    """Where a cook can actually run: standing at the base with a station standing there, or
+    carrying the furnace. The same options `resolve` will bind, one rule for offer and binding.
+
+    run78: eight `cook_food` in a row ran into the server's `[WORKSTATION_NOT_CARRIED]`.
+    `_furnace_ready` answers "a furnace stands at the base" even when the bot is 200 m out on a
+    hunt and carries nothing - but `_smelt_args` names the station's cell only where the body
+    stands at it, and otherwise asks for a *temporary* workstation, which is a carried furnace.
+    """
+    return _has(gs.inventory, "furnace") or _cooking_station(gs) is not None
+
+
+def _smelting_reach(gs: GameState) -> bool:
+    """The same distinction for ore: a smoker would refuse raw iron, so only the furnace counts."""
+    return _has(gs.inventory, "furnace") or (_at_base(gs) and gs.furnace_pos is not None)
 
 
 def _smelt_args(gs: GameState, item_name: str, count: int, fuel_name: str,
@@ -2474,7 +2505,7 @@ def candidates(gs: GameState) -> list[str]:
         # thing it was actually short of (live, run34: a bow it could not rebuild, no spider
         # within 24 m, and `candidates: ['cook_food']` with nothing else on it).
         fuel = _furnace_fuel(inv)
-        if fuel is not None and (fuel[0] in ("coal", "charcoal") or _nether_idle(gs)):
+        if fuel is not None and _cooking_reach(gs) and (fuel[0] in ("coal", "charcoal") or _nether_idle(gs)):
             out.append("cook_food")
     # Food reserve: bank edible items. At full hunger the reflex cannot eat, so gathered drops
     # accumulate; when hunger drops it spends them. Never compete with eating: feed to 20 first,
@@ -2542,10 +2573,10 @@ def candidates(gs: GameState) -> list[str]:
         if tier >= 1 and table and not furnace and cobble >= 8:
             out.append("craft_furnace")
         if (tier >= 1 and table and gs.smoker_pos is None and _at_base(gs)
-                and _plank_units(inv) >= SMOKER_PLANKS and inv.get("coal", 0) >= 1
-                and _first_cookable(inv) is not None):
+                and _smoker_craft_ready(gs) and _first_cookable(inv) is not None):
             out.append("craft_smoker")
-        if furnace and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs) and _furnace_room(gs):
+        if (_smelting_reach(gs) and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs)
+                and _furnace_room(gs)):
             out.append("smelt_iron")
         if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
             out.append("craft_iron_pickaxe")
@@ -2966,8 +2997,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": "stone_pickaxe"}], "temporary_workstation": True},
                       "craft a stone pickaxe at the carried crafting table")
     if label == "craft_smoker":
-        if _plank_units(inv) < SMOKER_PLANKS or inv.get("coal", 0) < 1 \
-                or not _has(inv, "crafting_table"):
+        if not _smoker_craft_ready(gs) or not _has(inv, "crafting_table"):
             return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": "smoker"}], "temporary_workstation": True},
@@ -2988,7 +3018,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": "furnace"}], "temporary_workstation": True},
                       "craft a furnace to smelt iron")
     if label == "smelt_iron":
-        if (not (_has(inv, "furnace") or _furnace_ready(gs)) or inv.get("raw_iron", 0) < 1
+        if (not _smelting_reach(gs) or inv.get("raw_iron", 0) < 1
                 or inv.get("coal", 0) < 1 or not _furnace_room(gs)):
             return None
         count = min(inv.get("raw_iron", 0), 3)
@@ -3277,7 +3307,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "mine gold ore for the helmet that keeps piglins neutral")
     if label == "smelt_gold":
         fuel = _furnace_fuel(inv)
-        if (not (_has(inv, "furnace") or _furnace_ready(gs)) or inv.get(RAW_GOLD, 0) < 1
+        if (not _smelting_reach(gs) or inv.get(RAW_GOLD, 0) < 1
                 or fuel is None or not _furnace_room(gs)
                 or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
             return None
@@ -3446,9 +3476,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         fuel = _furnace_fuel(inv)
         if not raw or fuel is None or not _furnace_room(gs):
             return None
-        station = _cooking_station(gs)
-        if not (_has(inv, "furnace") or _furnace_ready(gs) or gs.smoker_pos is not None):
+        # The station rule lives in `cooking_reach`, the same one the offer asks, so the two
+        # cannot drift: run78's eight `[WORKSTATION_NOT_CARRIED]` came precisely from this
+        # line accepting a furnace standing 200 m away while the cook asked for a temporary
+        # workstation it could not carry.
+        if not _cooking_reach(gs):
             return None
+        station = _cooking_station(gs)
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
         if fuel[0] not in ("coal", "charcoal") and not _nether_idle(gs):
             return None

@@ -3965,7 +3965,8 @@ class SmokerBesideTheFurnaceTest(unittest.TestCase):
     SMOKER = (-196, -46, -99)
 
     def _base_with_raw_meat(self, **inv) -> GameState:
-        # Four planks off the wood the run already hoards: `_plank_units` counts a log as four.
+        # The wood the run already hoards also carries the smoker recipe: server's recipe is
+        # four logs plus a carried furnace, and one more furnace stays behind as station.
         g = at_home(geared(oak_log=12, **inv))
         g.chest_pos = (self.BASE[0] + 2, self.BASE[1], self.BASE[2] + 2)
         g.furnace_pos = self.FURNACE
@@ -3990,27 +3991,40 @@ class SmokerBesideTheFurnaceTest(unittest.TestCase):
                                               self.SMOKER[2], 1.0)]}
         self.assertIsNone(_smoker_site(g))
 
-    def test_it_is_built_once_there_is_food_a_coal_and_four_planks(self) -> None:
-        g = self._base_with_raw_meat(beef=12, coal=1)
+    def test_it_is_built_once_there_is_food_a_second_furnace_and_four_logs(self) -> None:
+        # The server's recipe, not a fiction: four logs *and* one furnace go into the smoker,
+        # which is why a second furnace has to be carried - run78's "four planks and a coal"
+        # was answered `[CRAFT_MATERIALS_MISSING] oak_log x3` against one carried log.
+        g = self._base_with_raw_meat(beef=12, furnace=2)
         self.assertIn("craft_smoker", candidates(g))
         a = resolve("craft_smoker", g)
         self.assertEqual(a.tool, "craft_item")
         self.assertEqual(a.args["items"], [{"item_name": "smoker"}])
 
-    def test_without_coal_the_recipe_does_not_start(self) -> None:
-        # One coal goes into the smoker and two more into the fire, which is the whole reason
-        # `mine_coal` counts cookable meat now instead of ore alone.
-        g = self._base_with_raw_meat(beef=12)
+    def test_one_carried_furnace_is_eaten_by_the_recipe_so_is_not_enough(self) -> None:
+        # The furnace in the recipe is a material. With one furnace the smoker would stand
+        # where the cook chain's station stood, so the craft that makes cooking faster takes
+        # away the station cooking needs. Only the second furnace makes it a gain.
+        g = self._base_with_raw_meat(beef=12, furnace=1)
         self.assertNotIn("craft_smoker", candidates(g))
+        self.assertIsNone(resolve("craft_smoker", g))
+
+    def test_the_recipe_wants_logs_and_a_planks_hoard_does_not_answer_for_them(self) -> None:
+        # run78 carried oak_log 1 and the server named `oak_log x3` missing - four logs are
+        # the recipe, and planks (however many `_plank_units` counts) are not part of it.
+        g = self._base_with_raw_meat(beef=12, furnace=2)
+        g.inventory["oak_log"] = 1
+        self.assertNotIn("craft_smoker", candidates(g))
+        self.assertIsNone(resolve("craft_smoker", g))
 
     def test_without_food_waiting_there_is_nothing_to_speed_up(self) -> None:
-        g = self._base_with_raw_meat(cobblestone=40, coal=1)
+        g = self._base_with_raw_meat(cobblestone=40, furnace=2)
         self.assertNotIn("craft_smoker", candidates(g))
 
     def test_craft_first_then_place_then_never_again(self) -> None:
         # The order is the point: there is nothing to stand until the recipe has run, so
         # `place_smoker` is not offered against a base the bot is merely standing next to.
-        g = self._base_with_raw_meat(beef=12, coal=1)
+        g = self._base_with_raw_meat(beef=12, furnace=2)
         self.assertIn("craft_smoker", candidates(g))
         self.assertNotIn("place_smoker", candidates(g))
 
@@ -4041,11 +4055,21 @@ class SmokerBesideTheFurnaceTest(unittest.TestCase):
         cook = resolve("cook_food", g)
         self.assertEqual((cook.args["x"], cook.args["y"], cook.args["z"]), self.FURNACE)
 
-    def test_away_from_the_base_neither_cell_is_named(self) -> None:
-        # Naming a station 190 m away is the run58 bug: the smelt goes somewhere the bot has no
-        # reason to walk to, and the portable furnace is the branch that always worked.
+    def test_away_from_the_base_nothing_cooks_without_a_carried_furnace(self) -> None:
+        # run78's eight `[WORKSTATION_NOT_CARRIED]`: the station stood at the base and the cook
+        # ran where the bot stood, and the temporary workstation `_smelt_args` asks for there
+        # is a carried furnace this state does not carry. Naming the remote cell is the run58
+        # bug; pretending the portable one exists is the run78 bug. Both refuse here.
         g = self._base_with_raw_meat(beef=12, coal=3)
         g.smoker_pos = self.SMOKER
+        g.pos = (120.5, 64.0, 120.5)
+        self.assertNotIn("cook_food", candidates(g))
+        self.assertIsNone(resolve("cook_food", g))
+
+    def test_the_carried_furnace_is_the_station_that_travels(self) -> None:
+        # The run58 lesson keeps its half: with the furnace in the pack, away from every
+        # standing station is not a refusal but the portable branch that always worked.
+        g = self._base_with_raw_meat(beef=12, coal=3, furnace=1)
         g.pos = (120.5, 64.0, 120.5)
         cook = resolve("cook_food", g)
         self.assertTrue(cook.args["temporary_workstation"])
