@@ -89,6 +89,10 @@ class WaterTicksTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -430,6 +434,10 @@ class PourSkipTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = {(-129, 66, -30)}
         self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
@@ -506,6 +514,10 @@ class StanceSkipTest(unittest.TestCase):
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.base = None
         agent.surface = None
@@ -603,6 +615,10 @@ class StuckOfferTest(unittest.TestCase):
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.base = None
         agent.surface = None
@@ -709,6 +725,10 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -785,6 +805,10 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         agent = self._agent(_home_anchor=(229, 62, 224), _home_ticks=HOME_ANCHOR_TICKS)
         agent.base = (229, 61, 225)
         agent.chest_pos = (229, 62, 224)
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._settle_home_anchor(gs(pos=(229.5, 61.0, 225.5), base=(229, 61, 225)))
         self.assertEqual(agent.chest_pos, (229, 62, 224))
@@ -1139,6 +1163,10 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -1206,6 +1234,10 @@ class FrameRefusalTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -1331,6 +1363,10 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._powder_stowed = False
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -1605,6 +1641,10 @@ class DropHoleTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = set()
         agent._stance_skip = set()
@@ -1637,6 +1677,13 @@ class ChestSupportTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.base = None
+        agent.chest_pos = None
+        agent.banked = {}
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -1683,6 +1730,10 @@ class ChestSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = set()
         agent._stance_skip = set()
@@ -1723,6 +1774,10 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._portal_blocked = []
         agent._frame_complete = False
@@ -1764,6 +1819,10 @@ class FurnaceSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = (-197, -46, -99)
         agent.smoker_pos = None
@@ -1902,6 +1961,10 @@ class ChestLidTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -2054,6 +2117,10 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -2191,6 +2258,10 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)
         agent.base = (-197, -47, -98)
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -2308,6 +2379,10 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -2384,6 +2459,10 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         agent = self._agent(_home_anchor=(229, 62, 224), _home_ticks=HOME_ANCHOR_TICKS)
         agent.base = (229, 61, 225)
         agent.chest_pos = (229, 62, 224)
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._settle_home_anchor(gs(pos=(229.5, 61.0, 225.5), base=(229, 61, 225)))
         self.assertEqual(agent.chest_pos, (229, 62, 224))
@@ -2738,6 +2817,10 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -2805,6 +2888,10 @@ class FrameRefusalTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -2930,6 +3017,10 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._powder_stowed = False
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -3204,6 +3295,10 @@ class DropHoleTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = set()
         agent._stance_skip = set()
@@ -3236,6 +3331,13 @@ class ChestSupportTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.base = None
+        agent.chest_pos = None
+        agent.banked = {}
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -3282,6 +3384,10 @@ class ChestSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = set()
         agent._stance_skip = set()
@@ -3322,6 +3428,10 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._portal_blocked = []
         agent._frame_complete = False
@@ -3363,6 +3473,10 @@ class FurnaceSupportTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = (-197, -46, -99)
         agent.smoker_pos = None
@@ -3501,6 +3615,10 @@ class ChestLidTest(unittest.TestCase):
         agent = self._agent()
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -3653,6 +3771,10 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -3790,6 +3912,10 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)
         agent.base = (-197, -47, -98)
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -3907,6 +4033,10 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)
         agent.base = (-197, -47, -98)
         agent.chest_pos = (229, 62, 224)
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent._stock_read = None
         agent._stock_warned = False
@@ -3921,7 +4051,7 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         mcp = self._Mcp(self.FULL)
         agent = self._agent(mcp)
         await agent._note_stocked_chest(self._state())
-        self.assertEqual(mcp.calls[0][1]["sql"], perception.REMEMBERED_STOCK_SQL)
+        self.assertEqual(mcp.calls[0][1]["sql"], perception.REMEMBERED_STOCKS_SQL)
         self.assertEqual(agent.banked, {"cooked_mutton": 21})
 
     async def test_only_the_edibles_are_kept(self) -> None:
@@ -3947,6 +4077,231 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(mcp.calls), 1)
         await agent._note_stocked_chest(gs(pos=(40.5, 64.0, 0.5)))
         self.assertEqual(len(mcp.calls), 2)
+
+
+class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
+    """How the loop remembers what the server says about storage, chest by chest (run79: the
+    `[CONTAINER_BATCH_INCOMPLETE]` deposit became a failed action, the one chest a dead end, and
+    102 `wait` ticks followed -- because nothing recorded *which* cell was the one full, let alone
+    that a second chest beside it would have had room)."""
+
+    BASE = (-197, -47, -98)
+    MAIN = (-197, -46, -97)
+    OVERFLOW = (-197, -46, -95)
+    FOREIGN = (40, 70, 40)          # a chest of some other base: the database has it, not us
+
+    class _Action:
+        def __init__(self, label: str, tool: str, args: dict | None = None) -> None:
+            self.label = label
+            self.tool = tool
+            self.args = args or {}
+
+    class _Read:
+        def __init__(self, data):
+            self.data, self.text = data, ""
+
+    class _Mcp:
+        def __init__(self, data):
+            self.data = data
+            self.calls: list[tuple[str, dict]] = []
+
+        async def read(self, tool, args, why):
+            self.calls.append((tool, args))
+            return StorageNetworkNotesTest._Read(self.data)
+
+    # Overflow chest first (the newest observation), then the main one, then a foreign base's.
+    ROWS = {"response": {"data": {"result": {"query": {"rows": [
+        [-197, -46, -95, '[{"item":"cooked_beef","count":12},{"item":"cobblestone","count":64}]'],
+        [-197, -46, -97, '[{"item":"cooked_mutton","count":21},{"item":"rotten_flesh","count":96}]'],
+        [40, 70, 40, '[{"item":"golden_carrot","count":3}]']]}}}}}
+
+    def _agent(self, data=None) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.base = self.BASE
+        agent.chest_pos = None
+        agent.banked = {}
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
+        agent._stock_read = None
+        agent._stock_warned = False
+        agent._stow_blocked = False
+        agent._chest_blocked = False
+        agent.log = []
+        # The rest of the state `_adopt_homebase` and `_inject` read, for the two tests that
+        # walk through them.
+        agent.furnace_pos = None
+        agent.smoker_pos = None
+        agent._furnace_blocked = False
+        agent._furnace_contents = {}
+        agent._furnace_occupied = False
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._base_adopted = False
+        agent.surface = None
+        agent.build_site = None
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_off = set()
+        agent._recover_written_off = set()
+        agent._water_ticks = 0
+        agent._drop_hole_blocked = False
+        agent._drop_open_pending = False
+        agent._drop_pos = None
+        agent._blocked_cell = None
+        agent._chest_above = None
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
+        agent._nether_ticks = 0
+        agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
+        agent._powder_stowed = False
+        agent._portal_blocked = []
+        agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._portal_base_scanned = None
+        agent.mcp = self._Mcp(data)
+        return agent
+
+    def _deposit(self, cell) -> _Action:
+        return self._Action("stow_surplus", "use_container",
+                            {"operation": "deposit", "x": cell[0], "y": cell[1], "z": cell[2]})
+
+    def test_batch_incomplete_marks_which_chest_closed(self) -> None:
+        agent = self._agent()
+        agent._note_container(self._deposit(self.MAIN), False,
+                              "[CONTAINER_BATCH_INCOMPLETE] Only part of the offered batch fit "
+                              "the container. Observed item transfers: gunpowder 0/2, "
+                              "cobblestone 0/16")
+        self.assertIn(self.MAIN, agent._chests_full)
+
+    def test_a_deposit_that_worked_opens_the_cell_again(self) -> None:
+        agent = self._agent()
+        agent._chests_full = {self.MAIN}
+        agent._note_container(self._deposit(self.MAIN), True, "")
+        self.assertEqual(agent._chests_full, set())
+
+    def test_every_other_refusal_leaves_fullness_alone(self) -> None:
+        # A deposit broken off by combat contact is not a chest that ran out of space; a
+        # `withdraw` says nothing about space at all.
+        agent = self._agent()
+        agent._note_container(self._deposit(self.MAIN), False, "[HOSTILE_CONTACT]")
+        self.assertEqual(agent._chests_full, set())
+        withdraw = self._Action("take_stored_food", "use_container",
+                                {"operation": "withdraw", "x": self.MAIN[0],
+                                 "y": self.MAIN[1], "z": self.MAIN[2]})
+        agent._note_container(withdraw, False, "[CONTAINER_BATCH_INCOMPLETE]")
+        self.assertEqual(agent._chests_full, set())
+
+    def test_only_the_full_message_blocks_the_stow_relief(self) -> None:
+        # The old line blocked the deposit relief on any failure, combat included -- and the run
+        # dropped what a chest standing right there could have stored.
+        act = self._Action("stow_surplus", "navigate", {})
+        agent = self._agent()
+        agent._note_stow_blocked(act, False, "[HOSTILE_CONTACT]")
+        self.assertFalse(agent._stow_blocked)
+        agent._note_stow_blocked(act, False, "[CONTAINER_BATCH_INCOMPLETE]")
+        self.assertTrue(agent._stow_blocked)
+        deposit = self._deposit(self.MAIN)
+        agent._note_stow_blocked(deposit, True, "")
+        self.assertFalse(agent._stow_blocked)
+
+    def test_an_overflow_chest_grows_the_network_not_the_main_cell(self) -> None:
+        agent = self._agent()
+        agent.chest_pos = self.MAIN
+        agent._chests_full = {self.MAIN}
+        place = self._Action("place_chest", "place_block",
+                             {"block_name": "chest", "x": self.OVERFLOW[0],
+                              "y": self.OVERFLOW[1], "z": self.OVERFLOW[2]})
+        agent._note_placed(place)
+        self.assertEqual(agent.chest_pos, self.MAIN)          # the main chest keeps its cell
+        self.assertEqual(agent._extra_chests, [self.OVERFLOW])
+        self.assertNotIn(self.OVERFLOW, agent._chests_full)   # a fresh chest is roomy by definition
+
+    def test_the_first_chest_still_sets_the_main_cell(self) -> None:
+        agent = self._agent()
+        place = self._Action("place_chest", "place_block",
+                             {"block_name": "chest", "x": self.MAIN[0],
+                              "y": self.MAIN[1], "z": self.MAIN[2]})
+        agent._note_placed(place)
+        self.assertEqual(agent.chest_pos, self.MAIN)
+        self.assertEqual(agent._extra_chests, [])
+
+    def test_the_grounds_refusal_at_an_overflow_cell_keeps_the_chain(self) -> None:
+        # One candidate is refused: the next is picked. Only the main cell's refusal gives the
+        # chest chain up (`_chest_blocked`), the old verdict on the base ground.
+        agent = self._agent()
+        agent.chest_pos = self.MAIN
+        refused = self._Action("place_chest", "place_block",
+                               {"block_name": "chest", "x": self.OVERFLOW[0],
+                                "y": self.OVERFLOW[1], "z": self.OVERFLOW[2]})
+        agent._note_chest(refused, False, "[PLACE_NO_SUPPORT] No adjacent solid block")
+        self.assertFalse(agent._chest_blocked)
+        self.assertEqual(agent._overflow_no_support, {self.OVERFLOW})
+
+    def test_the_grounds_refusal_at_the_main_cell_ends_the_chain(self) -> None:
+        agent = self._agent()
+        refused = self._Action("place_chest", "place_block",
+                               {"block_name": "chest", "x": self.MAIN[0],
+                                "y": self.MAIN[1], "z": self.MAIN[2]})
+        agent._note_chest(refused, False, "[PLACE_NO_SUPPORT] No adjacent solid block")
+        self.assertTrue(agent._chest_blocked)
+        self.assertEqual(agent._overflow_no_support, set())
+
+    async def test_the_network_read_keeps_only_its_own_cells(self) -> None:
+        # The database lists every chest this bot ever opened -- including the one a *foreign*
+        # base left. What the loop does not own, it cannot bank, and would not know where to
+        # walk to fetch.
+        agent = self._agent(self.ROWS)
+        agent.chest_pos = self.MAIN
+        agent._extra_chests = [self.OVERFLOW]
+        await agent._note_stocked_chest(gs(pos=(0.5, 64.0, 0.5)))
+        self.assertEqual(agent.banked,
+                         {"cooked_beef": 12, "cooked_mutton": 21, "rotten_flesh": 96})
+        self.assertEqual(agent._banked_stores,
+                         ((self.OVERFLOW, "cooked_beef", 12),
+                          (self.MAIN, "cooked_mutton", 21), (self.MAIN, "rotten_flesh", 96)))
+
+    async def test_an_unadopted_read_leaves_the_bank_empty_rather_than_guessing(self) -> None:
+        # Fresh restart, network unknown: rows exist but no cell is owned -- the aggregate stays
+        # empty instead of adopting some other base's chest into the bank.
+        agent = self._agent(self.ROWS)
+        await agent._note_stocked_chest(gs(pos=(0.5, 64.0, 0.5)))
+        self.assertEqual(agent.banked, {})
+        self.assertEqual(agent._banked_stores, ())
+
+    def test_a_restart_adopts_the_overflow_chest_next_to_the_main_one(self) -> None:
+        # The chest scan sees every chest near the base. Left alone, the network's overflow
+        # would go blind after a restart: its provisions stay in the server's database behind a
+        # cell the loop no longer owns.
+        agent = self._agent()
+        agent.chest_pos = self.MAIN
+        g = gs(resources={"chest": [BlockHit("chest", "chest", self.MAIN[0], self.MAIN[1],
+                                             self.MAIN[2], 1.0),
+                                    BlockHit("chest", "chest", self.OVERFLOW[0], self.OVERFLOW[1],
+                                             self.OVERFLOW[2], 5.0)]})
+        agent._adopt_homebase(g)
+        self.assertEqual(agent.chest_pos, self.MAIN)
+        self.assertEqual(agent._extra_chests, [self.OVERFLOW])
+
+    def test_inject_carries_the_network_into_the_state(self) -> None:
+        agent = self._agent()
+        agent.chest_pos = self.MAIN
+        agent._extra_chests = [self.OVERFLOW]
+        agent._chests_full = {self.MAIN}
+        agent._overflow_no_support = {self.OVERFLOW}
+        agent._banked_stores = ((self.MAIN, "cooked_mutton", 21),)
+        g = agent._inject(gs())
+        self.assertEqual(g.extra_chests, (self.OVERFLOW,))
+        self.assertEqual(g.chests_full, frozenset({self.MAIN}))
+        self.assertEqual(g.overflow_skip, frozenset({self.OVERFLOW}))
+        self.assertEqual(g.banked_stores, ((self.MAIN, "cooked_mutton", 21),))
 
 
 class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
@@ -3986,6 +4341,10 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -4092,6 +4451,10 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         # live, run43 died in the Nether and would have re-based on open ground, chest included.
         agent = self._agent(self._FIND)
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -4199,6 +4562,10 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
         agent.base = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -4335,6 +4702,10 @@ class NetherCrossingTest(unittest.TestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -4587,6 +4958,10 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
         agent.smoker_pos = None

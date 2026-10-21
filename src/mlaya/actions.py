@@ -265,6 +265,16 @@ CHEST_ITEM = "chest"
 SMOKER_LOGS = 4        # the server's smoker recipe: four logs *and* one carried furnace
 SMOKER_FURNACES = 2    # one goes into the craft; the second stays as station for cook and iron
 CHEST_PLANKS = 8
+# The overflow cells of the base's storage network, in the order they are filled: behind and
+# beside the main chest at `(bx, by+1, bz+1)`, marching in +z -- away from the furnace and the
+# smoker (both at `bz-1`) and from the portal's frame plane (which runs along `z == bz`, so no
+# candidate ever touches it).
+STORAGE_SITES = ((0, 3), (-1, 2), (1, 2), (-1, 1), (1, 1), (-2, 2), (2, 2),
+                 (0, 4), (-2, 3), (2, 3), (-2, 1), (2, 1), (-1, 3), (1, 3),
+                 (-2, 4), (2, 4))
+# How close to a chest's centre the bot must stand for `use_container` to work the cell itself;
+# farther off, the storage label walks there under its own name first.
+STORAGE_REACH = 4.0
 # How close the bot must be to the base to lay blocks out there: feet within this many blocks
 # of the anchor in x/z (one more vertically, so a step up or down still counts).
 BASE_RADIUS = 4.0
@@ -1726,6 +1736,104 @@ def _chest_ready(gs: GameState) -> bool:
     return gs.chest_pos is not None
 
 
+def _chest_network(gs: GameState) -> list[tuple[int, int, int]]:
+    """Every chest cell the base keeps: the main one first, then the overflow in order."""
+    cells: list[tuple[int, int, int]] = []
+    if gs.chest_pos is not None:
+        cells.append(tuple(gs.chest_pos))
+    for cell in gs.extra_chests:
+        c = tuple(cell)
+        if c not in cells:
+            cells.append(c)
+    return cells
+
+
+def _storage_target(gs: GameState) -> tuple[int, int, int] | None:
+    """The network chest that should hold the next deposit: the first one the server has not
+    already called full. `None` means the network is full through -- a deposit anywhere in it
+    would only earn the same `[CONTAINER_BATCH_INCOMPLETE]` again, and the relief builds
+    another chest instead of pouring into closed lids.
+    """
+    full = set(gs.chests_full)
+    for cell in _chest_network(gs):
+        if cell not in full:
+            return cell
+    return None
+
+
+def _storage_full(gs: GameState) -> bool:
+    """Whether every chest standing at the base the server has declared full."""
+    network = _chest_network(gs)
+    return bool(network) and all(cell in set(gs.chests_full) for cell in network)
+
+
+def _overflow_site(gs: GameState) -> tuple[int, int, int] | None:
+    """A cell for the next overflow chest, or None once none can stand.
+
+    The candidates march behind the base in +z, past the furnace, the smoker and the frame
+    plane; a cell that already has a chest, a bed or the frame's obsidian on it is skipped, as
+    is one the ground refused a chest at (`[PLACE_NO_SUPPORT]`, kept per cell so the whole
+    chain stays open -- the main ground's refusal is that, a bed the frame cannot use is this).
+    A cell merely *occupied* is not this pick's problem: `make_room` digs it free and the same
+    cell retries.
+    """
+    if gs.base is None:
+        return None
+    bx, by, bz = gs.base
+    taken = set(_chest_network(gs))
+    for name in ("white_bed", "obsidian"):
+        taken.update(tuple(hit.pos) for hit in gs.resources.get(name, []))
+    for station in (gs.furnace_pos, gs.smoker_pos):
+        if station is not None:
+            taken.add(tuple(station))
+    taken |= set(gs.overflow_skip)
+    for dx, dz in STORAGE_SITES:
+        cell = (bx + dx, by + 1, bz + dz)
+        if cell not in taken:
+            return cell
+    return None
+
+
+def _near_cell(gs: GameState, cell: tuple[int, int, int],
+               reach: float = STORAGE_REACH) -> bool:
+    """Whether the bot stands over a cell's centre close enough to work it directly.
+
+    A chest's cell sits at the bot's feet level (`by + 1` is the floor the bot walks on), so the
+    height test is loose -- a chest one step up a ledge is still in reach of the lid.
+    """
+    if gs.pos is None:
+        return False
+    cx, cy, cz = cell
+    return (abs(gs.pos[0] - (cx + 0.5)) <= reach and abs(gs.pos[2] - (cz + 0.5)) <= reach
+            and abs(gs.pos[1] - cy) <= 2.5)
+
+
+def _banked_stores(gs: GameState) -> list[tuple[tuple[int, int, int], dict[str, int]]]:
+    """The provisions each network chest holds, as `[(cell, {item: count}), ...]`.
+
+    The main chest leads the list -- it is where the bot stands most of the time -- and junk
+    stays out of it the same way `_banked_provisions` keeps it out of the aggregate: a store of
+    rotten flesh alone is not a larder, and a `take` that walks to fetch it is the round trip
+    `stow_surplus` would immediately undo.
+    """
+    stores: dict[tuple[int, int, int], dict[str, int]] = {}
+    for entry in (gs.banked_stores or ()):
+        try:
+            cell, name, count = entry
+            cell = tuple(int(v) for v in cell)
+            count = int(count)
+        except (TypeError, ValueError):
+            continue
+        if count > 0 and name in PROVISIONS:
+            stores.setdefault(cell, {})[name] = stores.setdefault(cell, {}).get(name, 0) + count
+    ordered: list[tuple[tuple[int, int, int], dict[str, int]]] = []
+    if gs.chest_pos is not None and tuple(gs.chest_pos) in stores:
+        main = tuple(gs.chest_pos)
+        ordered.append((main, stores.pop(main)))
+    ordered.extend((cell, counts) for cell, counts in stores.items())
+    return ordered
+
+
 def _furnace_site(gs: GameState) -> tuple[int, int, int] | None:
     """The cell the base furnace goes on, or None when it cannot stand there.
 
@@ -2840,7 +2948,19 @@ def candidates(gs: GameState) -> list[str]:
             out.append("place_chest")
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
             out.append("craft_chest")
-    at_chest = gs.base is not None and _chest_ready(gs) and _at_base(gs)
+    elif _chest_ready(gs) and not gs.chest_blocked and _at_base(gs) and _storage_full(gs):
+        # run79's storage deadlock: one chest at the base, then `[CONTAINER_BATCH_INCOMPLETE]`
+        # on every side and the pack had to keep everything. The same chain that raised the
+        # first chest opens again once the server has called every chest in the network full:
+        # another one is crafted and stood beside the base, and the relief deposits into it.
+        # The ground's own refusal (`chest_blocked`) closes this too -- a base whose first
+        # chest had to be given up on will not hold a second one somewhere nearby.
+        if _has(inv, CHEST_ITEM) and _overflow_site(gs) is not None:
+            out.append("place_chest")
+        elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
+            out.append("craft_chest")
+    at_chest = (gs.base is not None and _chest_ready(gs) and _at_base(gs)
+                and _storage_target(gs) is not None)
     if gs.slots_used >= INVENTORY_NEAR_FULL:
         if at_chest:
             if _sheddable(gs, inv):
@@ -3408,7 +3528,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "stow_blaze_powder":
         if _in_nether(gs) or _blaze_powder(inv) <= 0 or not _chest_ready(gs):
             return None
-        cx, cy, cz = gs.chest_pos
+        # The blaze powder belongs in a chest of the network that can still take it: the main
+        # one may well be the one a stow filled up, and powder deposited into a full chest is
+        # powder held in the pack on the way back through the gate.
+        cell = _storage_target(gs) or tuple(gs.chest_pos)
+        if not _near_cell(gs, cell):
+            wx, wy, wz = cell
+            return Action(label, "navigate", {"x": wx, "y": wy, "z": wz},
+                          "walk over to the chest at the portal to bank the blaze powder")
+        cx, cy, cz = cell
         powder = _blaze_powder(inv)
         return Action(label, "use_container",
                       {"operation": "deposit", "x": cx, "y": cy, "z": cz,
@@ -3417,18 +3545,35 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "take_stored_food":
         if _in_nether(gs) or not _at_base(gs) or not _chest_ready(gs):
             return None
-        stored = _banked_provisions(gs)
-        if not stored:
-            return None
         want = _food_goal(gs) - _edible_count(inv)
         if want <= 0:
             return None
-        # Named from what the chest last held, not from a wish list: a `withdraw` naming an item
+        # Named from what a chest last held, not from a wish list: a `withdraw` naming an item
         # the chest does not hold takes nothing out, and the tick is then a refusal that looks
-        # exactly like a working chest.
+        # exactly like a working chest. And now per chest rather than in the aggregate: with a
+        # network the provisions can stand in the overflow, not in the main chest, and emptying
+        # the aggregate into one cell's coordinates withdraws from the wrong lid.
+        stores = _banked_stores(gs)
+        if stores:
+            cell, held = stores[0]
+            if not _near_cell(gs, cell):
+                cx, cy, cz = cell
+                return Action(label, "navigate", {"x": cx, "y": cy, "z": cz},
+                              "walk over to the chest at the base that holds the banked provisions")
+        else:
+            # Before the first per-cell read (or on an old logged state): what the run knew
+            # before networks existed -- the aggregate, taken at the one chest.
+            stored = _banked_provisions(gs)
+            if not stored:
+                return None
+            cell, held = tuple(gs.chest_pos), stored
+            if not _near_cell(gs, cell):
+                cx, cy, cz = cell
+                return Action(label, "navigate", {"x": cx, "y": cy, "z": cz},
+                              "walk over to the chest at the base that holds the banked provisions")
         items: list[dict] = []
         left = want
-        for name, count in stored.items():
+        for name, count in held.items():
             if left <= 0:
                 break
             take = min(int(count), left, 64)
@@ -3437,7 +3582,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                 left -= take
         if not items:
             return None
-        cx, cy, cz = gs.chest_pos
+        cx, cy, cz = cell
         return Action(label, "use_container",
                       {"operation": "withdraw", "x": cx, "y": cy, "z": cz, "items": items},
                       f"take {sum(i['count'] for i in items)} edible items out of the chest at the "
@@ -3576,19 +3721,37 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": bx, "y": by + 1, "z": bz, "dig": True, "scaffold": True},
                       "walk back to the home base to place the bed, the portal or a chest")
     if label == "craft_chest":
-        if (gs.base is None or _has(inv, CHEST_ITEM) or _chest_ready(gs) or gs.chest_blocked
+        if (gs.base is None or _has(inv, CHEST_ITEM) or gs.chest_blocked
                 or not _has(inv, "crafting_table") or _plank_units(inv) < CHEST_PLANKS):
+            return None
+        if _chest_ready(gs) and not _storage_full(gs):
+            # A chest still stands with room somewhere in the network: the surplus goes there,
+            # and a third chest would only gather dust beside the two that work.
             return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": CHEST_ITEM}], "temporary_workstation": True},
-                      "craft a chest from eight planks to store surplus at the base")
+                      ("craft another chest from eight planks: the storage network at the base "
+                       "is full through" if _chest_ready(gs) else
+                       "craft a chest from eight planks to store surplus at the base"))
     if label == "place_chest":
-        if gs.base is None or _chest_ready(gs) or gs.chest_blocked or not _has(inv, CHEST_ITEM):
+        if gs.base is None or gs.chest_blocked or not _has(inv, CHEST_ITEM):
             return None
         bx, by, bz = gs.base
+        if not _chest_ready(gs):
+            return Action(label, "place_block",
+                          {"block_name": CHEST_ITEM, "x": bx, "y": by + 1, "z": bz + 1},
+                          "place the chest at the home base")
+        if not _storage_full(gs):
+            # The first chest is not even up yet, or one of them has room: an overflow chest
+            # placed with nobody waiting for it is an item spent on furniture.
+            return None
+        cell = _overflow_site(gs)
+        if cell is None:
+            return None
+        ox, oy, oz = cell
         return Action(label, "place_block",
-                      {"block_name": CHEST_ITEM, "x": bx, "y": by + 1, "z": bz + 1},
-                      "place the chest at the home base")
+                      {"block_name": CHEST_ITEM, "x": ox, "y": oy, "z": oz},
+                      "set up another chest beside the base: the storage network is full through")
     if label == "place_furnace":
         cell = _furnace_site(gs)
         if (_furnace_ready(gs) or gs.furnace_blocked or not _has(inv, "furnace")
@@ -3613,7 +3776,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return Action(label, "build_structure",
                           {"blocks": [{"x": ax, "y": ay, "z": az, "block_name": "air"}]},
                           f"dig the block at {ax},{ay},{az} that blocks the chest lid")
-        cx, cy, cz = gs.chest_pos
+        target = _storage_target(gs)
+        if target is None:
+            # Every chest in the network is full: depositing anywhere would only earn the same
+            # refusal again. The offer grows the network instead (run79's 8×
+            # `[CONTAINER_BATCH_INCOMPLETE]` and the `wait` chain that followed).
+            return None
+        if not _near_cell(gs, target):
+            tx, ty, tz = target
+            return Action(label, "navigate", {"x": tx, "y": ty, "z": tz},
+                          "walk over to the storage chest at the base that still has room")
+        cx, cy, cz = target
         return Action(label, "use_container",
                       {"operation": "deposit", "x": cx, "y": cy, "z": cz, "items": items[:12]},
                       "deposit the surplus blocks into the chest at the base")
@@ -3690,13 +3863,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
 def inventory_relief(gs: GameState, allow_stow: bool = True) -> "Action | None":
     """The step that frees pack space after an `[INVENTORY_FULL]` refusal.
 
-    Prefers the chest at the base (deposit) when the bot is standing there; otherwise it drops
-    the surplus into a disposal pit. Either way the pack gains room so the blocked gather can
-    run again on the next tick. `allow_stow` is False once a deposit has already failed (a full
-    chest), so the loop falls back to dropping instead of retrying a deposit that cannot work.
+    Prefers the chest at the base (deposit) when the bot is standing there; once every chest of
+    the network is full it grows the network instead, and only where there is neither chest nor
+    room left does it drop into a disposal pit. Either way the pack gains room so the blocked
+    gather can run again on the next tick. `allow_stow` is False once a deposit has already
+    failed into a full chest, so the loop builds another chest or drops instead of retrying a
+    deposit that cannot work.
     """
-    if allow_stow and _chest_ready(gs) and _at_base(gs):
-        action = resolve("stow_surplus", gs)
+    if _chest_ready(gs) and _at_base(gs) and gs.base is not None:
+        if allow_stow:
+            action = resolve("stow_surplus", gs)
+            if action is not None:
+                return action
+        # The network itself is the relief once every chest in it is full -- including the
+        # case this function exists for (`allow_stow` off: a deposit just failed into a full
+        # chest). Without this the run79 deadlock had no third way out: pack full, chest full,
+        # no junk left to drop, and `wait` owned the tick.
+        action = resolve("place_chest", gs) or resolve("craft_chest", gs)
         if action is not None:
             return action
     return resolve("drop_junk", gs)

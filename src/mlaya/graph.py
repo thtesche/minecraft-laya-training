@@ -246,6 +246,17 @@ class Agent:
         self.base: tuple[int, int, int] | None = None
         self.chest_pos: tuple[int, int, int] | None = None
         self.banked: dict[str, int] = {}
+        # The storage network grown at the base: the overflow chests placed after the first one
+        # (`chest_pos` keeps the main chest), the cells the server called full and the candidate
+        # cells whose ground refused a chest. Per-run state like `chest_pos` itself: a restart
+        # forgets them until the server's container database or the next placement names them.
+        self._extra_chests: list[tuple[int, int, int]] = []
+        self._chests_full: set[tuple[int, int, int]] = set()
+        self._overflow_no_support: set[tuple[int, int, int]] = set()
+        # What each chest of the network last held, per cell, as `(cell, item, count)` triples --
+        # the same read that aggregates `banked`, kept per chest (`_note_stocked_chest`) because
+        # `take_stored_food` has to reach into the chest that actually holds the provisions.
+        self._banked_stores: tuple = ()
         self._stock_read: tuple[float, float, float] | None = None
         self._stock_warned = False
         # The furnace stood at the base (`place_furnace`), remembered so `cook_food`/`smelt_gold`
@@ -400,6 +411,10 @@ class Agent:
         gs.surface = self.surface
         gs.chest_pos = self.chest_pos
         gs.banked = dict(self.banked)
+        gs.banked_stores = self._banked_stores
+        gs.extra_chests = tuple(self._extra_chests)
+        gs.chests_full = frozenset(self._chests_full)
+        gs.overflow_skip = frozenset(self._overflow_no_support)
         gs.nether_travel = self._nether_travel
         gs.furnace_pos = self.furnace_pos
         gs.smoker_pos = self.smoker_pos
@@ -580,11 +595,18 @@ class Agent:
         self._nether_gate = gate
 
     async def _note_stocked_chest(self, gs) -> None:
-        """Read what the Overworld chest last held, and keep only the edibles.
+        """Read what every Overworld chest the network owns last held; keep the edibles.
 
         The same database read `_walk_home_to_memory` makes, one column wider. It is a read of the
         server's memory rather than of the world, so it answers from the Nether, from 300 blocks
         away and after a restart, and it costs no `use_container` inspection on the tick.
+
+        Every chest of the network, not the newest one: a storage network grows past its first
+        chest, and a read bound to one cell would lose the provisions standing in the overflow --
+        the total that stops hunts would come up one container short and the run would hunt
+        beside its own base again. The database knows no network (it lists every container the
+        bot has ever opened, in any base, in any world), so the loop filters the rows to the
+        cells it placed or adopted: what it owns is what it banks.
 
         Edibles only: the count exists to answer "is there food banked?", and every other item in
         the chest would be carried into every state, the narrative and every logged tick for
@@ -597,9 +619,9 @@ class Agent:
                 return
         try:
             res = await self.mcp.read("query_bot_data",
-                                    {"sql": perception.REMEMBERED_STOCK_SQL},
-                                    "read what the chest at the base last held")
-            stock = perception.parse_remembered_stock(perception.coerce(res.data, res.text))
+                                    {"sql": perception.REMEMBERED_STOCKS_SQL},
+                                    "read what the chests at the base last held")
+            rows = perception.parse_remembered_stocks(perception.coerce(res.data, res.text))
         except Exception as exc:
             # Loudly, once, and only while it has never worked. Swallowed, a wrong argument name
             # and a genuinely empty chest look identical - both leave `banked` empty - and the read
@@ -611,11 +633,19 @@ class Agent:
                                  "error": str(exc)[:160]})
             return
         self._stock_read = gs.pos
-        if stock is None:
-            self.banked.clear()
-            return
-        _cell, counts = stock
-        self.banked = {n: int(c) for n, c in counts.items() if n in perception.EDIBLE_NAMES}
+        network = {tuple(self.chest_pos)} if self.chest_pos is not None else set()
+        network |= {tuple(cell) for cell in self._extra_chests}
+        edible: dict[str, int] = {}
+        stores: list[tuple] = []
+        for cell, counts in rows:
+            if cell not in network:
+                continue
+            for name, count in counts.items():
+                if name in perception.EDIBLE_NAMES and int(count) > 0:
+                    edible[name] = edible.get(name, 0) + int(count)
+                    stores.append((cell, name, int(count)))
+        self.banked = edible
+        self._banked_stores = tuple(stores)
 
     def _settle_home_anchor(self, gs) -> None:
         """Retire the provisional base once the bot stands on it, or when the window runs out.
@@ -798,6 +828,18 @@ class Agent:
                         and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS):
                     self.chest_pos = hit.pos
                     break
+        elif self.chest_pos is not None and self.base is not None:
+            # The restart's network: the chest scan sees every chest near the base, not the main
+            # one only. A network chest left standing would otherwise go blind -- its provisions
+            # stay in the server's database but behind a cell the loop no longer owns, and the
+            # filtered stock read stops seeing what it owned yesterday.
+            bx, by, bz = self.base
+            for hit in gs.resources.get("chest", []):
+                if (abs(hit.x - bx) <= ADOPT_CHEST_RADIUS
+                        and abs(hit.z - bz) <= ADOPT_CHEST_RADIUS
+                        and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS
+                        and hit.pos != self.chest_pos and hit.pos not in self._extra_chests):
+                    self._extra_chests.append(hit.pos)
         if self.smoker_pos is None and self.base is not None:
             bx, by, bz = self.base
             for hit in gs.resources.get("smoker", []):
@@ -1342,8 +1384,47 @@ class Agent:
         """
         if ok or action.label != "place_chest":
             return
-        if "PLACE_NO_SUPPORT" in (text or ""):
+        if "PLACE_NO_SUPPORT" not in (text or ""):
+            return
+        args = getattr(action, "args", None) or {}
+        cell = (args.get("x"), args.get("y"), args.get("z"))
+        main = None
+        if self.base is not None:
+            bx, by, bz = self.base
+            main = (bx, by + 1, bz + 1)
+        # A network cell is one candidate among many: refuse that one and pick the next, the
+        # chain stays open. Only the main cell -- or a placement whose cell the loop cannot name
+        # next to the base -- is the ground's verdict on chests in general, which is the old
+        # giving-up-the-chain the comment describes.
+        if main is None or self.chest_pos is None or cell == main:
             self._chest_blocked = True
+            return
+        self._overflow_no_support.add(cell)
+
+    def _note_container(self, action, ok: bool, text: str | None) -> None:
+        """Track the storage network's fullness, chest by chest.
+
+        The server answers a deposit `[CONTAINER_BATCH_INCOMPLETE] ... Observed item transfers:
+        gunpowder 0/2, cobblestone 0/16` when the named chest cannot take what the bot offered
+        (live, run79): not a mistake of the action but the cell's storage space running out. The
+        relief needs exactly that knowledge per cell -- which chest closed, so the deposit aims
+        at the next one, and the network may only grow once every one of them closed. A deposit
+        that succeeds into a cell opens it again: the server kept something, or a `withdraw`
+        emptied it, and a full-mark that outlives the space under it would grow chests nobody
+        asked for.
+        """
+        if action.tool != "use_container":
+            return
+        args = getattr(action, "args", None) or {}
+        if args.get("operation") != "deposit":
+            return
+        cell = (args.get("x"), args.get("y"), args.get("z"))
+        if not all(isinstance(v, int) for v in cell):
+            return
+        if not ok and "CONTAINER_BATCH_INCOMPLETE" in (text or ""):
+            self._chests_full.add(cell)
+        elif ok:
+            self._chests_full.discard(cell)
 
     def _note_chest_lid(self, action, ok: bool, text: str | None) -> None:
         """Remember the block sitting on the base chest's lid, so `stow_surplus` digs it.
@@ -1442,6 +1523,51 @@ class Agent:
         if gs.death_pos is not None:
             self._recover_written_off.add(_cell(gs.death_pos))
 
+    def _note_stow_blocked(self, action, ok: bool, text: str) -> None:
+        """Only the server's full message blocks the deposit as relief.
+
+        A failed deposit was enough once, whatever the reason said on it: a single
+        `[HOSTILE_CONTACT]` off the walk, or a lid dig interrupted by combat, kept the loop
+        dropping what a chest standing right there could have stored. The full message blocks
+        -- and a deposit that works again opens the relief.
+        """
+        if action.label != "stow_surplus":
+            return
+        if ok:
+            self._stow_blocked = False
+        elif "CONTAINER_BATCH_INCOMPLETE" in text:
+            self._stow_blocked = True
+
+    def _note_placed(self, action) -> None:
+        """Remember the cell of a placement that just succeeded.
+
+        `establish_base` reports the surface cell through its navigate target; the base anchor
+        is the ground block under the feet it walked to. `place_chest` names the cell it placed
+        into, remembered so `use_container` can reach it later -- and since run79 the second
+        chest of the network names *its* cell with the same label: `chest_pos` keeps the main
+        one (the blaze powder bank at the portal and the lid dig hang on it), the new cell joins
+        the overflow a deposit can look for room in. A chest just stood is by definition roomy;
+        any full-mark on its cell is now history. The furnace and the smoker latch on their
+        placement's own success, the same shape: a station that answered
+        `[PLACE_TARGET_OCCUPIED]` is not standing, and a remembered cell that is not there would
+        send every later cook to an empty space.
+        """
+        if "x" not in action.args:
+            return
+        cell = (int(action.args["x"]), int(action.args["y"]), int(action.args["z"]))
+        if action.label == "establish_base":
+            self.base = (cell[0], cell[1] - 1, cell[2])
+        elif action.label == "place_chest":
+            if self.chest_pos is None:
+                self.chest_pos = cell
+            elif cell != self.chest_pos and cell not in self._extra_chests:
+                self._extra_chests.append(cell)
+            self._chests_full.discard(cell)
+        elif action.label == "place_furnace":
+            self.furnace_pos = cell
+        elif action.label == "place_smoker":
+            self.smoker_pos = cell
+
     async def _verify(self, state: AgentState) -> dict:
         before = state["before"]
         action = state["action"]
@@ -1457,6 +1583,7 @@ class Agent:
         self._note_drop(action, _ok, _text, before)
         self._note_chest(action, _ok, _text)
         self._note_chest_lid(action, _ok, _text)
+        self._note_container(action, _ok, _text)
         self._note_furnace(action, _ok, _text, res)
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
@@ -1464,29 +1591,10 @@ class Agent:
         # Opened before the action runs: the rescue has to be down on the *next* tick, while the
         # crossing settles and the teleport fires.
         self._note_crossing(action)
-        if action.label == "stow_surplus":
-            # A failed deposit means the chest is full; stop offering it as the relief.
-            self._stow_blocked = not _ok
+        self._note_stow_blocked(action, _ok, _text)
         if _ok:
             self._note_step_away(action, _ok)
-            # `establish_base` reports the surface cell through its navigate target; the base
-            # anchor is the ground block under the feet it walked to. `place_chest` names the
-            # cell it placed into, remembered so `use_container` can reach it later.
-            if action.label == "establish_base" and "x" in action.args:
-                self.base = (int(action.args["x"]), int(action.args["y"]) - 1,
-                             int(action.args["z"]))
-            elif action.label == "place_chest" and "x" in action.args:
-                self.chest_pos = (int(action.args["x"]), int(action.args["y"]),
-                                  int(action.args["z"]))
-            elif action.label == "place_furnace" and "x" in action.args:
-                self.furnace_pos = (int(action.args["x"]), int(action.args["y"]),
-                                    int(action.args["z"]))
-            elif action.label == "place_smoker" and "x" in action.args:
-                # Latched on the placement's own success, the same shape as the furnace's. A
-                # smoker that answered `[PLACE_TARGET_OCCUPIED]` is not standing, and a remembered
-                # cell that is not there would send every later cook to an empty space.
-                self.smoker_pos = (int(action.args["x"]), int(action.args["y"]),
-                                   int(action.args["z"]))
+            self._note_placed(action)
         after = await self._observe()
         # `surface_up` answers itself through the position it lands on (a resolved probe) or
         # through the height the server names when it refuses to guess (an ambiguous column);

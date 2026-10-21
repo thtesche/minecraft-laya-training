@@ -131,7 +131,8 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label == "craft_blaze_powder":
         return d["inventory_delta"].get("blaze_powder", 0) > 0
     if label == "stow_blaze_powder":
-        return d["inventory_delta"].get("blaze_powder", 0) < 0
+        # The powder leaving the pack; the walk to the network chest with room is progress too.
+        return d["inventory_delta"].get("blaze_powder", 0) < 0 or (ok and (d["pos_delta"] or 0) > 2)
     # Home base. Walking home (or up to the surface) shows as movement; the chest shows as the
     # item entering or leaving the pack; stowing/dropping shows as any carried item going down.
     if label in ("surface_up", "establish_base", "go_home"):
@@ -146,8 +147,18 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         return d["inventory_delta"].get("chest", 0) < 0
     if label == "place_furnace":
         return d["inventory_delta"].get("furnace", 0) < 0
-    if label in ("stow_surplus", "drop_junk"):
+    if label == "stow_surplus":
+        # The deposit shows as any carried item going down; the walk to the network chest that
+        # still has room (the one the run79 deadlock never started, having no chest to walk to)
+        # shows as movement -- the same shape as `place_bed`'s walk to its cell.
+        return any(v < 0 for v in d["inventory_delta"].values()) or (ok and (d["pos_delta"] or 0) > 2)
+    if label == "drop_junk":
         return any(v < 0 for v in d["inventory_delta"].values())
+    if label == "take_stored_food":
+        # The provisions reaching the pack is the step; walking to the chest of the network that
+        # actually holds them is progress too, and until this a successful `withdraw` never was
+        # any (`progressed` had no rule for the label at all).
+        return any(v > 0 for v in d["inventory_delta"].values()) or (ok and (d["pos_delta"] or 0) > 2)
     if label == "collect_smelted":
         # The drain itself is the items landing in the pack. The look before the reach-in has
         # nothing to show, and that empty delta is progress only when the call actually succeeded:

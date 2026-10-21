@@ -8,7 +8,8 @@ from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_NAMES, RESCU
                               frame_obsidian_cells, frame_volume, parse_block_above, parse_box,
                               parse_cells, parse_furnace_contents, parse_ground_height,
                               parse_frontier_heading, parse_remembered_gate,
-                              parse_remembered_stock, REMEMBERED_GATE_SQL,
+                              parse_remembered_stock, parse_remembered_stocks,
+                              REMEMBERED_GATE_SQL,
                               parse_portal_corner, parse_refused_cells, parse_resource_counts,
                               parse_resources, parse_status, parse_surface_height,
                               portal_interior, build, GameState)
@@ -323,6 +324,83 @@ class RememberedStockParseTest(unittest.TestCase):
         # chest would be filtered with one list and counted with the other.
         from mlaya.actions import EDIBLE
         self.assertEqual(set(EDIBLE_NAMES), set(EDIBLE))
+
+
+class StorageNetworkParseTest(unittest.TestCase):
+    """Every chest the server remembers, and the network fields of the logged state.
+
+    One chest fills, the run sets another beside it (run79: a full chest, a full pack and
+    nothing in the state that said *which* chest had closed). The newest-first read could only
+    see the chest touched last; this one lists them all, and the cells' fullness is a state the
+    log can answer afterwards.
+    """
+
+    @staticmethod
+    def _payload(rows):
+        return {"response": {"data": {"result": {"query": {"rows": list(rows)}}}}}
+
+    def test_every_row_comes_back_with_its_own_counts(self) -> None:
+        payload = self._payload([
+            [1, 2, 3, json.dumps([{"item": "bread", "count": 4}])],
+            [9, 10, 11, json.dumps([{"item": "cooked_beef", "count": 12},
+                                    {"item": "cooked_beef", "count": 3}])]])
+        self.assertEqual(parse_remembered_stocks(payload),
+                         [((1, 2, 3), {"bread": 4}), ((9, 10, 11), {"cooked_beef": 15})])
+
+    def test_a_broken_row_drops_without_blinding_the_others(self) -> None:
+        # The network read's rows are independent containers: one torn `contents_json` must not
+        # answer "no chest holds anything" for the chest next to it.
+        payload = self._payload([
+            [1, 2, 3, "{not json"],
+            [9, 10, 11, json.dumps([{"item": "bread", "count": 2}])]])
+        self.assertEqual(parse_remembered_stocks(payload), [((9, 10, 11), {"bread": 2})])
+
+    def test_no_rows_is_not_a_failure_just_an_unopened_world(self) -> None:
+        self.assertEqual(parse_remembered_stocks(self._payload([])), [])
+
+    def test_the_network_fields_survive_the_log_round_trip(self) -> None:
+        # `from_state` is the inverse of `as_state` for diagnosis after the fact -- and JSON
+        # turns every tuple into a list, which has to come back hashable (a full chest is
+        # tested against a set).
+        import json as jsonlib
+        g = GameState()
+        g.chest_pos = (0, 71, 1)
+        g.extra_chests = ((0, 71, 3), (1, 71, 2))
+        g.chests_full = frozenset({(0, 71, 1)})
+        g.banked_stores = (((0, 71, 3), "cooked_beef", 12),)
+        g.banked = {"cooked_beef": 12}
+        rebuilt = GameState.from_state(jsonlib.loads(jsonlib.dumps(g.as_state())))
+        self.assertEqual(rebuilt.extra_chests, ((0, 71, 3), (1, 71, 2)))
+        self.assertEqual(rebuilt.chests_full, frozenset({(0, 71, 1)}))
+        self.assertEqual(rebuilt.banked_stores, (((0, 71, 3), "cooked_beef", 12),))
+        # hashable, because every predicate that aims at a chest tests it against a set:
+        self.assertIn((0, 71, 1), rebuilt.chests_full)
+
+    def test_an_old_log_yields_an_empty_network_not_a_crash(self) -> None:
+        # run79's own entries predate the fields: defaults, not guesses.
+        g = GameState.from_state({"chest_pos": [0, 71, 1]})
+        self.assertEqual(g.extra_chests, ())
+        self.assertEqual(g.chests_full, frozenset())
+        self.assertEqual(g.banked_stores, ())
+
+    def test_the_narration_names_the_network_and_its_fullness(self) -> None:
+        # Every narrative clause is capitalised by the state itself; the assertions follow it.
+        g = GameState(chest_pos=(0, 71, 1))
+        plain = g.narrative()
+        self.assertIn("chest stands at the base", plain)
+        self.assertNotIn("(it is full)", plain)
+        g.chests_full = frozenset({(0, 71, 1)})
+        self.assertIn("chest stands at the base (it is full)", g.narrative())
+        g.extra_chests = ((0, 71, 3),)
+        g.chests_full = frozenset({(0, 71, 1), (0, 71, 3)})
+        self.assertIn("chest stands at the base, plus 1 overflow chest beside it: every one of "
+                      "them is full", g.narrative())
+        # Room left in the network is *not* told as full -- "build another chest" must not
+        # stand next to a chest that could still take the surplus.
+        g.chests_full = frozenset({(0, 71, 1)})
+        text = g.narrative()
+        self.assertIn("plus 1 overflow chest beside it (the main one is full)", text)
+        self.assertNotIn("every one of them is full", text)
 
 
 class RememberedGateParseTest(unittest.TestCase):

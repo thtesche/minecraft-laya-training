@@ -153,6 +153,18 @@ class HomeBaseProgressTest(unittest.TestCase):
         self.assertFalse(progressed("stow_surplus",
                                     diff(gs(inventory={"tuff": 64}), gs(inventory={"tuff": 64}))))
 
+    def test_the_walk_to_the_roomy_chest_is_progress_too(self) -> None:
+        # A network chest across the base is `stow_surplus` walking, `take_stored_food` walking
+        # to it: the step toward the chest is progress as much as the deposit at it is -- and
+        # until this a *successful* `withdraw` had no rule at all and always read as no progress.
+        walked = diff(gs(pos=(0.0, 64.0, 0.0)), gs(pos=(20.0, 64.0, 0.0)))
+        self.assertTrue(progressed("stow_surplus", walked))
+        self.assertTrue(progressed("take_stored_food", walked))
+        self.assertTrue(progressed("take_stored_food",
+                                    diff(gs(inventory={}), gs(inventory={"cooked_beef": 12}))))
+        self.assertFalse(progressed("stow_surplus", walked, False))
+        self.assertFalse(progressed("take_stored_food", walked, False))
+
 
 class GoldAndNetherPrepProgressTest(unittest.TestCase):
     """Gold and the Nether-prep steps each net an item, but they were absent from the

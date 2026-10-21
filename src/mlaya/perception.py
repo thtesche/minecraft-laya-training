@@ -229,6 +229,56 @@ def parse_remembered_stock(payload: Any) -> tuple[tuple[int, int, int], dict[str
     return (int(x), int(y), int(z)), counts
 
 
+# The base's storage *network*: one chest fills up, the run sets another beside it, and the relief
+# goes on shedding. A newest-first read could only ever see the chest the bot touched last, so
+# provisions standing in the second chest stayed invisible to `take_stored_food` and the total
+# that stops hunts was one container short of what is banked. This one lists every Overworld
+# chest the server has seen opened; which of the cells belong to the run's network is a base-side
+# question the loop applies afterwards - the database cannot know it.
+REMEMBERED_STOCKS_SQL = (
+    "SELECT block_x, block_y, block_z, contents_json FROM observed_containers "
+    "WHERE block_name = 'chest' AND dimension = 'overworld' "
+    "ORDER BY observed_at DESC")
+
+
+def parse_remembered_stocks(payload: Any) -> list[tuple[tuple[int, int, int], dict[str, int]]]:
+    """What every Overworld chest last held, as `[(cell, counts), ...]`, newest observation first.
+
+    The rows of `parse_remembered_stock` without the `LIMIT 1`: an overflow chest the bot walked
+    to once after placing it still says what its last deposit left in it, and that is where the
+    banked provisions might stand. A chest never opened is simply not in the database yet - the
+    deposit that first opens it is also the observation that lists it.
+    """
+    rows = get(payload, "response", "data", "result", "query", "rows")
+    if not isinstance(rows, list):
+        return []
+    out: list[tuple[tuple[int, int, int], dict[str, int]]] = []
+    for row in rows:
+        cells = row if isinstance(row, list) else [row]
+        if len(cells) < 4:
+            continue
+        x, y, z = (_num(cells[0]), _num(cells[1]), _num(cells[2]))
+        if x is None or y is None or z is None:
+            continue
+        raw = cells[3]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+        counts: dict[str, int] = {}
+        if isinstance(raw, list):
+            for entry in raw:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("item")
+                n = _num(entry.get("count"))
+                if isinstance(name, str) and name and n is not None and n > 0:
+                    counts[name] = counts.get(name, 0) + int(n)
+        out.append(((int(x), int(y), int(z)), counts))
+    return out
+
+
 def parse_remembered_home(payload: Any) -> tuple[int, int, int] | None:
     """The cell of the newest chest this bot has ever opened, or None if it has opened none.
 
@@ -633,6 +683,28 @@ class GameState:
     # be carried across is the pack. Folding them into one number deadlocks the run - stop hunting,
     # and then nothing can put food in the pack.
     banked: dict[str, int] = field(default_factory=dict)
+    # The overflow chests standing beside the base as the storage network grows
+    # (`Agent._extra_chests`): the cells a deposit can look for room in once the main chest is
+    # full. Injected per run like `chest_pos` itself; a restart forgets them until the server's
+    # container database or the next placement names them again.
+    extra_chests: tuple[tuple[int, int, int], ...] = ()
+    # The network cells the server has already called full: a deposit into one answered
+    # `[CONTAINER_BATCH_INCOMPLETE]` (`Agent._note_container`), and a deposit that succeeds opens
+    # it again. Not whether *a* chest is full but which one: `stow_surplus` has to aim at the one
+    # with room and the network may only grow once every one of them is full (live, run79: the
+    # base chest held everything, every deposit after it was refused, and 102 `wait` ticks with
+    # a 36/36 pack followed).
+    chests_full: frozenset = frozenset()
+    # Overflow candidate cells whose ground refused the chest (`[PLACE_NO_SUPPORT]`,
+    # `Agent._note_chest`): the next candidate is chosen instead, and the network stops growing
+    # when the candidates run out.
+    overflow_skip: frozenset = frozenset()
+    # What each network chest last held, as `(cell, item, count)` triples off the server's
+    # container database (`Agent._note_stocked_chest`). The aggregate `banked` stays the number
+    # that stops hunts; the per-cell shape is what `take_stored_food` needs - a `withdraw` that
+    # names provisions in a chest that does not hold them takes nothing out and answers exactly
+    # like a working chest does.
+    banked_stores: tuple = ()
     # A level, clear surface cell to raise the home base on, proposed by a one-off
     # `view_blocks box` scan while `base` is still unset. The loop owns the base, so this is
     # only the *site proposal*; `None` means no flat site was found and the base pick falls
@@ -776,6 +848,13 @@ class GameState:
             "resources": {n: [h.as_dict() for h in hits[:2]] for n, hits in self.resources.items() if hits},
             "resource_found": self.resource_found,
             "banked": self.banked,
+            # The storage network belongs in the log for the same reason `chest_pos` does: run79's
+            # deadlock was only diagnosable afterwards, and afterwards the cells that were full,
+            # the chests beside them and where each provision stood were nowhere to be read.
+            "extra_chests": [list(cell) for cell in self.extra_chests],
+            "chests_full": [list(cell) for cell in sorted(self.chests_full)],
+            "banked_stores": [[list(cell), name, count]
+                              for cell, name, count in self.banked_stores],
             # The Nether crossing and the cell it arrived on. Loop-owned, and a field that is
             # not logged cannot be diagnosed after the fact - which is the whole of run60's
             # "leave_nether is offered and refused" reading: `nether_arrival` is what
@@ -832,6 +911,22 @@ class GameState:
                     distance=float(hit.get("distance") or 0.0),
                     above=hit.get("above"), below=hit.get("below"), level=hit.get("level")))
             gs.resources[name] = rebuilt
+        # The network's cells come back from JSON as lists; the state keeps tuples so they are
+        # hashable where a full chest is tested against a set, and a torn entry from an old log
+        # simply drops instead of guessing.
+        gs.extra_chests = tuple(tuple(int(v) for v in cell)
+                                for cell in (data.get("extra_chests") or ())
+                                if isinstance(cell, (list, tuple)) and len(cell) == 3)
+        gs.chests_full = frozenset(tuple(int(v) for v in cell)
+                                   for cell in (data.get("chests_full") or ())
+                                   if isinstance(cell, (list, tuple)) and len(cell) == 3)
+        stores = []
+        for entry in (data.get("banked_stores") or ()):
+            if isinstance(entry, (list, tuple)) and len(entry) == 3:
+                cell, name, count = entry
+                if isinstance(cell, (list, tuple)) and len(cell) == 3:
+                    stores.append((tuple(int(v) for v in cell), str(name), int(count)))
+        gs.banked_stores = tuple(stores)
         return gs
 
     def narrative(self) -> str:
@@ -864,7 +959,20 @@ class GameState:
                                        and abs(self.pos[2] - (bz + 0.5)) <= 4) else ""
             parts.append(f"home base at x={bx}, y={by}, z={bz}{here}")
         if self.chest_pos:
-            parts.append("a chest stands at the base")
+            # The fullness of the network is a decision the model has to be able to see: run79
+            # waited with a full pack beside a full chest because nothing in the state said the
+            # chest could not take another item, and "build another chest" was never on offer.
+            line = "a chest stands at the base"
+            extra = [tuple(cell) for cell in self.extra_chests]
+            if extra:
+                line += f", plus {len(extra)} overflow chest{'' if len(extra) == 1 else 's'} beside it"
+            full = set(self.chests_full)
+            network = [tuple(self.chest_pos)] + extra
+            if extra and all(cell in full for cell in extra) and tuple(self.chest_pos) in full:
+                line += ": every one of them is full, so nothing more can be stowed until another chest stands"
+            elif tuple(self.chest_pos) in full:
+                line += " (it is full)" if not extra else " (the main one is full)"
+            parts.append(line)
         inv = ", ".join(f"{c}x {n}" for n, c in sorted(self.inventory.items())) or "empty"
         parts.append(f"inventory: {inv}")
         if self.slots_used >= INVENTORY_NEAR_FULL:

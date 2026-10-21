@@ -2362,6 +2362,152 @@ class HomeBaseTest(unittest.TestCase):
         self.assertEqual(inventory_relief(g, allow_stow=False).tool, "drop_item")
 
 
+class StorageNetworkTest(unittest.TestCase):
+    """run79's storage bottleneck: one chest at the base, and once it was full nothing could be
+    shed anymore -- `[CONTAINER_BATCH_INCOMPLETE]` on every side, a 36/36 pack and 102 `wait`
+    ticks. A network grows: the server's full message marks *which* chest closed, the deposit
+    aims at the next one, and another chest is crafted and stood beside the base once every
+    one of them is full. The banked provisions are looked for in whichever chest holds them,
+    not in the main chest by assumption.
+    """
+
+    BASE = (-197, -47, -98)
+    MAIN = (-197, -46, -97)            # (bx, by+1, bz+1), the main chest's cell
+    OVERFLOW = (-197, -46, -95)        # the first free candidate: (0, 3) behind the main chest
+    SECOND = (-198, -46, -96)          # the next candidate after that: (-1, 2)
+
+    @staticmethod
+    def _network(chests_full: frozenset, **inv) -> GameState:
+        """A bot on its base with the main chest placed, the given cells called full, and the
+        pack as named (the geared fixture already carries a crafting table)."""
+        g = at_home(geared(**inv))
+        g.chest_pos = StorageNetworkTest.MAIN
+        g.chests_full = chests_full
+        return g
+
+    def test_a_full_main_chest_deposits_into_the_overflow_one(self) -> None:
+        g = self._network(frozenset({StorageNetworkTest.MAIN}), tuff=64)
+        g.extra_chests = (StorageNetworkTest.OVERFLOW,)
+        g.slots_used = 36
+        self.assertIn("stow_surplus", candidates(g))
+        a = resolve("stow_surplus", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "deposit")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), StorageNetworkTest.OVERFLOW)
+
+    def test_the_roomy_chest_across_the_base_is_walked_to_first(self) -> None:
+        # Farther off than `use_container` reaches: the label walks to the chest under its own
+        # name, the deposit runs once the bot stands beside it.
+        g = self._network(frozenset({StorageNetworkTest.MAIN}), tuff=64)
+        g.extra_chests = (StorageNetworkTest.OVERFLOW,)
+        g.pos = (-190.5, -46.0, -90.5)
+        a = resolve("stow_surplus", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), StorageNetworkTest.OVERFLOW)
+
+    def test_a_full_network_asks_for_another_chest(self) -> None:
+        # run79's deadlock offer: no room left anywhere, but a crafting table and eight planks
+        # -- and the relief that could only ever have dropped is now a chest under construction.
+        g = self._network(frozenset({StorageNetworkTest.MAIN}), spruce_planks=8)
+        g.slots_used = 36
+        self.assertIn("craft_chest", candidates(g))
+        self.assertNotIn("stow_surplus", candidates(g))
+        a = resolve("craft_chest", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "chest"}])
+
+    def test_the_overflow_chest_is_stood_behind_the_main_one(self) -> None:
+        g = self._network(frozenset({StorageNetworkTest.MAIN}), chest=1)
+        self.assertIn("place_chest", candidates(g))
+        a = resolve("place_chest", g)
+        self.assertEqual(a.tool, "place_block")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), StorageNetworkTest.OVERFLOW)
+
+    def test_cells_taken_or_refused_are_passed_over(self) -> None:
+        # The first candidate already holds the run's second chest, the next one the ground
+        # refused: the third candidate gets the third chest, not a refusal on every tick.
+        g = self._network(frozenset({StorageNetworkTest.MAIN, StorageNetworkTest.OVERFLOW}),
+                          chest=1)
+        g.extra_chests = (StorageNetworkTest.OVERFLOW,)
+        g.overflow_skip = frozenset({StorageNetworkTest.SECOND})
+        a = resolve("place_chest", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-196, -46, -96))
+
+    def test_no_new_chest_while_a_network_chest_still_has_room(self) -> None:
+        # One full chest beside one that is roomy is a deposit waiting, not a furniture project.
+        g = self._network(frozenset({StorageNetworkTest.MAIN}), spruce_planks=8)
+        g.extra_chests = (StorageNetworkTest.OVERFLOW,)
+        self.assertNotIn("craft_chest", candidates(g))
+        self.assertNotIn("place_chest", candidates(g))
+        self.assertIsNone(resolve("craft_chest", g))
+        self.assertIsNone(resolve("place_chest", g))
+
+    def test_relief_builds_the_next_chest_when_the_network_is_full(self) -> None:
+        # The run79 bottleneck with materials in the pack: neither deposit nor drop frees a
+        # slot, but the chest does. `allow_stow` off -- the relief's own name for "the chest
+        # is full" -- used to be a hard fall to `drop_junk`.
+        g = self._network(frozenset({StorageNetworkTest.MAIN}), spruce_planks=8)
+        g.slots_used = 36
+        self.assertEqual(inventory_relief(g).tool, "craft_item")
+        self.assertEqual(inventory_relief(g, allow_stow=False).tool, "craft_item")
+        g2 = self._network(frozenset({StorageNetworkTest.MAIN}), chest=1)
+        g2.slots_used = 36
+        self.assertEqual(inventory_relief(g2).tool, "place_block")
+
+    def test_provisions_standing_in_the_overflow_are_fetched_there(self) -> None:
+        # `banked` aggregates the network -- and that is exactly the trap: provisions the main
+        # chest does not hold cannot be withdrawn from its cell, and the aggregate does not say
+        # which lid they stand behind. `banked_stores` does, and `take_stored_food` reaches in.
+        g = at_home(geared())
+        g.food = 12.0
+        g.phase = "day"
+        g.chest_pos = self.MAIN
+        g.banked = {"cooked_beef": 16}
+        g.banked_stores = ((self.OVERFLOW, "cooked_beef", 16),)
+        self.assertIn("take_stored_food", candidates(g))
+        a = resolve("take_stored_food", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "withdraw")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.OVERFLOW)
+        self.assertEqual(a.args["items"], [{"item_name": "cooked_beef", "count": 16}])
+
+    def test_a_store_far_off_is_walked_to_before_it_is_reached_into(self) -> None:
+        g = at_home(geared())
+        g.food = 12.0
+        g.phase = "day"
+        g.chest_pos = self.MAIN
+        far = (40, -46, 30)
+        g.banked = {"cooked_beef": 8}
+        g.banked_stores = ((far, "cooked_beef", 8),)
+        a = resolve("take_stored_food", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), far)
+
+    def test_the_main_chest_leads_when_both_hold_provisions(self) -> None:
+        # The bot stands at its base most of the time; the shortest walk is the one it skips.
+        g = at_home(geared())
+        g.food = 12.0
+        g.phase = "day"
+        g.chest_pos = self.MAIN
+        g.banked = {"cooked_beef": 16}
+        g.banked_stores = ((self.OVERFLOW, "cooked_beef", 8), (self.MAIN, "cooked_beef", 8))
+        a = resolve("take_stored_food", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.MAIN)
+
+    def test_a_store_of_junk_only_is_not_a_larder(self) -> None:
+        # The run78 shuttle in its per-cell shape: a network chest full of rotten flesh is not
+        # a provision to fetch, wherever it stands.
+        g = at_home(geared())
+        g.food = 12.0
+        g.phase = "day"
+        g.chest_pos = self.MAIN
+        g.banked = {"rotten_flesh": 96}
+        g.banked_stores = ((self.OVERFLOW, "rotten_flesh", 96),)
+        self.assertNotIn("take_stored_food", candidates(g))
+        self.assertIsNone(resolve("take_stored_food", g))
+
+
 class BaseFurnaceTest(unittest.TestCase):
     """The furnace that stands at the base, so cooking does not tear a temporary one down.
 
