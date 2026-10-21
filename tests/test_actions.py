@@ -4437,13 +4437,16 @@ class BankedFoodEndsTheHuntTest(unittest.TestCase):
         g.banked = {"rotten_flesh": 96}
         self.assertIn("hunt_food", candidates(g))
 
-    def test_the_emergency_pile_is_still_taken_when_it_is_all_there_is(self) -> None:
-        # Falling back is not the same as pretending it is a reserve: `_provisioned` stays at 0,
-        # so the hunt continues while the pack is topped up with what exists.
+    def test_a_bank_of_only_junk_is_an_empty_larder(self) -> None:
+        # The fallback this test once pinned became a shuttle in run78: `stow_surplus` deposits
+        # junk (rotten flesh is JUNK) into the chest, and `take_stored_food` withdrew that very
+        # stack back on the next tick - ~400 iterations of pack and chest shedding 21 rotten
+        # flesh onto each other, with the Nether trip waiting. Provisions the chest does not
+        # hold are not fetchable; the hunt stays offered instead (see the test above).
         g = self._hungry_at_base(carried=0)
         g.banked = {"rotten_flesh": 96}
-        a = resolve("take_stored_food", g)
-        self.assertEqual(a.args["items"], [{"item_name": "rotten_flesh", "count": 16}])
+        self.assertNotIn("take_stored_food", candidates(g))
+        self.assertIsNone(resolve("take_stored_food", g))
         from mlaya.actions import _provisioned
         self.assertEqual(_provisioned(g), 0)
 

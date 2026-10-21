@@ -1069,6 +1069,19 @@ def _provisioned(gs: GameState) -> int:
     return _provision_count(gs.inventory) + _provision_count(gs.banked)
 
 
+def _banked_provisions(gs: GameState) -> dict[str, int]:
+    """What the chest holds that counts as trip provisions - never the junk banked beside them.
+
+    Rotten flesh can be eaten but cannot be banked as food (see `_provisioned` for the same
+    split). run77's successor ran on this hole: `stow_surplus` deposited 21 rotten flesh into
+    the chest, `take_stored_food` withdrew that very stack again, and for ~400 iterations pack
+    and chest shed the pile back and forth while the Nether trip it was offered for waited. A
+    bank that holds only junk is an empty larder, and provisions that do not exist are not
+    fetchable.
+    """
+    return {n: int(c) for n, c in (gs.banked or {}).items() if n in PROVISIONS and c > 0}
+
+
 def _food_reserve_met(gs: GameState) -> bool:
     """Whether the banked food reserve is met, or out of reach.
 
@@ -2469,7 +2482,7 @@ def candidates(gs: GameState) -> list[str]:
     if (_provisioned(gs) < _food_goal(gs) and not eating
             and _food_target(gs) is not None):
         out.append("hunt_food")
-    if (_edible_count(inv) < _food_goal(gs) and gs.banked
+    if (_edible_count(inv) < _food_goal(gs) and _banked_provisions(gs)
             and not _in_nether(gs) and _at_base(gs) and _chest_ready(gs)):
         out.append("take_stored_food")
 
@@ -3374,12 +3387,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "take_stored_food":
         if _in_nether(gs) or not _at_base(gs) or not _chest_ready(gs):
             return None
-        want = _food_goal(gs) - _edible_count(inv)
-        if want <= 0 or not gs.banked:
+        stored = _banked_provisions(gs)
+        if not stored:
             return None
-        # Provisions first, and only the emergency pile if that is all the chest has. A pack of 64
-        # rotten flesh is not a larder, and taking it would look like the reserve being met.
-        stored = {n: c for n, c in gs.banked.items() if n in PROVISIONS} or dict(gs.banked)
+        want = _food_goal(gs) - _edible_count(inv)
+        if want <= 0:
+            return None
         # Named from what the chest last held, not from a wish list: a `withdraw` naming an item
         # the chest does not hold takes nothing out, and the tick is then a refusal that looks
         # exactly like a working chest.
