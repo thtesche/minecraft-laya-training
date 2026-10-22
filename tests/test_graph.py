@@ -4079,6 +4079,88 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(mcp.calls), 2)
 
 
+class ContainerMissingTest(unittest.TestCase):
+    """A cell the server calls "not a container" has to leave what the run remembers.
+
+    run83 re-adopted its base from a bed a previous run left standing and took the chest
+    cell banked beside it (-45,71,13) on adoption, without the cell ever being looked at;
+    the world had given the chest up. Four deposits walked to the empty space, each answered
+    `[CONTAINER_NOT_PRESENT] The loaded target block is air, not a chest`, and none of it
+    landed: the phantom stayed the deposit's target until the run ended, every `stow_surplus`
+    walked empty, and a `take_stored_food` would have paid the same walk for provisions that
+    were believed to stand there. The server's word is the evidence: the cell leaves the
+    network, its believed provisions leave with it, and the storage chain places a chest
+    again -- the next adopted phantom dies the same first death.
+    """
+
+    MAIN = (-45, 71, 13)
+    OVERFLOW = (-45, 71, 20)
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.chest_pos = ContainerMissingTest.MAIN
+        agent._extra_chests = [ContainerMissingTest.OVERFLOW]
+        agent._chests_full = {ContainerMissingTest.OVERFLOW}
+        agent._banked_stores = ((ContainerMissingTest.MAIN, "cooked_beef", 4),)
+        agent.banked = {"cooked_beef": 4}
+        agent.furnace_pos = None
+        agent.smoker_pos = None
+        agent._furnace_contents = {}
+        agent._furnace_occupied = False
+        return agent
+
+    def _deposit(self, cell: tuple[int, int, int]) -> Action:
+        return Action("stow_surplus", "use_container",
+                      {"operation": "deposit", "x": cell[0], "y": cell[1], "z": cell[2],
+                       "items": []}, "deposit into the chest")
+
+    def test_the_phantom_main_chest_leaves_the_network(self) -> None:
+        agent = self._agent()
+        agent._note_container_missing(self._deposit(self.MAIN), False,
+                                      "[CONTAINER_NOT_PRESENT] The loaded target block is air, not a chest")
+        self.assertIsNone(agent.chest_pos)
+        self.assertEqual(agent._extra_chests, [ContainerMissingTest.OVERFLOW])
+        self.assertEqual(agent._banked_stores, ())
+        self.assertEqual(agent.banked, {})
+
+    def test_the_overflow_cell_drops_from_full_and_keeps_the_main_one(self) -> None:
+        agent = self._agent()
+        agent._banked_stores = ((ContainerMissingTest.OVERFLOW, "cooked_beef", 4),)
+        agent._note_container_missing(self._deposit(self.OVERFLOW), False,
+                                      "[CONTAINER_NOT_PRESENT] ...")
+        self.assertEqual(agent._extra_chests, [])
+        self.assertEqual(agent._chests_full, set())
+        self.assertEqual(agent._banked_stores, ())
+        self.assertEqual(agent.banked, {})
+        self.assertEqual(agent.chest_pos, ContainerMissingTest.MAIN)
+
+    def test_a_furnace_answering_the_same_is_no_station_anymore(self) -> None:
+        agent = self._agent()
+        agent.furnace_pos = (-45, 71, 11)
+        agent._furnace_contents = {"iron_ingot": 2}
+        agent._furnace_occupied = True
+        act = Action("collect_smelted", "use_container",
+                     {"operation": "withdraw", "x": -45, "y": 71, "z": 11, "items": []},
+                     "take the furnace output")
+        agent._note_container_missing(act, False, "[CONTAINER_NOT_PRESENT] ...")
+        self.assertIsNone(agent.furnace_pos)
+        self.assertEqual(agent._furnace_contents, {})
+        self.assertFalse(agent._furnace_occupied)
+
+    def test_a_successful_attempt_forgets_nothing(self) -> None:
+        agent = self._agent()
+        agent._note_container_missing(self._deposit(self.MAIN), True, "")
+        self.assertEqual(agent.chest_pos, ContainerMissingTest.MAIN)
+
+    def test_an_unrelated_cell_leaves_the_remembered_chest_alone(self) -> None:
+        agent = self._agent()
+        agent._note_container_missing(self._deposit((10, 64, 20)), False,
+                                      "[CONTAINER_NOT_PRESENT] ...")
+        self.assertEqual(agent.chest_pos, ContainerMissingTest.MAIN)
+        self.assertEqual(agent._banked_stores, ((ContainerMissingTest.MAIN, "cooked_beef", 4),))
+        self.assertEqual(agent.banked, {"cooked_beef": 4})
+
+
 class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
     """How the loop remembers what the server says about storage, chest by chest (run79: the
     `[CONTAINER_BATCH_INCOMPLETE]` deposit became a failed action, the one chest a dead end, and

@@ -1462,6 +1462,48 @@ class Agent:
         elif ok:
             self._chests_full.discard(cell)
 
+    def _note_container_missing(self, action, ok: bool, text: str | None) -> None:
+        """A cell the server calls not-a-container is dropped from what the run remembers.
+
+        `[CONTAINER_NOT_PRESENT] The loaded target block is air, ...` is the one answer the
+        storage network had no use for: run83 re-adopted its base from a bed a previous run
+        left standing and took the chest cell banked beside it on adoption -- four blocks
+        away, never checked -- while the world had given that chest up. Four deposits walked
+        to the empty space, each answered by the same message, and none of it landed: the
+        phantom stayed the deposit's target for the rest of the run, `stow_surplus` walked
+        its ticks empty and `take_stored_food` would have done the same to the provisions
+        believed to stand there. What the server names cannot stand: the cell leaves the
+        network, the provisions believed in it leave with it, and the storage chain places a
+        chest again -- adoption is not special-cased, the next phantom dies the same first
+        death. A station cell answering the same is no station either: run49 already met
+        `... is furnace, not a chest`, and a remembered furnace at a cell the world gave up
+        is the same walk to an empty space that every later cook would pay.
+        """
+        if ok or "CONTAINER_NOT_PRESENT" not in (text or ""):
+            return
+        args = getattr(action, "args", None) or {}
+        cell = (args.get("x"), args.get("y"), args.get("z"))
+        if not all(isinstance(v, int) for v in cell):
+            return
+        if self.chest_pos is not None and tuple(self.chest_pos) == cell:
+            self.chest_pos = None
+        if cell in {tuple(c) for c in self._extra_chests}:
+            self._extra_chests = [c for c in self._extra_chests if tuple(c) != cell]
+        self._chests_full.discard(cell)
+        stores = [s for s in self._banked_stores if tuple(s[0]) != cell]
+        if len(stores) != len(self._banked_stores):
+            self._banked_stores = tuple(stores)
+            banked: dict[str, int] = {}
+            for _, name, count in stores:
+                banked[name] = banked.get(name, 0) + count
+            self.banked = banked
+        if self.furnace_pos is not None and tuple(self.furnace_pos) == cell:
+            self.furnace_pos = None
+            self._furnace_contents = {}
+            self._furnace_occupied = False
+        if self.smoker_pos is not None and tuple(self.smoker_pos) == cell:
+            self.smoker_pos = None
+
     def _note_chest_lid(self, action, ok: bool, text: str | None) -> None:
         """Remember the block sitting on the base chest's lid, so `stow_surplus` digs it.
 
@@ -1620,6 +1662,7 @@ class Agent:
         self._note_chest(action, _ok, _text)
         self._note_chest_lid(action, _ok, _text)
         self._note_container(action, _ok, _text)
+        self._note_container_missing(action, _ok, _text)
         self._note_furnace(action, _ok, _text, res)
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
