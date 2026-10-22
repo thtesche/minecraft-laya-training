@@ -81,6 +81,10 @@ class LoopConfig(BaseModel):
     # worn + shield + lit portal + bed + the Nether prep banked), instead of walking the full
     # iteration budget. See actions.tech_tree_complete and actions._all_nether_prep_steps.
     stop_when_complete: bool = True
+    # Seconds a successful `wait` holds before the next decision. The step settles at once (a
+    # navigate to the anchor it already stands on), so without the hold every tick was one
+    # second and run86 spent ~300 of its 600 iterations waiting for one night.
+    wait_hold_s: float = 30.0
     log_path: str = "runs/decisions.jsonl"
     memory_path: str = "MEMORY.md"
 

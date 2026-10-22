@@ -1025,6 +1025,21 @@ class Agent:
         acted = any(str(e).lower().startswith(SURVIVAL_EVENT_PREFIXES) for e in after.events)
         self._defer_quiet = 0 if (hurt or acted) else self._defer_quiet + 1
 
+    async def _hold_wait(self, action, ok: bool) -> None:
+        """Let a successful `wait` pass real time before the next decision.
+
+        `wait` is a navigate to the anchor the bot already stands on, so it settles at once and
+        every tick of it was about a second: run86 lit its gate by day and burned ~300 of its 600
+        iterations at the base before the night came. Holding `[loop] wait_hold_s` per tick makes
+        a ten-minute day some twenty decisions. The server's reflexes guard the body meanwhile,
+        as they do during any long action, and the hold ends on the next observation.
+        """
+        if action.label != "wait" or not ok:
+            return
+        hold = float(self.settings.loop.wait_hold_s or 0)
+        if hold > 0:
+            await asyncio.sleep(hold)
+
     def _note_hurt(self, before, after) -> None:
         """A hit while the loop works hands the next contact back to the survival policy."""
         if (before.health is not None and after.health is not None
@@ -1754,6 +1769,7 @@ class Agent:
         self._note_crossing(action)
         self._note_stow_blocked(action, _ok, _text)
         self._note_result(action, _ok)
+        await self._hold_wait(action, _ok)
         after = await self._observe()
         # `surface_up` answers itself through the position it lands on (a resolved probe) or
         # through the height the server names when it refuses to guess (an ambiguous column);

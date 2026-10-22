@@ -26,6 +26,7 @@ max_iterations = 10
 max_escalations = 3
 hitl = false
 stop_when_complete = true   # end the run once diamond kit + worn armour + shield + lit portal + bed + Nether prep are done
+wait_hold_s = 30            # seconds a successful `wait` holds before the next decision
 log_path = "runs/decisions.jsonl"
 memory_path = "MEMORY.md"
 

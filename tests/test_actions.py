@@ -5233,6 +5233,33 @@ class DeferQuietTest(unittest.TestCase):
         self.assertEqual(agent._defer_quiet, 0)
 
 
+class WaitHoldTest(unittest.IsolatedAsyncioTestCase):
+    """A successful `wait` holds `wait_hold_s` instead of burning an iteration per second."""
+
+    def _agent(self, hold: float = 30.0):
+        from mlaya.config import Settings
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.settings = Settings()
+        agent.settings.loop.wait_hold_s = hold
+        return agent
+
+    async def test_a_successful_wait_holds(self) -> None:
+        from unittest import mock
+        with mock.patch("mlaya.graph.asyncio.sleep", mock.AsyncMock()) as sleep:
+            await self._agent()._hold_wait(Action("wait", "navigate", {}, ""), True)
+        sleep.assert_awaited_once_with(30.0)
+
+    async def test_other_steps_and_refused_waits_do_not_hold(self) -> None:
+        from unittest import mock
+        with mock.patch("mlaya.graph.asyncio.sleep", mock.AsyncMock()) as sleep:
+            agent = self._agent()
+            await agent._hold_wait(Action("wait", "navigate", {}, ""), False)
+            await agent._hold_wait(Action("mine_coal", "collect_block", {}, ""), True)
+            await self._agent(0)._hold_wait(Action("wait", "navigate", {}, ""), True)
+        sleep.assert_not_awaited()
+
+
 class StepAwayGroundReadTest(unittest.IsolatedAsyncioTestCase):
     """The ground around an open drop is read once per drop, and only while the walk is owed."""
 
