@@ -1567,6 +1567,24 @@ def _expedition_ready(gs: GameState) -> bool:
             and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES)
 
 
+def _light_window(gs: GameState) -> bool:
+    """The lighting clause of `_expedition_ready` with the hour gate relaxed for a proven frame.
+
+    The hour existed because lighting an *inferred* frame could burn a half-built gate: it is
+    the last Overworld act, and it waits for a bed laid at once (at base, or at night, when
+    `place_bed` runs the very next tick). Live, run80: the plane read had proven nothing while
+    a build stopped 3 obsidian short for 350 ticks; when the server finally closed the frame
+    it was late in the day, and the run's cap came before the night -- the finished, fully
+    geared gate never burned. Once the frame-plane read (`_frame_complete_at_base`) proves the
+    frame itself finished, there is nothing left to wait for but the bed, and `place_bed`
+    follows the lit gate whenever night comes; a burning gate waits by day too.
+    """
+    return (_expedition_prepared(gs)
+            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES
+            and (_bed_at_base(gs) or gs.phase == "night"
+                 or (_portal_frame_started(gs) and _frame_complete_at_base(gs))))
+
+
 # What stays in the pack while a chest stands open behind it.
 #
 # `JUNK_ITEMS` above is a blacklist, and a blacklist can only name the rubbish it already thought
@@ -2845,18 +2863,20 @@ def candidates(gs: GameState) -> list[str]:
             # "beside the bot" landed in the opening). `gs.portal_blocked` is filled by the
             # loop's opening read; while it is non-empty the dig stands in front of the build.
             out.append("clear_portal" if gs.portal_blocked else "build_portal")
-        # After the build the ten obsidian have left the pack (`obsidian < PORTAL_OBSIDIAN`)
-        # while the flint and steel remains - that is the "frame is standing" signal. It is
-        # confirmed against the frame plane (`_portal_frame_started`) so natural obsidian near
-        # the base cannot be mistaken for our frame. Lighting waits for the whole expedition to
-        # be ready (`_expedition_ready`) and for the bot to stand at the base: it is the last
-        # Overworld act, so the gate never burns while the prep still runs beside it (live, run22
-        # walked into its own early-lit gate). `_expedition_ready` also holds lighting to a night
-        # with the bed still carried (or a bed already at the base), so `place_bed` follows the
-        # very next tick and the burning gate is never left standing while the bot works.
-        if (_at_base(gs) and has_fs
-                and (obsidian < PORTAL_OBSIDIAN or _frame_complete_at_base(gs))
-                and _portal_frame_started(gs) and _expedition_ready(gs)):
+        # The frame is proven finished by the plane read (`_frame_complete_at_base`): the ten
+        # obsidian cells the gate needs stand, named by the frame scan. The old
+        # "obsidian < PORTAL_OBSIDIAN" alone was not enough - live, run80 from it215: a build had
+        # spent 7 of the ten blocks and gone quiet for 350 ticks, and `light_portal` fired 22
+        # times on the still-short frame, the server answering `[PORTAL_NO_FRAME]` each time.
+        # Lighting also stands down while a stray block still sits in the opening
+        # (`gs.portal_blocked`): the clear steps dig it first. And the trip must be stocked --
+        # `_light_window` keeps the hour guard while the frame's completeness is only inferred
+        # (live, run22 walked into its own early-lit gate), and drops it once the plane read
+        # proves the frame finished (live, run80: the last build closed the frame too late in
+        # the day, and the run ended beside a finished gate that never burned).
+        if (_at_base(gs) and has_fs and not gs.portal_blocked
+                and _frame_complete_at_base(gs)
+                and _portal_frame_started(gs) and _light_window(gs)):
             out.append("light_portal")
     # The bed goes down at the base at night, because `sleep` is what actually sets the respawn
     # point: placing it in daylight would leave the pause point unset. It waits for the *lit*
@@ -3334,9 +3354,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "light_portal":
         cell = _portal_ignite_cell(gs)
         if (not _has(inv, FLINT_STEEL_ITEM) or _portal_lit(gs) or not _at_base(gs)
-                or (inv.get("obsidian", 0) >= PORTAL_OBSIDIAN
-                    and not _frame_complete_at_base(gs))
-                or cell is None or not _portal_frame_started(gs) or not _expedition_ready(gs)):
+                or not _frame_complete_at_base(gs) or gs.portal_blocked
+                or cell is None or not _portal_frame_started(gs) or not _light_window(gs)):
             return None
         return Action(label, "activate_portal", {"x": cell[0], "y": cell[1], "z": cell[2]},
                       "light the built portal frame with the carried flint and steel")

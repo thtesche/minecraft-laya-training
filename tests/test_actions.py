@@ -1304,7 +1304,9 @@ class NetherGateTest(unittest.TestCase):
         down: `_expedition_ready` holds, so `light_portal` is offered.
 
         The frame is confirmed by an obsidian hit *inside the frame plane* (the signal
-        `build_portal` leaves behind); the gate itself is still unlit, which is exactly the
+        `build_portal` leaves behind) and by the exact plane read naming all ten obsidian
+        cells (`_frame_complete_at_base` -- the light step only burns on a frame the read
+        proves finished, run80); the gate itself is still unlit, which is exactly the
         state `light_portal` is meant to run from.
         """
         base = {"flint_and_steel": 1, "bow": 1, "arrow": 16, "cobblestone": 64}
@@ -1314,6 +1316,7 @@ class NetherGateTest(unittest.TestCase):
             "obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)],
             "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0)],
         }
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
         return g
 
     def test_craft_bucket_from_three_iron(self) -> None:
@@ -1790,24 +1793,62 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("light_portal", candidates(g))
         self.assertIsNone(resolve("light_portal", g))
 
-    def test_light_portal_waits_for_night_with_only_a_carried_bed(self) -> None:
-        # A bed merely *carried* cannot be laid until the gate burns (a bed laid beside an unlit
-        # frame can land in the open opening, which `clear_portal` cannot dig). So lighting with a
-        # carried bed waits for night, when `place_bed` can run the very next tick; by day the
-        # burning gate would sit beside the working bot.
+    def test_a_finished_frame_burns_by_day_too(self) -> None:
+        # A bed merely *carried* waits for night while the frame's completeness is only inferred,
+        # so `place_bed` can run the very next tick. Live, run80: the last build stopped the
+        # frame 3 obsidian short for 350 ticks and closed it too late in the day - the run ended
+        # before night came, beside a finished, fully geared gate that never burned. Once the
+        # plane read proves the frame complete the hour guard has nothing left to protect: the
+        # gate lights by day too, and `place_bed` follows it when night comes.
         def carried(phase: str) -> GameState:
             g = self._at_home(self._geared(white_bed=1, flint_and_steel=1,
                                            bow=1, arrow=16, cobblestone=64))
             g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
             g.phase = phase
+            g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
             return g
 
         day = carried("day")
-        self.assertNotIn("light_portal", candidates(day))
-        self.assertIsNone(resolve("light_portal", day))
+        self.assertIn("light_portal", candidates(day))
+        self.assertEqual(resolve("light_portal", day).tool, "activate_portal")
         night = carried("night")
         self.assertIn("light_portal", candidates(night))
-        self.assertEqual(resolve("light_portal", night).tool, "activate_portal")
+
+    def test_light_portal_waits_while_the_frame_is_only_partly_built(self) -> None:
+        # run80 from it215: a build had spent 7 of the ten obsidian and stopped, the pack still
+        # carried 3, and the plane read named the missing cells dirt and spruce. Every
+        # `activate_portal` on that short frame answered `[PORTAL_NO_FRAME]` - 22 attempts. The
+        # "obsidian left the pack" signal was not enough: lighting now waits for the plane read
+        # to prove the ten obsidian stand, whatever the hour.
+        def partial(phase: str) -> GameState:
+            g = self._at_home(self._geared(white_bed=1, flint_and_steel=1, obsidian=3,
+                                           bow=1, arrow=16, cobblestone=64))
+            g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+            g.phase = phase
+            cells = frame_obsidian_cells(g.base)
+            names = {cell: "obsidian" for cell in cells[:7]}
+            names[cells[7]] = "dirt"
+            names[cells[8]] = "spruce_log"
+            names[cells[9]] = "dirt"
+            g.frame_names = names
+            return g
+
+        for phase in ("day", "night"):
+            g = partial(phase)
+            self.assertNotIn("light_portal", candidates(g))
+            self.assertIsNone(resolve("light_portal", g))
+
+    def test_a_block_left_in_the_opening_holds_the_lighting_back(self) -> None:
+        # Even a frame the plane read proves complete cannot burn while a stray block stands in
+        # the 2x3 opening (a bed the base `sleep` laid into it): `activate_portal` reads the
+        # opening with the gate and answers `[PORTAL_NO_FRAME]` forever. The clear steps dig it
+        # in front of the light; while `gs.portal_blocked` holds a cell, the light says nothing.
+        g = self._expedition()
+        g.phase = "day"
+        self.assertIn("light_portal", candidates(g))
+        g.portal_blocked = [(-195, -46, -98)]
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
 
     def test_light_portal_ignores_the_hour_with_a_bed_at_the_base(self) -> None:
         # A bed already standing at the base needs no night wait: lighting stops the run at once.
@@ -1905,6 +1946,7 @@ class NetherGateTest(unittest.TestCase):
         g = self._at_home(self._geared(white_bed=1, flint_and_steel=1, bow=1, arrow=16,
                                        cobblestone=64))
         g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
         g.phase = "night"
         self.assertIn("light_portal", candidates(g))
         self.assertNotIn("place_bed", candidates(g))
@@ -4783,9 +4825,12 @@ class ExpeditionSparePickaxeTest(unittest.TestCase):
 
     def _unlit(self, **inv):
         # The frame stands, the gate does not burn: that is the state `light_portal` decides on.
+        # The plane read names all ten obsidian cells: the light step needs the frame proven
+        # finished (run80), only the pickaxe spare is decided by these tests.
         g = self._stocked(**inv)
         g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
                        "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -100, 2.5)]}
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
         return g
 
     def test_the_gate_does_not_light_without_the_spare(self) -> None:
