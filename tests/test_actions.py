@@ -273,16 +273,69 @@ class BedChainTest(unittest.TestCase):
         self.assertIsNotNone(resolve("go_home", g))
 
 
+class UnarmedHuntGateTest(unittest.TestCase):
+    """run83's three deaths: the hunt walks up to kill something, and at hunger 20 with bare
+    hands that walk is the death. it85 ran night, `pickaxe: none`, and `hunt_food` and
+    `hunt_wool` alone on the candidate list; the food hunt died at (-86,71,14) to a zombie.
+    Offer and refusal read one rule (`_hunt_ok`): a weapon carried, or hunger genuinely
+    under way. Spider string keeps its own guard - the bow's three strings are earned on
+    exactly that walk, so gating it would deny the expedition its only way to arm itself.
+    """
+
+    MOBS = [("cow", "animal", 5, 9.0), ("sheep", "animal", 2, 10.0)]
+
+    @staticmethod
+    def _state(**kw) -> GameState:
+        """Full hunger, a cow nearest and a sheep still inside the bed chain's reach."""
+        return gs(mobs=UnarmedHuntGateTest.MOBS, **kw)
+
+    def test_the_unarmed_food_hunt_refuses(self) -> None:
+        g = self._state()
+        self.assertIsNone(resolve("hunt_food", g))
+        self.assertNotIn("hunt_food", candidates(g))
+
+    def test_the_unarmed_wool_hunt_is_not_offered(self) -> None:
+        # run83's it85 list: night and no weapon left `hunt_food` and `hunt_wool` as the
+        # only offers - both are the walk that killed the bot.
+        g = self._state(phase="night")
+        self.assertIsNone(resolve("hunt_wool", g))
+        self.assertNotIn("hunt_wool", candidates(g))
+
+    def test_a_sword_lets_the_same_walk_be_made(self) -> None:
+        g = self._state(tools={"sword": "iron"})
+        self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
+        self.assertEqual(resolve("hunt_wool", g).args["mob_name"], "sheep")
+        # The offer path is really reachable in this state, so its refusal unarmed (above)
+        # is the gate working, not the state failing to ask for a hunt at all.
+        self.assertIn("hunt_food", candidates(g))
+        self.assertIn("hunt_wool", candidates(g))
+
+    def test_a_bow_lets_the_same_walk_be_made(self) -> None:
+        g = self._state(tools={"bow": "bow"})
+        self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
+
+    def test_hunger_under_way_beats_the_missing_weapon(self) -> None:
+        # Only starvation opens the exception, and only the eating reflex's own floor is
+        # close enough for it: at 12 the walk is still refused, at 8 it is made.
+        self.assertIsNone(resolve("hunt_food", self._state(food=12.0)))
+        self.assertEqual(
+            resolve("hunt_food", self._state(food=8.0)).args["mob_name"], "cow")
+
+
 class FoodChainTest(unittest.TestCase):
+    # The hunt's weapon gate (`_hunt_ok`) is not what these fixtures test - range and target
+    # choice are - so every one carries an iron sword and only carries that.
+    SWORD = {"sword": "iron"}
+
     def test_hunt_passive_animal(self) -> None:
-        g = gs(mobs=[("cow", "animal", 5, 10.0)])
+        g = gs(mobs=[("cow", "animal", 5, 10.0)], tools=self.SWORD)
         a = resolve("hunt_food", g)
         self.assertEqual(a.args["mob_name"], "cow")
         self.assertEqual(a.args["drop_name"], "beef")
         self.assertEqual(a.args["count"], 6)
 
     def test_hunt_lone_zombie_for_rotten_flesh(self) -> None:
-        g = gs(mobs=[("zombie", "hostile", 1, 10.0)], health=20.0)
+        g = gs(mobs=[("zombie", "hostile", 1, 10.0)], health=20.0, tools=self.SWORD)
         a = resolve("hunt_food", g)
         self.assertEqual(a.args["mob_name"], "zombie")
         self.assertEqual(a.args["drop_name"], "rotten_flesh")
@@ -293,29 +346,29 @@ class FoodChainTest(unittest.TestCase):
 
     def test_night_hunt_ignores_far_animal(self) -> None:
         """After dark a distant animal is not worth the walk (the old 180 m night roam)."""
-        g = gs(mobs=[("cow", "animal", 5, 40.0)], phase="night")
+        g = gs(mobs=[("cow", "animal", 5, 40.0)], phase="night", tools=self.SWORD)
         self.assertIsNone(resolve("hunt_food", g))
 
     def test_night_hunt_takes_close_animal(self) -> None:
-        g = gs(mobs=[("cow", "animal", 5, 12.0)], phase="night")
+        g = gs(mobs=[("cow", "animal", 5, 12.0)], phase="night", tools=self.SWORD)
         self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
 
     def test_day_hunt_reaches_far_animal(self) -> None:
-        g = gs(mobs=[("cow", "animal", 5, 40.0)], phase="day")
+        g = gs(mobs=[("cow", "animal", 5, 40.0)], phase="day", tools=self.SWORD)
         self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
 
     def test_day_hunt_gives_up_beyond_range(self) -> None:
-        g = gs(mobs=[("cow", "animal", 5, 80.0)], phase="day")
+        g = gs(mobs=[("cow", "animal", 5, 80.0)], phase="day", tools=self.SWORD)
         self.assertIsNone(resolve("hunt_food", g))
 
     def test_night_hunt_boundary(self) -> None:
-        self.assertIsNotNone(resolve("hunt_food", gs(mobs=[("pig", "animal", 1, 16.0)], phase="night")))
-        self.assertIsNone(resolve("hunt_food", gs(mobs=[("pig", "animal", 1, 16.1)], phase="night")))
+        self.assertIsNotNone(resolve("hunt_food", gs(mobs=[("pig", "animal", 1, 16.0)], phase="night", tools=self.SWORD)))
+        self.assertIsNone(resolve("hunt_food", gs(mobs=[("pig", "animal", 1, 16.1)], phase="night", tools=self.SWORD)))
 
     def test_candidates_gate_hunt_food_by_range(self) -> None:
-        far = gs(mobs=[("cow", "animal", 5, 40.0)], phase="night")
+        far = gs(mobs=[("cow", "animal", 5, 40.0)], phase="night", tools=self.SWORD)
         self.assertNotIn("hunt_food", candidates(far))
-        near = gs(mobs=[("cow", "animal", 5, 12.0)], phase="night")
+        near = gs(mobs=[("cow", "animal", 5, 12.0)], phase="night", tools=self.SWORD)
         self.assertIn("hunt_food", candidates(near))
 
     def test_eat_first_edible(self) -> None:

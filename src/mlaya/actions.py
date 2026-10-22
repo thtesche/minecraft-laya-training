@@ -275,6 +275,11 @@ STORAGE_SITES = ((0, 3), (-1, 2), (1, 2), (-1, 1), (1, 1), (-2, 2), (2, 2),
 # How close to a chest's centre the bot must stand for `use_container` to work the cell itself;
 # farther off, the storage label walks there under its own name first.
 STORAGE_REACH = 4.0
+# Hunger at which a hunt is worth walking even with bare hands: below it the starvation
+# damage is certain, while the unarmed hunt is only a risk. run83 died twice at hunger 20,
+# where nothing at all forced the unarmed walk - so the number sits well under the eating
+# reflex (`EAT_HUNGER` 14), which would have let the same walk through at half hunger.
+HUNT_STARVE = 8.0
 # How close the bot must be to the base to lay blocks out there: feet within this many blocks
 # of the anchor in x/z (one more vertically, so a step up or down still counts).
 BASE_RADIUS = 4.0
@@ -486,6 +491,35 @@ def _nearest_food_mob(gs: GameState, max_range: float | None = None) -> str | No
 def _food_hunt_range(gs: GameState) -> float:
     """How far a food hunt may walk: far in daylight, only at hand after dark."""
     return FOOD_HUNT_RANGE_NIGHT if gs.phase == "night" else FOOD_HUNT_RANGE_DAY
+
+
+def _armed(gs: GameState) -> bool:
+    """Whether the bot carries a weapon a hunt can be walked up with.
+
+    A hunt ends by killing something, and bare hands turn that walk into the run's death:
+    run83 offered `hunt_food` and `hunt_wool` at hunger 20, at night, with no tool at all
+    (it85), and the food hunt died at (-86,71,14) to a zombie, the day before a skeleton on
+    the same kind of walk (with an iron pickaxe but no sword) had already cost the whole
+    pack. The bow counts because it shoots a hunt down from distance; a pickaxe does not,
+    however often it was carried when the hunt started.
+    """
+    for kind in ("sword", "bow"):
+        tool = str(gs.tools.get(kind) or "none").lower()
+        if tool != "none":
+            return True
+    return False
+
+
+def _hunt_ok(gs: GameState) -> bool:
+    """Whether a hunt may be walked: armed, or bare-handed only while starvation bites.
+
+    Unknown hunger is no licence for the unarmed walk - the exception is earned by a meter
+    actually at `HUNT_STARVE`, which real states always carry, and none is worth risking a
+    death for a meal that the eating reflex would not have needed anyway.
+    """
+    return _armed(gs) or (gs.food is not None and gs.food <= HUNT_STARVE)
+
+
 
 
 def _first_cookable(inv: dict[str, int]) -> str | None:
@@ -2654,7 +2688,8 @@ def candidates(gs: GameState) -> list[str]:
     # accumulate; when hunger drops it spends them. Never compete with eating: feed to 20 first,
     # bank after. The goal deepens to the Nether target once the gate frame stands.
     if (_provisioned(gs) < _food_goal(gs) and not eating
-            and _food_target(gs) is not None):
+            and _food_target(gs) is not None
+            and _hunt_ok(gs)):
         out.append("hunt_food")
     if (_edible_count(inv) < _food_goal(gs) and _banked_provisions(gs)
             and not _in_nether(gs) and _at_base(gs) and _chest_ready(gs)):
@@ -2731,7 +2766,12 @@ def candidates(gs: GameState) -> list[str]:
             if table and (wool >= 3 or string >= 12) and (logs >= 1 or planks >= 3):
                 out.append("craft_bed")
             elif wool < 3 and string < 12:
-                if gs.mob_nearest("sheep") is not None:
+                # Wool is killed for, so the walk needs the weapon too - run83's it85 stood
+                # with `pickaxe: none` at hunger 20 and had only `hunt_food` and `hunt_wool`
+                # on offer, two deaths later. String keeps its own guard: the spider walk is
+                # how the bow's three strings are earned, and gate it and the expedition
+                # cannot arm itself anymore.
+                if gs.mob_nearest("sheep") is not None and _hunt_ok(gs):
                     out.append("hunt_wool")
                 elif _safe_spider_hunt(gs):
                     out.append("hunt_string")
@@ -3436,6 +3476,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "hunt_wool":
         if _wool(inv) >= 3:
             return None
+        if not _hunt_ok(gs):
+            return None
         return Action(label, "collect_mob_drop",
                       {"mob_name": "sheep", "drop_name": "white_wool", "count": 3},
                       "collect white wool from a sheep for a bed")
@@ -3630,6 +3672,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "base so the pack is fed for the next trip without hunting again")
     if label == "hunt_food":
         if _provisioned(gs) >= _food_goal(gs):
+            return None
+        # The offer's weapon rule lives here too, so a forced label cannot walk the unarmed
+        # hunt that the offer itself refuses (`_hunt_ok`).
+        if not _hunt_ok(gs):
             return None
         target = _food_target(gs)
         if not target:
