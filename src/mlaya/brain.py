@@ -46,6 +46,12 @@ DANGER_SCORE = {
 DANGER_DEFER_M = 4.0
 DANGER_DEFER_HEALTH = 15.0
 DANGER_BAND_NOTE = "danger band: no mob in range -> keep working"
+# Contact range is still no proof of a fight. run86 stood at a fortress blaze spawner with
+# blazes at 2-4 m that no longer attacked: the server's reflex fell silent at 20:25:33 (health
+# and hunger full, `busy` false) and the loop deferred 120+ ticks without moving until the run
+# cap. After this many defers in a row that took no damage and saw no reflex act, the band
+# lets the loop work again; the first hit, or health under the band, hands the tick back.
+DEFER_QUIET_TICKS = 5
 
 
 def danger_matters(gs: Any) -> bool:
@@ -60,6 +66,8 @@ def danger_matters(gs: Any) -> bool:
         return True
     if gs.health is not None and gs.health < DANGER_DEFER_HEALTH:
         return True
+    if getattr(gs, "defer_quiet", 0) >= DEFER_QUIET_TICKS:
+        return False
     nearest = gs.nearest_hostile
     return nearest is not None and nearest <= DANGER_DEFER_M
 

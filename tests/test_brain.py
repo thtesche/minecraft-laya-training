@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from mlaya.brain import (DANGER_BAND_NOTE, DANGER_DEFER_HEALTH, DANGER_DEFER_M, DANGER_QID,
-                         INTENT_QID, Brain, danger_matters)
+                         DEFER_QUIET_TICKS, INTENT_QID, Brain, danger_matters)
 
 
 class _Router:
@@ -84,6 +84,20 @@ class DangerMattersTest(unittest.TestCase):
         self.assertFalse(danger_matters(_gs(20.0, DANGER_DEFER_M + 0.1)))
         self.assertTrue(danger_matters(_gs(DANGER_DEFER_HEALTH - 0.1, None)))
         self.assertFalse(danger_matters(_gs(DANGER_DEFER_HEALTH, None)))
+
+    def test_quiet_defers_hand_contact_range_back_to_the_loop(self) -> None:
+        # run86: blazes at 2 m behind the spawner fence, health full, the reflex silent - the
+        # loop deferred 120+ ticks without moving.
+        g = _gs(20.0, 2.0)
+        g.defer_quiet = DEFER_QUIET_TICKS - 1
+        self.assertTrue(danger_matters(g))
+        g.defer_quiet = DEFER_QUIET_TICKS
+        self.assertFalse(danger_matters(g))
+
+    def test_low_health_defers_however_quiet(self) -> None:
+        g = _gs(DANGER_DEFER_HEALTH - 0.1, 2.0)
+        g.defer_quiet = DEFER_QUIET_TICKS + 10
+        self.assertTrue(danger_matters(g))
 
 
 if __name__ == "__main__":

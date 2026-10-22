@@ -5199,6 +5199,40 @@ class StepAwayDropsWholeCellTest(unittest.TestCase):
         self.assertTrue(agent._drop_open_pending)
 
 
+class DeferQuietTest(unittest.TestCase):
+    """A defer counts as quiet only when it took no hit and no survival reflex acted."""
+
+    def _agent(self):
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent._defer_quiet = 0
+        return agent
+
+    def test_quiet_defers_add_up(self) -> None:
+        agent = self._agent()
+        for _ in range(3):
+            agent._note_defer(gs(health=20.0), gs(health=20.0, events=["hunger: ate; cooked porkchop"]))
+        self.assertEqual(agent._defer_quiet, 3)
+
+    def test_a_hit_or_a_fight_starts_over(self) -> None:
+        agent = self._agent()
+        agent._defer_quiet = 4
+        agent._note_defer(gs(health=20.0), gs(health=16.4))
+        self.assertEqual(agent._defer_quiet, 0)
+        agent._defer_quiet = 4
+        agent._note_defer(gs(health=20.0),
+                          gs(health=20.0, events=["hostile: target died; health 20 → 20/20"]))
+        self.assertEqual(agent._defer_quiet, 0)
+
+    def test_a_hit_while_working_hands_contact_back(self) -> None:
+        agent = self._agent()
+        agent._defer_quiet = 9
+        agent._note_hurt(gs(health=20.0), gs(health=20.0))
+        self.assertEqual(agent._defer_quiet, 9)
+        agent._note_hurt(gs(health=20.0), gs(health=17.0))
+        self.assertEqual(agent._defer_quiet, 0)
+
+
 class StepAwayGroundReadTest(unittest.IsolatedAsyncioTestCase):
     """The ground around an open drop is read once per drop, and only while the walk is owed."""
 

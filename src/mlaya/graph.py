@@ -117,6 +117,12 @@ PASS_TIME_LABELS = ("wait", "sleep")
 # because the bot marches away from it, not over it, so the auto-pickup never reaches it.
 STEP_AWAY_GIVE_UP = 3
 
+# The summaries the server's survival reflexes write when they act ("hostile: target died; ...",
+# "fire: dry footing; ..."): a defer that sees one of these handed the tick to someone. Eating
+# ("hunger: ate; ...") is no answer to the danger, so it does not count.
+SURVIVAL_EVENT_PREFIXES = ("hostile:", "fire:", "recover footing:", "lava:",
+                           "water:", "drowning:")
+
 _CODE_RE = re.compile(r"\[([A-Z][A-Z_]+)\]")
 
 # The two lines the server prints into every settled result's final progress
@@ -331,6 +337,8 @@ class Agent:
         # Decisions spent off the feet in water (`GameState.water_ticks`): the rescue waits out
         # the first ones so a crossing the server can swim is not torn up on sight (live, run15).
         self._water_ticks = 0
+        # Defers in a row that met no damage and no survival reflex (`_note_defer`).
+        self._defer_quiet = 0
         # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): from
         # then on the relief drops the surplus on the open ground instead. That still frees the
         # slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall on it.
@@ -438,6 +446,7 @@ class Agent:
         # back for its first moments (live, run15).
         self._water_ticks = self._water_ticks + 1 if (gs.in_water and not gs.on_ground) else 0
         gs.water_ticks = self._water_ticks
+        gs.defer_quiet = self._defer_quiet
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.drop_open_pending = self._drop_open_pending
         gs.drop_pos = self._drop_pos
@@ -1000,7 +1009,27 @@ class Agent:
         if not stop["done"]:
             await asyncio.sleep(self.settings.mcp.poll_ms / 1000)
             gs = await self._observe()
+            self._note_defer(state["before"], gs)
+            gs.defer_quiet = self._defer_quiet
         return {"before": gs, "iteration": iteration, **stop}
+
+    def _note_defer(self, before, after) -> None:
+        """Count the defers in which the survival policy had nothing to do.
+
+        A defer hands the tick to the server's reflexes; one that took no damage and in which
+        no reflex reported acting (`SURVIVAL_EVENT_PREFIXES`) handed it to nobody. A hit or a
+        reflex outcome starts the count over (see `brain.DEFER_QUIET_TICKS`).
+        """
+        hurt = (before.health is not None and after.health is not None
+                and after.health < before.health)
+        acted = any(str(e).lower().startswith(SURVIVAL_EVENT_PREFIXES) for e in after.events)
+        self._defer_quiet = 0 if (hurt or acted) else self._defer_quiet + 1
+
+    def _note_hurt(self, before, after) -> None:
+        """A hit while the loop works hands the next contact back to the survival policy."""
+        if (before.health is not None and after.health is not None
+                and after.health < before.health):
+            self._defer_quiet = 0
 
     def _goal_reached(self, gs) -> bool:
         """Whether the run is finished: every phase, not the first one that closes.
@@ -1732,6 +1761,8 @@ class Agent:
         self._note_surface(action, _ok, _text, after.pos)
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
+        self._note_hurt(before, after)
+        after.defer_quiet = self._defer_quiet
         self._note_build(action, _ok, delta)
         self._note_stow(action, _ok, delta)
         progressed = vmod.progressed(action.label, delta, _ok)

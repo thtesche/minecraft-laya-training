@@ -783,6 +783,9 @@ class GameState:
     # that crosses water the server can swim is not torn up the moment an action comes back
     # (live, run15).
     water_ticks: int = 0
+    # The defers in a row that met no damage and no survival reflex (`Agent._note_defer`): once
+    # they reach `brain.DEFER_QUIET_TICKS` a mob in contact range no longer yields the tick.
+    defer_quiet: int = 0
     # The labels the loop is currently withholding from `candidates` because each kept answering
     # the identical refusal without progress (`Agent._track_stuck`, see `graph.STUCK_REPEATS`).
     # While one is listed, `candidates` drops it so the last fallback (`explore`/`wait`) owns the

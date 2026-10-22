@@ -108,6 +108,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -131,6 +132,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         return agent
 
     def test_counts_the_decisions_off_the_feet(self) -> None:
@@ -203,6 +205,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         return agent
 
@@ -383,6 +386,7 @@ class PourSkipTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -488,8 +492,10 @@ class StanceSkipTest(unittest.TestCase):
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -589,8 +595,10 @@ class StuckOfferTest(unittest.TestCase):
         agent._stance_skip = set()
         agent._recover_written_off = set()
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -1181,8 +1189,10 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -1251,6 +1261,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -1274,6 +1285,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         return agent
 
     _REFUSAL = ("[BUILD_INCOMPLETE] 1 cell still wrong: 1 were refused (229,62,222: movement "
@@ -1340,6 +1352,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._bed_base_scanned = None
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -1594,6 +1607,7 @@ class DropHoleTest(unittest.TestCase):
         agent = Agent.__new__(Agent)
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -1656,6 +1670,7 @@ class DropHoleTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = True
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         self.assertTrue(agent._inject(gs()).drop_hole_blocked)
 
@@ -1745,6 +1760,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = True
         self.assertTrue(agent._inject(gs()).chest_blocked)
@@ -1836,6 +1852,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._furnace_blocked = True
         state = agent._inject(gs())
@@ -2001,6 +2018,7 @@ class ChestLidTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_above = (229, 63, 224)
         self.assertEqual(agent._inject(gs()).chest_above, (229, 63, 224))
@@ -2141,8 +2159,10 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._stuck_off = {}
         agent._recover_written_off = set()
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._blocked_cell = None
@@ -2334,6 +2354,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -2621,8 +2642,10 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._stuck_off = set()
         agent._recover_written_off = set()
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._blocked_cell = None
         agent._chest_above = None
@@ -2969,6 +2992,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -3209,6 +3233,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -3232,6 +3257,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         agent.settings = Settings()
         return agent
 
@@ -3465,6 +3491,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._recover_written_off = set()
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
+        agent._defer_quiet = 0
         agent._drop_pos = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -3487,6 +3514,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._gate_read = False
         agent._powder_stowed = False
         agent._water_ticks = 0
+        agent._defer_quiet = 0
         agent._home_anchor = None
         agent._home_ticks = 0
         agent.log = []
