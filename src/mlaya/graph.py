@@ -1396,6 +1396,20 @@ class Agent:
             self._drop_pos = None
             self._step_away_fails = 0
 
+    def _note_result(self, action, ok: bool) -> None:
+        """Report one result to the two latches that read its outcome.
+
+        The walk-off is reported both ways: `STEP_AWAY_GIVE_UP` releases the latch inside
+        `_note_step_away` on a refusal, and it must actually see the refusals - the call sat
+        under the success guard, so a walk-off the terrain refused on every try never reached
+        the give-up (live, run81: a cliff top answered `[NAVIGATION_TARGET_UNSUPPORTED]` 470
+        times in a row while the latch, the exclusive offer and the run cap burned together).
+        `_note_placed` adopts cells the server said were placed, which is a success-only fact.
+        """
+        self._note_step_away(action, ok)
+        if ok:
+            self._note_placed(action)
+
     def _note_chest(self, action, ok: bool, text: str | None) -> None:
         """Remember that the base's ground cannot hold the chest, so the chain is dropped.
 
@@ -1614,9 +1628,7 @@ class Agent:
         # crossing settles and the teleport fires.
         self._note_crossing(action)
         self._note_stow_blocked(action, _ok, _text)
-        if _ok:
-            self._note_step_away(action, _ok)
-            self._note_placed(action)
+        self._note_result(action, _ok)
         after = await self._observe()
         # `surface_up` answers itself through the position it lands on (a resolved probe) or
         # through the height the server names when it refuses to guess (an ambiguous column);

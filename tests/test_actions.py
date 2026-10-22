@@ -3558,6 +3558,38 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertIsNone(agent._drop_pos)
         self.assertEqual(agent._step_away_fails, 0)
 
+    def test_the_loop_reports_refusals_through_note_result(self) -> None:
+        # The give-up existed but never reached it in run81: the call sat under `_verify`'s
+        # success guard, so a walk-off that the cliff top refused again and again was never
+        # counted (live: 470 refusals in a row, `[NAVIGATION_TARGET_UNSUPPORTED]` every tick,
+        # nothing progressing, the run cap burned on the one exclusive offer). The report now
+        # goes both ways through `_note_result`, and this test rides that very path.
+        from mlaya.graph import STEP_AWAY_GIVE_UP
+        agent = self._agent_with_pending_drop()
+        act = Action("step_away_drops", "navigate", {}, "")
+        for i in range(STEP_AWAY_GIVE_UP - 1):
+            agent._note_result(act, False)
+            self.assertTrue(agent._drop_open_pending, f"give-up must come last (refusal {i + 1})")
+        agent._note_result(act, False)
+        self.assertFalse(agent._drop_open_pending)
+
+    def test_note_result_closes_the_walk_off_on_success(self) -> None:
+        # The happy path rides the same report: success closes the latch, and the refusal
+        # counter goes with it.
+        agent = self._agent_with_pending_drop()
+        agent._note_result(Action("step_away_drops", "navigate", {}, ""), True)
+        self.assertFalse(agent._drop_open_pending)
+        self.assertEqual(agent._step_away_fails, 0)
+
+    def test_a_refused_other_label_leaves_the_pending_walk_off_alone(self) -> None:
+        # The other half of `_note_result`: a refusal is counted for the walk-off itself and
+        # never for it, and `_note_placed` must not see the failure - the pending latch and
+        # its counter stay exactly as they were.
+        agent = self._agent_with_pending_drop()
+        agent._note_result(Action("mine_iron", "dig", {}, ""), False)
+        self.assertTrue(agent._drop_open_pending)
+        self.assertEqual(agent._step_away_fails, 0)
+
     def test_explore_walks_to_a_visible_spawner(self) -> None:
         # The search closes in on the bricks once they are in view, the way a dig closes in on
         # the ore: `explore`'s Nether branch navigates to the nearest fortress landmark.
