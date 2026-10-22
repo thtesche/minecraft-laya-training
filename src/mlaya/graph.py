@@ -18,7 +18,7 @@ from .brain import Brain, escalate_to_system2
 from .mcp import _find
 from .memory import MemoryLog
 from .config import Settings
-from .targets import bed_frame_site, flat_build_site, ground_targets, _clear
+from .targets import bed_frame_site, flat_build_site, ground_targets, step_away_cell, _clear
 
 # Safe default when a chosen label cannot be resolved (should be rare; candidates are filtered).
 FALLBACK_LABEL = "get_wood"
@@ -341,6 +341,11 @@ class Agent:
         # Consecutive refused `step_away_drops` since the last drop; `STEP_AWAY_GIVE_UP` of them
         # releases the walk off so a step that cannot be made cannot wedge the bot.
         self._step_away_fails = 0
+        # The ground read around that drop (`_scan_drop_ground`), the drop it was read for, and
+        # the cells a walk off it was already refused at.
+        self._drop_grid: dict = {}
+        self._drop_grid_at: tuple[float, float, float] | None = None
+        self._drop_refused: set[tuple[int, int, int]] = set()
         # A `place_chest` the base's ground refused (`[PLACE_NO_SUPPORT]`): no solid block
         # touches the cell beside the base, so the chest cannot stand there. Retrying can only
         # fail again, so the chain is dropped and the relief falls back to `drop_junk` (live,
@@ -436,6 +441,9 @@ class Agent:
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.drop_open_pending = self._drop_open_pending
         gs.drop_pos = self._drop_pos
+        gs.drop_away = (step_away_cell(self._drop_grid, self._drop_pos, gs.pos,
+                                       frozenset(self._drop_refused))
+                        if self._drop_open_pending and self._drop_pos is not None else None)
         gs.chest_blocked = self._chest_blocked
         gs.furnace_blocked = self._furnace_blocked
         gs.furnace_contents = dict(self._furnace_contents)
@@ -517,11 +525,33 @@ class Agent:
                 await perception.scan_ground(self.mcp, (bed.x, bed.y, bed.z), dy)))
         self._bed_base = (bed.x, bed.y - 1, bed.z) if bed_frame_site(grid, bed) else None
 
+    async def _scan_drop_ground(self, gs) -> None:
+        """Read the ground around an open drop once, so the walk off it aims at real footing.
+
+        One `view_blocks box` per drop, paid only while the walk off it is still owed; the
+        cell itself is picked on every tick from this read (`targets.step_away_cell`), passing
+        over the cells a walk was refused at.
+        """
+        if not self._drop_open_pending or self._drop_pos is None:
+            self._drop_grid, self._drop_grid_at = {}, None
+            return
+        if self._drop_grid_at == self._drop_pos:
+            return
+        self._drop_grid_at = self._drop_pos
+        self._drop_refused.clear()
+        try:
+            self._drop_grid = perception.parse_box(await perception.scan_ground(
+                self.mcp, self._drop_pos, 0,
+                "read the ground around the junk just dropped to find footing to step away to"))
+        except Exception:
+            self._drop_grid = {}
+
     async def _observe(self):
         """One perception read, with the loop-owned facts and the base-site scan folded in."""
         gs = await perception.build(self.mcp)
         await self._adopt_portal_base(gs)
         await self._scan_bed_site(gs)
+        await self._scan_drop_ground(gs)
         await self._walk_home_to_memory(gs)
         await self._note_nether_gate(gs)
         await self._note_stocked_chest(gs)
@@ -1390,6 +1420,11 @@ class Agent:
             self._drop_pos = None
             self._step_away_fails = 0
             return
+        args = getattr(action, "args", None) or {}
+        cell = (args.get("x"), args.get("y"), args.get("z"))
+        if all(isinstance(v, int) for v in cell):
+            # The next tick picks another standable cell from the same read.
+            self._drop_refused.add(cell)
         self._step_away_fails += 1
         if self._step_away_fails >= STEP_AWAY_GIVE_UP:
             self._drop_open_pending = False

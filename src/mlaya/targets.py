@@ -306,6 +306,53 @@ def bed_frame_site(grid: dict[tuple[int, int, int], str], bed) -> bool:
     return True
 
 
+# How far the walk off an open drop goes. A toss lands up to two blocks out in whatever way the
+# bot faced and the pickup reaches about one more, so a cell four blocks from where the bot stood
+# is clear of the junk whichever way it flew.
+STEP_AWAY_MIN = 4.0
+# Footing that is solid but no place to stand on.
+_HAZARD_FLOOR = frozenset({"magma_block", "cactus", "campfire", "soul_campfire", "fire",
+                           "soul_fire", "powder_snow", "sweet_berry_bush"})
+
+
+def step_away_cell(grid: dict[tuple[int, int, int], str],
+                   drop: tuple[float, float, float],
+                   feet: tuple[float, float, float] | None,
+                   refused=frozenset()) -> tuple[int, int, int] | None:
+    """A feet cell the walk off an open drop can actually stand in, or None.
+
+    `grid` is one `view_blocks box` read around the drop (`perception.parse_box`). A cell
+    qualifies with solid footing under it and room for the body (feet and head clear), at least
+    `STEP_AWAY_MIN` from the drop and within two levels of it. The old walk aimed three blocks
+    "away" from a drop that lay under the bot's own feet -- a zero vector, so always due west --
+    at the bot's own height, and run86 answered `[NAVIGATION_TARGET_UNSUPPORTED] No usable
+    footing ... of -93, 70, -6` nine times for a cell nobody had looked at. Cells a walk was
+    already refused at (`refused`) are passed over. The nearest such cell to the bot wins, on its
+    own level first.
+    """
+    if not grid:
+        return None
+    dx0, dy0, dz0 = drop
+    fx, fy, fz = feet if feet is not None else drop
+    cells: list[tuple[float, float, tuple[int, int, int]]] = []
+    for (x, y, z), name in grid.items():
+        if not _clear(name) or not _clear(grid.get((x, y + 1, z))):
+            continue
+        floor = grid.get((x, y - 1, z))
+        if not _solid(floor) or floor in _HAZARD_FLOOR:
+            continue
+        if abs(y - math.floor(dy0)) > 2 or (x, y, z) in refused:
+            continue
+        away = math.hypot(x + 0.5 - dx0, z + 0.5 - dz0)
+        if away < STEP_AWAY_MIN:
+            continue
+        walk = (x + 0.5 - fx) ** 2 + (z + 0.5 - fz) ** 2 + 2 * (y - math.floor(fy)) ** 2
+        cells.append((walk, -away, (x, y, z)))
+    if not cells:
+        return None
+    return min(cells)[2]
+
+
 def _solid(name: str | None) -> bool:
     return name is not None and name not in _NOT_SOLID
 

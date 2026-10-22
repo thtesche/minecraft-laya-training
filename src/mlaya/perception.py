@@ -640,6 +640,9 @@ class GameState:
     drop_hole_blocked: bool = False
     drop_open_pending: bool = False
     drop_pos: tuple[float,float,float] | None = None
+    # The standable cell the walk off that drop goes to, picked from a ground read around it
+    # (`targets.step_away_cell`); None when the read found none.
+    drop_away: tuple[int, int, int] | None = None
     # A `place_chest` the terrain refused for want of a supporting block (`[PLACE_NO_SUPPORT]`):
     # no solid block touches the cell beside the base, so the chest cannot stand there. That is
     # a property of the base's ground, so the loop gives the chest chain up and lets the
@@ -1315,7 +1318,9 @@ def parse_box(data: dict) -> dict[tuple[int, int, int], str]:
     return out
 
 
-async def scan_ground(executor, pos, dy: int = 0) -> dict:
+async def scan_ground(executor, pos, dy: int = 0,
+                      why: str = "read the terrain around the bot to place the home base on level ground"
+                      ) -> dict:
     """One `view_blocks box` read around the bot, for the flat base-site search.
 
     `half_width`/`half_height` are the server's maxima (4 and 3), which is exactly the reach
@@ -1328,7 +1333,7 @@ async def scan_ground(executor, pos, dy: int = 0) -> dict:
     res = await executor.read(
         "view_blocks",
         {"box": {"x": cx, "y": cy + dy, "z": cz, "half_width": 4, "half_height": 3}},
-        "read the terrain around the bot to place the home base on level ground",
+        why,
     )
     return coerce(res.data, res.text)
 

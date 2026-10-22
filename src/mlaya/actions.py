@@ -3924,7 +3924,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "step_away_drops":
         if not gs.drop_open_pending or gs.drop_pos is None or gs.pos is None:
             return None
-        # Walk off the drop, straight away from the cell the junk landed on. Three blocks is the
+        if gs.drop_away is not None:
+            # A cell the ground read proved standable, far enough that the junk cannot be in
+            # reach whichever way the toss flew (`targets.step_away_cell`).
+            ax, ay, az = gs.drop_away
+            return Action(label, "navigate",
+                          {"x": ax, "y": ay, "z": az, "range": 1, "dig": True,
+                           "scaffold": True},
+                          "step onto firm ground away from the junk just dropped, so it stays dropped")
+        # No read, or no standable cell in it: walk off the drop, straight away from the cell the junk landed on. Three blocks is the
         # reach items are gathered over again, so standing that far away ends the pickup risk;
         # the pathfinder finds footing on that line rather than the line being assumed walkable.
         dx, dz = gs.drop_pos[0] - gs.pos[0], gs.drop_pos[2] - gs.pos[2]

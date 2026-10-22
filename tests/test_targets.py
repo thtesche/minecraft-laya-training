@@ -1,12 +1,14 @@
 """M4 parameter layer: target candidates from `view_blocks` hits and their binding."""
 from __future__ import annotations
 
+import math
 import unittest
 
 from mlaya.actions import resolve
 from mlaya.perception import BlockHit, GameState
-from mlaya.targets import (Target, _compass, base_target, bed_frame_site, boxed_in, flat_build_site,
-                           frontier_heading, ground_targets, nearest_ground)
+from mlaya.targets import (STEP_AWAY_MIN, Target, _compass, base_target, bed_frame_site, boxed_in,
+                           flat_build_site, frontier_heading, ground_targets, nearest_ground,
+                           step_away_cell)
 
 
 def hit(query: str, name: str, x: int, y: int, z: int, distance: float,
@@ -435,6 +437,61 @@ class BedFrameSiteTest(unittest.TestCase):
 
     def test_no_grid_is_refused(self) -> None:
         self.assertFalse(bed_frame_site({}, self._bed(0, 64, 0)))
+
+
+class StepAwayCellTest(unittest.TestCase):
+    """The walk off an open drop aims at a cell the ground read proved standable.
+
+    run86 dropped junk at (-90,70,-5) and walked "three blocks away" from a drop under its own
+    feet - a zero vector, so always due west - to (-93,70,-6), a cell with no footing: nine
+    `[NAVIGATION_TARGET_UNSUPPORTED]` in three rounds of drop and refused walk.
+    """
+
+    DROP = (-89.5, 70.0, -4.5)
+
+    def _ground(self, floor_y: int = 69, hole_west_of: int | None = None) -> dict:
+        # One read like `scan_ground`'s box: stone at `floor_y`, air above it; columns west of
+        # `hole_west_of` have no floor at all (the run86 west side).
+        grid = {}
+        for x in range(-94, -85):
+            for z in range(-9, 0):
+                for y in range(67, 74):
+                    hole = hole_west_of is not None and x < hole_west_of
+                    grid[(x, y, z)] = "stone" if (y <= floor_y and not hole) else "air"
+        return grid
+
+    def _away(self, cell) -> float:
+        return math.hypot(cell[0] + 0.5 - self.DROP[0], cell[2] + 0.5 - self.DROP[2])
+
+    def test_the_cell_stands_on_the_floor_far_enough_from_the_drop(self) -> None:
+        grid = self._ground()
+        cell = step_away_cell(grid, self.DROP, self.DROP)
+        self.assertIsNotNone(cell)
+        self.assertEqual(cell[1], 70)
+        self.assertEqual(grid[(cell[0], cell[1] - 1, cell[2])], "stone")
+        self.assertGreaterEqual(self._away(cell), STEP_AWAY_MIN)
+
+    def test_ground_without_footing_is_never_the_target(self) -> None:
+        cell = step_away_cell(self._ground(hole_west_of=-90), self.DROP, self.DROP)
+        self.assertIsNotNone(cell)
+        self.assertGreaterEqual(cell[0], -90)
+
+    def test_a_refused_cell_gives_way_to_the_next(self) -> None:
+        grid = self._ground()
+        first = step_away_cell(grid, self.DROP, self.DROP)
+        second = step_away_cell(grid, self.DROP, self.DROP, frozenset({first}))
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first, second)
+
+    def test_lava_and_magma_are_no_footing(self) -> None:
+        grid = {(x, y, z): name for (x, y, z), name in self._ground().items()}
+        for (x, y, z) in list(grid):
+            if y == 69:
+                grid[(x, y, z)] = "magma_block" if x % 2 else "lava"
+        self.assertIsNone(step_away_cell(grid, self.DROP, self.DROP))
+
+    def test_no_read_no_cell(self) -> None:
+        self.assertIsNone(step_away_cell({}, self.DROP, self.DROP))
 
 
 if __name__ == "__main__":

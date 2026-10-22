@@ -5177,6 +5177,56 @@ class StepAwayDropsWholeCellTest(unittest.TestCase):
         self.assertEqual(a.tool, "navigate")
         self.assertTrue(all(isinstance(a.args[k], int) for k in ("x", "y", "z")), a.args)
 
+    def test_a_cell_the_ground_read_proved_is_walked_to(self) -> None:
+        # run86: the blind "three blocks away" target had no footing nine times running.
+        g = gs(pos=(-89.5, 70.0, -4.5), drop_pos=(-89.5, 70.0, -4.5),
+               drop_open_pending=True, drop_away=(-85, 70, -3))
+        a = resolve("step_away_drops", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-85, 70, -3))
+
+    def test_a_refused_walk_marks_its_cell_for_the_next_pick(self) -> None:
+        from mlaya.config import Settings
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.settings = Settings()
+        agent._drop_open_pending = True
+        agent._drop_pos = (-89.5, 70.0, -4.5)
+        agent._step_away_fails = 0
+        agent._drop_refused = set()
+        agent._note_step_away(Action("step_away_drops", "navigate",
+                                     {"x": -85, "y": 70, "z": -3}, ""), False)
+        self.assertEqual(agent._drop_refused, {(-85, 70, -3)})
+        self.assertTrue(agent._drop_open_pending)
+
+
+class StepAwayGroundReadTest(unittest.IsolatedAsyncioTestCase):
+    """The ground around an open drop is read once per drop, and only while the walk is owed."""
+
+    async def test_one_read_per_drop(self) -> None:
+        from unittest import mock
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.mcp = object()
+        agent._drop_open_pending = True
+        agent._drop_pos = (-89.5, 70.0, -4.5)
+        agent._drop_grid, agent._drop_grid_at, agent._drop_refused = {}, None, {(1, 2, 3)}
+        grid = {(-85, 70, -3): "air"}
+        with mock.patch("mlaya.perception.scan_ground",
+                        mock.AsyncMock(return_value={})) as scan, \
+                mock.patch("mlaya.perception.parse_box", return_value=grid):
+            await agent._scan_drop_ground(None)
+            await agent._scan_drop_ground(None)
+            self.assertEqual(scan.await_count, 1)
+            self.assertEqual(agent._drop_grid, grid)
+            self.assertEqual(agent._drop_refused, set())
+            agent._drop_pos = (0.5, 64.0, 0.5)  # the next drop
+            await agent._scan_drop_ground(None)
+            self.assertEqual(scan.await_count, 2)
+            agent._drop_open_pending = False
+            await agent._scan_drop_ground(None)
+            self.assertEqual(scan.await_count, 2)
+            self.assertEqual(agent._drop_grid, {})
+
 
 if __name__ == "__main__":
     unittest.main()
