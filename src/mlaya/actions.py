@@ -1826,6 +1826,19 @@ def _storage_reachable(gs: GameState) -> bool:
     return target is not None and gs.pos is not None and _near_cell(gs, target)
 
 
+def _shed_owed(gs: GameState, inv: dict[str, int]) -> bool:
+    """Whether a near-full pack owes the roomy chest its surplus before the next trip out.
+
+    The same condition that calls the bot home (`_base_steps_ready`'s surplus clause), so a
+    step that walks away from the base must not be offered while it holds: run84 walked
+    `mine_obsidian` 27 blocks down to the lava at a full 36/36 pack, `go_home` called it straight
+    back on the surplus before the pour, and at the base Laya chose the walk down again over
+    `stow_surplus` - a `navigate` that succeeds every time, so no guard ever counted it.
+    """
+    return (_chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL
+            and _sheddable(gs, inv) and not _storage_full(gs))
+
+
 def _storage_full(gs: GameState) -> bool:
     """Whether every chest standing at the base the server has declared full."""
     network = _chest_network(gs)
@@ -2890,6 +2903,7 @@ def candidates(gs: GameState) -> list[str]:
         # (to mine it). The reach test on the mine side keeps the dig shallow - the natural
         # deposit under the same lava caves is tens of blocks down and never comes that close.
         if (_frame_needs_obsidian(gs, inv) and _can_mine(gs, "obsidian")
+                and not _shed_owed(gs, inv)
                 and ((has_water and _lava_pour_target(gs) is not None)
                      or _obsidian_within_reach(gs))):
             out.append("mine_obsidian")
@@ -3332,7 +3346,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "fill the carried bucket with water to pour onto lava")
     if label == "mine_obsidian":
         if (not _can_mine(gs, "obsidian") or _frame_started_at_base(gs)
-                or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN):
+                or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN or _shed_owed(gs, inv)):
             return None
         # Phase 1: obsidian already lies within reach (what the last pour formed) - mine it.
         if _obsidian_within_reach(gs):

@@ -1466,6 +1466,35 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.args, {"action": "pour", "liquid": "water",
                                   "x": -270, "y": 64, "z": -56})
 
+    def _full_pack_at_home(self) -> GameState:
+        # run84 it8-15: a 36/36 pack carrying 129 cobblestone, the chest at the base, the lava
+        # 27 blocks down - the walk to it succeeded every time and `go_home` called it back.
+        g = self._at_home(self._geared(water_bucket=1, cobblestone=129))
+        g.chest_pos = (g.base[0], g.base[1] + 1, g.base[2] + 1)
+        g.slots_used = 36
+        g.resources = self._lava(source=(-193, -73, -94), target=(-193, -73, -93),
+                                 distance=27.0)
+        return g
+
+    def test_a_full_pack_stows_before_it_walks_to_the_lava(self) -> None:
+        g = self._full_pack_at_home()
+        offered = candidates(g)
+        self.assertNotIn("mine_obsidian", offered)
+        self.assertIsNone(resolve("mine_obsidian", g))
+        self.assertIn("stow_surplus", offered)
+
+    def test_the_lava_walk_returns_once_the_pack_has_room(self) -> None:
+        g = self._full_pack_at_home()
+        g.slots_used = 20
+        self.assertIn("mine_obsidian", candidates(g))
+        self.assertEqual(resolve("mine_obsidian", g).tool, "navigate")
+
+    def test_a_full_chest_network_does_not_hold_the_obsidian_back(self) -> None:
+        # Nothing to shed into: the surplus is no debt the walk could wait for.
+        g = self._full_pack_at_home()
+        g.chests_full = [g.chest_pos]
+        self.assertIn("mine_obsidian", candidates(g))
+
     def test_mine_obsidian_walks_to_far_lava_first(self) -> None:
         # Out of pouring reach the step walks to the cell *on top of* the block beside the lava,
         # never into the lava and never to the neighbour's own height: that neighbour is solid
