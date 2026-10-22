@@ -4147,6 +4147,53 @@ class ContainerMissingTest(unittest.TestCase):
         self.assertEqual(agent._furnace_contents, {})
         self.assertFalse(agent._furnace_occupied)
 
+    def test_a_standing_furnace_the_server_cannot_open_stays(self) -> None:
+        # run49: 119 drains answered this at a real furnace; forgetting it re-adopted the same
+        # cell with the occupied flag wiped, and cook and drain refused each other in turn.
+        agent = self._agent()
+        agent.furnace_pos = (-45, 71, 11)
+        agent._furnace_contents = {"iron_ingot": 2}
+        agent._furnace_occupied = True
+        act = Action("collect_smelted", "use_container",
+                     {"operation": "withdraw", "x": -45, "y": 71, "z": 11, "items": []},
+                     "take the furnace output")
+        agent._note_container_missing(
+            act, False, "[CONTAINER_NOT_PRESENT] The loaded target block is furnace, "
+                        "not a supported location-owned container.")
+        self.assertEqual(agent.furnace_pos, (-45, 71, 11))
+        self.assertEqual(agent._furnace_contents, {"iron_ingot": 2})
+        self.assertTrue(agent._furnace_occupied)
+
+    def test_a_furnace_cell_turned_to_air_is_forgotten(self) -> None:
+        agent = self._agent()
+        agent.furnace_pos = (-45, 71, 11)
+        agent._furnace_occupied = True
+        act = Action("collect_smelted", "use_container",
+                     {"operation": "inspect", "x": -45, "y": 71, "z": 11},
+                     "look at the furnace")
+        agent._note_container_missing(
+            act, False, "[CONTAINER_NOT_PRESENT] The loaded target block is air, "
+                        "not a supported location-owned container.")
+        self.assertIsNone(agent.furnace_pos)
+        self.assertFalse(agent._furnace_occupied)
+
+    def test_a_chest_cell_holding_a_furnace_leaves_the_network(self) -> None:
+        agent = self._agent()
+        agent._note_container_missing(
+            self._deposit(self.MAIN), False,
+            "[CONTAINER_NOT_PRESENT] The loaded target block is furnace, "
+            "not a supported location-owned container.")
+        self.assertIsNone(agent.chest_pos)
+        self.assertEqual(agent.banked, {})
+
+    def test_a_chest_block_that_is_refused_stays_in_the_network(self) -> None:
+        agent = self._agent()
+        agent._note_container_missing(
+            self._deposit(self.MAIN), False,
+            "[CONTAINER_NOT_PRESENT] The loaded target block is chest, not loaded yet.")
+        self.assertEqual(agent.chest_pos, ContainerMissingTest.MAIN)
+        self.assertEqual(agent.banked, {"cooked_beef": 4})
+
     def test_a_successful_attempt_forgets_nothing(self) -> None:
         agent = self._agent()
         agent._note_container_missing(self._deposit(self.MAIN), True, "")

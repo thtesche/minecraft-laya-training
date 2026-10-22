@@ -125,6 +125,11 @@ _CODE_RE = re.compile(r"\[([A-Z][A-Z_]+)\]")
 _WALKED_RE = re.compile(r"\*\*Travel:\*\*\s*([\d.]+)\s*blocks")
 _NET_RE = re.compile(r"\*\*Distance from start:\*\*\s*([\d.]+)\s*blocks")
 
+# The block the server found where a container was asked for:
+# "[CONTAINER_NOT_PRESENT] The loaded target block is air, not a supported ...".
+_FOUND_BLOCK_RE = re.compile(r"target block is (?:minecraft:)?([a-z_]+)")
+_CHEST_BLOCKS = frozenset({"chest", "trapped_chest", "barrel"})
+
 
 def _walk_progress(res) -> tuple[float | None, float | None]:
     """How far an action walked and how far it ended from its start, or None for either.
@@ -1475,9 +1480,15 @@ class Agent:
         believed to stand there. What the server names cannot stand: the cell leaves the
         network, the provisions believed in it leave with it, and the storage chain places a
         chest again -- adoption is not special-cased, the next phantom dies the same first
-        death. A station cell answering the same is no station either: run49 already met
-        `... is furnace, not a chest`, and a remembered furnace at a cell the world gave up
-        is the same walk to an empty space that every later cook would pay.
+        death. A station cell whose block is gone is no station either.
+
+        Only a block that is not what the cell was remembered as says the station is gone. The
+        same code also names a block that stands and is merely refused: run49 answered every
+        furnace drain `... is furnace, not a supported location-owned container` 119 times, a
+        real furnace a server without furnace support could not open. Forgetting that one
+        brought it straight back through `_adopt_homebase` with its occupied flag wiped, and
+        the cook and the drain refused each other in turn; it stays, and the stuck guard drops
+        the drain as before. A message that names no block is the server's word alone.
         """
         if ok or "CONTAINER_NOT_PRESENT" not in (text or ""):
             return
@@ -1485,6 +1496,21 @@ class Agent:
         cell = (args.get("x"), args.get("y"), args.get("z"))
         if not all(isinstance(v, int) for v in cell):
             return
+        found = _FOUND_BLOCK_RE.search(text or "")
+        block = found.group(1) if found else None
+        if block is None or block not in _CHEST_BLOCKS:
+            self._forget_chest_cell(cell)
+        if (self.furnace_pos is not None and tuple(self.furnace_pos) == cell
+                and block != "furnace"):
+            self.furnace_pos = None
+            self._furnace_contents = {}
+            self._furnace_occupied = False
+        if (self.smoker_pos is not None and tuple(self.smoker_pos) == cell
+                and block != "smoker"):
+            self.smoker_pos = None
+
+    def _forget_chest_cell(self, cell: tuple) -> None:
+        """Drop one cell from the storage network, with the provisions believed in it."""
         if self.chest_pos is not None and tuple(self.chest_pos) == cell:
             self.chest_pos = None
         if cell in {tuple(c) for c in self._extra_chests}:
@@ -1497,12 +1523,6 @@ class Agent:
             for _, name, count in stores:
                 banked[name] = banked.get(name, 0) + count
             self.banked = banked
-        if self.furnace_pos is not None and tuple(self.furnace_pos) == cell:
-            self.furnace_pos = None
-            self._furnace_contents = {}
-            self._furnace_occupied = False
-        if self.smoker_pos is not None and tuple(self.smoker_pos) == cell:
-            self.smoker_pos = None
 
     def _note_chest_lid(self, action, ok: bool, text: str | None) -> None:
         """Remember the block sitting on the base chest's lid, so `stow_surplus` digs it.
