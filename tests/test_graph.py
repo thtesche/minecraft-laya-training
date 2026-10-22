@@ -5008,5 +5008,82 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         return agent
 
 
+class StoppedBuildFrameMarkingTest(unittest.TestCase):
+    """A `[BUILD_STOPPED]` that names no cell marks what the frame scan already knows.
+
+    Live, run80: the answer "The build stopped: 2 passes changed nothing; last route
+    completed." carries no cell, so `parse_refused_cells` remembered nothing, `clear_frame`
+    was never offered and 350 `clear_portal` route digs changed nothing either -- the frame
+    closed only at it364, too late in the day. The blocked opening cells and the frame ring
+    cells the plane read has named a wrong block stand in for the missing answer:
+    `clear_frame` digs each with the explicit `collect_block` the movement policy allows.
+    """
+
+    _STOPPED = ("[BUILD_STOPPED] The build stopped: 2 passes changed nothing; "
+                "last route completed.")
+
+    class _Action:
+        def __init__(self, label: str, **args) -> None:
+            self.label = label
+            self.args = args
+
+    @staticmethod
+    def _agent(**over) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.base = None
+        agent._portal_blocked = []
+        agent._frame_names = {}
+        agent._refused_frame = set()
+        for k, v in over.items():
+            setattr(agent, k, v)
+        return agent
+
+    def test_a_stopped_build_marks_the_blocked_opening(self) -> None:
+        # The cells the scan flagged in the opening are marked for the explicit dig, with
+        # nothing else: no base, no plane read, so no ring can be judged.
+        agent = self._agent(base=(-45, 70, 10),
+                           _portal_blocked=[(-43, 71, 10), (-42, 71, 10)])
+        agent._note_frame_cells(self._Action("clear_portal"), False, self._STOPPED)
+        self.assertEqual(agent._refused_frame, {(-43, 71, 10), (-42, 71, 10)})
+
+    def test_a_stopped_build_marks_the_wrong_blocks_in_the_frame_ring(self) -> None:
+        # run80's blockers were the frame's own cells: a tree in a side obsidian cell,
+        # terrain where a cobblestone corner belongs. The plane read names each cell and the
+        # ring says which block belongs where: cells already holding their right block, and
+        # cells the read has not named, wait.
+        agent = self._agent(base=(-45, 70, 10))
+        cells = perception.frame_obsidian_cells(agent.base)
+        names = {cell: "obsidian" for cell in cells}
+        names[cells[2]] = "spruce_log"            # side cell holding a tree
+        names[(-44, 73, 10)] = "dirt"             # side cell holding terrain
+        names[(-44, 70, 10)] = "cobblestone"      # corner already right
+        names[(-41, 70, 10)] = "dirt"             # corner still terrain
+        agent._frame_names = names
+        agent._note_frame_cells(self._Action("build_portal"), False, self._STOPPED)
+        self.assertEqual(agent._refused_frame, {cells[2], (-44, 73, 10), (-41, 70, 10)})
+
+    def test_a_stopped_build_without_a_base_or_scan_marks_nothing(self) -> None:
+        agent = self._agent()
+        agent._note_frame_cells(self._Action("clear_portal"), False, self._STOPPED)
+        self.assertEqual(agent._refused_frame, set())
+
+    def test_the_opening_marking_survives_a_base_without_a_scan(self) -> None:
+        # No plane read yet: the blocked opening still stands, the ring simply cannot be
+        # judged -- no cell is invented from thin air.
+        agent = self._agent(base=(-45, 70, 10), _portal_blocked=[(-43, 72, 10)])
+        agent._note_frame_cells(self._Action("clear_portal"), False, self._STOPPED)
+        self.assertEqual(agent._refused_frame, {(-43, 72, 10)})
+
+    def test_a_finished_build_clears_the_marked_cells(self) -> None:
+        # Same as the refused container before it: the build closing the frame clears the
+        # whole list, and one dug cell drops just itself.
+        agent = self._agent(base=(-45, 70, 10), _portal_blocked=[(-43, 71, 10)])
+        agent._note_frame_cells(self._Action("clear_portal"), False, self._STOPPED)
+        agent._note_frame_cells(self._Action("clear_frame", x=-43, y=71, z=10), True, "")
+        self.assertEqual(agent._refused_frame, set())
+        agent._note_frame_cells(self._Action("build_portal"), True, "")
+        self.assertEqual(agent._refused_frame, set())
+
+
 if __name__ == "__main__":
     unittest.main()

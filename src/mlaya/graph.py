@@ -1272,6 +1272,15 @@ class Agent:
         frame corner). The refused cells are remembered here and `clear_frame` digs each with the
         explicit `collect_block` the policy does allow; a finished build clears the whole list, and
         `clear_frame` drops just the cell it broke.
+
+        A `[BUILD_STOPPED]` names no cell ("2 passes changed nothing; last route completed"), so
+        parsing it remembers nothing -- live, run80, 350 `clear_portal` ticks learned nothing:
+        the route dig and the build stopped on blocks the route could not change, and the frame
+        closed only at it364, too late in the day for the run's last hour. What the frame scan
+        already holds stands in for the missing answer: the blocked opening cells, plus every
+        frame ring cell the plane read has named a wrong block (a tree in an obsidian cell,
+        terrain in a cobblestone corner). `clear_frame` digs those by name -- the explicit break
+        is the one the movement policy allows -- and the build resumes on what the pack carries.
         """
         if action.label == "clear_frame":
             if ok and {"x", "y", "z"} <= set(action.args):
@@ -1284,6 +1293,19 @@ class Agent:
             self._refused_frame.clear()
             return
         self._refused_frame.update(perception.parse_refused_cells(text))
+        if "[BUILD_STOPPED]" in (text or ""):
+            blocked = set(self._portal_blocked)
+            if self.base is not None:
+                bx, by, bz = self.base
+                wanted = {cell: "obsidian"
+                          for cell in perception.frame_obsidian_cells(self.base)}
+                wanted.update({cell: "cobblestone" for cell in (
+                    (bx + 1, by, bz), (bx + 4, by, bz),
+                    (bx + 1, by + 4, bz), (bx + 4, by + 4, bz))})
+                blocked |= {cell for cell, name in self._frame_names.items()
+                            if cell in wanted and name and not _clear(name)
+                            and wanted[cell] != name}
+            self._refused_frame.update(blocked)
 
     def _note_base(self, action, ok: bool, text: str | None) -> None:
         """Repair a home base whose anchor cell has lost its footing.
