@@ -1779,6 +1779,19 @@ def _storage_target(gs: GameState) -> tuple[int, int, int] | None:
     return None
 
 
+def _storage_reachable(gs: GameState) -> bool:
+    """Whether the network's next roomy chest stands within deposit reach of the bot.
+
+    `stow_surplus` works a chest where it stands (`_near_cell`, not the base anchor), so a
+    surplus this close is stored now - and is no reason to walk to the base. run82 ran 481
+    `go_home` and `stow_surplus` walks between (-45,71,15) and (-43,71,21), every one "ok"
+    and walking, a 35-slot pack never shed a block: the deposit was only ever offered at the
+    base anchor, while the chest it walked to stood outside that anchor's radius.
+    """
+    target = _storage_target(gs)
+    return target is not None and gs.pos is not None and _near_cell(gs, target)
+
+
 def _storage_full(gs: GameState) -> bool:
     """Whether every chest standing at the base the server has declared full."""
     network = _chest_network(gs)
@@ -2215,7 +2228,11 @@ def _base_steps_ready(gs: GameState) -> bool:
         return True
     if not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs):
         return True
-    if _chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(gs, inv):
+    if (_chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(gs, inv)
+            and not _storage_reachable(gs)):
+        # Surplus within reach of the roomy chest is stored now, not carried home first: the
+        # walk back and the walk over share one surplus, and where the chest stands outside
+        # the base's radius the two hand the bot off to each other forever (run82, 481 ticks).
         return True
     return False
 
@@ -2979,8 +2996,13 @@ def candidates(gs: GameState) -> list[str]:
             out.append("place_chest")
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
             out.append("craft_chest")
-    at_chest = (gs.base is not None and _chest_ready(gs) and _at_base(gs)
-                and _storage_target(gs) is not None)
+    storage_target = _storage_target(gs)
+    # The walk-over deposit works the chest where it stands: `at_chest` is the base or the
+    # lid's reach, not only the base - a chest adopted outside the base radius was walked to
+    # but never worked from the chest side, and the bot went home for the very surplus the
+    # chest was waiting for (run82's 481-tick ping-pong).
+    at_chest = (gs.base is not None and _chest_ready(gs) and storage_target is not None
+                and (_at_base(gs) or _near_cell(gs, storage_target)))
     if gs.slots_used >= INVENTORY_NEAR_FULL:
         if at_chest:
             if _sheddable(gs, inv):

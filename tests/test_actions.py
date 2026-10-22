@@ -2447,6 +2447,45 @@ class StorageNetworkTest(unittest.TestCase):
         self.assertEqual(a.tool, "navigate")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), StorageNetworkTest.OVERFLOW)
 
+    def test_a_chest_adopted_outside_the_base_works_from_its_lid(self) -> None:
+        # run82's dead loop: the chest had been adopted eight blocks outside the base's
+        # radius, so the walk over was offered at the anchor and the deposit nowhere else,
+        # while the walk back was justified by the very surplus the lid waited for - 481
+        # `go_home` and `stow_surplus` walks between (-45,71,15) and (-43,71,21), each one
+        # "ok", a 35-slot pack never shedding a block. Standing at the chest within reach,
+        # the deposit is what has to run; carrying the surplus back to the anchor is not.
+        g = self._network(frozenset(), tuff=64)
+        g.chest_pos = (-197, -46, -106)        # nine blocks off the anchor, out of its radius
+        g.pos = (-196.6, -46.2, -105.6)        # at the lid, and not at the base
+        g.slots_used = 35
+        self.assertIn("stow_surplus", candidates(g))
+        a = resolve("stow_surplus", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "deposit")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -106))
+        self.assertNotIn("go_home", candidates(g))
+
+    def test_surplus_still_justifies_the_walk_home_when_no_lid_is_in_reach(self) -> None:
+        # The other anchor of the same pair: away from base and chest alike the walk back
+        # stays worth it - the deposit is not within reach yet.
+        g = self._network(frozenset(), tuff=64)
+        g.chest_pos = (-197, -46, -106)
+        g.pos = (-189.5, -46.0, -103.5)
+        g.slots_used = 35
+        self.assertIn("go_home", candidates(g))
+        self.assertNotIn("stow_surplus", candidates(g))
+
+    def test_a_full_distant_chest_still_sends_the_bot_home(self) -> None:
+        # Its lid declared full, the relief is growing the network elsewhere and the surplus
+        # is not stowable right here, so the walk back to the base keeps its justification.
+        g = self._network(frozenset(), tuff=64)
+        g.chest_pos = (-197, -46, -106)
+        g.chests_full = frozenset({(-197, -46, -106)})
+        g.pos = (-196.6, -46.2, -105.6)
+        g.slots_used = 35
+        self.assertNotIn("stow_surplus", candidates(g))
+        self.assertIn("go_home", candidates(g))
+
     def test_a_full_network_asks_for_another_chest(self) -> None:
         # run79's deadlock offer: no room left anywhere, but a crafting table and eight planks
         # -- and the relief that could only ever have dropped is now a chest under construction.
