@@ -2708,6 +2708,19 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.chest_pos, self.MAIN)
         self.assertEqual(agent._extra_chests, [])
 
+    def test_a_probe_that_walked_up_adopts_no_cell(self) -> None:
+        # Live, run85: the heightless `surface_up` probe (`navigate` with `x` and `z` only)
+        # answered not with `[NAVIGATION_HEIGHT_REQUIRED]` but with a walk -- the first column
+        # the server could answer unambiguously -- and `_note_placed`, whose guard checked
+        # only `"x"`, raised `KeyError: 'y'` in `verify` and broke the whole run at it31.
+        # What names no height names no cell: the success passes by untouched.
+        agent = self._agent()
+        probe = self._Action("surface_up", "navigate", {"x": -36, "z": 13})
+        agent._note_placed(probe)
+        self.assertIsNone(agent.chest_pos)
+        self.assertEqual(agent.base, self.BASE)
+        self.assertEqual(agent._extra_chests, [])
+
     def test_the_grounds_refusal_at_an_overflow_cell_keeps_the_chain(self) -> None:
         # One candidate is refused: the next is picked. Only the main cell's refusal gives the
         # chest chain up (`_chest_blocked`), the old verdict on the base ground.

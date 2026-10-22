@@ -1648,9 +1648,12 @@ class Agent:
         any full-mark on its cell is now history. The furnace and the smoker latch on their
         placement's own success, the same shape: a station that answered
         `[PLACE_TARGET_OCCUPIED]` is not standing, and a remembered cell that is not there would
-        send every later cook to an empty space.
+        send every later cook to an empty space. A cell the server does not know yet names no
+        coordinates: the `surface_up` probe `navigate {x,z}` names the column, not the cell --
+        run85's first probe that found an unambiguous surface and walked, met a guard that
+        checked only `x` and died on `KeyError: 'y'` in `verify`, the whole run with it.
         """
-        if "x" not in action.args:
+        if not {"x", "y", "z"} <= set(action.args or {}):
             return
         cell = (int(action.args["x"]), int(action.args["y"]), int(action.args["z"]))
         if action.label == "establish_base":
