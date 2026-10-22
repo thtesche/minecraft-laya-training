@@ -301,6 +301,10 @@ BASE_SURFACE_TOL = 2
 # this far from the gate rather than trusting the anchor it happens to stand on.
 BED_PORTAL_CLEARANCE = 2
 
+# How far the `sleep` server looks for a standing bed: "[BED_NOT_FOUND] No unoccupied bed found
+# within 32 blocks". A bed the scan sees beyond it cannot be slept in from where the bot stands.
+SLEEP_BED_REACH = 32.0
+
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
              "sheep": "mutton", "rabbit": "rabbit"}
@@ -2191,7 +2195,21 @@ def _sleep_ready(gs: GameState) -> bool:
     """
     if _portal_lit(gs):
         return _at_base(gs) and _bed_at_base(gs)
-    return not _at_base(gs) and _bed_available(gs)
+    return not _at_base(gs) and _bed_in_sleep_reach(gs)
+
+
+def _bed_in_sleep_reach(gs: GameState) -> bool:
+    """A bed the `sleep` server can find from here: carried, or standing within its search.
+
+    `_bed_available` counts any bed the scan sees, which is right for "is a second bed owed",
+    and wrong for the sleep itself: run86 started at night 51 blocks from the old base's bed,
+    the server searches 32, and the exclusive night offer answered `[BED_NOT_FOUND]` on sixteen
+    ticks until the morning.
+    """
+    if _has_bed(gs.inventory):
+        return True
+    distance = gs.resource_distance("white_bed")
+    return distance is not None and distance <= SLEEP_BED_REACH
 
 
 def _at_base(gs: GameState) -> bool:
@@ -2718,7 +2736,11 @@ def candidates(gs: GameState) -> list[str]:
     # opening and `light_portal` answered `[PORTAL_NO_FRAME]` on every tick), and at the base on a
     # bed actually standing there once the gate is lit. `place_bed` owns the base bed, `take_bed`
     # brings a leftover home.
-    if gs.phase == "night" and not gs.sleeping and _overworld(gs) and _sleep_ready(gs):
+    # The night offer returns ahead of the withholding filter at the end, so it asks for itself:
+    # run86 dropped `sleep` at it2 for `[BED_NOT_FOUND]` and the offer took the next 13 ticks
+    # anyway, the window never reaching it.
+    if (gs.phase == "night" and not gs.sleeping and _overworld(gs) and _sleep_ready(gs)
+            and "sleep" not in gs.stuck_labels):
         # Sleeping is not a step among others, it is the clock. A night costs about forty decisions
         # at eighteen seconds each; a sleep costs one. So at night, with a bed underfoot, nothing
         # else on this list is time-critical: the work will still be waiting at dawn, and every

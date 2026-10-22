@@ -4579,6 +4579,46 @@ class NightIsAClockNotACandidateTest(unittest.TestCase):
         self.assertNotIn("sleep", candidates(g))
 
 
+class SleepReachTest(unittest.TestCase):
+    """The night offer asks for a bed the `sleep` server can find, and honours the withholding.
+
+    run86 started at night at (-91,68,-5), the old base's bed 51 blocks away at (-43,71,12):
+    the scan saw it, the server searches 32 blocks, and the exclusive night offer answered
+    `[BED_NOT_FOUND]` sixteen ticks running. The stuck guard dropped `sleep` at it2, but the
+    night offer returns ahead of the withholding filter, so the drop changed nothing.
+    """
+
+    def _night(self, bed_distance: float | None = None, **inv) -> GameState:
+        g = geared(**inv)
+        g.pos = (-91.0, 68.0, -5.0)
+        g.phase = "night"
+        g.food = 20.0
+        if bed_distance is not None:
+            g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -43, 71, 12,
+                                                  bed_distance)]}
+        return g
+
+    def test_a_bed_beyond_the_servers_search_is_no_sleep(self) -> None:
+        g = self._night(bed_distance=51.4)
+        self.assertNotIn("sleep", candidates(g))
+        self.assertIsNone(resolve("sleep", g))
+
+    def test_a_bed_within_the_servers_search_owns_the_night(self) -> None:
+        g = self._night(bed_distance=20.0)
+        self.assertEqual(candidates(g), ["sleep"])
+
+    def test_a_carried_bed_sleeps_wherever_the_scan_looks(self) -> None:
+        g = self._night(bed_distance=51.4, white_bed=1)
+        self.assertEqual(candidates(g), ["sleep"])
+
+    def test_a_withheld_sleep_gives_the_night_back_to_the_offer(self) -> None:
+        g = self._night(bed_distance=20.0)
+        g.stuck_labels = frozenset({"sleep"})
+        offered = candidates(g)
+        self.assertNotIn("sleep", offered)
+        self.assertTrue(offered)
+
+
 class CoalIsCookingFuelTooTest(unittest.TestCase):
     """Coal smelts eight items; a log smelts one. That is the whole difference.
 
