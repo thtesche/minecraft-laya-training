@@ -1301,12 +1301,7 @@ class Agent:
         if "[BUILD_STOPPED]" in (text or ""):
             blocked = set(self._portal_blocked)
             if self.base is not None:
-                bx, by, bz = self.base
-                wanted = {cell: "obsidian"
-                          for cell in perception.frame_obsidian_cells(self.base)}
-                wanted.update({cell: "cobblestone" for cell in (
-                    (bx + 1, by, bz), (bx + 4, by, bz),
-                    (bx + 1, by + 4, bz), (bx + 4, by + 4, bz))})
+                wanted = perception.frame_wanted_blocks(self.base)
                 blocked |= {cell for cell, name in self._frame_names.items()
                             if cell in wanted and name and not _clear(name)
                             and wanted[cell] != name}

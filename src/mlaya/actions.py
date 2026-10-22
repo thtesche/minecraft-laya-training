@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from .perception import (AIR_NAMES, EAT_HUNGER, INVENTORY_NEAR_FULL, INVENTORY_SLOTS,
                          PORTAL_BLOCK, REGEN_HUNGER, GameState, _in_nether_dimension,
-                         frame_obsidian_cells)
+                         frame_obsidian_cells, frame_wanted_blocks)
 from .targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
                       frontier_heading, nearest_ground)
 
@@ -2405,10 +2405,18 @@ def _frame_blocker(gs: GameState) -> tuple[tuple[int, int, int], str] | None:
     The name comes from the frame-plane read (`gs.frame_names`): `collect_block` matches on it, so
     a cell the scan has not named yet -- or one holding the frame's own block, a fluid, or bedrock
     -- waits rather than being dug blind.
+
+    A cell that now holds the block the frame wants there is done, whatever marked it: the
+    `[BUILD_STOPPED]` marking reads the plane as it stood *before* the build, so the cells that
+    build had just filled were marked too, and run86 dug its own cobblestone corner (-89,68,-6)
+    and two freshly laid obsidian (-88,68,-6), (-86,69,-6) back out of the frame.
     """
+    wanted = frame_wanted_blocks(gs.base) if gs.base is not None else {}
     for cell in gs.refused_frame:
         name = gs.frame_names.get(cell)
         if name is None or name in AIR_NAMES or name in FRAME_UNDIGGABLE:
+            continue
+        if wanted.get(cell) == name:
             continue
         return cell, name
     return None

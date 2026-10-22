@@ -1843,6 +1843,26 @@ class NetherGateTest(unittest.TestCase):
             self.assertNotIn("clear_frame", candidates(g))
             self.assertIsNone(resolve("clear_frame", g))
 
+    def test_a_cell_already_holding_its_frame_block_is_not_dug(self) -> None:
+        # run86: the BUILD_STOPPED marking read the plane from before the build, so the cells the
+        # build had just filled were marked as well, and `clear_frame` dug the cobblestone corner
+        # and two fresh obsidian back out. A cell holding what the frame wants there is done.
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=6, cobblestone=4))
+        corner, bottom = (-196, -47, -98), (-195, -47, -98)
+        g.refused_frame = (corner, bottom)
+        g.frame_names = {corner: "cobblestone", bottom: "obsidian"}
+        self.assertNotIn("clear_frame", candidates(g))
+        self.assertIsNone(resolve("clear_frame", g))
+
+    def test_the_real_blocker_is_dug_past_the_finished_cells(self) -> None:
+        g = self._at_home(self._geared(flint_and_steel=1, obsidian=6, cobblestone=4))
+        bottom, side = (-195, -47, -98), (-196, -46, -98)
+        g.refused_frame = (bottom, side)
+        g.frame_names = {bottom: "obsidian", side: "spruce_leaves"}
+        a = resolve("clear_frame", g)
+        self.assertEqual(a.args["block_name"], "spruce_leaves")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), side)
+
     def test_clear_frame_waits_until_the_bot_is_at_the_base(self) -> None:
         g = self._geared(flint_and_steel=1, obsidian=10, cobblestone=4)
         g.base = (-197, -47, -98)

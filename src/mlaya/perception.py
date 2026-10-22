@@ -1395,6 +1395,15 @@ def frame_obsidian_cells(base: tuple[int, int, int]) -> list[tuple[int, int, int
     return cells
 
 
+def frame_wanted_blocks(base: tuple[int, int, int]) -> dict[tuple[int, int, int], str]:
+    """The block each frame ring cell should hold: obsidian round the opening, cobblestone corners."""
+    bx, by, bz = base
+    wanted = {cell: "obsidian" for cell in frame_obsidian_cells(base)}
+    wanted.update({cell: "cobblestone" for cell in (
+        (bx + 1, by, bz), (bx + 4, by, bz), (bx + 1, by + 4, bz), (bx + 4, by + 4, bz))})
+    return wanted
+
+
 async def scan_frame_volume(executor, base: tuple[int, int, int]) -> dict:
     """One `view_blocks cells` read of the whole frame plane, for the frame-clearance steps.
 
