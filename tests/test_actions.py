@@ -2226,12 +2226,63 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("take_bed", candidates(g))
 
     def test_take_bed_waits_until_the_frame_stands(self) -> None:
+        # A leftover on open ground off the base waits for the lull; only a bed underground is
+        # fetched at once (`test_a_cave_bed_is_fetched_at_once`).
         g = self._geared()
         g.base = (-197, -47, -98)
         g.pos = (-196.5, -46.0, -98.5)
-        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -196, -57, -98, 11.0)]}
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -230, -46, -98, 33.0)]}
         self.assertNotIn("take_bed", candidates(g))
         self.assertIsNone(resolve("take_bed", g))
+
+    def test_a_cave_bed_is_fetched_at_once(self) -> None:
+        # run88 it193-200: the night sleep laid the bed at y=-10 in a zombie cave, the game
+        # refused the sleep but kept the respawn there, and from it198 `take_bed` stood beside
+        # `drop_junk` and `craft_bow` while Laya picked the junk. A bed that far below the base
+        # is now the tick's only step (eating aside), frame or no frame.
+        g = self._geared(cobblestone=40)
+        g.base = (-60, 84, 44)
+        g.pos = (-60.5, -5.0, 22.5)
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -64, -10, 58, 36.0)]}
+        self.assertEqual(candidates(g), ["take_bed"])
+        a = resolve("take_bed", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "white_bed", "count": 1})
+
+    def test_no_night_sleep_with_a_monster_at_hand(self) -> None:
+        # The game refuses the sleep with hostiles near the bed but sets the respawn first, so
+        # the bed is not laid at all while one is within `SLEEP_HOSTILE_CLEAR`.
+        g = self._geared(white_bed=1)
+        g.base = (-60, 84, 44)
+        g.pos = (-120.5, 75.0, 40.5)
+        g.phase = "night"
+        g.nearest_hostile = 6.0
+        self.assertNotIn("sleep", candidates(g))
+        self.assertIsNone(resolve("sleep", g))
+        g.nearest_hostile = 20.0
+        self.assertIn("sleep", candidates(g))
+        self.assertEqual(resolve("sleep", g).tool, "sleep")
+
+    def test_no_night_sleep_underground(self) -> None:
+        # run88 it184: the night found the bot at y=-1 after a hunt; the bed went down in the
+        # cave. Below the surface the night changes nothing, and the bed would only move the
+        # respawn into the rock.
+        g = self._geared(white_bed=1)
+        g.base = (-60, 84, 44)
+        g.pos = (-64.5, -10.0, 57.5)
+        g.phase = "night"
+        self.assertNotIn("sleep", candidates(g))
+        self.assertIsNone(resolve("sleep", g))
+
+    def test_a_cave_bed_in_the_search_keeps_the_sleep_off(self) -> None:
+        # The server sleeps in a standing bed before it lays a carried one, so a cave bed within
+        # its 32 blocks would take the surface sleep back underground.
+        g = self._geared(white_bed=1)
+        g.base = (-60, 84, 44)
+        g.pos = (-64.5, 70.0, 57.5)
+        g.phase = "night"
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -64, 50, 58, 20.0)]}
+        self.assertNotIn("sleep", candidates(g))
 
     def test_take_bed_waits_for_a_carried_bed_to_be_laid(self) -> None:
         # A bed already carried belongs at the base through `place_bed`; the standing leftover

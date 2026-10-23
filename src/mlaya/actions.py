@@ -82,7 +82,7 @@ CRITERIA: dict[str, str] = {
     "build_portal": "build the nether portal frame from the ten banked obsidian and four cobblestone corners",
     "light_portal": "strike the built portal frame with the carried flint and steel to light it",
     "place_bed": "place the carried bed beside the gate frame so the respawn point sits at the gate",
-    "take_bed": "take the standing respawn bed back up when it lies away from the base, so it can be laid beside the portal",
+    "take_bed": "take the standing respawn bed back up when it lies away from the base or underground, so it can be laid beside the portal",
     "drop_junk": "drop low-value blocks from the full pack so a gathering action has room again",
     "step_away_drops": "walk a few blocks off the junk just dropped on open ground, so the bot cannot pick it up again",
     "enter_portal": "step into the lit gate and cross into the Nether for the blaze rods",
@@ -304,6 +304,19 @@ BED_PORTAL_CLEARANCE = 2
 # How far the `sleep` server looks for a standing bed: "[BED_NOT_FOUND] No unoccupied bed found
 # within 32 blocks". A bed the scan sees beyond it cannot be slept in from where the bot stands.
 SLEEP_BED_REACH = 32.0
+# A night sleep away from the base needs open ground and no monster at hand. Minecraft refuses a
+# sleep with hostiles near the bed but sets the respawn point first, so a refused sleep still
+# pins the respawn wherever the bed was laid: run88 slept at y=-10 in a zombie cave (it193-197,
+# five `[BED_HOSTILES_NEARBY]`), the bed stayed, and the bot fought down to 0.2 health with its
+# respawn among the zombies. The hostile radius is wider than the game's own eight blocks, so the
+# bed is never laid for a sleep that will be refused. Underground means feet (or a bed) more than
+# `SLEEP_DEPTH_TOL` below the base floor - or below `SURFACE_FALLBACK_Y` while there is no base -
+# where the night changes nothing and a bed is only a respawn point inside rock. The margin is
+# wide because the base can stand on a hill above a valley's open ground; reading a valley as a
+# cave only skips one sleep, reading a cave as ground lays the respawn in it.
+SLEEP_HOSTILE_CLEAR = 12.0
+SLEEP_DEPTH_TOL = 16
+SURFACE_FALLBACK_Y = 56
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",
@@ -2184,7 +2197,8 @@ def _sleep_ready(gs: GameState) -> bool:
     """
     if _portal_lit(gs):
         return _at_base(gs) and _bed_at_base(gs)
-    return not _at_base(gs) and _bed_in_sleep_reach(gs)
+    return (not _at_base(gs) and not (gs.pos is not None and _underground(gs, gs.pos[1]))
+            and _bed_in_sleep_reach(gs))
 
 
 # How far west of the base anchor the night walk goes before a carried bed may be slept in
@@ -2211,6 +2225,22 @@ def _sleep_off_base(gs: GameState) -> bool:
             and not _expedition_ready(gs))
 
 
+def _underground(gs: GameState, feet_y: float) -> bool:
+    """Whether feet (or a bed) at `feet_y` lie well below the surface the base stands on."""
+    floor = gs.base[1] + 1 if gs.base is not None else SURFACE_FALLBACK_Y
+    return feet_y < floor - SLEEP_DEPTH_TOL
+
+
+def _sleep_safe(gs: GameState) -> bool:
+    """No hostile close enough for the game to refuse the sleep (`SLEEP_HOSTILE_CLEAR`)."""
+    return gs.nearest_hostile is None or gs.nearest_hostile > SLEEP_HOSTILE_CLEAR
+
+
+def _unsafe_beds(gs: GameState) -> list:
+    """Standing beds laid underground: each one may hold the respawn point inside a cave."""
+    return [hit for hit in gs.resources.get("white_bed") or [] if _underground(gs, hit.y)]
+
+
 def _bed_in_sleep_reach(gs: GameState) -> bool:
     """A bed the `sleep` server can find from here: carried, or standing within its search.
 
@@ -2219,6 +2249,10 @@ def _bed_in_sleep_reach(gs: GameState) -> bool:
     the server searches 32, and the exclusive night offer answered `[BED_NOT_FOUND]` on sixteen
     ticks until the morning.
     """
+    if any(hit.distance <= SLEEP_BED_REACH for hit in _unsafe_beds(gs)):
+        # The server sleeps in a standing bed before it lays the carried one, so a cave bed in
+        # its search would take the sleep - and the respawn - back underground.
+        return False
     if _has_bed(gs.inventory):
         return True
     distance = gs.resource_distance("white_bed")
@@ -2747,6 +2781,13 @@ def candidates(gs: GameState) -> list[str]:
             and not _in_nether(gs) and _at_base(gs) and _chest_ready(gs)):
         out.append("take_stored_food")
 
+    # A bed standing underground holds the respawn point in a cave (`_unsafe_beds`), so it is
+    # taken back up before anything else - not left beside `drop_junk` for Laya to pass over, as
+    # run88 did from it198 on with the bot at 0.2 health among the zombies of that cave.
+    if (_unsafe_beds(gs) and not _has_bed(inv) and _overworld(gs)
+            and "take_bed" not in gs.stuck_labels):
+        return (["eat_food"] if eating else []) + ["take_bed"]
+
     wool = _wool(inv)
     string = inv.get("string", 0)
     bed = _bed_available(gs)
@@ -2760,7 +2801,7 @@ def candidates(gs: GameState) -> list[str]:
     # The night offer returns ahead of the withholding filter at the end, so it asks for itself:
     # run86 dropped `sleep` at it2 for `[BED_NOT_FOUND]` and the offer took the next 13 ticks
     # anyway, the window never reaching it.
-    if (gs.phase == "night" and not gs.sleeping and _overworld(gs)
+    if (gs.phase == "night" and not gs.sleeping and _overworld(gs) and _sleep_safe(gs)
             and (_sleep_ready(gs) or _sleep_off_base(gs))
             and "sleep" not in gs.stuck_labels):
         # Sleeping is not a step among others, it is the clock. A night costs about forty decisions
@@ -3494,8 +3535,9 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": tx, "y": ty, "z": tz, "dig": False, "scaffold": False},
                       "step out of the lit portal the body is standing in, before it teleports")
     if label == "take_bed":
-        if (_has_bed(inv) or not _nether_idle(gs) or not _overworld(gs)
-                or not _bed_needs_moving(gs)):
+        if _has_bed(inv) or not _overworld(gs):
+            return None
+        if not _unsafe_beds(gs) and (not _nether_idle(gs) or not _bed_needs_moving(gs)):
             return None
         return Action(label, "collect_block",
                       {"block_name": "white_bed", "count": 1},
@@ -3517,7 +3559,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "sleep", {},
                       "place the carried bed clear of the gate and set the respawn point")
     if label == "sleep":
-        if gs.phase != "night" or gs.sleeping or not _overworld(gs):
+        if gs.phase != "night" or gs.sleeping or not _overworld(gs) or not _sleep_safe(gs):
             return None
         if _sleep_off_base(gs):
             bx, by, bz = gs.base

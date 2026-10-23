@@ -741,6 +741,16 @@ Details of the run86 fixes:
   `sleep` there: it walks `SLEEP_OFF_BASE_STEP` blocks west of the anchor, away from the frame,
   and sleeps off the base next tick; `take_bed` brings the bed home in the day. A gate that may be
   lit now keeps the bot at the base.
+- **A night sleep in a zombie cave.** A night hunt left the bot at y=−1; the night offer laid the
+  bed at (−64, −10, 58) and the game refused five sleeps for the zombies around it — but sets
+  the respawn point before it checks for monsters, so the respawn stayed in the cave while the
+  bot fought down to 0.2 health. `take_bed` was on offer from it198, beside `drop_junk`, and
+  Laya kept picking the junk. Now the night sleep needs no hostile within
+  `SLEEP_HOSTILE_CLEAR = 12` (wider than the game's eight blocks), and away from the base the
+  bot's feet must not lie more than `SLEEP_DEPTH_TOL = 16` below the base floor (`_underground`);
+  a standing bed that deep in the server's 32-block search keeps the sleep off too, since the
+  server would sleep in it before laying the carried one. A bed already standing underground
+  (`_unsafe_beds`) makes `take_bed` the tick's only step, eating aside, frame or no frame.
 
 ## Next milestones
 
