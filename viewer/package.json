@@ -1,0 +1,16 @@
+{
+  "name": "laya-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Live browser view of the MineAI bot: a spectator client (LayaView) with prismarine-viewer",
+  "type": "module",
+  "main": "viewer.mjs",
+  "scripts": {
+    "start": "node viewer.mjs"
+  },
+  "dependencies": {
+    "canvas": "^3.2.3",
+    "mineflayer": "^4.39.0",
+    "prismarine-viewer": "^1.33.0"
+  }
+}

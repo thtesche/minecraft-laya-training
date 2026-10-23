@@ -128,4 +128,8 @@ Tests: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests`.
 - [`docs/architecture.md`](docs/architecture.md) — design, layers, decisions, and the
   milestone-by-milestone findings from the live runs (M1–M4, homebase, Nether chain).
 - [`docs/nether-prep.md`](docs/nether-prep.md) — the Nether preparation design and the
-  open phase 3 (the actual visit).
+  phase 3 visit, with its live status.
+- [`docs/operations.md`](docs/operations.md) — the runbook: world and MCP setup, how a run is
+  started and archived, how a fix lands, how a head is trained.
+- [`viewer/README.md`](viewer/README.md) — the live browser view of the bot (a spectator
+  client with prismarine-viewer).
