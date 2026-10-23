@@ -5233,6 +5233,49 @@ class DeferQuietTest(unittest.TestCase):
         self.assertEqual(agent._defer_quiet, 0)
 
 
+class RefreshAfterTest(unittest.TestCase):
+    """Facts learned after `_verify`'s observation reach the state the next tick decides on."""
+
+    def _agent(self):
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.surface = None
+        agent._frame_complete = False
+        agent._powder_stowed = False
+        agent._stuck_off = {}
+        agent._defer_quiet = 0
+        return agent
+
+    def test_the_probe_answer_climbs_on_the_very_next_tick(self) -> None:
+        # run87 it58/59: the same height-less probe twice before the climb at it60.
+        agent = self._agent()
+        probe = Action("surface_up", "navigate", {"x": -58, "z": 45}, "")
+        after = geared()
+        after.pos = (-57.4, -13.0, 45.5)
+        agent._note_surface(probe, False,
+                            "[NAVIGATION_STOPPED] Pathfinder stopped: [NAVIGATION_HEIGHT_REQUIRED] "
+                            "Column -58, 45 has highest block grass_block at y=84; observed "
+                            "standable feet heights: 85, -13, -39. Supply y to choose a floor..",
+                            after.pos)
+        agent._refresh_after(after)
+        self.assertEqual(after.surface, (-58, 85, 45))
+        climb = resolve("surface_up", after)
+        self.assertEqual((climb.args["x"], climb.args["y"], climb.args["z"]), (-58, 85, 45))
+
+    def test_the_latches_and_the_withholding_are_handed_over(self) -> None:
+        agent = self._agent()
+        agent._frame_complete = True
+        agent._powder_stowed = True
+        agent._stuck_off = {"sleep": 15}
+        agent._defer_quiet = 3
+        after = gs()
+        agent._refresh_after(after)
+        self.assertTrue(after.frame_complete)
+        self.assertTrue(after.powder_stowed)
+        self.assertEqual(after.stuck_labels, frozenset({"sleep"}))
+        self.assertEqual(after.defer_quiet, 3)
+
+
 class WaitHoldTest(unittest.IsolatedAsyncioTestCase):
     """A successful `wait` holds `wait_hold_s` instead of burning an iteration per second."""
 

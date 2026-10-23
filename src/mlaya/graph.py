@@ -1040,6 +1040,23 @@ class Agent:
         if hold > 0:
             await asyncio.sleep(hold)
 
+    def _refresh_after(self, gs) -> None:
+        """Hand the facts learned after the observation to the state the next tick decides on.
+
+        `_verify` observes first and then reads the result into the loop's own facts, but the
+        observation already carried the old ones (`_inject`), and the next `decide` uses that very
+        state. So every fact learned here acted one tick late: run87 sent each `surface_up` probe
+        twice (`[NAVIGATION_HEIGHT_REQUIRED]` at it58 and it59, it64/65, it68/69) because the
+        height the first refusal named only reached the state of the tick after the second, and a
+        withheld label still owned the tick it was withheld on. Only plain copies here - `_inject`
+        also counts ticks (`water_ticks`) and must run once per observation.
+        """
+        gs.surface = self.surface
+        gs.frame_complete = self._frame_complete
+        gs.powder_stowed = self._powder_stowed
+        gs.stuck_labels = frozenset(self._stuck_off)
+        gs.defer_quiet = self._defer_quiet
+
     def _note_hurt(self, before, after) -> None:
         """A hit while the loop works hands the next contact back to the survival policy."""
         if (before.health is not None and after.health is not None
@@ -1778,7 +1795,6 @@ class Agent:
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
         self._note_hurt(before, after)
-        after.defer_quiet = self._defer_quiet
         self._note_build(action, _ok, delta)
         self._note_stow(action, _ok, delta)
         progressed = vmod.progressed(action.label, delta, _ok)
@@ -1787,6 +1803,7 @@ class Agent:
         # action is not a refusal, so the two runs of counts do not disturb each other.
         self._track_wander(action.label, res)
         self._track_idle(action.label, delta)
+        self._refresh_after(after)
         record = {
             "stage": "action",
             "iteration": state.get("iteration", 0),
