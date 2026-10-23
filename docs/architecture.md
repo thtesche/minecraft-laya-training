@@ -668,7 +668,7 @@ progress. The loop now has one guard per kind of stall; each withholds the label
 | walking far, arriving nowhere | `_track_wander` | ≥ `WANDER_WALK = 80` m walked at a ratio worse than `WANDER_RATIO = 6`, `WANDER_REPEATS = 2`× |
 | succeeding at nothing | `_track_idle` | `IDLE_REPEATS = 3` ticks with no change at all (`wait`/`sleep` exempt) |
 | a walk off dropped junk that cannot be made | `_note_step_away` | `STEP_AWAY_GIVE_UP = 3` refusals in a row |
-| deferring to a reflex that does nothing | `_note_defer` | `DEFER_QUIET_TICKS = 5` quiet defers (see M3) |
+| deferring to a reflex that does nothing | `_note_defer` | `DEFER_QUIET_TICKS = 5` quiet defers (see M3); under the health band only when nothing heals in place (`_recovery_owed`) |
 
 Three lessons from the runs behind them:
 
@@ -722,7 +722,7 @@ Details of the run86 fixes:
   `drop_item` cannot aim — nearest to the bot on its own level; a refused cell gives way to the
   next from the same read.
 
-### run88 (2026-10-23): three ways of standing still
+### run87 (2026-10-23): standing still, and a bed in a cave
 
 - **The walk off a drop went the way of the toss.** In a one-wide tunnel the cells four blocks
   east and west of the drop tie, and the tie went to the lower x — west. The bot had dug west,
@@ -751,6 +751,23 @@ Details of the run86 fixes:
   a standing bed that deep in the server's 32-block search keeps the sleep off too, since the
   server would sleep in it before laying the carried one. A bed already standing underground
   (`_unsafe_beds`) makes `take_bed` the tick's only step, eating aside, frame or no frame.
+
+### run88 (2026-10-23): wounded, foodless, deferring
+
+The fastest chain of the series — the whole diamond set worn by it55 — and then nothing: at it63
+cave-spider bites during `mine_iron` beside a spawner took the bot to 8.5 health. It had not
+carried one edible item all run, and at hunger 17 the game does not regenerate (`REGEN_HUNGER`
+is 18). Below `RECOVER_HEALTH = 15` every hostile `yes` deferred to the survival policy, which
+had nothing to fight and nothing to eat; the quiet-defer release only applied above the band.
+536 defers to the iteration limit, health fixed at 8.5, while the spawner's spiders gathered to
+89 at 10–16 m. `hunt_food` for a chicken 44 m away was on offer on it65–76 and deferred with the
+rest.
+
+`actions._recovery_owed` names the case: under the band, `DEFER_QUIET_TICKS` quiet defers, no
+food carried, hunger under `REGEN_HUNGER`. `brain.danger_matters` then hands the tick back, and
+`candidates` offers `_recovery_steps` alone: `hunt_food` with an animal in reach, else `go_home`
+to the base, else `surface_up` out of the cave when there is no base, else `explore`. While the
+body can still heal — food in the pack, or hunger at 18 — the defer holds as before.
 
 ## Next milestones
 

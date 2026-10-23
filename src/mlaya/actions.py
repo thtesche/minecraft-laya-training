@@ -306,7 +306,7 @@ BED_PORTAL_CLEARANCE = 2
 SLEEP_BED_REACH = 32.0
 # A night sleep away from the base needs open ground and no monster at hand. Minecraft refuses a
 # sleep with hostiles near the bed but sets the respawn point first, so a refused sleep still
-# pins the respawn wherever the bed was laid: run88 slept at y=-10 in a zombie cave (it193-197,
+# pins the respawn wherever the bed was laid: run87 slept at y=-10 in a zombie cave (it193-197,
 # five `[BED_HOSTILES_NEARBY]`), the bed stayed, and the bot fought down to 0.2 health with its
 # respawn among the zombies. The hostile radius is wider than the game's own eight blocks, so the
 # bed is never laid for a sleep that will be refused. Underground means feet (or a bed) more than
@@ -355,6 +355,14 @@ NETHER_FOOD_RESERVE = 64
 # as the gate that withholds nothing. EAT_HUNGER is the survival floor the reflex has always
 # used; REGEN_HUNGER is Minecraft's natural regeneration threshold.
 HEALTH_MAX = 20.0
+# Health under this hands a hostile `yes` to the survival policy (`brain.danger_matters`): the
+# body is at risk, so the loop stands aside while the server's reflexes fight and eat.
+RECOVER_HEALTH = 15.0
+# Defers in a row that took no damage and saw no reflex act (`graph.Agent._note_defer`). After
+# this many the policy is not doing anything with the tick: above `RECOVER_HEALTH` the loop
+# works again (run86, blazes at a spawner that no longer attacked), and below it the loop takes
+# the tick only to recover (`_recovery_owed`).
+DEFER_QUIET_TICKS = 5
 
 # --- Nether prep (the daytime lull once the gate frame stands) ---
 # Beyond the deep food reserve, the expedition wants a ranged answer, a piglin pass and building
@@ -390,7 +398,7 @@ NETHER_COBBLE = 64
 # How far the Nether stack may run below `NETHER_COBBLE` before `mine_stone` refills it. The surplus
 # drop leaves exactly `NETHER_COBBLE` (`HOARD_KEEP`), and the next scaffold block took it to 63:
 # `mine_stone` came up for the one block, and its `collect_block` hoovered up the whole pile just
-# dropped beside the bot (live, run88 it177-179: 63 cobblestone and all the junk back in the pack,
+# dropped beside the bot (live, run87 it177-179: 63 cobblestone and all the junk back in the pack,
 # dropped again the next tick). One `mine_stone` batch of slack keeps the two lines apart.
 NETHER_COBBLE_SLACK = 8
 # Food hunting is the one gather that walks to a moving target, so it is bounded by
@@ -531,6 +539,41 @@ def _armed(gs: GameState) -> bool:
         if tool != "none":
             return True
     return False
+
+
+def _recovery_owed(gs: GameState) -> bool:
+    """Wounded, the survival policy idle, and nothing that heals where the bot stands.
+
+    Below `RECOVER_HEALTH` the loop defers every tick to the policy, which fights and eats - but
+    a body with no food in the pack and hunger under `REGEN_HUNGER` neither eats nor regenerates.
+    run88 took cave-spider bites down to 8.5 health at it63, hunger 17, not one edible item all
+    run, and deferred the remaining 536 ticks standing beside the spawner: health never moved,
+    and the `hunt_food` offered on it65-76 for a chicken 44 m off was deferred with the rest.
+    After `DEFER_QUIET_TICKS` quiet defers the loop takes the tick back for `_recovery_steps`
+    alone.
+    """
+    food = getattr(gs, "food", None)
+    return (gs.health is not None and gs.health < RECOVER_HEALTH
+            and getattr(gs, "defer_quiet", 0) >= DEFER_QUIET_TICKS
+            and not _first_edible(getattr(gs, "inventory", None) or {})
+            and food is not None and food < REGEN_HUNGER)
+
+
+def _recovery_steps(gs: GameState) -> list[str]:
+    """The one step that leads toward food or safety, while `_recovery_owed` holds.
+
+    Food first, because a meal is what heals: the hunt when an animal is in reach. Otherwise
+    away from where the bot was hurt - home to the base, or up out of the cave when there is none
+    - and with neither, `explore` toward new ground and new animals. No work rides along: a
+    `smelt_iron` at 8.5 health beside a spawner is how the next bite finds the bot.
+    """
+    if _hunt_ok(gs) and _food_target(gs) is not None:
+        return ["hunt_food"]
+    if gs.base is not None and not _at_base(gs) and not _in_nether(gs):
+        return ["go_home"]
+    if gs.base is None and _gear_ready(gs) and gs.pos is not None and not _at_surface(gs):
+        return ["surface_up"]
+    return ["explore"]
 
 
 def _hunt_ok(gs: GameState) -> bool:
@@ -1703,10 +1746,11 @@ def _go_home_wanted(gs: GameState) -> bool:
     was already true here for the crossing: `candidates` offered `go_home` when
     `_nether_departure_ready` held, while `resolve` knew only about `_base_steps_ready`.
 
-    Three reasons, in the order they matter:
+    Four reasons, in the order they matter:
       some base step is waiting
       the Nether gate is lit and stocked, and the bot's next job only it can do standing there
       it is night and the bed is at the base
+      wounded with nothing to heal on (`_recovery_owed`), so the base is the way out
     """
     # Never in the Nether. `base` is one field for both worlds, so its coordinates name a
     # different place down there - 778 m from where the bot actually stood, live, run70. The
@@ -1717,7 +1761,7 @@ def _go_home_wanted(gs: GameState) -> bool:
     if _in_nether(gs):
         return False
     return (_base_steps_ready(gs) or _nether_departure_ready(gs)
-            or (gs.phase == "night" and _bed_at_base(gs)))
+            or (gs.phase == "night" and _bed_at_base(gs)) or _recovery_owed(gs))
 
 
 def _junk_carried(inv: dict[str, int]) -> list[str]:
@@ -2214,7 +2258,7 @@ def _sleep_off_base(gs: GameState) -> bool:
     `_sleep_ready` forbids sleeping at the base before the gate burns (the bed would land in the
     open 2x3 opening) and allows it anywhere else - but nothing walked the bot anywhere else. With
     the gate still waiting for its spare pickaxe and no diamond ore in view, the night offered
-    `wait` alone: run88 stood twelve ticks at its base, bed in the pack, until dawn (it147-158).
+    `wait` alone: run87 stood twelve ticks at its base, bed in the pack, until dawn (it147-158).
     The walk west leaves the frame behind; the bed it lays there is a leftover `take_bed` brings
     home in the day, as it does for every bed slept in away from the base. A gate that may be lit
     now (`_expedition_ready`) keeps the bot at the base: lighting it and `place_bed` beside it is
@@ -2727,6 +2771,11 @@ def candidates(gs: GameState) -> list[str]:
         if dx * dx + dz * dz < 3.0 * 3.0:
             return ["step_away_drops"]
 
+    # Wounded with nothing to heal on and the survival policy idle: the tick goes to food or
+    # safety, nothing else (`_recovery_owed`).
+    if _recovery_owed(gs):
+        return _recovery_steps(gs)
+
     # --- event-driven reactions (M2d) ---
     # A tool about to break, a mob the reflex just killed (its drops despawn in minutes),
     # or gear lying at a fresh death site are all time-sensitive, so the top reaction
@@ -2783,7 +2832,7 @@ def candidates(gs: GameState) -> list[str]:
 
     # A bed standing underground holds the respawn point in a cave (`_unsafe_beds`), so it is
     # taken back up before anything else - not left beside `drop_junk` for Laya to pass over, as
-    # run88 did from it198 on with the bot at 0.2 health among the zombies of that cave.
+    # run87 did from it198 on with the bot at 0.2 health among the zombies of that cave.
     if (_unsafe_beds(gs) and not _has_bed(inv) and _overworld(gs)
             and "take_bed" not in gs.stuck_labels):
         return (["eat_food"] if eating else []) + ["take_bed"]

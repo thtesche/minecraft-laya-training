@@ -332,7 +332,7 @@ def step_away_cell(grid: dict[tuple[int, int, int], str],
     own level first.
 
     `heading` is the way the bot last walked (x, z), which is the way it faced when it tossed, so
-    the junk lies ahead of the drop. A cell behind it wins over any cell ahead: run88 dug west
+    the junk lies ahead of the drop. A cell behind it wins over any cell ahead: run87 dug west
     along a tunnel, tossed west, and the tie between the cells four blocks east and west went to
     the lower x - west, through the pile - so four rounds of drop and step-away picked the same
     junk straight back up (it171-176). Without a heading every cell counts alike.

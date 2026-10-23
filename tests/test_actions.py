@@ -14,6 +14,7 @@ from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _hoard_surpl
                          _portal_lit, Action, _armor_to_wear, candidates,
                          BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
+                         DEFER_QUIET_TICKS,
                            nether_expedition_complete, NETHER_SEARCH_M, NETHER_HOPELESS_TICKS, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
@@ -455,6 +456,54 @@ class FoodChainTest(unittest.TestCase):
         self.assertIn("eat_food", candidates(g))
 
 
+class RecoveryTest(unittest.TestCase):
+    """Wounded with nothing to heal on: the loop takes the tick back for food or a retreat.
+
+    run88 from it64: cave-spider bites took the bot to 8.5 health beside a spawner, hunger 17,
+    not one edible item all run. Below the health band every tick deferred to the survival
+    policy, which had nothing to do - 536 defers, health never moved, the run ended standing.
+    """
+
+    @staticmethod
+    def _hurt(**kw) -> GameState:
+        g = geared(cobblestone=179, raw_iron=3, furnace=1, coal=3, spider_eye=2)
+        g.health, g.food, g.phase = 8.5, 17.0, "day"
+        g.pos = (-233.4, 4.0, 35.3)
+        g.nearest_hostile = 12.9
+        g.defer_quiet = DEFER_QUIET_TICKS
+        for k, v in kw.items():
+            setattr(g, k, v)
+        return g
+
+    def test_an_animal_in_reach_is_hunted(self) -> None:
+        # it66: a chicken 44 m off, `hunt_food` on offer - and deferred with every other tick.
+        g = self._hurt(mobs=[("chicken", "animal", 4, 44.0)])
+        self.assertEqual(candidates(g), ["hunt_food"])
+        self.assertEqual(resolve("hunt_food", g).tool, "collect_mob_drop")
+
+    def test_no_animal_and_no_base_climbs_out(self) -> None:
+        g = self._hurt(mobs=[("chicken", "animal", 3, 115.5)])
+        self.assertEqual(candidates(g), ["surface_up"])
+        self.assertIsNotNone(resolve("surface_up", g))
+
+    def test_a_base_draws_the_bot_home(self) -> None:
+        g = self._hurt(base=(-60, 84, 44))
+        self.assertEqual(candidates(g), ["go_home"])
+        self.assertEqual(resolve("go_home", g).tool, "navigate")
+
+    def test_work_comes_back_before_the_quiet_defers(self) -> None:
+        # The policy gets its quiet ticks first; only then does the tick go to recovery.
+        g = self._hurt(defer_quiet=DEFER_QUIET_TICKS - 1)
+        self.assertNotEqual(candidates(g), ["surface_up"])
+
+    def test_food_in_the_pack_is_no_recovery_case(self) -> None:
+        # Eating heals: the ordinary offer with `eat_food` runs, not the retreat.
+        g = self._hurt()
+        g.inventory["cooked_beef"] = 3
+        self.assertIn("eat_food", candidates(g))
+        self.assertNotEqual(candidates(g), ["surface_up"])
+
+
 class NetherLullWaitTest(unittest.TestCase):
     """The lull after the portal is lit and the bed laid: nothing productive is left, so the bot
     holds at the base instead of wandering off on `explore` (live, from-zero run: 25 idle ticks,
@@ -624,7 +673,7 @@ class NetherPrepTest(unittest.TestCase):
         self.assertIn("mine_stone", candidates(g))
 
     def test_one_scaffold_block_does_not_reopen_the_dig(self) -> None:
-        # run88 it177-179: the drop left exactly 64, the walk off it laid one scaffold block,
+        # run87 it177-179: the drop left exactly 64, the walk off it laid one scaffold block,
         # and `mine_stone` came up for the 63rd - its `collect_block` hoovered the dropped pile
         # straight back into the pack. A batch of slack keeps the two lines apart.
         g = self._lull(bow=1, arrow=16, cobblestone=NETHER_COBBLE - 1)
@@ -2147,7 +2196,7 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.args["z"], bz)
 
     def test_a_night_at_the_base_walks_off_it_to_sleep(self) -> None:
-        # run88 it147-158: night, the frame up but unlit (the spare pickaxe still owed), no
+        # run87 it147-158: night, the frame up but unlit (the spare pickaxe still owed), no
         # diamond ore in view and the bed in the pack. Sleeping at the base is forbidden and
         # nothing walked the bot anywhere else, so the night offered `wait` alone for twelve
         # ticks. Now `sleep` is offered and walks off the base first; off it, it sleeps.
@@ -2236,7 +2285,7 @@ class NetherGateTest(unittest.TestCase):
         self.assertIsNone(resolve("take_bed", g))
 
     def test_a_cave_bed_is_fetched_at_once(self) -> None:
-        # run88 it193-200: the night sleep laid the bed at y=-10 in a zombie cave, the game
+        # run87 it193-200: the night sleep laid the bed at y=-10 in a zombie cave, the game
         # refused the sleep but kept the respawn there, and from it198 `take_bed` stood beside
         # `drop_junk` and `craft_bow` while Laya picked the junk. A bed that far below the base
         # is now the tick's only step (eating aside), frame or no frame.
@@ -2264,7 +2313,7 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(resolve("sleep", g).tool, "sleep")
 
     def test_no_night_sleep_underground(self) -> None:
-        # run88 it184: the night found the bot at y=-1 after a hunt; the bed went down in the
+        # run87 it184: the night found the bot at y=-1 after a hunt; the bed went down in the
         # cave. Below the surface the night changes nothing, and the bed would only move the
         # respawn into the rock.
         g = self._geared(white_bed=1)

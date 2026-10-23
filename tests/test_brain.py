@@ -94,10 +94,29 @@ class DangerMattersTest(unittest.TestCase):
         g.defer_quiet = DEFER_QUIET_TICKS
         self.assertFalse(danger_matters(g))
 
-    def test_low_health_defers_however_quiet(self) -> None:
+    def test_low_health_defers_however_quiet_while_it_can_heal(self) -> None:
+        # Food in the pack, or hunger high enough to regenerate: the policy heals the body, so
+        # the defer holds however quiet the ticks are.
         g = _gs(DANGER_DEFER_HEALTH - 0.1, 2.0)
         g.defer_quiet = DEFER_QUIET_TICKS + 10
+        g.food = 17.0
+        g.inventory = {"cooked_beef": 3}
         self.assertTrue(danger_matters(g))
+        g.inventory = {}
+        g.food = 18.0
+        self.assertTrue(danger_matters(g))
+
+    def test_low_health_with_nothing_to_heal_on_goes_back_to_the_loop(self) -> None:
+        # run88 from it64: 8.5 health after cave-spider bites, hunger 17, not one edible item,
+        # the spiders held off at 10-16 m. The policy had nothing to do and 536 defers changed
+        # nothing; after the quiet defers the loop takes the tick for its recovery steps.
+        g = _gs(8.5, 10.0)
+        g.food = 17.0
+        g.inventory = {"cobblestone": 179, "spider_eye": 2}
+        g.defer_quiet = DEFER_QUIET_TICKS - 1
+        self.assertTrue(danger_matters(g))
+        g.defer_quiet = DEFER_QUIET_TICKS
+        self.assertFalse(danger_matters(g))
 
 
 if __name__ == "__main__":

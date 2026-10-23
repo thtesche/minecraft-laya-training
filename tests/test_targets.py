@@ -494,7 +494,7 @@ class StepAwayCellTest(unittest.TestCase):
         self.assertIsNone(step_away_cell({}, self.DROP, self.DROP))
 
     def _tunnel(self) -> dict:
-        # A one-wide tunnel running east-west at z=-5, stone everywhere else (run88 at y=6).
+        # A one-wide tunnel running east-west at z=-5, stone everywhere else (run87 at y=6).
         grid = {}
         for x in range(-96, -82):
             for z in range(-7, -2):
@@ -503,7 +503,7 @@ class StepAwayCellTest(unittest.TestCase):
         return grid
 
     def test_the_walk_goes_back_the_way_the_bot_came(self) -> None:
-        # run88 it171-176: dug west, tossed west, and the even tie between the cells east and
+        # run87 it171-176: dug west, tossed west, and the even tie between the cells east and
         # west went west through the pile - the junk came straight back up, four rounds running.
         # With the heading the cell behind the bot wins.
         grid = self._tunnel()

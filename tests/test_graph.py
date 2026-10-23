@@ -1658,7 +1658,7 @@ class DropHoleTest(unittest.TestCase):
 
     def test_the_drop_keeps_the_way_the_bot_walked(self) -> None:
         # The toss flies the way the bot faces, which is the way it last walked; the walk off
-        # the drop reads that heading (run88: dug west, tossed west, stepped west into the pile).
+        # the drop reads that heading (run87: dug west, tossed west, stepped west into the pile).
         agent = self._agent()
         agent._drop_hole_blocked = True
         agent._note_heading((-59.5, 85.0, 44.5), (-93.5, 6.0, 35.3))
