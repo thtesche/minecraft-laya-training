@@ -242,5 +242,56 @@ class RealLogSmokeTest(unittest.TestCase):
                 self.assertIn(label, CRITERIA)
 
 
+class LoopFilterTest(unittest.TestCase):
+    """Ping-pong ticks and walk-only deposits teach no intent (run82, run84)."""
+
+    def _act(self, n, label, inv=None):
+        rec = _rec(f"state {n}", ["go_home", "stow_surplus", "mine_obsidian"], label)
+        rec["delta"] = {"inventory_delta": inv or {}}
+        return rec
+
+    def _rows(self, records):
+        with tempfile.TemporaryDirectory() as d:
+            return ds.build_rows(_write(Path(d), records), with_danger=False)
+
+    def test_an_alternation_with_nothing_gained_is_dropped(self):
+        # run82: go_home <-> stow_surplus, every tick "ok", delta {}.
+        recs = [self._act(i, "go_home" if i % 2 else "stow_surplus", {"cobblestone": -1} if i % 2 == 0 else {})
+                for i in range(ds.LOOP_MIN_TICKS)]
+        self.assertEqual(self._rows(recs), [])
+
+    def test_gains_and_losses_that_cancel_are_still_a_loop(self):
+        # run84: mine_obsidian +25 cobblestone, go_home -25.
+        recs = [self._act(i, "mine_obsidian" if i % 2 == 0 else "go_home",
+                          {"cobblestone": 25 if i % 2 == 0 else -25})
+                for i in range(ds.LOOP_MIN_TICKS)]
+        self.assertEqual(self._rows(recs), [])
+
+    def test_a_short_alternation_is_kept(self):
+        recs = [self._act(i, "mine_obsidian" if i % 2 == 0 else "go_home")
+                for i in range(ds.LOOP_MIN_TICKS - 1)]
+        self.assertEqual(len(self._rows(recs)), ds.LOOP_MIN_TICKS - 1)
+
+    def test_an_alternation_that_gains_is_work(self):
+        recs = [self._act(i, "mine_obsidian" if i % 2 == 0 else "go_home",
+                          {"obsidian": 1} if i % 2 == 0 else {})
+                for i in range(ds.LOOP_MIN_TICKS)]
+        self.assertEqual(len(self._rows(recs)), ds.LOOP_MIN_TICKS)
+
+    def test_a_stow_that_only_walked_is_no_deposit(self):
+        rows = self._rows([self._act(0, "stow_surplus"),
+                           self._act(1, "stow_surplus", {"cobblestone": -64}),
+                           self._act(2, "go_home")])
+        self.assertEqual([r["state"] for r in rows], ["state 1", "state 2"])
+
+    def test_several_logs_are_read_as_one_set(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d) / "a.jsonl", Path(d) / "b.jsonl"
+            a.write_text(json.dumps(self._act(0, "go_home")) + "\n", encoding="utf-8")
+            b.write_text(json.dumps(self._act(1, "mine_obsidian")) + "\n", encoding="utf-8")
+            rows = ds.build_rows([a, b], with_danger=False)
+        self.assertEqual([r["state"] for r in rows], ["state 0", "state 1"])
+
+
 if __name__ == "__main__":
     unittest.main()

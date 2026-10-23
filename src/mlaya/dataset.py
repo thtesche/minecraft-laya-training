@@ -152,8 +152,56 @@ def _danger_defer_row(narrative: str, answers: dict | None, note: str | None) ->
             "expected": {DANGER_QID: "yes"}}
 
 
+# A ping-pong is a run of ticks that keeps succeeding and gets nowhere: two labels handing the
+# bot to each other (run82: `go_home` and `stow_surplus`, 481 ticks, every one "ok" and walking;
+# run84: `mine_obsidian` and `go_home`, cobblestone +25 / -25), or one label repeated the same
+# way. The verifier reads each tick as progress - a walk moved the bot - so without this filter
+# the head learns the loop itself. A window this long with no item gained over it is dropped.
+LOOP_MIN_TICKS = 6
+
+
+def _inventory_delta(rec: dict) -> dict:
+    delta = rec.get("delta") if isinstance(rec.get("delta"), dict) else {}
+    inv = delta.get("inventory_delta")
+    return inv if isinstance(inv, dict) else {}
+
+
+def _deposited(rec: dict) -> bool:
+    """Whether a tick actually put something away: an item left the pack."""
+    return any(isinstance(v, (int, float)) and v < 0 for v in _inventory_delta(rec).values())
+
+
+def _loop_ticks(records: list[dict]) -> set[int]:
+    """Indices into `records` of the action ticks inside a ping-pong window (`LOOP_MIN_TICKS`).
+
+    A window is a maximal run of consecutive action ticks that either repeats one label or
+    strictly alternates two; it is a loop when no item has a net gain across it.
+    """
+    acts = [(i, r) for i, r in enumerate(records) if r.get("stage") == "action"]
+    out: set[int] = set()
+    i = 0
+    while i < len(acts):
+        a = acts[i][1].get("label")
+        b = acts[i + 1][1].get("label") if i + 1 < len(acts) else None
+        k = i + 1
+        while k < len(acts) and acts[k][1].get("label") == (a if (k - i) % 2 == 0 else b):
+            k += 1
+        window = acts[i:k]
+        net: dict[str, float] = {}
+        for _, rec in window:
+            for item, v in _inventory_delta(rec).items():
+                if isinstance(v, (int, float)):
+                    net[item] = net.get(item, 0) + v
+        if len(window) >= LOOP_MIN_TICKS and not any(v > 0 for v in net.values()):
+            out.update(idx for idx, _ in window)
+            i = k
+            continue
+        i += 1
+    return out
+
+
 def build_rows(
-    log_path: Path,
+    log_path: Path | Iterable[Path],
     *,
     include_failed: bool = False,
     with_danger: bool = True,
@@ -163,16 +211,25 @@ def build_rows(
 
     Action ticks: only those with more than one eligible label carry an `intent` choice; a
     single-candidate tick is deterministic at run time (the filter already picked it), so it
-    teaches nothing. Ticks are de-duplicated on (state, candidates).
+    teaches nothing. Ticks are de-duplicated on (state, candidates). Several logs are read as
+    one set; ticks inside a ping-pong window (`_loop_ticks`) teach no intent, and a
+    `stow_surplus` counts only when an item actually left the pack.
 
     Defer ticks: a deferred tick is the bot standing aside for the server survival reflex.
     When the reason is danger that is a labelled `in_danger = yes` example - the case an
     action-only dataset never sees. It becomes a danger-only row. A defer for another reason
     ("no valid action") is ignored.
     """
+    paths = [log_path] if isinstance(log_path, (str, Path)) else list(log_path)
+    records: list[dict] = []
+    loops: set[int] = set()
+    for path in paths:
+        part = _read_records(Path(path))
+        loops |= {len(records) + i for i in _loop_ticks(part)}
+        records.extend(part)
     rows: list[dict] = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
-    for rec in _read_records(log_path):
+    for index, rec in enumerate(records):
         stage = rec.get("stage")
         if stage not in ("action", "defer"):
             continue
@@ -196,7 +253,9 @@ def build_rows(
 
         candidates = tuple(c for c in (rec.get("candidates") or []) if c in CRITERIA)
         label = rec.get("label")
-        teachable = len(candidates) >= 2 and label in candidates
+        teachable = (len(candidates) >= 2 and label in candidates and index not in loops
+                     # The walk to the chest is no deposit: only an item leaving the pack is.
+                     and (label != "stow_surplus" or _deposited(rec)))
         if teachable and (rec.get("progressed") or include_failed):
             key = (narrative, candidates)
             if key in seen:

@@ -125,8 +125,13 @@ def cmd_dataset(args) -> int:
     from . import dataset as ds
 
     settings = load_settings()
+    logs = [_resolve(p) for p in args.log] if args.log else [settings.log_path()]
+    missing = [str(p) for p in logs if not p.exists()]
+    if missing:
+        print(json.dumps({"error": "run log not found", "missing": missing}))
+        return 2
     rows = ds.build_rows(
-        settings.log_path(),
+        logs,
         include_failed=args.include_failed,
         with_danger=not args.no_danger,
         limit=args.limit or None,
@@ -143,7 +148,7 @@ def cmd_dataset(args) -> int:
         labels[lab] = labels.get(lab, 0) + 1
 
     result = {
-        "log": str(settings.log_path()),
+        "logs": [str(p) for p in logs],
         "rows": len(rows),
         "train": len(train),
         "eval": len(ev),
@@ -157,6 +162,17 @@ def cmd_dataset(args) -> int:
         result["eval_path"] = str(ev_path)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
+
+
+def _train_base(settings, name: str = "") -> str:
+    """The checkpoint a fine-tune starts from: `--base`, else `[train] base_model`.
+
+    A name the run re-points through `LAYA_EXTRA_MODELS` resolves the same way here, so the
+    head is trained on top of the checkpoint the loop actually served. Resolving the bare name
+    instead fell back to the built-in `english` from the Hub, discarding every earlier fine-tune.
+    """
+    name = name or settings.train.base_model
+    return str(settings.laya.extra_models.get(name, name))
 
 
 def cmd_train(args) -> int:
@@ -193,7 +209,7 @@ def cmd_train(args) -> int:
     )
 
     if args.dry_run:
-        base = resolve_checkpoint_dir(tcfg.base_model)
+        base = resolve_checkpoint_dir(_train_base(settings, args.base))
         print(json.dumps({"dry_run": True, "data": str(data), "eval_data": eval_path,
                           "base": base, "config": {"epochs": epochs, "loss": loss,
                                                    "freeze_encoder": cfg.freeze_encoder}},
@@ -201,7 +217,7 @@ def cmd_train(args) -> int:
         print(json.dumps(dry_run(str(data), base, cfg), indent=2, ensure_ascii=False, default=str))
         return 0
 
-    base = resolve_checkpoint_dir(tcfg.base_model)
+    base = resolve_checkpoint_dir(_train_base(settings, args.base))
     out = _resolve(args.out) if args.out else _resolve(
         f"{tcfg.out_dir}/minecraft-{time.strftime('%Y%m%d-%H%M%S')}")
     summary = finetune(str(data), base, str(out), cfg, device=args.device or "auto")
@@ -234,6 +250,8 @@ def main(argv: list[str] | None = None) -> int:
                      help="base (cautious travel) or hunt (aggressive combat floor)")
 
     dset = sub.add_parser("dataset", help="build Laya training JSONL from the run log")
+    dset.add_argument("--log", action="append", default=[],
+                      help="run log to read; repeat for several (default: the configured log)")
     dset.add_argument("--out", default="data/train.jsonl", help="training JSONL path")
     dset.add_argument("--eval", default="", help="held-out JSONL path (empty = write only train)")
     dset.add_argument("--eval-frac", type=float, default=0.25, help="eval split fraction")
@@ -246,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
 
     trn = sub.add_parser("train", help="fine-tune a Laya checkpoint head on the dataset")
     trn.add_argument("--data", default="", help="training JSONL (default data/train.jsonl)")
+    trn.add_argument("--base", default="",
+                     help="checkpoint to start from: a name or a directory (default [train] base_model)")
     trn.add_argument("--eval", default=None, help="held-out JSONL (default auto-detect)")
     trn.add_argument("--out", default="", help="checkpoint output dir")
     trn.add_argument("--epochs", type=int, default=0)
