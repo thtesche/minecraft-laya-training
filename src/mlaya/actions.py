@@ -541,26 +541,51 @@ def _armed(gs: GameState) -> bool:
     return False
 
 
-def _recovery_owed(gs: GameState) -> bool:
-    """Wounded, the survival policy idle, and nothing that heals where the bot stands.
+def _cannot_heal(gs: GameState) -> bool:
+    """Wounded, and nothing that heals where the bot stands: no food carried, no regeneration.
 
-    Below `RECOVER_HEALTH` the loop defers every tick to the policy, which fights and eats - but
-    a body with no food in the pack and hunger under `REGEN_HUNGER` neither eats nor regenerates.
-    run88 took cave-spider bites down to 8.5 health at it63, hunger 17, not one edible item all
-    run, and deferred the remaining 536 ticks standing beside the spawner: health never moved,
-    and the `hunt_food` offered on it65-76 for a chicken 44 m off was deferred with the rest.
-    After `DEFER_QUIET_TICKS` quiet defers the loop takes the tick back for `_recovery_steps`
-    alone.
+    A body with no food in the pack and hunger under `REGEN_HUNGER` neither eats nor regenerates,
+    so every tick of work at that health is a tick waiting for the next hit. Whenever the loop has
+    the tick in that state it offers `_recovery_steps` alone. run89 began in run88's state - 8.5
+    health, hunger 15, no food, in the spider cave - and the gate's `no` handed it the ordinary
+    offer (`smelt_iron`, `hunt_wool`, `get_flint`) for fifteen ticks while the hunger fell to 5.
     """
     food = getattr(gs, "food", None)
     return (gs.health is not None and gs.health < RECOVER_HEALTH
-            and getattr(gs, "defer_quiet", 0) >= DEFER_QUIET_TICKS
             and not _first_edible(getattr(gs, "inventory", None) or {})
             and food is not None and food < REGEN_HUNGER)
 
 
+def _recovery_owed(gs: GameState) -> bool:
+    """`_cannot_heal`, and the survival policy idle: the defer below the band lets go.
+
+    Below `RECOVER_HEALTH` the loop defers every hostile `yes` to the policy, which fights and
+    eats - with nothing to eat it does nothing. run88 took cave-spider bites down to 8.5 health at
+    it63, hunger 17, not one edible item all run, and deferred the remaining 536 ticks beside the
+    spawner: health never moved, and the `hunt_food` offered on it65-76 for a chicken 44 m off was
+    deferred with the rest. After `DEFER_QUIET_TICKS` quiet defers `brain.danger_matters` hands
+    the tick back for `_recovery_steps`.
+    """
+    return _cannot_heal(gs) and getattr(gs, "defer_quiet", 0) >= DEFER_QUIET_TICKS
+
+
+def _must_eat(gs: GameState) -> bool:
+    """Food carried, and the body needs it now: hungry, or wounded below the band without the
+    hunger to regenerate. Then `eat_food` is the tick's only step.
+
+    Offered beside the work, the meal lost: run89 carried six raw chicken from it16, hunger 5,
+    health 8.5, and Laya chose `surface_up` and then `establish_base`; the second walk met a
+    drowned at night, and the chicken was still in the pack when the bot died at it21.
+    """
+    food = getattr(gs, "food", None)
+    if food is None or not _first_edible(getattr(gs, "inventory", None) or {}):
+        return False
+    return food < EAT_HUNGER or (gs.health is not None and gs.health < RECOVER_HEALTH
+                                 and food < REGEN_HUNGER)
+
+
 def _recovery_steps(gs: GameState) -> list[str]:
-    """The one step that leads toward food or safety, while `_recovery_owed` holds.
+    """The one step that leads toward food or safety, while `_cannot_heal` holds.
 
     Food first, because a meal is what heals: the hunt when an animal is in reach. Otherwise
     away from where the bot was hurt - home to the base, or up out of the cave when there is none
@@ -1750,7 +1775,7 @@ def _go_home_wanted(gs: GameState) -> bool:
       some base step is waiting
       the Nether gate is lit and stocked, and the bot's next job only it can do standing there
       it is night and the bed is at the base
-      wounded with nothing to heal on (`_recovery_owed`), so the base is the way out
+      wounded with nothing to heal on (`_cannot_heal`), so the base is the way out
     """
     # Never in the Nether. `base` is one field for both worlds, so its coordinates name a
     # different place down there - 778 m from where the bot actually stood, live, run70. The
@@ -1761,7 +1786,7 @@ def _go_home_wanted(gs: GameState) -> bool:
     if _in_nether(gs):
         return False
     return (_base_steps_ready(gs) or _nether_departure_ready(gs)
-            or (gs.phase == "night" and _bed_at_base(gs)) or _recovery_owed(gs))
+            or (gs.phase == "night" and _bed_at_base(gs)) or _cannot_heal(gs))
 
 
 def _junk_carried(inv: dict[str, int]) -> list[str]:
@@ -2771,9 +2796,11 @@ def candidates(gs: GameState) -> list[str]:
         if dx * dx + dz * dz < 3.0 * 3.0:
             return ["step_away_drops"]
 
-    # Wounded with nothing to heal on and the survival policy idle: the tick goes to food or
-    # safety, nothing else (`_recovery_owed`).
-    if _recovery_owed(gs):
+    # A meal the body needs now owns the tick (`_must_eat`); wounded with nothing to eat, the
+    # tick goes to food or safety, nothing else (`_cannot_heal`).
+    if _must_eat(gs) and "eat_food" not in gs.stuck_labels:
+        return ["eat_food"]
+    if _cannot_heal(gs):
         return _recovery_steps(gs)
 
     # --- event-driven reactions (M2d) ---

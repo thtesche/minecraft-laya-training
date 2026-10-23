@@ -491,17 +491,27 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(candidates(g), ["go_home"])
         self.assertEqual(resolve("go_home", g).tool, "navigate")
 
-    def test_work_comes_back_before_the_quiet_defers(self) -> None:
-        # The policy gets its quiet ticks first; only then does the tick go to recovery.
-        g = self._hurt(defer_quiet=DEFER_QUIET_TICKS - 1)
-        self.assertNotEqual(candidates(g), ["surface_up"])
+    def test_recovery_needs_no_defers_first(self) -> None:
+        # run89 it0: the same state with the gate saying `no` - the ordinary offer
+        # (`smelt_iron`, `hunt_wool`, `get_flint`) ran fifteen ticks while hunger fell to 5.
+        # The quiet defers only gate the release from a defer, not the offer itself.
+        g = self._hurt(defer_quiet=0)
+        self.assertEqual(candidates(g), ["surface_up"])
+
+    def test_food_in_the_pack_is_eaten_first(self) -> None:
+        # run89 it16-17: six raw chicken, hunger 5, health 8.5 - and `surface_up` then
+        # `establish_base` won over `eat_food`. The drowned on the second walk killed the bot
+        # with the chicken still in the pack. Now the meal is the tick's only step.
+        g = self._hurt(food=5.0)
+        g.inventory["chicken"] = 6
+        self.assertEqual(candidates(g), ["eat_food"])
+        self.assertEqual(resolve("eat_food", g).args, {"food_name": "chicken"})
 
     def test_food_in_the_pack_is_no_recovery_case(self) -> None:
-        # Eating heals: the ordinary offer with `eat_food` runs, not the retreat.
+        # Eating heals: the meal, not the retreat.
         g = self._hurt()
         g.inventory["cooked_beef"] = 3
-        self.assertIn("eat_food", candidates(g))
-        self.assertNotEqual(candidates(g), ["surface_up"])
+        self.assertEqual(candidates(g), ["eat_food"])
 
 
 class NetherLullWaitTest(unittest.TestCase):
@@ -768,9 +778,19 @@ class ReactionPriorityTest(unittest.TestCase):
         g.inventory = {"crafting_table": 1, "cobblestone": 3, "acacia_log": 1}
         self.assertEqual(candidates(g)[0], "recover_drops")
 
-    def test_eating_rides_along_with_a_reaction(self) -> None:
+    def test_a_hungry_bot_eats_before_the_reaction(self) -> None:
+        # Hungry, the meal comes first and alone (`_must_eat`): a second on the meal costs the
+        # drops nothing, and offered beside other steps it lost (run89 it16-17).
         g = self._recoverable()
         g.food = 10.0
+        g.inventory = {"cooked_beef": 1}
+        self.assertEqual(candidates(g), ["eat_food"])
+
+    def test_eating_rides_along_when_the_need_is_mild(self) -> None:
+        # Fed above the floor and healthy enough, the meal is one offer among the others.
+        g = self._recoverable()
+        g.food = 16.0
+        g.health = 18.0
         g.inventory = {"cooked_beef": 1}
         self.assertEqual(candidates(g), ["eat_food", "recover_drops"])
 
@@ -4699,9 +4719,12 @@ class NightIsAClockNotACandidateTest(unittest.TestCase):
         self.assertEqual(candidates(g), ["sleep"])
 
     def test_a_hungry_bot_eats_and_then_sleeps(self) -> None:
+        # The meal owns the tick (`_must_eat`); the sleep follows once the hunger is fed.
         g = self._night_at_base(cooked_mutton=4)
         g.food = 9.0
-        self.assertEqual(candidates(g), ["eat_food", "sleep"])
+        self.assertEqual(candidates(g), ["eat_food"])
+        g.food = 20.0
+        self.assertEqual(candidates(g), ["sleep"])
 
     def test_drops_still_outrank_sleep_before_they_despawn(self) -> None:
         # The reflex killed something and its items evaporate in minutes. A sleep would throw them

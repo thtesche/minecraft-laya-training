@@ -769,6 +769,26 @@ food carried, hunger under `REGEN_HUNGER`. `brain.danger_matters` then hands the
 to the base, else `surface_up` out of the cave when there is no base, else `explore`. While the
 body can still heal — food in the pack, or hunger at 18 — the defer holds as before.
 
+### run89 (2026-10-23): the chicken stayed in the pack
+
+run89 began in run88's state — 8.5 health, hunger 15, no food, in the spider cave — and died at
+it21. Two gaps:
+
+- **The recovery waited for defers.** The gate said `no`, so the loop had the tick and offered
+  the ordinary work (`smelt_iron`, `hunt_wool`, `get_flint`) for fifteen ticks while a failing
+  `surface_up` let the hunger fall to 5. `actions._cannot_heal` (wounded below
+  `RECOVER_HEALTH`, no food carried, hunger under `REGEN_HUNGER`) now sends every tick in that
+  state to `_recovery_steps`; the quiet defers (`_recovery_owed`) only gate the release from a
+  defer in `brain.danger_matters`.
+- **The meal rode along and lost.** `hunt_food` brought six raw chicken at it15, and on it16–17
+  `eat_food` stood beside `surface_up` and `establish_base` at hunger 5 and 8.5 health; Laya chose
+  the walks, the second met a drowned at night, and the bot died with the chicken still carried.
+  `_must_eat` — food carried, and hunger under `EAT_HUNGER`, or health under the band with hunger
+  under `REGEN_HUNGER` — makes `eat_food` the tick's only step. A milder need still rides along.
+
+Not addressed yet: that `hunt_food` walked 276 m in one `collect_mob_drop` (three minutes,
+hunger 8 → 5) although the day reach is 64 m.
+
 ## Next milestones
 
 - **Open after run86:** (1) the October fixes above are unit-tested but not yet seen live;
