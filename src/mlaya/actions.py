@@ -61,7 +61,7 @@ CRITERIA: dict[str, str] = {
     "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
     "explore": "walk to new terrain to find missing resources; the last fallback",
-    "wait": "hold position at the home base until night falls; the only work left is the bed, which cannot be placed in daylight",
+    "wait": "hold position at the home base; nothing productive is left in the lull before the expedition",
     "make_room": "dig the block a placement was refused at, or a small pocket, so a carried workstation or bed fits",
     # Home base: one surface anchor the bed, the portal and the chests all stand at.
     "surface_up": "climb back out to open surface ground; the home base, the bed and the portal all belong under open sky, never on a cave floor",
@@ -1587,40 +1587,23 @@ def _expedition_prepared(gs: GameState) -> bool:
 def _expedition_ready(gs: GameState) -> bool:
     """Whether the gate may be lit now.
 
-    `_expedition_prepared` (the whole trip stocked), plus a moment that leaves no burning gate
-    standing unused: the bed already stands **at the base** (`_bed_at_base`), or it is **night**,
-    when `place_bed` lays the carried bed the very next tick. `light_portal` requires this, so
-    lighting is the last Overworld act: with the frame merely built, unlit, the bot can work at
-    the base for as long as the prep takes without ever standing at an open gate.
+    `_expedition_prepared` (the whole trip stocked, a bed at hand) and the spare pickaxe. No hour:
+    `place_bed` lays the carried bed the very next tick, by day as well as by night, so no burning
+    gate stands unused. `light_portal` requires this, so lighting is the last Overworld act: with
+    the frame merely built, unlit, the bot can work at the base for as long as the prep takes
+    without ever standing at an open gate. The hour it used to wait for cost run86 some 300
+    `wait` ticks between a gate lit by day and the night its bed was held back for.
 
     The bed is laid *after* the gate lights, not before. The server lays a carried bed on the
     nearest flat two-block footprint, and beside an *unlit* frame that footprint is often the
     open 2x3 opening itself; `clear_portal` cannot remove it (the movement policy protects a bed
     from a route dig), so `light_portal` would answer `[PORTAL_NO_FRAME]` forever. With the gate
     lit the opening holds portal blocks and the bed falls on the ground beside the base instead.
-    So the gate lights once a bed is *at hand*, and only when it can be laid at once. After that
-    the completion gate needs only the bed at the base.
-    """
-    return (_expedition_prepared(gs) and (_bed_at_base(gs) or gs.phase == "night")
-            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES)
-
-
-def _light_window(gs: GameState) -> bool:
-    """The lighting clause of `_expedition_ready` with the hour gate relaxed for a proven frame.
-
-    The hour existed because lighting an *inferred* frame could burn a half-built gate: it is
-    the last Overworld act, and it waits for a bed laid at once (at base, or at night, when
-    `place_bed` runs the very next tick). Live, run80: the plane read had proven nothing while
-    a build stopped 3 obsidian short for 350 ticks; when the server finally closed the frame
-    it was late in the day, and the run's cap came before the night -- the finished, fully
-    geared gate never burned. Once the frame-plane read (`_frame_complete_at_base`) proves the
-    frame itself finished, there is nothing left to wait for but the bed, and `place_bed`
-    follows the lit gate whenever night comes; a burning gate waits by day too.
+    So the gate lights once a bed is *at hand*, and the bed is laid at once. After that the
+    completion gate needs only the bed at the base.
     """
     return (_expedition_prepared(gs)
-            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES
-            and (_bed_at_base(gs) or gs.phase == "night"
-                 or (_portal_frame_started(gs) and _frame_complete_at_base(gs))))
+            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES)
 
 
 # What stays in the pack while a chest stands open behind it.
@@ -2268,8 +2251,8 @@ def _base_steps_ready(gs: GameState) -> bool:
             and inv.get("cobblestone", 0) >= PORTAL_CORNERS and not _portal_lit(gs)):
         return True
     if _portal_lit(gs) and _has_bed(inv) and not _bed_at_base(gs):
-        # Not gated on the night: `place_bed` only runs after dark, but a bed carried out of the
-        # base's own shaft (taken up by `take_bed`) belongs home whatever the hour. Gated on the
+        # Not gated on the night: a bed carried out of the base's own shaft (taken up by
+        # `take_bed`) belongs home whatever the hour, and `place_bed` lays it by day. Gated on the
         # night, the bot carried it around all day and never came back (live, run19b it39-40:
         # `take_bed` succeeded in daylight, `go_home` was not offered, and the bed was never laid).
         # Keyed on the *lit* gate, not the bare frame: a carried bed cannot be laid until the gate
@@ -2280,8 +2263,8 @@ def _base_steps_ready(gs: GameState) -> bool:
     # bed laid the very next tick), so walk home rather than drift. `light_portal` itself is
     # `_at_base`-gated, so without this the bot that finished the prep away from the base (a gold
     # shaft under it, a feather hunt nearby) would never come back to light the gate. Keyed on
-    # `_expedition_prepared`, not `_expedition_ready`: the walk home is worth it by day too, when
-    # the lighting itself still waits for night.
+    # `_expedition_prepared`, not `_expedition_ready`: the walk home is worth it before the spare
+    # pickaxe the lighting also waits for is made.
     if not _portal_lit(gs) and _expedition_prepared(gs):
         return True
     # In the lull, a carried furnace belongs at the base: walking back lets `place_furnace`
@@ -2538,13 +2521,13 @@ def tech_tree_complete(gs: GameState) -> bool:
     on - and the shield in the off-hand. Then the overworld -> Nether gate itself: a bed stands
     *at the base* beside the frame to respawn at (a bed merely loaded is not enough: a leftover
     bed from an earlier run satisfies `_bed_placed` while `_bed_off_base` still reports it, so
-    the run keeps working until `take_bed`/`place_bed` bring it home; the bed is only laid at
-    night, so `sleep` actually ran and the respawn point is set), the Nether prep is finished
+    the run keeps working until `take_bed`/`place_bed` bring it home; the bed is laid through
+    `sleep`, which sets the respawn point by day as well as by night), the Nether prep is finished
     (a bow with arrows, a gold helmet and a deep cobblestone stack are banked, `_all_nether_prep_steps`)
     and the deep food reserve is banked (`_food_reserve_met`, the `NETHER_FOOD_RESERVE`). The
     gate is lit with all of that in place but the bed still carried (`light_portal` requires
-    `_expedition_ready`), so the only burning-portal moment before the bed is laid is one tick at
-    night, immediately followed by `place_bed`; only then does this gate close. It must never be
+    `_expedition_ready`), so the only burning-portal moment before the bed is laid is one tick,
+    immediately followed by `place_bed`; only then does this gate close. It must never be
     lit early: the bot works at the base beside the frame, and the pathfinder walks an open gate
     like any block, so a portal burning through the prep window walks the body through it (live,
     run22: lit at it208, the bot stood in its own portal and was in the Nether by it245, with no
@@ -2970,23 +2953,24 @@ def candidates(gs: GameState) -> list[str]:
         # spent 7 of the ten blocks and gone quiet for 350 ticks, and `light_portal` fired 22
         # times on the still-short frame, the server answering `[PORTAL_NO_FRAME]` each time.
         # Lighting also stands down while a stray block still sits in the opening
-        # (`gs.portal_blocked`): the clear steps dig it first. And the trip must be stocked --
-        # `_light_window` keeps the hour guard while the frame's completeness is only inferred
-        # (live, run22 walked into its own early-lit gate), and drops it once the plane read
-        # proves the frame finished (live, run80: the last build closed the frame too late in
-        # the day, and the run ended beside a finished gate that never burned).
+        # (`gs.portal_blocked`): the clear steps dig it first. And the trip must be stocked
+        # (`_expedition_ready`; live, run22 walked into its own early-lit gate). There is no hour:
+        # `place_bed` follows the lit gate the very next tick, by day too (live, run80: the last
+        # build closed the frame late in the day, and the run ended beside a gate that never burned).
         if (_at_base(gs) and has_fs and not gs.portal_blocked
                 and _frame_complete_at_base(gs)
-                and _portal_frame_started(gs) and _light_window(gs)):
+                and _portal_frame_started(gs) and _expedition_ready(gs)):
             out.append("light_portal")
-    # The bed goes down at the base at night, because `sleep` is what actually sets the respawn
-    # point: placing it in daylight would leave the pause point unset. It waits for the *lit*
+    # The bed goes down at the base whatever the hour: `sleep` lays it, and by day the server
+    # uses the bed instead of sleeping in it, which sets the respawn point all the same ("Respawn
+    # point set at the bed, but daytime prevents sleeping"). Holding it back for the night left
+    # the run nothing to do between a gate lit by day and dark (run86: ~300 `wait` ticks). It waits for the *lit*
     # gate (`_portal_lit`), not the bare frame: the server lays a carried bed on the nearest flat
     # footprint, and beside an unlit frame that is the open 2x3 opening, which `clear_portal`
     # cannot dig (a bed is protected from a route dig) and `light_portal` then fails on. Once the
     # gate burns the opening is solid and the bed falls on the ground beside the base.
     if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_at_base(gs)
-            and gs.phase == "night" and _overworld(gs)):
+            and _overworld(gs)):
         out.append("place_bed")
 
     # --- The Nether expedition (phase 3) ---
@@ -3136,7 +3120,7 @@ def candidates(gs: GameState) -> list[str]:
         out = [label for label in out if label not in gs.stuck_labels]
 
     # The explicit last fallback when nothing productive is available. In the lull once the gate
-    # frame stands the only work left is the prep and the night bed, and wandering off just burned
+    # frame stands the only work left is the prep, and wandering off just burned
     # five pathfinder timeouts and left the bot away from the base at dusk (live, from-zero run), so
     # hold at the base and wait it out rather than explore. Roaming to fill an open food reserve
     # was tried live (run19b) and reverted: the roam carried the bot 150-200 m out, where the
@@ -3461,7 +3445,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         cell = _portal_ignite_cell(gs)
         if (not _has(inv, FLINT_STEEL_ITEM) or _portal_lit(gs) or not _at_base(gs)
                 or not _frame_complete_at_base(gs) or gs.portal_blocked
-                or cell is None or not _portal_frame_started(gs) or not _light_window(gs)):
+                or cell is None or not _portal_frame_started(gs) or not _expedition_ready(gs)):
             return None
         return Action(label, "activate_portal", {"x": cell[0], "y": cell[1], "z": cell[2]},
                       "light the built portal frame with the carried flint and steel")
@@ -3489,7 +3473,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         stance = _bed_stance(gs)
         if (not _has_bed(inv) or not _portal_lit(gs) or _bed_at_base(gs)
                 or stance is None
-                or not _at_base(gs) or gs.phase != "night" or not _overworld(gs)):
+                or not _at_base(gs) or not _overworld(gs)):
             return None
         if not _at_stance(gs, stance):
             # The `sleep` server lays the carried bed on the flat footprint beside the bot, so the
@@ -3963,7 +3947,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         bx, by, bz = gs.base
         return Action(label, "navigate",
                       {"x": bx, "y": by + 1, "z": bz, "range": 1},
-                      "hold at the home base until night falls and the bed can be placed")
+                      "hold at the home base while nothing productive is left in the lull")
     if label == "explore":
         if x is None or z is None:
             return None

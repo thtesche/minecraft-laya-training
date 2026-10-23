@@ -56,10 +56,9 @@ The run **stops itself** once every phase stands (`Agent._goal_reached`): the ov
 base, all Nether prep steps done, the food reserve banked and the gate lit) **and** the Nether
 trip (`actions.nether_expedition_complete` — the blaze powder deposited in the chest at the
 gate). The portal is lit **last** in the overworld: `light_portal` waits for the whole stocked
-trip, so the gate never burns through the prep window. It normally lights at night, when the
-carried bed can be laid the very next tick; a frame the plane read proves finished may also
-burn by day, and the bot then holds at the base (`wait`, 30 s per decision) until night lays
-the bed and opens the crossing. The run then reports `"stop": "goal"`; a run that never gets
+trip, so the gate never burns through the prep window. The carried bed is laid the very next
+tick, by day or by night — the `sleep` server sets the respawn point at a bed used in daylight
+too — and that opens the crossing. The run then reports `"stop": "goal"`; a run that never gets
 the powder home ends with `"stop": "limit"`, and `--ignore-goal` (or
 `[loop] stop_when_complete = false`) always runs to the iteration limit.
 

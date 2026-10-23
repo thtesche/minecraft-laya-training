@@ -10,8 +10,7 @@ Nether" a **preparation stage** is missing: the bot should only step through the
 food and building material really are right. Just as with eating (see `NETHER_FOOD_RESERVE = 64`
 in [`architecture.md`](architecture.md)): better properly prepared than quickly in and
 losing everything. The gate is lit **only once all of this stands** (`light_portal` requires
-`_expedition_ready`: the prep done, the food reserved, a bed at hand, and it night or the bed
-already at the base), so the portal never burns through the preparation window beside the base —
+`_expedition_ready`: the prep done, the food reserved, a bed at hand; no hour), so the portal never burns through the preparation window beside the base —
 the bot used to walk into its own lit gate there (live, run22). The bed is laid the very next tick
 after lighting, once the opening holds the portal's own blocks; laid beside the *unlit* frame it can
 fall into the still-open opening, which `clear_portal` cannot dig out.
@@ -167,8 +166,9 @@ of the run (fixed by the quiet-defer guard, `e0e7687`, see architecture/M3). Two
 `swap_to_gold_helmet` was offered on every Nether tick but never ran (the defers took them all),
 and `hunt_blaze` was not offered at all, because `_safe_blaze_hunt` refuses while any other
 hostile is within 16 m — at a fortress a zombified piglin or a wither skeleton almost always is.
-The ~300 iterations the bot spent waiting for the night are now ~20 (`[loop] wait_hold_s`), so the
-next run has the budget for the trip itself.
+The ~300 iterations the bot spent waiting for the night are gone: `place_bed` now lays the bed by
+day as well, and the `sleep` server sets the respawn point at a bed used in daylight, so the
+crossing follows the lit gate at once.
 
 ## Decided: the gold helmet replaces the diamond helmet
 

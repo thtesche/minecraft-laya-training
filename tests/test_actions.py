@@ -455,18 +455,20 @@ class FoodChainTest(unittest.TestCase):
 
 
 class NetherLullWaitTest(unittest.TestCase):
-    """The daytime lull after the portal is lit: the only work left is the night bed, so the bot
+    """The lull after the portal is lit and the bed laid: nothing productive is left, so the bot
     holds at the base instead of wandering off on `explore` (live, from-zero run: 25 idle ticks,
     five of them wasted on `[NAVIGATION_STOPPED]` pathfinder timeouts)."""
 
     @staticmethod
     def _idle() -> GameState:
         # The Nether prep is already banked (bow, arrows, deep cobblestone stack, and a furnace
-        # standing at the base), so the lull has no productive step left and the only sensible
-        # tick is holding at the base.
-        g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=64, white_bed=1,
+        # standing at the base) and the bed stands beside the gate, so the lull has no productive
+        # step left and the only sensible tick is holding at the base. A bed still carried is no
+        # longer such a tick: `place_bed` lays it by day as well.
+        g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=64,
                                       iron_ingot=1, cooked_beef=24,
                                       bow=1, arrow=16, diamond_pickaxe=2)))
+        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed", -200, -47, -98, 3.0)]
         g.food = 20.0
         g.chest_pos = (-198, -47, -98)
         g.furnace_pos = (-198, -46, -99)
@@ -1896,12 +1898,10 @@ class NetherGateTest(unittest.TestCase):
         self.assertIsNone(resolve("light_portal", g))
 
     def test_a_finished_frame_burns_by_day_too(self) -> None:
-        # A bed merely *carried* waits for night while the frame's completeness is only inferred,
-        # so `place_bed` can run the very next tick. Live, run80: the last build stopped the
-        # frame 3 obsidian short for 350 ticks and closed it too late in the day - the run ended
-        # before night came, beside a finished, fully geared gate that never burned. Once the
-        # plane read proves the frame complete the hour guard has nothing left to protect: the
-        # gate lights by day too, and `place_bed` follows it when night comes.
+        # Live, run80: the last build stopped the frame 3 obsidian short for 350 ticks and closed
+        # it too late in the day - the run ended before night came, beside a finished, fully
+        # geared gate that never burned. With the bed carried the gate lights by day too, and
+        # `place_bed` lays the bed the very next tick, whatever the hour.
         def carried(phase: str) -> GameState:
             g = self._at_home(self._geared(white_bed=1, flint_and_steel=1,
                                            bow=1, arrow=16, cobblestone=64))
@@ -2022,13 +2022,17 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.tool, "sleep")
         self.assertEqual(a.args, {})
 
-    def test_place_bed_waits_for_night_to_set_the_spawn(self) -> None:
-        # `sleep` is what actually sets the respawn point, and a bed can only be slept in at
-        # night; placing it in daylight would leave the pause point unset.
+    def test_place_bed_by_day_sets_the_spawn(self) -> None:
+        # By day the `sleep` server lays the carried bed and uses it instead of sleeping, which
+        # sets the respawn point all the same ("Respawn point set at the bed, but daytime prevents
+        # sleeping"). Held back for the night, run86 stood ~300 `wait` ticks beside a gate lit by
+        # day with nothing else left to do.
         g = self._at_home(self._geared(white_bed=1))
         g.resources = self._blocks("nether_portal")
         g.phase = "day"
-        self.assertNotIn("place_bed", candidates(g))
+        self.assertIn("place_bed", candidates(g))
+        a = resolve("place_bed", g)
+        self.assertEqual(a.tool, "sleep")
 
     def test_place_bed_waits_for_the_lit_gate(self) -> None:
         # The frame stands but the gate is not lit: a bed laid beside the open 2x3 opening can
@@ -2042,7 +2046,7 @@ class NetherGateTest(unittest.TestCase):
         self.assertIsNone(resolve("place_bed", g))
 
     def test_the_gate_lights_before_the_bed_goes_down(self) -> None:
-        # A carried bed, the prep banked and night: the *gate* is offered, not the bed. Once it
+        # A carried bed and the prep banked: the *gate* is offered, not the bed. Once it
         # lights the opening is solid, so `place_bed` lays the bed safely the very next tick and
         # the run stops - the burning gate is never left standing while the bot works.
         g = self._at_home(self._geared(white_bed=1, flint_and_steel=1, bow=1, arrow=16,

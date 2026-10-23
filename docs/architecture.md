@@ -688,7 +688,9 @@ Three lessons from the runs behind them:
 `wait` itself is no longer a stall: it navigates to the anchor the bot already stands on and
 settled in about a second, so run86 — its gate lit by day — spent ~300 of 600 iterations waiting
 for one night. A successful `wait` now holds `[loop] wait_hold_s` (default 30 s,
-`Agent._hold_wait`, `834f5b0`), which makes a ten-minute day some twenty decisions.
+`Agent._hold_wait`, `834f5b0`), which makes a ten-minute day some twenty decisions. The night
+itself is no longer waited for: `place_bed` lays the gate bed by day as well (see **Homebase**
+under the next milestones).
 
 ## Live findings run80–86 (2026-10-21 … 22)
 
@@ -786,9 +788,8 @@ Details of the run86 fixes:
   needs `take_bed`/`place_bed` to bring it home), **no Nether prep step left open**
   (`_all_nether_prep_steps`: bow+arrows, gold helmet, deep cobblestone) **and the food reserve
   banked** (`_food_reserve_met`, the 64 units from `_food_goal`) — and, because the bed is laid
-  *after* the gate burns (see the bed note below), only when that can happen at once: the bed
-  already stands **at the base** (`_bed_at_base`) or it is **night**, so `place_bed` runs the very
-  next tick. `light_portal` requires `_expedition_ready`, so **the gate is lit last**: the portal
+  *after* the gate burns (see the bed note below), with a bed at hand, so `place_bed` runs the
+  very next tick, by day or by night. `light_portal` requires `_expedition_ready`, so **the gate is lit last**: the portal
   burning is the last Overworld act, and `tech_tree_complete` — `_portal_lit` **and** `_gear_ready`
   **and** `_bed_at_base` **and** `not _all_nether_prep_steps` **and** `_food_reserve_met` — closes in
   the same tick the bed goes down. It must never light early — the bot works at the base right
@@ -977,8 +978,10 @@ Details of the run86 fixes:
   at most four cells per call — the server starts a route search per cell). A block above
   the support layer would otherwise be moved and `light_portal` would answer `[PORTAL_NO_FRAME]` forever
   (live the generic night sleep threw a bed exactly there).
-  **Sleep sets the respawn:** `place_bed` (via `sleep`)
-  is offered **only at night** — by day the bed would only be placed, the spawn point would stay unset.
+  **Sleep sets the respawn, by day too:** `place_bed` (via `sleep`) is offered whatever the hour.
+  By day the server lays the bed and uses it instead of sleeping, which sets the respawn point
+  all the same ("Respawn point set at the bed, but daytime prevents sleeping"). It used to wait
+  for the night, and run86 stood ~300 `wait` ticks beside a gate lit by day.
   `_bed_available` also counts a **placed** bed (not just a carried one): after a
   manual base build or a restart the bed otherwise remains as a block and the loop would
   needlessly look for wool for a second one.
@@ -990,7 +993,7 @@ Details of the run86 fixes:
   `[PORTAL_NO_FRAME]`. The base bed is `place_bed`'s job and waits for the *lit* gate: with the
   frame up but unlit the opening is still open air and a bed laid there blocks the lighting, so the
   gate goes first. `light_portal` requires `_expedition_ready` — which holds once a bed is **at
-  hand** and it is night or the bed already stands at the base (see the auto-stop) — and `place_bed`
+  hand** (see the auto-stop) — and `place_bed`
   lays it the very next tick, when the opening is solid. Away from the base the night
   sleep stays unchanged **until the gate is lit**. After that
   `sleep` is restricted to the base (`_at_base` *iff* `_portal_lit`): anywhere else it would pin the
