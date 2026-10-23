@@ -12,6 +12,7 @@ flat ground` in that shaft, so the stub list now covers both codes.
 from __future__ import annotations
 
 import json
+import math
 import unittest
 
 from mlaya import perception
@@ -110,6 +111,8 @@ class WaterTicksTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -207,6 +210,8 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         return agent
 
     async def test_first_block_digs_a_pocket(self) -> None:
@@ -388,6 +393,8 @@ class PourSkipTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -497,6 +504,8 @@ class StanceSkipTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -600,6 +609,8 @@ class StuckOfferTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -1194,6 +1205,8 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -1263,6 +1276,8 @@ class FrameRefusalTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -1354,6 +1369,8 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -1609,6 +1626,8 @@ class DropHoleTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -1636,6 +1655,20 @@ class DropHoleTest(unittest.TestCase):
         agent._portal_base_scanned = None
         agent.surface = None
         return agent
+
+    def test_the_drop_keeps_the_way_the_bot_walked(self) -> None:
+        # The toss flies the way the bot faces, which is the way it last walked; the walk off
+        # the drop reads that heading (run88: dug west, tossed west, stepped west into the pile).
+        agent = self._agent()
+        agent._drop_hole_blocked = True
+        agent._note_heading((-59.5, 85.0, 44.5), (-93.5, 6.0, 35.3))
+        agent._note_heading((-93.5, 6.0, 35.3), (-93.6, 6.0, 35.3))
+        g = GameState()
+        g.pos = (-93.5, 6.0, 35.3)
+        agent._note_drop(self._Action("drop_junk"), True, "", g)
+        hx, hz = agent._drop_heading
+        self.assertLess(hx, -0.9)
+        self.assertAlmostEqual(math.hypot(hx, hz), 1.0)
 
     def test_remembers_the_unavailable_pit(self) -> None:
         agent = self._agent()
@@ -1672,6 +1705,8 @@ class DropHoleTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         self.assertTrue(agent._inject(gs()).drop_hole_blocked)
 
 
@@ -1762,6 +1797,8 @@ class ChestSupportTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = True
         self.assertTrue(agent._inject(gs()).chest_blocked)
 
@@ -1854,6 +1891,8 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._furnace_blocked = True
         state = agent._inject(gs())
         self.assertTrue(state.furnace_blocked)
@@ -2020,6 +2059,8 @@ class ChestLidTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_above = (229, 63, 224)
         self.assertEqual(agent._inject(gs()).chest_above, (229, 63, 224))
 
@@ -2164,6 +2205,8 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -2356,6 +2399,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -2647,6 +2692,8 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._blocked_cell = None
         agent._chest_above = None
         agent._nether_travel = 0.0
@@ -2994,6 +3041,8 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -3235,6 +3284,8 @@ class NetherCrossingTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -3493,6 +3544,8 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}

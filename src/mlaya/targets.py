@@ -318,7 +318,8 @@ _HAZARD_FLOOR = frozenset({"magma_block", "cactus", "campfire", "soul_campfire",
 def step_away_cell(grid: dict[tuple[int, int, int], str],
                    drop: tuple[float, float, float],
                    feet: tuple[float, float, float] | None,
-                   refused=frozenset()) -> tuple[int, int, int] | None:
+                   refused=frozenset(),
+                   heading: tuple[float, float] | None = None) -> tuple[int, int, int] | None:
     """A feet cell the walk off an open drop can actually stand in, or None.
 
     `grid` is one `view_blocks box` read around the drop (`perception.parse_box`). A cell
@@ -329,6 +330,12 @@ def step_away_cell(grid: dict[tuple[int, int, int], str],
     footing ... of -93, 70, -6` nine times for a cell nobody had looked at. Cells a walk was
     already refused at (`refused`) are passed over. The nearest such cell to the bot wins, on its
     own level first.
+
+    `heading` is the way the bot last walked (x, z), which is the way it faced when it tossed, so
+    the junk lies ahead of the drop. A cell behind it wins over any cell ahead: run88 dug west
+    along a tunnel, tossed west, and the tie between the cells four blocks east and west went to
+    the lower x - west, through the pile - so four rounds of drop and step-away picked the same
+    junk straight back up (it171-176). Without a heading every cell counts alike.
     """
     if not grid:
         return None
@@ -347,10 +354,12 @@ def step_away_cell(grid: dict[tuple[int, int, int], str],
         if away < STEP_AWAY_MIN:
             continue
         walk = (x + 0.5 - fx) ** 2 + (z + 0.5 - fz) ** 2 + 2 * (y - math.floor(fy)) ** 2
-        cells.append((walk, -away, (x, y, z)))
+        ahead = (heading is not None
+                 and (x + 0.5 - dx0) * heading[0] + (z + 0.5 - dz0) * heading[1] > 0)
+        cells.append((ahead, walk, -away, (x, y, z)))
     if not cells:
         return None
-    return min(cells)[2]
+    return min(cells)[3]
 
 
 def _solid(name: str | None) -> bool:

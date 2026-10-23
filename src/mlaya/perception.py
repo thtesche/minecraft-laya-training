@@ -640,6 +640,9 @@ class GameState:
     drop_hole_blocked: bool = False
     drop_open_pending: bool = False
     drop_pos: tuple[float,float,float] | None = None
+    # The way the bot last walked before that drop (x, z), so the walk off it goes the other way:
+    # the toss flies the way the bot faces (`graph.Agent._note_heading`).
+    drop_heading: tuple[float, float] | None = None
     # The standable cell the walk off that drop goes to, picked from a ground read around it
     # (`targets.step_away_cell`); None when the read found none.
     drop_away: tuple[int, int, int] | None = None

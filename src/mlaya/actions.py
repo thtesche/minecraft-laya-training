@@ -374,6 +374,12 @@ GOLD_ORE = "gold_ore"
 RAW_GOLD = "raw_gold"
 GOLD_INGOT = "gold_ingot"
 NETHER_COBBLE = 64
+# How far the Nether stack may run below `NETHER_COBBLE` before `mine_stone` refills it. The surplus
+# drop leaves exactly `NETHER_COBBLE` (`HOARD_KEEP`), and the next scaffold block took it to 63:
+# `mine_stone` came up for the one block, and its `collect_block` hoovered up the whole pile just
+# dropped beside the bot (live, run88 it177-179: 63 cobblestone and all the junk back in the pack,
+# dropped again the next tick). One `mine_stone` batch of slack keeps the two lines apart.
+NETHER_COBBLE_SLACK = 8
 # Food hunting is the one gather that walks to a moving target, so it is bounded by
 # daylight: a long walk to a distant animal is cheap in daylight, but after dark the bot
 # only tops up from animals already at hand. The old unguarded hunt roamed ~180 m at
@@ -1541,7 +1547,7 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
             out.append("mine_gold")
     # Cobblestone: a deep stack for bridging over lava and gaps in the Nether (the arrival portal
     # is deliberately left unprotected, docs/nether-prep.md "(B) After arrival").
-    if inv.get("cobblestone", 0) < NETHER_COBBLE and _can_mine(gs, "stone"):
+    if inv.get("cobblestone", 0) < NETHER_COBBLE - NETHER_COBBLE_SLACK and _can_mine(gs, "stone"):
         out.append("mine_stone")
     return out
 
@@ -2181,6 +2187,30 @@ def _sleep_ready(gs: GameState) -> bool:
     return not _at_base(gs) and _bed_in_sleep_reach(gs)
 
 
+# How far west of the base anchor the night walk goes before a carried bed may be slept in
+# (`_sleep_off_base`). The frame stands east of the anchor (`perception.frame_obsidian_cells`,
+# x+1..x+4), so west leads away from it, and three blocks past `BASE_RADIUS` is off the base
+# box with the navigate's arrival tolerance to spare.
+SLEEP_OFF_BASE_STEP = int(BASE_RADIUS) + 3
+
+
+def _sleep_off_base(gs: GameState) -> bool:
+    """Night at the base with an unlit frame and a carried bed: walk off the base to sleep.
+
+    `_sleep_ready` forbids sleeping at the base before the gate burns (the bed would land in the
+    open 2x3 opening) and allows it anywhere else - but nothing walked the bot anywhere else. With
+    the gate still waiting for its spare pickaxe and no diamond ore in view, the night offered
+    `wait` alone: run88 stood twelve ticks at its base, bed in the pack, until dawn (it147-158).
+    The walk west leaves the frame behind; the bed it lays there is a leftover `take_bed` brings
+    home in the day, as it does for every bed slept in away from the base. A gate that may be lit
+    now (`_expedition_ready`) keeps the bot at the base: lighting it and `place_bed` beside it is
+    the night's work, and the end of the Overworld.
+    """
+    return (_overworld(gs) and not _portal_lit(gs) and _at_base(gs)
+            and _has_bed(gs.inventory) and gs.base is not None
+            and not _expedition_ready(gs))
+
+
 def _bed_in_sleep_reach(gs: GameState) -> bool:
     """A bed the `sleep` server can find from here: carried, or standing within its search.
 
@@ -2730,7 +2760,8 @@ def candidates(gs: GameState) -> list[str]:
     # The night offer returns ahead of the withholding filter at the end, so it asks for itself:
     # run86 dropped `sleep` at it2 for `[BED_NOT_FOUND]` and the offer took the next 13 ticks
     # anyway, the window never reaching it.
-    if (gs.phase == "night" and not gs.sleeping and _overworld(gs) and _sleep_ready(gs)
+    if (gs.phase == "night" and not gs.sleeping and _overworld(gs)
+            and (_sleep_ready(gs) or _sleep_off_base(gs))
             and "sleep" not in gs.stuck_labels):
         # Sleeping is not a step among others, it is the clock. A night costs about forty decisions
         # at eighteen seconds each; a sleep costs one. So at night, with a bed underfoot, nothing
@@ -3486,8 +3517,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "sleep", {},
                       "place the carried bed clear of the gate and set the respawn point")
     if label == "sleep":
-        if (gs.phase != "night" or gs.sleeping or not _overworld(gs)
-                or not _sleep_ready(gs)):
+        if gs.phase != "night" or gs.sleeping or not _overworld(gs):
+            return None
+        if _sleep_off_base(gs):
+            bx, by, bz = gs.base
+            return Action(label, "navigate",
+                          {"x": bx - SLEEP_OFF_BASE_STEP, "y": by + 1, "z": bz, "range": 1,
+                           "dig": True, "scaffold": True},
+                          "walk off the base, away from the unlit gate frame, to sleep there")
+        if not _sleep_ready(gs):
             return None
         return Action(label, "sleep", {},
                       "sleep through the night and set the respawn point")
@@ -3919,7 +3957,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # No read, or no standable cell in it: walk off the drop, straight away from the cell the junk landed on. Three blocks is the
         # reach items are gathered over again, so standing that far away ends the pickup risk;
         # the pathfinder finds footing on that line rather than the line being assumed walkable.
+        # Away means back the way the bot came, when it is known: the toss flew the way it faced.
         dx, dz = gs.drop_pos[0] - gs.pos[0], gs.drop_pos[2] - gs.pos[2]
+        if math.hypot(dx, dz) < 0.5 and gs.drop_heading is not None:
+            dx, dz = gs.drop_heading
         angle = math.atan2(-dz, -dx)
         # `navigate` wants whole cells and says so with a validation error that owns the tick
         # forever (live, run77: 120 identical `[expected int, received number at x]` refusals

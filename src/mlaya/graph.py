@@ -346,6 +346,9 @@ class Agent:
         # After dropping junk on open ground (no pit), step away so items aren't re-collected.
         self._drop_open_pending = False
         self._drop_pos: tuple[float,float,float]|None = None
+        # The way the bot last walked (`_note_heading`), and its value when the drop was made.
+        self._heading: tuple[float, float] | None = None
+        self._drop_heading: tuple[float, float] | None = None
         # Consecutive refused `step_away_drops` since the last drop; `STEP_AWAY_GIVE_UP` of them
         # releases the walk off so a step that cannot be made cannot wedge the bot.
         self._step_away_fails = 0
@@ -450,8 +453,9 @@ class Agent:
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.drop_open_pending = self._drop_open_pending
         gs.drop_pos = self._drop_pos
+        gs.drop_heading = self._drop_heading
         gs.drop_away = (step_away_cell(self._drop_grid, self._drop_pos, gs.pos,
-                                       frozenset(self._drop_refused))
+                                       frozenset(self._drop_refused), self._drop_heading)
                         if self._drop_open_pending and self._drop_pos is not None else None)
         gs.chest_blocked = self._chest_blocked
         gs.furnace_blocked = self._furnace_blocked
@@ -1458,10 +1462,26 @@ class Agent:
             if self._drop_hole_blocked and gs is not None and gs.pos is not None:
                 self._drop_open_pending = True
                 self._drop_pos = (gs.pos[0], gs.pos[1], gs.pos[2])
+                self._drop_heading = self._heading
                 self._step_away_fails = 0
             return
         if "DROP_HOLE_UNAVAILABLE" in (text or ""):
             self._drop_hole_blocked = True
+
+    def _note_heading(self, before, after) -> None:
+        """Keep the way the bot last walked, as a unit vector in the horizontal plane.
+
+        Neither the observation nor the server names the bot's facing, but a navigate or a dig
+        leaves the body looking the way it went, and an open `drop_junk` tosses that way. A tick
+        that moved less than a block keeps the old heading: the drop itself, a craft or a failed
+        step do not turn the bot round.
+        """
+        if before is None or after is None:
+            return
+        dx, dz = after[0] - before[0], after[2] - before[2]
+        length = math.hypot(dx, dz)
+        if length >= 1.0:
+            self._heading = (dx / length, dz / length)
 
     def _note_step_away(self, action, ok: bool) -> None:
         """Close the walk-off once the bot has actually made it, so the offer disappears.
@@ -1788,6 +1808,7 @@ class Agent:
         self._note_result(action, _ok)
         await self._hold_wait(action, _ok)
         after = await self._observe()
+        self._note_heading(before.pos, after.pos)
         # `surface_up` answers itself through the position it lands on (a resolved probe) or
         # through the height the server names when it refuses to guess (an ambiguous column);
         # both are read here, after the observation, and gate `establish_base` next tick.

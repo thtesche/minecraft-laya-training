@@ -12,7 +12,8 @@ import unittest
 from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _hoard_surplus,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
-                         INVENTORY_NEAR_FULL, inventory_relief,
+                         BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
+                         NETHER_COBBLE, NETHER_COBBLE_SLACK,
                            nether_expedition_complete, NETHER_SEARCH_M, NETHER_HOPELESS_TICKS, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
@@ -620,6 +621,15 @@ class NetherPrepTest(unittest.TestCase):
 
     def test_deep_cobble_stack_is_stocked_in_the_lull(self) -> None:
         g = self._lull(bow=1, arrow=16, cobblestone=12)
+        self.assertIn("mine_stone", candidates(g))
+
+    def test_one_scaffold_block_does_not_reopen_the_dig(self) -> None:
+        # run88 it177-179: the drop left exactly 64, the walk off it laid one scaffold block,
+        # and `mine_stone` came up for the 63rd - its `collect_block` hoovered the dropped pile
+        # straight back into the pack. A batch of slack keeps the two lines apart.
+        g = self._lull(bow=1, arrow=16, cobblestone=NETHER_COBBLE - 1)
+        self.assertNotIn("mine_stone", candidates(g))
+        g = self._lull(bow=1, arrow=16, cobblestone=NETHER_COBBLE - NETHER_COBBLE_SLACK - 1)
         self.assertIn("mine_stone", candidates(g))
 
     def test_mine_stone_is_not_listed_twice(self) -> None:
@@ -2126,11 +2136,34 @@ class NetherGateTest(unittest.TestCase):
         # "movement policy prohibits breaking this block" for a bed). The base bed is
         # `place_bed`'s job and waits for the lit portal; the generic night sleep must not
         # pre-empt it. Live, the bed fell into the opening and `light_portal` answered
-        # `[PORTAL_NO_FRAME]` on every tick.
+        # `[PORTAL_NO_FRAME]` on every tick. So at the base `sleep` only walks off it, west and
+        # away from the frame; the bed goes down where the bot stands next tick.
         g = self._at_home(self._geared(white_bed=1))
         g.phase = "night"
-        self.assertNotIn("sleep", candidates(g))
-        self.assertIsNone(resolve("sleep", g))
+        a = resolve("sleep", g)
+        self.assertEqual(a.tool, "navigate")
+        bx, _, bz = g.base
+        self.assertLessEqual(a.args["x"], bx - BASE_RADIUS - 1)
+        self.assertEqual(a.args["z"], bz)
+
+    def test_a_night_at_the_base_walks_off_it_to_sleep(self) -> None:
+        # run88 it147-158: night, the frame up but unlit (the spare pickaxe still owed), no
+        # diamond ore in view and the bed in the pack. Sleeping at the base is forbidden and
+        # nothing walked the bot anywhere else, so the night offered `wait` alone for twelve
+        # ticks. Now `sleep` is offered and walks off the base first; off it, it sleeps.
+        g = self._at_home(self._geared(white_bed=1, flint_and_steel=1, cobblestone=64,
+                                       diamond_pickaxe=1))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        g.phase = "night"
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIn("sleep", candidates(g))
+        self.assertNotIn("wait", candidates(g))
+        self.assertEqual(resolve("sleep", g).tool, "navigate")
+        bx, by, bz = g.base
+        g.pos = (bx - SLEEP_OFF_BASE_STEP + 0.5, by + 1.0, bz + 0.5)
+        self.assertIn("sleep", candidates(g))
+        self.assertEqual(resolve("sleep", g).tool, "sleep")
 
     def test_sleep_at_the_base_waits_for_the_bed_to_stand_there(self) -> None:
         # With the portal lit the gate bed must *stand* at the base: a carried bed is `place_bed`'s

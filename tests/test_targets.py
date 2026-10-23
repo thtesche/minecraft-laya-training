@@ -493,6 +493,37 @@ class StepAwayCellTest(unittest.TestCase):
     def test_no_read_no_cell(self) -> None:
         self.assertIsNone(step_away_cell({}, self.DROP, self.DROP))
 
+    def _tunnel(self) -> dict:
+        # A one-wide tunnel running east-west at z=-5, stone everywhere else (run88 at y=6).
+        grid = {}
+        for x in range(-96, -82):
+            for z in range(-7, -2):
+                for y in range(68, 73):
+                    grid[(x, y, z)] = "air" if (z == -5 and y in (70, 71)) else "stone"
+        return grid
+
+    def test_the_walk_goes_back_the_way_the_bot_came(self) -> None:
+        # run88 it171-176: dug west, tossed west, and the even tie between the cells east and
+        # west went west through the pile - the junk came straight back up, four rounds running.
+        # With the heading the cell behind the bot wins.
+        grid = self._tunnel()
+        self.assertLess(step_away_cell(grid, self.DROP, self.DROP)[0], self.DROP[0])
+        cell = step_away_cell(grid, self.DROP, self.DROP, heading=(-1.0, 0.0))
+        self.assertGreater(cell[0], self.DROP[0])
+        self.assertGreaterEqual(self._away(cell), STEP_AWAY_MIN)
+        cell = step_away_cell(grid, self.DROP, self.DROP, heading=(1.0, 0.0))
+        self.assertLess(cell[0], self.DROP[0])
+
+    def test_a_dead_end_behind_still_steps_ahead(self) -> None:
+        # Nothing standable behind the bot: a cell ahead beats no walk at all.
+        grid = self._tunnel()
+        for (x, y, z) in list(grid):
+            if x > -90:
+                grid[(x, y, z)] = "stone"
+        cell = step_away_cell(grid, self.DROP, self.DROP, heading=(-1.0, 0.0))
+        self.assertIsNotNone(cell)
+        self.assertLess(cell[0], self.DROP[0])
+
 
 if __name__ == "__main__":
     unittest.main()

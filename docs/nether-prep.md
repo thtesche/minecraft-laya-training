@@ -110,8 +110,9 @@ Nether terrain is already provided for in the server reflex.
   `hunt_string`) + 3 sticks; arrows = flint (`get_flint`, reopened after the flint and steel) +
   stick + feather (chickens). Goal: bow present ∧ ≥ 16 arrows (`NETHER_ARROWS`). The server fires
   the bow itself (`combat.bow`).
-- **Cobblestone minimum reserve** raised to 64 in the lull (`NETHER_COBBLE`); the light threshold 12
-  continues to apply outside the lull. Before the passage the bot carries a spare-pickaxe reflex
+- **Cobblestone minimum reserve** raised to 64 in the lull (`NETHER_COBBLE`), refilled only once
+  it falls below 56 (`NETHER_COBBLE_SLACK`), so a scaffold block does not send `mine_stone` to
+  collect a pile just dropped; the light threshold 12 continues to apply outside the lull. Before the passage the bot carries a spare-pickaxe reflex
   (`replace_tool`).
 
 **Phase 2 — done (gold helmet, carried ready):**

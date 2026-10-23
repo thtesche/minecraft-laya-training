@@ -722,6 +722,26 @@ Details of the run86 fixes:
   `drop_item` cannot aim — nearest to the bot on its own level; a refused cell gives way to the
   next from the same read.
 
+### run88 (2026-10-23): three ways of standing still
+
+- **The walk off a drop went the way of the toss.** In a one-wide tunnel the cells four blocks
+  east and west of the drop tie, and the tie went to the lower x — west. The bot had dug west,
+  so it faced west and tossed west, and the walk led straight through the pile: four rounds of
+  `drop_junk` / `step_away_drops` picked the same junk back up (it171–176). The loop now keeps
+  the way the bot last walked (`Agent._note_heading`, a move of at least a block), stores it with
+  the drop (`drop_heading`), and `step_away_cell` prefers any cell behind it; the read-less
+  fallback walks back along it too.
+- **One scaffold block reopened the dig.** The surplus drop leaves exactly `NETHER_COBBLE`, the
+  walk off it spent one block as scaffold, and `mine_stone` came up for the 63rd — its
+  `collect_block` hoovered the dropped pile back into the pack (it177–179). The lull refills the
+  stack only below `NETHER_COBBLE - NETHER_COBBLE_SLACK` (64 − 8).
+- **A night at the base with nothing allowed.** The frame stood unlit (the spare pickaxe still
+  owed), no diamond ore was in view, and sleeping at the base is forbidden before the gate burns,
+  so the night offered `wait` alone for twelve ticks (it147–158). `_sleep_off_base` now offers
+  `sleep` there: it walks `SLEEP_OFF_BASE_STEP` blocks west of the anchor, away from the frame,
+  and sleeps off the base next tick; `take_bed` brings the bed home in the day. A gate that may be
+  lit now keeps the bot at the base.
+
 ## Next milestones
 
 - **Open after run86:** (1) the October fixes above are unit-tested but not yet seen live;
@@ -995,7 +1015,8 @@ Details of the run86 fixes:
   gate goes first. `light_portal` requires `_expedition_ready` — which holds once a bed is **at
   hand** (see the auto-stop) — and `place_bed`
   lays it the very next tick, when the opening is solid. Away from the base the night
-  sleep stays unchanged **until the gate is lit**. After that
+  sleep stays unchanged **until the gate is lit**; a night that finds the bot at the base with a
+  carried bed and a gate not yet ready to light walks it off the base first (`_sleep_off_base`). After that
   `sleep` is restricted to the base (`_at_base` *iff* `_portal_lit`): anywhere else it would pin the
   respawn point away from the gate, and a carried bed laid wherever the bot happened to stand is
   exactly the leftover `take_bed` then had to fetch. A bed standing **away from the base** — the
