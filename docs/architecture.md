@@ -551,6 +551,41 @@ a **food acquisition** that fits "actually survive".
   and the upper bound (> 8 m) the logged gate answer stays, instead of forcing `no`.
   The `DANGER_Q` criteria were also sharpened ("within a few blocks and closing in"). Tested
   in `tests/test_brain.py` and `tests/test_perception.py`.
+- **Quiet defers hand the tick back (2026-10-22, `e0e7687`):** contact range is still no proof
+  of a fight. run86 stood at a fortress blaze spawner with blazes 2–4 m away behind the spawner
+  fence; the server's hostile reflex fell silent at 20:25:33 (health and hunger full, `busy`
+  false), and the loop deferred **120+ ticks** without moving until the iteration cap.
+  `Agent._note_defer` now counts the defers in a row that took **no damage** and saw **no
+  survival reflex act** (event summaries starting with `hostile:`, `fire:`, `lava:`, … —
+  `graph.SURVIVAL_EVENT_PREFIXES`; eating does not count). Once `gs.defer_quiet` reaches
+  `brain.DEFER_QUIET_TICKS = 5`, `danger_matters` lets the loop work again; health below the
+  band still defers, and the first hit — also during the loop's own action (`_note_hurt`) —
+  resets the count. Tested in `tests/test_brain.py::DangerMattersTest` and
+  `tests/test_actions.py::DeferQuietTest`.
+- **Second training round: run79–86 (2026-10-23, `775d0d2`):** three changes to the pipeline.
+  (1) **Several logs:** `mlaya dataset --log A --log B …` reads them as one set (dedup across
+  them). (2) **Ping-pong filter:** the verifier reads a walk as progress, so the loops of the
+  October runs would have been taught as good decisions — run82's 481 `go_home`↔`stow_surplus`
+  ticks and run84's `mine_obsidian`↔`go_home` swaps (cobblestone +25/−25). `dataset._loop_ticks`
+  drops every window of `LOOP_MIN_TICKS = 6` or more action ticks that repeats one label or
+  strictly alternates two with **no item gained net** over the window, and a `stow_surplus`
+  counts only when an item actually left the pack (`_deposited`). Effect on run79–86:
+  `stow_surplus` 48 → 12 rows, `go_home` 81 → 56. (3) **The base is the served checkpoint:**
+  `mlaya train` resolved `[train] base_model` straight through `laya.train.resolve_checkpoint_dir`,
+  which ignores `LAYA_EXTRA_MODELS` — every fine-tune therefore started from the Hub's built-in
+  `english` and discarded the earlier one. `cli._train_base` now resolves the name through
+  `laya.extra_models` exactly as the loop does, and `--base` names a checkpoint explicitly.
+  Dataset: 683 rows (512 train / 171 held-out, `data/run79-86-*.jsonl`), 306 `in_danger=yes`;
+  dry run 843 valid items, 380 optimizer updates over 4 epochs, base
+  `runs/checkpoints/minecraft-20261014-104114`. Tested in `tests/test_dataset.py::LoopFilterTest`
+  and `tests/test_cli.py`.
+  **Result** (4 epochs, `rlcd`, encoder frozen → `runs/checkpoints/minecraft-20261023-100828`,
+  log `runs/train-run79-86.log`), held-out 279 items: accuracy **0.767 → 0.885**, loss **1.224 →
+  0.309**, ECE **0.255 → 0.065**, Brier **0.483 → 0.189**; calibration slice accuracy 0.893. Unlike
+  the 2026-10-14 round the accuracy moves — but this held-out set is a hash split of the **same**
+  runs, not a whole unseen run as `run7d` was, so it is closer to in-distribution and the number
+  is an upper bound until a live run confirms it. Served with
+  `LAYA_EXTRA_MODELS='{"english": "<repo>/runs/checkpoints/minecraft-20261023-100828"}'`.
 
 ## M4 — reached: parameter layer (goal choice over `view_blocks` candidates, `predict_shortlist`)
 
@@ -596,7 +631,104 @@ just one level deeper.
   deliberately generic (`TARGET_LABELS`, `resolve(..., target)`), further labels can adopt it
   later.
 
+## Storage network — reached (2026-10-21, `5135ef0`)
+
+run79 ended in the deadlock this exists to break: the one chest at the base filled up, every
+deposit after it answered `[CONTAINER_BATCH_INCOMPLETE]`, the pack had nothing left to shed, and
+102 `wait` ticks followed. The base now keeps a **network** of chests:
+
+- **Fullness per cell** (`Agent._note_container`): a deposit the server could not finish marks
+  that cell full; a successful deposit or withdraw opens it again.
+- **Overflow chests** grow beside the main one (`STORAGE_SITES` candidates, refused cells
+  skipped) once every chest of the network is full. `stow_surplus` deposits into the first chest
+  with room, `take_stored_food` reaches into whichever network chest the server's database last
+  saw holding provisions (`banked_stores` per cell, own cells only).
+- **The deposit works where the chest stands (`0d24d78`):** a chest adopted outside the base's
+  radius was walked to 481 times and worked never (run82) — `stow_surplus` was only allowed at
+  the base anchor and `go_home` walked the bot back on the very surplus the chest was waiting
+  for. `at_chest` is now the base **or** the chest lid's reach (`STORAGE_REACH`), and
+  `_storage_reachable` silences `go_home`'s surplus clause while a roomy chest is in reach.
+- **Phantom cells leave the network (`9f5b62e`, `3f5b908`):** run83 adopted a chest cell that
+  the world had given up; four deposits answered `[CONTAINER_NOT_PRESENT] The loaded target block
+  is air` and the phantom stayed the target to the end. `Agent._note_container_missing` drops a
+  cell — with the provisions believed in it — when the server names a block that is **not** what
+  the cell was remembered as (air, or a furnace where a chest was). A standing furnace the server
+  merely cannot open (`... is furnace, not a supported container`, 119× in run49) is **kept**:
+  forgetting it would re-adopt it with its occupied flag wiped.
+
+## Stall guards
+
+Most October runs were not lost to deaths but to a loop that kept the run busy without
+progress. The loop now has one guard per kind of stall; each withholds the label for
+`STUCK_COOLDOWN = 15` ticks, after which it returns on its own.
+
+| Stall | Guard | Trigger |
+|---|---|---|
+| the same refusal again and again | `_track_stuck` | `STUCK_REPEATS = 4` identical failure codes |
+| walking far, arriving nowhere | `_track_wander` | ≥ `WANDER_WALK = 80` m walked at a ratio worse than `WANDER_RATIO = 6`, `WANDER_REPEATS = 2`× |
+| succeeding at nothing | `_track_idle` | `IDLE_REPEATS = 3` ticks with no change at all (`wait`/`sleep` exempt) |
+| a walk off dropped junk that cannot be made | `_note_step_away` | `STEP_AWAY_GIVE_UP = 3` refusals in a row |
+| deferring to a reflex that does nothing | `_note_defer` | `DEFER_QUIET_TICKS = 5` quiet defers (see M3) |
+
+Three lessons from the runs behind them:
+
+- **Exclusive offers must ask for the withholding themselves.** A rescue or the night `sleep`
+  returns from `candidates` before the final `gs.stuck_labels` filter, so a withheld label kept
+  the tick anyway (run86: `sleep` dropped at it2, chosen 13 more times). The night offer now checks
+  `"sleep" not in gs.stuck_labels` itself (`6d3d164`).
+- **Two offers that walk the bot in opposite directions are one predicate.** A walk that
+  succeeds every tick is invisible to all three guards above. The fix is always the same: the
+  step that walks *away* must not be offered while the step that calls it *back* holds —
+  `_storage_reachable` (run82, `go_home`↔`stow_surplus`) and `_shed_owed` (run84, a full pack
+  walking `mine_obsidian` 27 blocks down to the lava while `go_home` called it back on the
+  surplus, `251df45`).
+- **A guard must see both outcomes.** `STEP_AWAY_GIVE_UP` existed but `_note_step_away` sat under
+  the success guard, so run81's 470 cliff-top refusals never reached it (`c48da18`).
+
+`wait` itself is no longer a stall: it navigates to the anchor the bot already stands on and
+settled in about a second, so run86 — its gate lit by day — spent ~300 of 600 iterations waiting
+for one night. A successful `wait` now holds `[loop] wait_hold_s` (default 30 s,
+`Agent._hold_wait`, `834f5b0`), which makes a ten-minute day some twenty decisions.
+
+## Live findings run80–86 (2026-10-21 … 22)
+
+| Run | Result | What held it back | Fix |
+|---|---|---|---|
+| run80 | 600/600, 0 deaths | `[BUILD_STOPPED]` names no cell, ~350 `clear_portal` ticks; 22 lightings on a partial frame; finished frame never lit by day | `017f69c`, `86f2846` |
+| run81 | 600/600, 0 deaths | 470× `step_away_drops` refused on a cliff top, give-up never saw the refusals | `c48da18` |
+| run82 | 600/600, 0 deaths, best early game so far | 481× `go_home`↔`stow_surplus`, the chest outside the base radius | `0d24d78` |
+| run83 | aborted at it524 (`SSE stream ended`), 4 deaths | unarmed hunts at night; a phantom chest from earlier runs | `91c1cb5`, `9f5b62e`/`3f5b908` |
+| run84 | stopped early | `mine_obsidian`↔`go_home` with a full pack | `251df45` |
+| run85 | crashed at it31 | `KeyError: 'y'` in `_note_placed` after a heightless `surface_up` probe | `c7b3c38` |
+| run86 | 600/600 `limit`, 0 deaths, **first crossing of this series** | a night of `[BED_NOT_FOUND]` (bed 51 m away, server searches 32); `clear_frame` dug its own fresh frame blocks; junk walk-off aimed due west into no footing; gate lit by day → ~300 `wait` ticks; at the fortress spawner 120+ quiet defers | `6d3d164`, `c63b1db`, `3907457`, `834f5b0`, `e0e7687` |
+
+Details of the run86 fixes:
+
+- **Sleep reach (`6d3d164`):** `_bed_available` counts any bed the scan sees — right for "is a
+  second bed owed", wrong for the sleep itself. `_bed_in_sleep_reach` counts a carried bed or one
+  within `SLEEP_BED_REACH = 32` (the server's search), and the night offer honours the withholding.
+- **Frame cells that are done (`c63b1db`):** the `[BUILD_STOPPED]` marking reads the frame plane
+  from **before** the build, so the cells that build had just filled were marked too, and
+  `clear_frame` dug the fresh cobblestone corner and two just-laid obsidian back out.
+  `perception.frame_wanted_blocks(base)` is now the one table of which block each ring cell
+  wants, and `_frame_blocker` skips a cell that holds it.
+- **Walk-off to proven footing (`3907457`):** the drop position is the bot's own feet, so "three
+  blocks away from the drop" was a zero vector — `atan2(-0, -0)`, always due west, at the bot's
+  own height. One `view_blocks box` around the drop (`Agent._scan_drop_ground`) now feeds
+  `targets.step_away_cell`: solid footing (no lava/magma/cactus), room for the body, at least
+  `STEP_AWAY_MIN = 4` blocks from the drop — past the reach of a toss in any direction, since
+  `drop_item` cannot aim — nearest to the bot on its own level; a refused cell gives way to the
+  next from the same read.
+
 ## Next milestones
+
+- **Open after run86:** (1) the October fixes above are unit-tested but not yet seen live;
+  (2) the gate may still be lit by day (`86f2846`), which leaves the bot beside an open portal
+  for up to a day — the `wait` hold makes it cheap, not safe; (3) `mine_obsidian` re-made ten
+  obsidian far from a base whose frame already stood (run86 it64–66), presumably because the
+  frame-plane read only exists near the base; (4) other steps that leave the base (`mine_diamond`,
+  `mine_gold`) are not yet held back by `_shed_owed`; (5) the server's `observed_containers`
+  table was empty in the run86 world, so `_walk_home_to_memory` cannot fire there.
 
 - **M3+ (open):** The **out-of-distribution** held-out split is now built (full run
   `run7d`): the zero-shot accuracy there is **0.934**, the fine-tune improves loss/ECE/Brier,

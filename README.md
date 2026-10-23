@@ -46,16 +46,22 @@ rationale and the zero-shot findings behind this split are in
 | Homebase — surface anchor with bed, chest and furnace | reached, validated live |
 | Nether portal — bucket → obsidian → flint & steel → frame → lit portal | reached, validated live |
 | Nether prep — bow + arrows, gold helmet, cobblestone/food reserve | implemented, part of the auto-stop |
-| Nether visit (phase 3) | **open** — see [`docs/nether-prep.md`](docs/nether-prep.md) |
+| Storage network — chests per cell, overflow chests, provisions fetched back | reached, validated live |
+| Stall guards — refusals, wandering, idle steps, quiet defers, `wait` hold | implemented (see [`docs/architecture.md`](docs/architecture.md#stall-guards)) |
+| Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented; live up to the fortress spawner (run86), no rod home yet — see [`docs/nether-prep.md`](docs/nether-prep.md) |
+| M3, second round — run79–86 head on top of the 2026-10-14 checkpoint | trained (held-out accuracy 0.767 → 0.885), not yet run live |
 
-The run **stops itself** once the overworld goal stands
-(`actions.tech_tree_complete`): full diamond kit **worn** + shield in the off-hand, a bed
-at the base, all Nether prep steps done and the food reserve banked. The portal is lit
-**last** — `light_portal` waits for that whole bundle (`_expedition_ready`) and for a night
-that can lay the carried bed at once, so the gate never burns while the bot still works at
-the base beside it; the bed goes down the very next tick and the run ends. It then reports
-`"stop": "goal"`; with `--ignore-goal` (or
-`[loop] stop_when_complete = false`) it runs to the iteration limit instead.
+The run **stops itself** once every phase stands (`Agent._goal_reached`): the overworld goal
+(`actions.tech_tree_complete` — full diamond kit **worn** + shield in the off-hand, a bed at the
+base, all Nether prep steps done, the food reserve banked and the gate lit) **and** the Nether
+trip (`actions.nether_expedition_complete` — the blaze powder deposited in the chest at the
+gate). The portal is lit **last** in the overworld: `light_portal` waits for the whole stocked
+trip, so the gate never burns through the prep window. It normally lights at night, when the
+carried bed can be laid the very next tick; a frame the plane read proves finished may also
+burn by day, and the bot then holds at the base (`wait`, 30 s per decision) until night lays
+the bed and opens the crossing. The run then reports `"stop": "goal"`; a run that never gets
+the powder home ends with `"stop": "limit"`, and `--ignore-goal` (or
+`[loop] stop_when_complete = false`) always runs to the iteration limit.
 
 ## Setup
 
@@ -81,8 +87,9 @@ precedence) and is gitignored. Prerequisite: the mine-ai MCP server running at
 .venv/bin/python -m mlaya.cli run --ignore-goal  # keep running past the goal
 ```
 
-Configuration: [`config/settings.toml`](config/settings.toml). Every decision is logged
-to `runs/decisions.jsonl`.
+Configuration: [`config/settings.toml`](config/settings.toml) — among others
+`[loop] wait_hold_s` (seconds a successful `wait` holds, default 30). Every decision is logged
+to `runs/decisions.jsonl`; move it to `runs/history/decisions-runNN.jsonl` before the next run.
 
 ### M3: logs → dataset → fine-tuning
 
@@ -91,10 +98,16 @@ to `runs/decisions.jsonl`.
 .venv/bin/python -m mlaya.cli dataset            # -> data/train.jsonl + data/eval.jsonl
 .venv/bin/python -m mlaya.cli dataset --include-failed   # also keep ticks without progress
 .venv/bin/python -m mlaya.cli dataset --no-danger        # without `in_danger` rows
+# several archived runs as one set, into their own files
+.venv/bin/python -m mlaya.cli dataset --log runs/history/decisions-run79.jsonl \
+    --log runs/history/decisions-run80.jsonl --out data/run79-80-train.jsonl --eval data/run79-80-eval.jsonl
 
 # 2) Check the dataset format (loads no weights), then retrain the head (RLCD)
 .venv/bin/python -m mlaya.cli train --dry-run
 .venv/bin/python -m mlaya.cli train              # -> runs/checkpoints/minecraft-<time>
+# the base is [train] base_model resolved through LAYA_EXTRA_MODELS, so with the variable set
+# the head trains on top of the checkpoint the loop serves; --base names one explicitly
+.venv/bin/python -m mlaya.cli train --base runs/checkpoints/minecraft-<time> --data data/run79-80-train.jsonl
 
 # 3) Register the checkpoint under `english` and run the loop with it
 export LAYA_EXTRA_MODELS='{"english": "'"$PWD"'/runs/checkpoints/minecraft-<time>"}'
@@ -104,7 +117,9 @@ export LAYA_EXTRA_MODELS='{"english": "'"$PWD"'/runs/checkpoints/minecraft-<time
 `LAYA_EXTRA_MODELS` is a JSON object `{name: source}`; a name that matches a built-in
 checkpoint (`english`) **re-points it** — the fine-tune is served without a code change.
 The reward is the verifier: only ticks whose action demonstrably made progress become
-positive examples (`--include-failed` for pure imitation).
+positive examples (`--include-failed` for pure imitation). Ticks inside a ping-pong — six or more
+ticks repeating one label or alternating two with no item gained — teach no intent, and a
+`stow_surplus` counts only when an item left the pack (see `docs/architecture.md`, M3).
 
 Tests: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests`.
 

@@ -158,6 +158,18 @@ portal** for now. Getting back out is part of the goal, not a detail.
   chest back would cost an inspection every tick). Powder still in the pack does **not** count:
   the point is that the haul is safe at home, and one death on the way back takes the inventory.
 
+**Live status (run86, 2026-10-22):** the first crossing of the October series. The gate was lit
+at it112, the bot waited at the base for the night, crossed with `enter_portal` at it420 and found
+a fortress within four decisions — at it425 it stood beside a blaze spawner at (-24,70,-54) in the
+Nether. The server's hostile reflex killed blazes there, but no rod reached the pack: after
+20:25:33 the reflex fell silent while blazes stayed within 4 m, and the loop deferred for the rest
+of the run (fixed by the quiet-defer guard, `e0e7687`, see architecture/M3). Two gaps showed:
+`swap_to_gold_helmet` was offered on every Nether tick but never ran (the defers took them all),
+and `hunt_blaze` was not offered at all, because `_safe_blaze_hunt` refuses while any other
+hostile is within 16 m — at a fortress a zombified piglin or a wither skeleton almost always is.
+The ~300 iterations the bot spent waiting for the night are now ~20 (`[loop] wait_hold_s`), so the
+next run has the budget for the trip itself.
+
 ## Decided: the gold helmet replaces the diamond helmet
 
 One piece of golden armour keeps piglins neutral, but the bot wears a **full diamond set** —
