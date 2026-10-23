@@ -786,8 +786,18 @@ it21. Two gaps:
   `_must_eat` — food carried, and hunger under `EAT_HUNGER`, or health under the band with hunger
   under `REGEN_HUNGER` — makes `eat_food` the tick's only step. A milder need still rides along.
 
-Not addressed yet: that `hunt_food` walked 276 m in one `collect_mob_drop` (three minutes,
-hunger 8 → 5) although the day reach is 64 m.
+- **The hunt asked for more than it could see.** `hunt_food` sent `collect_mob_drop` for six
+  chicken with four in view at 47 m. The server's hunt has no range limit and retargets to the
+  next animal of the kind anywhere loaded until the count is met: six target changes, one 81.6 m
+  out, 591 blocks in one 178-second action, 276 m from the start, hunger 8 → 5. `_hunt_count`
+  now asks for at most as many drops as animals of that kind are in view (one per kill is the
+  least each gives), `HUNT_BATCH = 6` at most, and `HUNT_HURRY = 2` when the bot is hungry or
+  wounded, so the meal comes back fast and `eat_food` takes the next tick. And a chicken is the
+  last choice (`FOOD_MOBS_LAST`): the server's hunger reflex never eats raw chicken
+  (`REFLEX_AVOIDED_FOODS`, food poisoning), so the six run89 carried fed nothing while it
+  deferred.
+
+A range limit on `collect_mob_drop` itself would belong in `mine-ai-mcp`.
 
 ## Next milestones
 

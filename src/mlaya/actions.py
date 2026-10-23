@@ -507,16 +507,53 @@ def _can_sticks(inv: dict[str, int], logs: int, planks: int) -> bool:
     return inv.get("stick", 0) >= 2 or planks >= 2 or logs >= 1
 
 
+# How many drops one food hunt asks for, and how many when the meal is urgent. `collect_mob_drop`
+# has no range limit: it retargets to the next animal of that kind anywhere loaded until the
+# count is met. run89 asked for six chicken with four in sight; the server walked 591 blocks in
+# one 178-second action, ending 276 m out, and the hunger fell from 8 to 5 on the way. So the
+# count never exceeds the animals of that kind the bot can see, and a hungry or wounded bot asks
+# for two - enough to eat, short enough that `eat_food` gets the next tick.
+HUNT_BATCH = 6
+HUNT_HURRY = 2
+ZOMBIE_FLESH_BATCH = 10
+# A chicken is hunted only when no other food animal is in reach: one raw chicken per kill, and
+# the server's hunger reflex never eats it (`REFLEX_AVOIDED_FOODS`, food poisoning), so a pack of
+# raw chicken does not feed a bot whose loop is deferring - run89 died with six of them carried.
+FOOD_MOBS_LAST = ("chicken",)
+
+
 def _nearest_food_mob(gs: GameState, max_range: float | None = None) -> str | None:
-    best: str | None = None
-    best_d: float | None = None
+    """The nearest food animal in reach, a chicken only when nothing else is (`FOOD_MOBS_LAST`)."""
+    best: tuple[bool, float, str] | None = None
     for mob in FOOD_MOBS:
         d = gs.mob_nearest(mob)
         if d is None or (max_range is not None and d > max_range):
             continue
-        if best_d is None or d < best_d:
-            best, best_d = mob, d
-    return best
+        key = (mob in FOOD_MOBS_LAST, d, mob)
+        if best is None or key < best:
+            best = key
+    return best[2] if best else None
+
+
+def _mob_count(gs: GameState, name: str) -> int:
+    """How many animals of one kind the observation lists (all loaded, nearest first)."""
+    return sum(count for n, _, count, _ in gs.mobs if n == name)
+
+
+def _hunt_count(gs: GameState, mob: str) -> int:
+    """Drops one hunt asks for: the batch, or `HUNT_HURRY` when hungry or wounded, and for an
+    animal never more than the ones of that kind in view, so the server has no reason to walk
+    past them. A zombie drops up to two rotten flesh and is hunted one at a time anyway, so its
+    batch (`ZOMBIE_FLESH_BATCH`) stays, cut only by the hurry."""
+    hungry = gs.food is not None and gs.food < EAT_HUNGER
+    hurt = gs.health is not None and gs.health < RECOVER_HEALTH
+    if hungry or hurt:
+        want = HUNT_HURRY
+    else:
+        want = HUNT_BATCH if mob in FOOD_MOBS else ZOMBIE_FLESH_BATCH
+    if mob in FOOD_MOBS:
+        want = min(want, max(1, _mob_count(gs, mob)))
+    return want
 
 
 def _food_hunt_range(gs: GameState) -> float:
@@ -3865,7 +3902,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if not target:
             return None
         mob, drop = target
-        count = 6 if mob in FOOD_MOBS else 10
+        count = _hunt_count(gs, mob)
         return Action(label, "collect_mob_drop",
                       {"mob_name": mob, "drop_name": drop, "count": count,
                        "allow_without_shield": True},

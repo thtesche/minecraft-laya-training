@@ -14,7 +14,7 @@ from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _hoard_surpl
                          _portal_lit, Action, _armor_to_wear, candidates,
                          BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
-                         DEFER_QUIET_TICKS,
+                         DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, NETHER_SEARCH_M, NETHER_HOPELESS_TICKS, resolve,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
@@ -330,11 +330,40 @@ class FoodChainTest(unittest.TestCase):
     SWORD = {"sword": "iron"}
 
     def test_hunt_passive_animal(self) -> None:
+        # Five cows in view: five drops at most, one a kill being the least a cow is sure to give.
         g = gs(mobs=[("cow", "animal", 5, 10.0)], tools=self.SWORD)
         a = resolve("hunt_food", g)
         self.assertEqual(a.args["mob_name"], "cow")
         self.assertEqual(a.args["drop_name"], "beef")
-        self.assertEqual(a.args["count"], 6)
+        self.assertEqual(a.args["count"], 5)
+        g.mobs = [("cow", "animal", 12, 10.0)]
+        self.assertEqual(resolve("hunt_food", g).args["count"], HUNT_BATCH)
+
+    def test_the_hunt_asks_no_more_than_the_animals_in_view(self) -> None:
+        # run89 it15: six chicken asked for, four in view at 47 m. `collect_mob_drop` has no
+        # range limit and retargeted until it had six - 591 blocks, 178 s, 276 m from the start,
+        # hunger 8 -> 5. The count stops at the animals the bot can see.
+        g = gs(mobs=[("chicken", "animal", 4, 47.5)], tools=self.SWORD, food=17.0, health=20.0)
+        self.assertEqual(resolve("hunt_food", g).args["count"], 4)
+
+    def test_a_hungry_or_wounded_hunt_is_short(self) -> None:
+        # Two drops are a meal; the next tick `eat_food` gets it (`_must_eat`).
+        g = gs(mobs=[("cow", "animal", 12, 10.0)], tools=self.SWORD, food=8.0, health=20.0)
+        self.assertEqual(resolve("hunt_food", g).args["count"], HUNT_HURRY)
+        g.food, g.health = 17.0, 8.5
+        self.assertEqual(resolve("hunt_food", g).args["count"], HUNT_HURRY)
+        self.assertEqual(_hunt_count(g, "zombie"), HUNT_HURRY)
+        g.food, g.health = 20.0, 20.0
+        self.assertEqual(_hunt_count(g, "zombie"), ZOMBIE_FLESH_BATCH)
+
+    def test_a_chicken_is_the_last_choice(self) -> None:
+        # The server's hunger reflex never eats raw chicken, and a chicken gives one drop: a cow
+        # in reach wins even when the chickens stand closer.
+        g = gs(mobs=[("chicken", "animal", 4, 12.0), ("cow", "animal", 2, 40.0)],
+               tools=self.SWORD)
+        self.assertEqual(resolve("hunt_food", g).args["mob_name"], "cow")
+        g.mobs = [("chicken", "animal", 4, 12.0), ("cow", "animal", 2, 90.0)]
+        self.assertEqual(resolve("hunt_food", g).args["mob_name"], "chicken")
 
     def test_hunt_lone_zombie_for_rotten_flesh(self) -> None:
         g = gs(mobs=[("zombie", "hostile", 1, 10.0)], health=20.0, tools=self.SWORD)
