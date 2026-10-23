@@ -15,8 +15,12 @@ from .config import MCPConfig
 
 SETTLED = {
     "succeeded", "success", "failed", "error", "cancelled", "canceled",
-    "completed", "complete", "settled", "done",
+    "completed", "complete", "settled", "done", "partial",
 }
+
+# The protocol's own word on an answer (`response.data.state`). Only `accepted` and `pending` name
+# an action still running; a refusal, a settlement and a failed store are all final for this call.
+RUNNING_STATES = {"accepted", "pending"}
 
 
 def clip(text: str, limit: int = 200) -> str:
@@ -80,11 +84,28 @@ def _extract(res: Any) -> ToolResult:
         m = re.search(r"Status:\W{0,4}([A-Za-z_]+)", text)
         if m:
             status = m.group(1).lower()
-    settled = action_id is None or (status in SETTLED)
+    # The envelope's `state` decides when it is there. `status` is found by a depth-first search
+    # and can be any nested result's: run90's hunt came back `state: settled` with a `partial`
+    # result, read as still running, and 900 `wait_for_action` polls - each answered at once with
+    # the same settlement - ran out after two minutes as a `[BODY_HELD]` with nobody holding.
+    state = _envelope_state(data)
+    if isinstance(state, str):
+        settled = state not in RUNNING_STATES
+    else:
+        settled = action_id is None or (status in SETTLED)
     return ToolResult(ok, text, data, action_id, settled, status, res)
 
 
-def _held(res: ToolResult) -> ToolResult:
+def _envelope_state(data: Any) -> Any:
+    """`response.data.state` of a JSON answer, or None for a Markdown one."""
+    if not isinstance(data, dict):
+        return None
+    response = data.get("response")
+    inner = response.get("data") if isinstance(response, dict) else None
+    return inner.get("state") if isinstance(inner, dict) else None
+
+
+def _held(res: ToolResult, waited_s: float | None = None) -> ToolResult:
     """The refusal a foreground call ends with when its action did not settle in time.
 
     Names who holds the body and in what, as far as the last progress answer says: run89's hunt
@@ -97,6 +118,8 @@ def _held(res: ToolResult) -> ToolResult:
         owner = (survival.get("owner") or {}).get("current")
         response = survival.get("response") or None
     parts = [f"owner {owner or 'unknown'}"]
+    if waited_s is not None:
+        parts.append(f"waited {waited_s:.0f} s")
     if isinstance(response, dict):
         parts.append(f"{response.get('kind')}/{response.get('phase')}")
         if response.get("phaseTicks") is not None:
@@ -222,7 +245,8 @@ class MCPExecutor:
         """
         async with self._lock:
             # One budget for the whole call: the drains of earlier actions and our own wait.
-            deadline = asyncio.get_running_loop().time() + self.cfg.action_wait_ms / 1000
+            started = asyncio.get_running_loop().time()
+            deadline = started + self.cfg.action_wait_ms / 1000
             res = ToolResult(False, "", None, None, False)
             for _ in range(3):
                 try:
@@ -239,7 +263,8 @@ class MCPExecutor:
                     # and resubmitting cannot double-run anything.
                     drained = await self._wait_settled(pending, deadline)
                     if not drained.settled:
-                        return _held(drained if drained.data else res)
+                        return _held(drained if drained.data else res,
+                                     asyncio.get_running_loop().time() - started)
                     continue
                 if not res.ok:
                     res = await self._recover(res, deadline)
@@ -247,7 +272,8 @@ class MCPExecutor:
             if res.action_id and not res.settled:
                 waited = await self._wait_settled(res.action_id, deadline)
                 if not waited.settled:
-                    return _held(waited if waited.data else res)
+                    return _held(waited if waited.data else res,
+                                 asyncio.get_running_loop().time() - started)
                 res = waited
             return res
 

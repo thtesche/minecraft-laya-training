@@ -134,6 +134,7 @@ class WaitBudgetTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[BODY_HELD]", res.text)
         self.assertIn("hostile_reflex", res.text)
         self.assertIn("fight/hold", res.text)
+        self.assertIn("waited 0 s", res.text)
         self.assertEqual(calls, ["collect_mob_drop"])
 
     async def test_a_drain_that_does_not_settle_is_not_resubmitted(self) -> None:
@@ -158,6 +159,60 @@ class WaitBudgetTest(unittest.IsolatedAsyncioTestCase):
         res = await ex.call("collect_mob_drop", {}, "test")
         self.assertEqual(res.status, "held")
         self.assertLess(polls, 10)
+
+
+def _pending(action_id: str) -> _Res:
+    """A `wait_for_action` answer for an action still running, its progress naming a status."""
+    return _Res(structured={"response": {"format": "json", "data": {
+        "state": "pending",
+        "wakeReason": "timeout",
+        "actionId": action_id,
+        "progress": {"actionId": action_id, "action": "collect_mob_drop",
+                     "progress": {"status": "succeeded"}},
+    }}})
+
+
+class SettledStateTest(unittest.IsolatedAsyncioTestCase):
+    """The envelope's `state` says whether an action settled, not a nested `status`.
+
+    run90 it76: a hunt that collected two of six chicken settled with result status `partial`,
+    which the depth-first `status` search read as still running. Every `wait_for_action` answered
+    at once with the same settlement, 900 polls ran out in two minutes, and the tick ended
+    `[BODY_HELD] ... owner unknown` while nothing held the body.
+    """
+
+    def test_a_partial_settlement_is_settled(self) -> None:
+        res = _extract(_settled(MINE, status="partial"))
+        self.assertTrue(res.settled)
+        self.assertEqual(res.status, "partial")
+
+    def test_a_pending_answer_is_running_whatever_its_progress_says(self) -> None:
+        self.assertFalse(_extract(_pending(MINE)).settled)
+
+    def test_an_acceptance_is_running(self) -> None:
+        res = _extract(_Res(structured={"response": {"format": "json", "data": {
+            "state": "accepted", "actionId": MINE, "action": "collect_mob_drop",
+            "admittedAt": "2026-10-23T21:00:00Z"}}}))
+        self.assertFalse(res.settled)
+
+    def test_a_markdown_answer_still_reads_its_status_line(self) -> None:
+        res = _extract(_Res(text=f"Action ID: {MINE}\nStatus: partial"))
+        self.assertTrue(res.settled)
+
+    async def test_a_partial_hunt_is_retrieved_once(self) -> None:
+        script = [_pending(MINE), _settled(MINE, status="partial")]
+        ex = MCPExecutor(MCPConfig())
+        calls: list[str] = []
+
+        async def fake(name: str, args: dict):
+            calls.append(name)
+            return script.pop(0)
+
+        ex._raw_call = fake  # type: ignore[assignment]
+        res = await ex.call("collect_mob_drop", {"mob_name": "chicken"}, "test")
+        self.assertNotEqual(res.status, "held")
+        self.assertEqual(res.status, "partial")
+        self.assertEqual(calls, ["collect_mob_drop", "wait_for_action"])
 
 
 class TransportTest(unittest.IsolatedAsyncioTestCase):

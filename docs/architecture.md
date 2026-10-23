@@ -816,6 +816,12 @@ the count — and `BODY_HELD_STOP = 3` of them end the run with `"stop": "body_h
 loop can send moves a body the reflex owns; the fix for the endless `hold` itself belongs in
 `mine-ai-mcp`.
 
+Whether an answer has settled comes from the envelope's `response.data.state` (`accepted` and
+`pending` run, everything else is final), not from the first `status` a depth-first search finds.
+run90's it76 hunt settled `partial` (two of six chicken), was read as still running, and 900
+polls — each answered at once with the same settlement — ran out in two minutes as a
+`[BODY_HELD] ... owner unknown`. The refusal now also says how long the call waited.
+
 ## Next milestones
 
 - **Open after run86:** (1) the October fixes above are unit-tested but not yet seen live;
