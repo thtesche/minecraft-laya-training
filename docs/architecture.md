@@ -668,6 +668,7 @@ progress. The loop now has one guard per kind of stall; each withholds the label
 | walking far, arriving nowhere | `_track_wander` | ≥ `WANDER_WALK = 80` m walked at a ratio worse than `WANDER_RATIO = 6`, `WANDER_REPEATS = 2`× |
 | succeeding at nothing | `_track_idle` | `IDLE_REPEATS = 3` ticks with no change at all (`wait`/`sleep` exempt) |
 | a walk off dropped junk that cannot be made | `_note_step_away` | `STEP_AWAY_GIVE_UP = 3` refusals in a row |
+| a body the server's reflex will not hand back | `MCPExecutor.call` / `_note_held` | `[mcp] action_wait_ms = 300000` per call, then `[BODY_HELD]`; `BODY_HELD_STOP = 3` in a row end the run with `"stop": "body_held"` |
 | deferring to a reflex that does nothing | `_note_defer` | `DEFER_QUIET_TICKS = 5` quiet defers (see M3); under the health band only when nothing heals in place (`_recovery_owed`) |
 
 Three lessons from the runs behind them:
@@ -798,6 +799,22 @@ it21. Two gaps:
   deferred.
 
 A range limit on `collect_mob_drop` itself would belong in `mine-ai-mcp`.
+
+### run89, later (2026-10-23): three hours in a fight that never ended
+
+At 16:11 the server's `hostile_reflex` took the body during a `hunt_wool` at y=−54 and stayed in
+`fight`, phase `hold`, against a zombie 1.6 m away — 55,712 ticks, three swings, full health,
+not one event after 16:11:36. The loop could only wait: every foreground call polled
+`wait_for_action` up to `max_polls` (900 × 2 s), and a refused submission drained the held action
+up to three times, so it311 came 31 minutes after it310 and it317 93 minutes after it316.
+
+`MCPExecutor.call` now shares one deadline, `[mcp] action_wait_ms` (five minutes), between its
+drains and its own wait. A call that runs out of it returns `[BODY_HELD]` with the holder the
+last progress answer named (owner, response kind/phase, phase ticks) and status `held`, without
+resubmitting. `Agent._note_held` counts such calls in a row — a defer between them does not reset
+the count — and `BODY_HELD_STOP = 3` of them end the run with `"stop": "body_held"`. Nothing the
+loop can send moves a body the reflex owns; the fix for the endless `hold` itself belongs in
+`mine-ai-mcp`.
 
 ## Next milestones
 

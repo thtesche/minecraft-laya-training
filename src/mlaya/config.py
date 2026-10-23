@@ -42,6 +42,12 @@ class MCPConfig(BaseModel):
     initial_wait_ms: int = 5_000
     poll_ms: int = 2_000
     max_polls: int = 900
+    # How long one foreground call may wait in total for its action - and for any earlier action
+    # it has to drain first - before the tick gives up with `[BODY_HELD]`. run89 sat in
+    # `wait_for_action` for 31 and then 93 minutes per tick: the server's hostile reflex held the
+    # body in a fight it could not finish, and every drain ran the full `max_polls`, up to three
+    # times over.
+    action_wait_ms: int = 300_000
     max_sse_event_bytes: int = 16_777_216
     submission_prefix: str = ""
 

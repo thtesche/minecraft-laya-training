@@ -32,7 +32,7 @@ head is trained. Run-by-run findings live in [`architecture.md`](architecture.md
 4. Never patch code under a running run: a run keeps the code it started with, and a fix
    applies from the next run. A run that is stuck is stopped by the user, not by the tooling.
 5. After the run: the last line of `runs/runNN.log` is the end JSON (`iterations`, `stop`
-   `goal`/`limit`, policy); `runs/decisions.jsonl` has one record per tick (`action`, `defer`,
+   `goal`/`limit`/`body_held`, policy; `body_held` means the server's reflex kept the body through three `action_wait_ms` budgets in a row); `runs/decisions.jsonl` has one record per tick (`action`, `defer`,
    `policy` stages) with the state, the candidates, the chosen label, the result text and the
    delta.
 

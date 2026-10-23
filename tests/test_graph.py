@@ -12,6 +12,7 @@ flat ground` in that shaft, so the stub list now covers both codes.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 import math
 import unittest
 
@@ -20,7 +21,7 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
                           tech_tree_complete)
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, HOME_ANCHOR_TICKS, IDLE_REPEATS, PASS_TIME_LABELS,
+from mlaya.graph import (Agent, BODY_HELD_STOP, HOME_ANCHOR_TICKS, IDLE_REPEATS, PASS_TIME_LABELS,
                          PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS, WANDER_RATIO,
                          WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
@@ -111,6 +112,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -210,6 +212,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         return agent
@@ -393,6 +396,7 @@ class PourSkipTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -504,6 +508,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -609,6 +614,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -1205,6 +1211,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -1276,6 +1283,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -1369,6 +1377,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -1626,6 +1635,7 @@ class DropHoleTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -1705,6 +1715,7 @@ class DropHoleTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         self.assertTrue(agent._inject(gs()).drop_hole_blocked)
@@ -1797,6 +1808,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = True
@@ -1891,6 +1903,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._furnace_blocked = True
@@ -2059,6 +2072,7 @@ class ChestLidTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_above = (229, 63, 224)
@@ -2080,6 +2094,7 @@ class GoalStopTest(unittest.TestCase):
         agent.settings = Settings()
         agent.settings.loop.max_iterations = 10
         agent.settings.loop.stop_when_complete = stop_when_complete
+        agent._held_ticks = 0
         return agent
 
     @staticmethod
@@ -2205,6 +2220,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -2399,6 +2415,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -2692,6 +2709,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._blocked_cell = None
@@ -3041,6 +3059,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -3284,6 +3303,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -3544,6 +3564,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
+        agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
         agent._chest_blocked = False
@@ -3652,6 +3673,40 @@ class StoppedBuildFrameMarkingTest(unittest.TestCase):
         self.assertEqual(agent._refused_frame, set())
         agent._note_frame_cells(self._Action("build_portal"), True, "")
         self.assertEqual(agent._refused_frame, set())
+
+
+class BodyHeldStopTest(unittest.TestCase):
+    """A body the server's reflex will not hand back ends the run with a reason.
+
+    run89: `hostile_reflex` held the body in `fight`/`hold` against a zombie 1.6 m off for nearly
+    three hours, full health, no event. Each tick sat 31 and then 93 minutes in `wait_for_action`
+    and the run neither moved nor ended.
+    """
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.settings = Settings()
+        agent.settings.loop.max_iterations = 600
+        agent.settings.loop.stop_when_complete = True
+        agent._held_ticks = 0
+        return agent
+
+    def test_three_held_calls_in_a_row_stop_the_run(self) -> None:
+        agent = self._agent()
+        held = SimpleNamespace(status="held")
+        for _ in range(BODY_HELD_STOP - 1):
+            agent._note_held(held)
+            self.assertFalse(agent._stop_state(gs(), 10)["done"])
+        agent._note_held(held)
+        self.assertEqual(agent._stop_state(gs(), 10), {"done": True, "stop": "body_held"})
+
+    def test_a_result_that_came_back_starts_the_count_over(self) -> None:
+        agent = self._agent()
+        agent._note_held(SimpleNamespace(status="held"))
+        agent._note_held(SimpleNamespace(status="held"))
+        agent._note_held(SimpleNamespace(status="succeeded"))
+        agent._note_held(SimpleNamespace(status="held"))
+        self.assertFalse(agent._stop_state(gs(), 10)["done"])
 
 
 if __name__ == "__main__":

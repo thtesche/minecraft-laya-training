@@ -116,6 +116,13 @@ PASS_TIME_LABELS = ("wait", "sleep")
 # consecutive refusals the walk off is given up and the bot moves on; the junk stays dropped,
 # because the bot marches away from it, not over it, so the auto-pickup never reaches it.
 STEP_AWAY_GIVE_UP = 3
+# Foreground calls in a row that ran out of `[mcp] action_wait_ms` with the body still held
+# (`[BODY_HELD]`) before the run stops with `"stop": "body_held"`. run89's hostile reflex held the
+# body in a `fight`/`hold` against a zombie 1.6 m off for nearly three hours - full health, no
+# damage, no event - and the loop could only wait; nothing it can send moves a body the reflex
+# owns. Three budgets (fifteen minutes by default) say the server will not hand it back, and an
+# ended run with that reason is something the operator sees, where a silent wait is not.
+BODY_HELD_STOP = 3
 
 # The summaries the server's survival reflexes write when they act ("hostile: target died; ...",
 # "fire: dry footing; ..."): a defer that sees one of these handed the tick to someone. Eating
@@ -339,6 +346,8 @@ class Agent:
         self._water_ticks = 0
         # Defers in a row that met no damage and no survival reflex (`_note_defer`).
         self._defer_quiet = 0
+        # Foreground calls in a row that ended `[BODY_HELD]` (`_note_held`).
+        self._held_ticks = 0
         # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): from
         # then on the relief drops the surplus on the open ground instead. That still frees the
         # slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall on it.
@@ -1092,11 +1101,21 @@ class Agent:
                 and tech_tree_complete(gs) and nether_expedition_complete(gs))
 
     def _stop_state(self, gs, iteration: int) -> dict:
-        """`done`/`stop` for the next state: the goal ends the run early, else the limit does."""
+        """`done`/`stop` for the next state: the goal ends the run early, else the limit does -
+        or a body the server's reflexes will not hand back (`BODY_HELD_STOP`)."""
         goal = self._goal_reached(gs)
         limit = iteration >= self.settings.loop.max_iterations
-        return {"done": goal or limit,
-                "stop": "goal" if goal else ("limit" if limit else "")}
+        held = self._held_ticks >= BODY_HELD_STOP
+        return {"done": goal or limit or held,
+                "stop": "goal" if goal else ("body_held" if held else ("limit" if limit else ""))}
+
+    def _note_held(self, res) -> None:
+        """Count the foreground calls in a row that ran out of wait budget with the body held.
+
+        A defer between them does not reset the count - it calls nothing and so learns nothing
+        about the body - only an action whose result came back does.
+        """
+        self._held_ticks = self._held_ticks + 1 if getattr(res, "status", None) == "held" else 0
 
     def _note_block(self, label: str, ok: bool, text: str | None) -> None:
         """Update the surroundings-block bookkeeping from one action's result.
@@ -1806,6 +1825,7 @@ class Agent:
         self._note_crossing(action)
         self._note_stow_blocked(action, _ok, _text)
         self._note_result(action, _ok)
+        self._note_held(res)
         await self._hold_wait(action, _ok)
         after = await self._observe()
         self._note_heading(before.pos, after.pos)

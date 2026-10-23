@@ -84,6 +84,28 @@ def _extract(res: Any) -> ToolResult:
     return ToolResult(ok, text, data, action_id, settled, status, res)
 
 
+def _held(res: ToolResult) -> ToolResult:
+    """The refusal a foreground call ends with when its action did not settle in time.
+
+    Names who holds the body and in what, as far as the last progress answer says: run89's hunt
+    sat behind `hostile_reflex` / `fight` / `hold` for 55,712 ticks against a zombie 1.6 m off.
+    """
+    data = res.data if isinstance(res.data, dict) else {}
+    survival = _find(data, "survival") if data else None
+    owner = response = None
+    if isinstance(survival, dict):
+        owner = (survival.get("owner") or {}).get("current")
+        response = survival.get("response") or None
+    parts = [f"owner {owner or 'unknown'}"]
+    if isinstance(response, dict):
+        parts.append(f"{response.get('kind')}/{response.get('phase')}")
+        if response.get("phaseTicks") is not None:
+            parts.append(f"{response.get('phaseTicks')} ticks")
+    text = (f"[BODY_HELD] action {res.action_id} still running after the wait budget; "
+            + ", ".join(parts))
+    return ToolResult(False, text, res.data, res.action_id, False, status="held", raw=res.raw)
+
+
 def _gated_id(res: ToolResult) -> tuple[str, str | None]:
     """(code, action_id) when a foreground submission was refused until another result is retrieved.
 
@@ -199,6 +221,8 @@ class MCPExecutor:
         run carries on; the next tick's perception shows what the world actually did.
         """
         async with self._lock:
+            # One budget for the whole call: the drains of earlier actions and our own wait.
+            deadline = asyncio.get_running_loop().time() + self.cfg.action_wait_ms / 1000
             res = ToolResult(False, "", None, None, False)
             for _ in range(3):
                 try:
@@ -213,13 +237,18 @@ class MCPExecutor:
                 if pending:
                     # The refusal means *our* action never started, so draining the named result
                     # and resubmitting cannot double-run anything.
-                    await self._wait_settled(pending)
+                    drained = await self._wait_settled(pending, deadline)
+                    if not drained.settled:
+                        return _held(drained if drained.data else res)
                     continue
                 if not res.ok:
-                    res = await self._recover(res)
+                    res = await self._recover(res, deadline)
                 break
             if res.action_id and not res.settled:
-                res = await self._wait_settled(res.action_id)
+                waited = await self._wait_settled(res.action_id, deadline)
+                if not waited.settled:
+                    return _held(waited if waited.data else res)
+                res = waited
             return res
 
     def _payload(self, tool: str, args: dict, rationale: str) -> dict:
@@ -231,16 +260,20 @@ class MCPExecutor:
             "response_format": "json",
         }
 
-    async def _recover(self, res: ToolResult) -> ToolResult:
+    async def _recover(self, res: ToolResult, deadline: float | None = None) -> ToolResult:
         """ACTION_BUSY / lost action id: wait on whatever the server points at."""
         m = re.search(r"([0-9a-fA-F-]{8,})", res.text)
         if m and "ACTION_BUSY" in res.text:
-            return await self._wait_settled(m.group(1))
+            return await self._wait_settled(m.group(1), deadline)
         return res
 
-    async def _wait_settled(self, action_id: str) -> ToolResult:
+    async def _wait_settled(self, action_id: str, deadline: float | None = None) -> ToolResult:
+        """Poll an action until it settles, `max_polls` runs out, or `deadline` passes."""
         res = ToolResult(False, "", None, action_id, False)
+        loop = asyncio.get_running_loop()
         for _ in range(self.cfg.max_polls):
+            if deadline is not None and loop.time() >= deadline:
+                return res
             res = _extract(await self._raw_call("wait_for_action", {
                 "action_id": action_id,
                 "timeout_ms": self.cfg.poll_ms,

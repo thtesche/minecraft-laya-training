@@ -7,6 +7,7 @@ submission with RESULT_NOT_RETRIEVED. The action id lives only in the structured
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from mlaya.config import MCPConfig
@@ -91,6 +92,72 @@ class DrainTest(unittest.IsolatedAsyncioTestCase):
         res = await ex.call("drop_item", {}, "test")
         self.assertTrue(res.ok)
         self.assertEqual([n for n, _ in calls], ["drop_item"])
+
+
+def _held_progress(action_id: str) -> _Res:
+    """A `wait_for_action` answer for an action the hostile reflex has suspended (run89)."""
+    return _Res(structured={"response": {"format": "json", "data": {
+        "state": "pending",
+        "wakeReason": "timeout",
+        "actionId": action_id,
+        "survival": {"owner": {"current": "hostile_reflex"},
+                     "response": {"capability": "combat", "kind": "fight", "phase": "hold",
+                                  "phaseTicks": 55712}},
+    }}})
+
+
+class WaitBudgetTest(unittest.IsolatedAsyncioTestCase):
+    """One foreground call waits at most `action_wait_ms`, drains included.
+
+    run89: the hostile reflex held the body in a fight it could not finish, and each tick sat in
+    `wait_for_action` for the full `max_polls` - 31 minutes, and 93 when a refused submission
+    drained the held action three times over.
+    """
+
+    def _exec(self, answer) -> tuple[MCPExecutor, list]:
+        cfg = MCPConfig(action_wait_ms=0)
+        ex = MCPExecutor(cfg)
+        calls: list[str] = []
+
+        async def fake(name: str, args: dict):
+            calls.append(name)
+            return answer(name)
+
+        ex._raw_call = fake  # type: ignore[assignment]
+        return ex, calls
+
+    async def test_a_held_action_ends_the_call_with_the_holder_named(self) -> None:
+        ex, calls = self._exec(lambda name: _held_progress(MINE))
+        res = await ex.call("collect_mob_drop", {"mob_name": "sheep"}, "test")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.status, "held")
+        self.assertIn("[BODY_HELD]", res.text)
+        self.assertIn("hostile_reflex", res.text)
+        self.assertIn("fight/hold", res.text)
+        self.assertEqual(calls, ["collect_mob_drop"])
+
+    async def test_a_drain_that_does_not_settle_is_not_resubmitted(self) -> None:
+        ex, calls = self._exec(lambda name: _refused(PENDING))
+        res = await ex.call("collect_mob_drop", {"mob_name": "sheep"}, "test")
+        self.assertEqual(res.status, "held")
+        self.assertEqual(calls, ["collect_mob_drop"])
+
+    async def test_the_budget_bounds_the_polls(self) -> None:
+        cfg = MCPConfig(action_wait_ms=50, poll_ms=10)
+        ex = MCPExecutor(cfg)
+        polls = 0
+
+        async def fake(name: str, args: dict):
+            nonlocal polls
+            if name == "wait_for_action":
+                polls += 1
+                await asyncio.sleep(0.02)
+            return _held_progress(MINE)
+
+        ex._raw_call = fake  # type: ignore[assignment]
+        res = await ex.call("collect_mob_drop", {}, "test")
+        self.assertEqual(res.status, "held")
+        self.assertLess(polls, 10)
 
 
 class TransportTest(unittest.IsolatedAsyncioTestCase):
