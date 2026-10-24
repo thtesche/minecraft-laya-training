@@ -1358,6 +1358,27 @@ def _blaze_powder(inv: dict[str, int]) -> int:
     return int(inv.get(BLAZE_POWDER_ITEM, 0))
 
 
+def _nether_haul_home(gs: GameState) -> bool:
+    """A Nether trip is home with its haul still to turn into stowed powder.
+
+    The relaunch path - rebuild the spare pickaxe (`_spare_pickaxe_wanted`), light the gate and
+    cross (`_nether_departure_ready`) - used to be gated on `not gs.nether_entered`, so a trip
+    already made was neither re-prepared nor re-entered. But that latch is one-way per run and
+    never clears: a bot that died in the Nether and respawned home empty-handed still read as
+    "trip done", and every relaunch step stayed off. run93 stood at the base on `wait` for ~25
+    min (~50 ticks) with one diamond pickaxe left of the kit, no food banked and no bow - the
+    second pickaxe it needed to relaunch was never offered because the latch said the trip was
+    already behind it.
+
+    What the gate really wants is "a haul is waiting to be processed": rods or powder in the
+    pack, turned into the stowed powder that `nether_expedition_complete` latches. A Nether death
+    drops both, so an empty-handed return reopens the relaunch; a successful return still holds
+    it shut until the powder is crafted and stowed. Rods only ever come from the Nether, so
+    before the first trip this is false - identical to the old `not nether_entered` there.
+    """
+    return _blaze_rods(gs.inventory) > 0 or _blaze_powder(gs.inventory) > 0
+
+
 def _safe_blaze_hunt(gs: GameState) -> bool:
     """Whether a blaze is a fight worth starting right now.
 
@@ -1441,7 +1462,7 @@ def _spare_pickaxe_wanted(gs: GameState) -> bool:
     neither: the offer should have said "go and mine diamonds".
     """
     inv = gs.inventory
-    return (_overworld(gs) and not gs.nether_entered
+    return (_overworld(gs) and not _nether_haul_home(gs)
             and _expedition_prepared(gs)
             and inv.get("diamond_pickaxe", 0) < NETHER_PICKAXES)
 
@@ -1539,7 +1560,7 @@ def _nether_departure_ready(gs: GameState) -> bool:
     it1782388156, `enter_portal` never executed). Keeping the gate dark until the trip is stocked
     means any crossing - planned or accidental - carries the kit.
     """
-    return (not nether_expedition_complete(gs) and not gs.nether_entered
+    return (not nether_expedition_complete(gs) and not _nether_haul_home(gs)
             and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
             and _has(gs.inventory, GOLD_HELMET_ITEM))
 

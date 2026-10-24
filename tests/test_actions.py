@@ -3605,10 +3605,25 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertIn("enter_portal", candidates(g))
         self.assertFalse(tech_tree_complete(g))
 
-    def test_the_gate_is_not_offered_twice(self) -> None:
+    def test_a_haul_home_holds_the_gate_shut(self) -> None:
+        # A trip home with its rods still in the pack is processing work - craft the powder, stow
+        # it - not a second crossing, so the gate is not re-offered while the haul waits. (The
+        # gate used to be keyed on the one-way `nether_entered` latch instead, which never
+        # cleared.)
         g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
         g.nether_entered = True
+        g.inventory["blaze_rod"] = 9
         self.assertNotIn("enter_portal", candidates(g))
+
+    def test_an_empty_handed_death_return_reopens_the_gate(self) -> None:
+        # The case run93 hung on: a death in the Nether drops the whole haul and kit, and the bot
+        # respawns home to a gate still burning with no rods and no powder. The relaunch was
+        # blocked by the one-way `nether_entered` latch - True for the rest of the run - so the
+        # second crossing was never offered and the bot stood at the base on `wait` for ~25 min.
+        # An empty pack (no rods, no powder) now reads as "no haul to process" and reopens it.
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        g.nether_entered = True
+        self.assertIn("enter_portal", candidates(g))
 
     def test_an_intended_crossing_stands_the_rescue_down(self) -> None:
         # The rescue exists to step a body out of a gate it wandered into; it must not fight the
