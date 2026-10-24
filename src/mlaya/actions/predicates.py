@@ -925,6 +925,26 @@ def _nether_haul_home(gs: GameState) -> bool:
     return _blaze_rods(gs.inventory) > 0 or _blaze_powder(gs.inventory) > 0
 
 
+def _nether_topup_wanted(gs: GameState) -> bool:
+    """Whether the stronghold phase has to send the bot back to the Nether for more powder.
+
+    The fallback the user named: top up blaze rods from the Nether only if needed. It is not a
+    normal step - the first expedition banks eighteen powder, more than the sixteen the eyes
+    cost - so this stays shut unless the banked powder was lost (the chest raided, a death on
+    the way back). The trigger is the gate chest coming up empty of powder (`gs.powder_exhausted`)
+    while the phase still owes eyes it has no powder to craft. Reopening reuses the whole tested
+    Nether chain; a fresh stow clears `powder_exhausted` and the eye-crafting resumes.
+
+    It lives here rather than in `stronghold` because `nether_expedition_open` below reads it:
+    the gate that reopens the chain has to be visible to the Nether predicates themselves, and
+    `predicates` cannot import `stronghold` without a cycle.
+    """
+    return (nether_expedition_complete(gs) and not gs.end_portal_active
+            and gs.powder_exhausted
+            and max(0, ENDER_EYES - int(gs.inventory.get(ENDER_EYE_ITEM, 0)))
+            > _blaze_powder(gs.inventory))
+
+
 def _safe_blaze_hunt(gs: GameState) -> bool:
     """Whether a blaze is a fight worth starting right now.
 
@@ -1106,7 +1126,7 @@ def _nether_departure_ready(gs: GameState) -> bool:
     it1782388156, `enter_portal` never executed). Keeping the gate dark until the trip is stocked
     means any crossing - planned or accidental - carries the kit.
     """
-    return (not nether_expedition_complete(gs) and not _nether_haul_home(gs)
+    return (nether_expedition_open(gs) and not _nether_haul_home(gs)
             and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
             and _has(gs.inventory, GOLD_HELMET_ITEM))
 
@@ -2264,6 +2284,19 @@ def nether_expedition_complete(gs: GameState) -> bool:
     that dies on the way back loses the inventory in one step.
     """
     return bool(gs.powder_stowed)
+
+
+def nether_expedition_open(gs: GameState) -> bool:
+    """Whether the Nether chain is still being worked, or has been reopened for a powder top-up.
+
+    `nether_expedition_complete` is a one-way latch: once the powder stands in the chest the
+    expedition is done for the phase-3 goal, and every gate that reads it - the departure gate,
+    the `enter_portal` offer - shuts. But the stronghold phase can need the gate again: the
+    banked powder lost, the eyes uncraftable (`_nether_topup_wanted`). Without this predicate a
+    top-up could never relaunch - `candidates` reopened the chain, yet `enter_portal` refused on
+    the completion latch, and the bot stood home at an empty chest with an open goal.
+    """
+    return not nether_expedition_complete(gs) or _nether_topup_wanted(gs)
 
 
 def _diamond_craft_ready(gs: GameState, item: str) -> bool:

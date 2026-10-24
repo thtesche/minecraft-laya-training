@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .predicates import *  # noqa: F401,F403
+from .stronghold import *  # noqa: F401,F403
 
 
 def candidates(gs: GameState) -> list[str]:
@@ -404,7 +405,11 @@ def candidates(gs: GameState) -> list[str]:
     # for nine rods, come home with them, swap the helmet back, turn the rods into powder, and
     # park the powder in the chest at the gate. Each step only appears while the ones before it are
     # done, so no step is ever offered out of turn.
-    if not nether_expedition_complete(gs):
+    #
+    # The same chain reopens for a stronghold-phase powder top-up (`nether_expedition_open`): the
+    # rare case where the banked powder was lost and the eyes cannot be crafted. A fresh stow
+    # closes the expedition again and clears the exhaustion latch, so the eye-crafting resumes.
+    if nether_expedition_open(gs):
         if _in_nether(gs):
             # The helmet first: piglins attack on sight without a worn gold piece, and the whole
             # trip is fought around them.
@@ -462,6 +467,14 @@ def candidates(gs: GameState) -> list[str]:
                     out.append("craft_blaze_powder")
                 if _blaze_powder(inv) > 0 and _chest_ready(gs):
                     out.append("stow_blaze_powder")
+
+    # --- The stronghold (the phase after the Nether haul) ---
+    # Offered once the Nether haul stands and the end portal is not yet active: gather pearls,
+    # bring the banked powder back out, craft the eyes, find and travel to the stronghold, fill
+    # the frame. The chain lives in `stronghold.stronghold_candidates`, Overworld-gated there, so
+    # it stays silent while a powder top-up runs the bot through the gate.
+    if nether_expedition_complete(gs) and not stronghold_complete(gs):
+        out.extend(stronghold_candidates(gs))
 
     # --- Home base storage ---
     # A chest at the base is where a filling pack sheds surplus, well before the server's
@@ -564,6 +577,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     """
     if not label:
         return None
+    # The stronghold labels are resolved in their own module (see docs/stronghold.md); a label it
+    # does not own never reaches here, so the main dispatch below is untouched.
+    if label in STRONGHOLD_LABELS:
+        return resolve_stronghold(label, gs)
     inv = gs.inventory
     tier = _pick_tier(inv, gs.tools)
     x, y, z = gs.pos or (None, None, None)

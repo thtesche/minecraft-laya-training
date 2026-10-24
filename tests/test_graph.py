@@ -140,6 +140,10 @@ class WaterTicksTest(unittest.TestCase):
         agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._water_ticks = 0
         agent._defer_quiet = 0
         return agent
@@ -429,6 +433,10 @@ class PourSkipTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -544,6 +552,10 @@ class StanceSkipTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
@@ -653,6 +665,10 @@ class StuckOfferTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
@@ -1201,6 +1217,10 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -1329,6 +1349,10 @@ class FrameRefusalTest(unittest.TestCase):
         agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._water_ticks = 0
         agent._defer_quiet = 0
         return agent
@@ -1425,6 +1449,10 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent.base = None
         agent.chest_pos = None
         agent._extra_chests = []
@@ -1708,6 +1736,10 @@ class DropHoleTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -1818,6 +1850,10 @@ class ChestSupportTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -1914,6 +1950,10 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -2114,6 +2154,10 @@ class ChestLidTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -2179,8 +2223,16 @@ class GoalStopTest(unittest.TestCase):
     def test_the_goal_ends_the_run_early(self) -> None:
         g = self._complete()
         g.powder_stowed = True          # the expedition is what the overworld goal was preparing
+        g.end_portal_active = True      # and the stronghold is what the expedition was for
         self.assertEqual(self._agent()._stop_state(g, 3),
                          {"done": True, "stop": "goal"})
+
+    def test_the_stowed_powder_alone_keeps_the_run_going(self) -> None:
+        # The Nether haul is no longer the last phase: the run carries on to the stronghold and
+        # stops only once the end portal stands active as well (docs/stronghold.md).
+        g = self._complete()
+        g.powder_stowed = True
+        self.assertEqual(self._agent()._stop_state(g, 3), {"done": False, "stop": ""})
 
     def test_the_overworld_goal_alone_keeps_the_run_going(self) -> None:
         # The whole point: this is the state the loop reaches one tick before `enter_portal`, and
@@ -2268,6 +2320,10 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._home_anchor = None
         agent._home_ticks = 0
         agent._pour_skip = set()
@@ -2348,9 +2404,10 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         self.assertFalse(agent._goal_reached(g))
         self.assertEqual(agent._stop_state(g, 3), {"done": False, "stop": ""})
 
-    def test_the_run_finishes_when_the_powder_is_home_and_the_base_is_in_order(self) -> None:
+    def test_the_run_finishes_when_the_portal_is_open_and_the_base_is_in_order(self) -> None:
         agent = self._agent()
         agent._powder_stowed = True
+        agent._end_portal_active = True
         g = agent._inject(self._standing())
         self.assertTrue(agent._goal_reached(g))
         self.assertEqual(agent._stop_state(g, 3), {"done": True, "stop": "goal"})
@@ -2426,6 +2483,10 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._blocked_cell = None
         agent._chest_above = None
         agent._base_adopted = False
@@ -2793,6 +2854,10 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -3157,6 +3222,10 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         self.assertTrue(agent._inject(gs()).base_adopted)
 
 
@@ -3404,6 +3473,10 @@ class NetherCrossingTest(unittest.TestCase):
         agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent.settings = Settings()
@@ -3516,6 +3589,65 @@ class NetherCrossingTest(unittest.TestCase):
         self.assertFalse(agent._powder_stowed)
         agent._note_stow(deposit, True, {"inventory_delta": {}})
         self.assertFalse(agent._powder_stowed)
+
+    def test_a_stow_remembers_the_cell_it_filled(self) -> None:
+        # `stow_blaze_powder` deposits into the network's roomy chest, not necessarily
+        # `chest_pos`; the stronghold withdraw has to look in the same cell, so the loop
+        # books it when the deposit lands.
+        agent = self._agent()
+        deposit = Action("stow_blaze_powder", "use_container",
+                         {"operation": "deposit", "x": -190, "y": -46, "z": -100}, "")
+        agent._note_stow(deposit, True, {"inventory_delta": {"blaze_powder": -18}})
+        self.assertEqual(agent._powder_cells, [(-190, -46, -100)])
+        self.assertEqual(agent._inject(gs()).powder_cells, ((-190, -46, -100),))
+
+    def test_one_empty_lid_does_not_empty_the_bank(self) -> None:
+        # A withdraw that comes up empty at the main chest says nothing about the overflow
+        # chest the powder actually went into; the top-up only latches once every remembered
+        # cell has come up empty.
+        agent = self._agent()
+        main = Action("stow_blaze_powder", "use_container",
+                      {"operation": "deposit", "x": -196, "y": -46, "z": -98}, "")
+        agent._note_stow(main, True, {"inventory_delta": {"blaze_powder": -18}})
+        agent._powder_cells.append((-190, -46, -100))
+        empty = Action("take_blaze_powder", "use_container",
+                       {"operation": "withdraw", "x": -196, "y": -46, "z": -98,
+                        "items": [{"item_name": "blaze_powder", "count": 16}]}, "")
+        agent._note_take_powder(empty, False, "[NO_MATCHING_ITEMS]", {})
+        self.assertFalse(agent._powder_exhausted)
+        self.assertEqual(agent._powder_cells, [(-190, -46, -100)])
+        # The overflow lid comes up empty too: now the bank is out and the top-up opens.
+        other = Action("take_blaze_powder", "use_container",
+                       {"operation": "withdraw", "x": -190, "y": -46, "z": -100,
+                        "items": [{"item_name": "blaze_powder", "count": 16}]}, "")
+        agent._note_take_powder(other, False, "[NO_MATCHING_ITEMS]", {})
+        self.assertTrue(agent._powder_exhausted)
+        self.assertEqual(agent._powder_cells, [])
+
+    def test_a_withdraw_that_brought_powder_keeps_the_cell(self) -> None:
+        # The chest may still hold more than the withdraw asked for; the cell stays in play
+        # until a visit to it comes up empty.
+        agent = self._agent()
+        deposit = Action("stow_blaze_powder", "use_container",
+                         {"operation": "deposit", "x": -196, "y": -46, "z": -98}, "")
+        agent._note_stow(deposit, True, {"inventory_delta": {"blaze_powder": -18}})
+        take = Action("take_blaze_powder", "use_container",
+                      {"operation": "withdraw", "x": -196, "y": -46, "z": -98,
+                       "items": [{"item_name": "blaze_powder", "count": 16}]}, "")
+        agent._note_take_powder(take, True, "", {"inventory_delta": {"blaze_powder": 16}})
+        self.assertEqual(agent._powder_cells, [(-196, -46, -98)])
+        self.assertFalse(agent._powder_exhausted)
+
+    def test_a_fresh_stow_clears_the_exhaustion(self) -> None:
+        # The top-up ends where it began: the second haul parks powder in the chest again, the
+        # latch reopens the eye-crafting, and the cell the deposit reached is remembered.
+        agent = self._agent()
+        agent._powder_exhausted = True
+        deposit = Action("stow_blaze_powder", "use_container",
+                         {"operation": "deposit", "x": -190, "y": -46, "z": -100}, "")
+        agent._note_stow(deposit, True, {"inventory_delta": {"blaze_powder": -18}})
+        self.assertFalse(agent._powder_exhausted)
+        self.assertEqual(agent._powder_cells, [(-190, -46, -100)])
 
     def test_the_stowed_expedition_alone_keeps_the_run_going(self) -> None:
         # `powder_stowed` is a latch that only ever sets, while `tech_tree_complete` reads the
@@ -3667,6 +3799,10 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._home_anchor = None

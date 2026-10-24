@@ -15,7 +15,8 @@ from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _hoard_surpl
                          BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
-                           nether_expedition_complete, NETHER_SEARCH_M, NETHER_HOPELESS_TICKS, resolve,
+                           nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
+                           NETHER_HOPELESS_TICKS, resolve, stronghold_complete,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources)
@@ -4040,6 +4041,143 @@ class NetherExpeditionTest(unittest.TestCase):
             self.assertNotIn(label, out)
 
 
+class StrongholdPhaseTest(unittest.TestCase):
+    """The phase after the haul: pearls, the banked powder, the eyes, the stronghold, the portal.
+
+    The chain lives in `actions/stronghold.py` and follows the Nether shape: every step is
+    offered only once the ones before it are done, the server owns the mechanics, and the loop
+    only books the calls. The rare case these tests care about most is the powder top-up - the
+    banked eighteen lost to a death or a raided chest - which has to reopen the gate the
+    expedition closed.
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-196, -46, -98)
+    GATE = (-195, -46, -98)
+    OVERWORLD = "minecraft:overworld"
+
+    def _home(self, mobs=(), **inv) -> GameState:
+        """A stocked bot at its base, haul banked, gate burning - the stronghold's starting state."""
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64,
+                     golden_helmet=1, cooked_mutton=64, white_bed=1, diamond_pickaxe=2)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.chest_pos = self.CHEST
+        g.powder_stowed = True
+        g.health = 20.0
+        g.food = 20.0
+        g.dimension = self.OVERWORLD
+        g.mobs = list(mobs)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  *self.GATE, 2.0)]}
+        return g
+
+    def test_the_phase_is_silent_before_the_haul(self) -> None:
+        g = self._home(ender_pearl=16, blaze_powder=16)
+        g.powder_stowed = False
+        for label in ("hunt_enderman", "take_blaze_powder", "craft_ender_eye",
+                      "locate_stronghold", "activate_end_portal"):
+            self.assertNotIn(label, candidates(g))
+
+    def test_pearls_and_powder_craft_the_eyes(self) -> None:
+        g = self._home(ender_pearl=16, blaze_powder=16)
+        self.assertIn("craft_ender_eye", candidates(g))
+        a = resolve("craft_ender_eye", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "ender_eye", "count": 16}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_the_craft_stops_at_the_eyes_owed(self) -> None:
+        # Sixteen eyes is the whole phase; a pack with more pearls than it needs does not craft
+        # a seventeenth, and the powder the eyes owe comes out of the chest, not the pack.
+        g = self._home(ender_pearl=20, blaze_powder=20)
+        self.assertEqual(resolve("craft_ender_eye", g).args["items"][0]["count"], 16)
+        self.assertNotIn("take_blaze_powder", candidates(g))
+
+    def test_the_powder_comes_back_out_of_the_chest(self) -> None:
+        g = self._home(ender_pearl=16)
+        self.assertIn("take_blaze_powder", candidates(g))
+        a = resolve("take_blaze_powder", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "withdraw")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.CHEST)
+        self.assertEqual(a.args["items"], [{"item_name": "blaze_powder", "count": 16}])
+
+    def test_the_withdraw_walks_to_the_cell_the_powder_was_stowed_in(self) -> None:
+        # `stow_blaze_powder` deposits into the network's roomy chest, which may be an overflow
+        # chest rather than `chest_pos`; the withdraw has to look in the remembered cell, or a
+        # full overflow reads as an empty bank and the bot walks back through the gate for
+        # powder sitting a few blocks away.
+        overflow = (-190, -46, -100)
+        g = self._home(ender_pearl=16)
+        g.powder_cells = (overflow,)
+        a = resolve("take_blaze_powder", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), overflow)
+        g.pos = (overflow[0] + 0.5, overflow[1] + 1.0, overflow[2] + 0.5)
+        a = resolve("take_blaze_powder", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), overflow)
+
+    def test_the_enderman_hunt_is_offered_when_the_fight_is_safe(self) -> None:
+        g = self._home(mobs=[("enderman", "hostile", 12, 18.0)])
+        self.assertIn("hunt_enderman", candidates(g))
+        a = resolve("hunt_enderman", g)
+        self.assertEqual(a.args["mob_name"], "enderman")
+        self.assertEqual(a.args["drop_name"], "ender_pearl")
+        self.assertEqual(a.args["count"], 3)  # one batch at a time, sixteen still owed
+
+    def test_a_wounded_or_crowded_hunt_is_refused(self) -> None:
+        # An enderman teleports behind the bot and hits for half a heart a swing; the eyes are
+        # not worth the diamond kit, so the same safe-hunt guard as the blaze applies.
+        g = self._home(mobs=[("enderman", "hostile", 12, 18.0)])
+        g.health = 10.0
+        self.assertNotIn("hunt_enderman", candidates(g))
+        g.health = 20.0
+        g.mobs = [("enderman", "hostile", 12, 18.0), ("zombie", "hostile", 8, 10.0)]
+        self.assertNotIn("hunt_enderman", candidates(g))
+
+    def test_sixteen_eyes_send_the_bot_to_the_stronghold(self) -> None:
+        g = self._home(ender_eye=16)
+        self.assertIn("locate_stronghold", candidates(g))
+        a = resolve("locate_stronghold", g)
+        self.assertEqual(a.tool, "locate_stronghold")
+        self.assertEqual(a.args["phase"], "estimate")
+        self.assertTrue(a.args["continue_without_recommended_items"])
+        g.stronghold_estimated = True
+        self.assertEqual(resolve("locate_stronghold", g).args["phase"], "locate")
+
+    def test_standing_at_the_frame_fills_it(self) -> None:
+        g = self._home(ender_eye=16)
+        g.resources["end_portal_frame"] = [BlockHit("end_portal_frame", "end_portal_frame",
+                                                    100, 60, 200, 3.0)]
+        g.resource_found = {"end_portal_frame": 12}
+        self.assertIn("activate_end_portal", candidates(g))
+        a = resolve("activate_end_portal", g)
+        self.assertEqual(a.tool, "activate_portal")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (100, 60, 200))
+        g.end_portal_active = True
+        self.assertTrue(stronghold_complete(g))
+        self.assertNotIn("activate_end_portal", candidates(g))
+
+    def test_a_lost_bank_reopens_the_gate(self) -> None:
+        # The top-up: the stowed powder is gone and the eyes still owe powder, so the tested
+        # Nether chain runs again. The departure gate reads the expedition as open even though
+        # the completion latch says it is done - without that, `candidates` reopens the chain
+        # and `enter_portal` still refuses, and the bot stands home at an empty chest.
+        g = self._home(ender_pearl=16)
+        g.powder_exhausted = True
+        self.assertTrue(nether_expedition_open(g))
+        self.assertIn("enter_portal", candidates(g))
+        a = resolve("enter_portal", g)
+        self.assertEqual(a.tool, "enter_nether_portal")
+
+    def test_a_full_bank_keeps_the_gate_shut(self) -> None:
+        g = self._home(ender_pearl=16, blaze_powder=18)
+        self.assertFalse(nether_expedition_open(g))
+        self.assertNotIn("enter_portal", candidates(g))
+
+
 class DiamondsForTheSparePickaxeTest(unittest.TestCase):
     """The two gates for `mine_diamond` asked different questions, sixty-two times.
 
@@ -5461,6 +5599,10 @@ class RefreshAfterTest(unittest.TestCase):
         agent.surface = None
         agent._frame_complete = False
         agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
         agent._stuck_off = {}
         agent._defer_quiet = 0
         return agent

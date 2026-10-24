@@ -50,7 +50,9 @@ RESCUE_ABOVE = ("air", "cave_air")
 # the Nether-prep dig (the gold helmet that keeps piglins neutral): like the diamonds, a deposit
 # deep under the surface counts through `resource_found` so the `collect_block` tunnel is still
 # offered. Kept as its own `view_blocks find` group: that call takes at most eight names.
-CHAIN_NAMES = ("lava", "chest", "furnace", "smoker", "gold_ore")
+# `end_portal_frame` is the stronghold phase's landmark: it loads into the scan once the locate
+# phase has walked the bot to the stronghold, and that is what hands the tick to the activation.
+CHAIN_NAMES = ("lava", "chest", "furnace", "smoker", "gold_ore", "end_portal_frame")
 # The Nether's own scan group, read *only* in the Nether: the bricks a fortress is built from are
 # the one landmark that tells the bot a blaze spawner is plausibly near, and `spawner` names the
 # cage itself. Blazes are hostile, so they only reach the state through `view_status` once one is
@@ -75,7 +77,8 @@ FORTRESS_RADIUS = 256.0
 FRONTIER_HEADING_SQL = ("SELECT heading_degrees FROM frontier_navigation "
                         "WHERE is_frontier = 1 ORDER BY distance_blocks ASC LIMIT 1")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
-NAMED_RESOURCES = RESOURCE_NAMES + ("lava", "spawner", "nether_bricks", "nether_brick_fence", "nether_brick_stairs")
+NAMED_RESOURCES = RESOURCE_NAMES + ("lava", "spawner", "nether_bricks", "nether_brick_fence", "nether_brick_stairs",
+                                    "end_portal_frame")
 RESOURCE_RADIUS = 64.0
 # How far the water rescue looks for dry land. The shore it needs to swim to is the one
 # reach the *last* live stranding missed: the nearest dry ground sat 65.1 m off, a whisker
@@ -524,9 +527,10 @@ def phase_persona(source) -> str:
     differently than the other. The phases follow the world: the dimension owns nether
     and end work; in the Overworld a finished diamond kit (worn, diamond pickaxe and
     sword to hand) says the climb is over and only the crossing is left.
-    `PHASE_STRONGHOLD` is deliberately not wired up: nothing in the state knows where an
-    end portal stands, and a phase nothing observed would be a guess about the run. The
-    end expansion gives it a real trigger.
+    In the Overworld the stronghold follows the Nether haul: once the blaze powder is
+    banked (`powder_stowed`) and until the end portal stands active (`end_portal_active`),
+    the run is out for eyes of ender and the stronghold (docs/stronghold.md). Both are loop
+    latches that only ever set, so the sentence cannot flicker with the world.
     """
     def field(name: str, default=None):
         return source.get(name, default) if isinstance(source, dict) else getattr(source, name, default)
@@ -535,6 +539,8 @@ def phase_persona(source) -> str:
         return PHASE_END
     if "nether" in dim:
         return PHASE_NETHER
+    if field("powder_stowed") and not field("end_portal_active"):
+        return PHASE_STRONGHOLD
     tools = field("tools") or {}
     armor = field("armor") or {}
 
@@ -779,6 +785,21 @@ class GameState:
     # chest back would cost a `use_container` inspection every tick, and the deposit is already
     # verified by the action's own result - the same latch shape as `frame_complete`.
     powder_stowed: bool = False
+    # The stronghold phase's loop latches (docs/stronghold.md), each set on its action's own
+    # result, the same shape as `powder_stowed`. `end_portal_active`: `activate_portal` confirmed
+    # the open portal (Agent `_note_portal`), the phase goal. `stronghold_estimated`: the
+    # `locate_stronghold` estimate saved its bearing, so the next call travels (`phase: locate`).
+    # `powder_exhausted`: a withdraw from the gate chest came up without powder, so the eyes can
+    # only be paid for by a second Nether trip; a fresh stow clears it again.
+    end_portal_active: bool = False
+    stronghold_estimated: bool = False
+    powder_exhausted: bool = False
+    # The cells a blaze-powder stow actually deposited into (Agent `_note_stow`): the storage
+    # network's roomy chest, which is not always `chest_pos`. `take_blaze_powder` withdraws from
+    # these remembered cells, and `powder_exhausted` only latches once every one of them has
+    # come up empty - a top-up aimed at the main chest while the powder sits in an overflow
+    # chest would send the bot back through the gate for nothing.
+    powder_cells: tuple[tuple[int, int, int], ...] = ()
     # Death cells (`actions._cell`) a recovery walk already reached and found empty
     # (`[NO_MATCHING_ITEMS]` and the other final codes). `_can_recover` refuses to offer the walk
     # there again, so a bot whose gear is gone does not stand at the death site for the whole
@@ -882,6 +903,12 @@ class GameState:
             "nether_ticks": self.nether_ticks,
             "nether_travel": self.nether_travel,
             "mobs": self.mobs,
+            # The stronghold latches, logged for the same reason the Nether facts are.
+            "powder_stowed": self.powder_stowed,
+            "powder_exhausted": self.powder_exhausted,
+            "stronghold_estimated": self.stronghold_estimated,
+            "end_portal_active": self.end_portal_active,
+            "powder_cells": [list(cell) for cell in self.powder_cells],
         }
 
     @classmethod
@@ -906,10 +933,12 @@ class GameState:
                       "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "banked",
                       "nether_entered", "nether_arrival", "nether_gate", "nether_ticks",
-                      "nether_travel"):
+                      "nether_travel", "powder_stowed", "powder_exhausted",
+                      "stronghold_estimated", "end_portal_active", "powder_cells"):
             value = data.get(field)
             if value is not None:
                 setattr(gs, field, value)
+        gs.powder_cells = tuple(tuple(cell) for cell in gs.powder_cells)
         gs.pos = data.get("position")
         gs.inventory = dict(data.get("inventory") or {})
         gs.furnace_contents = dict(data.get("furnace_contents") or {})

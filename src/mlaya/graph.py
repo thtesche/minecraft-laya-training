@@ -13,7 +13,7 @@ from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
-                      nether_expedition_complete)
+                      nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM)
 from .brain import Brain, escalate_to_system2
 from .mcp import _find
 from .memory import MemoryLog
@@ -466,6 +466,16 @@ class Agent:
         # The blaze powder reached the chest at the Overworld portal (`_note_stow`): the phase-3
         # goal. Latched on the deposit's own success, the same shape as `_frame_complete`.
         self._powder_stowed = False
+        # The stronghold phase's latches (docs/stronghold.md), each set on its action's own
+        # result: the open end portal (`_note_portal`, the phase goal), the saved eye-of-ender
+        # bearing (`_note_locate`) and a gate chest out of powder (`_note_take_powder`).
+        self._end_portal_active = False
+        self._stronghold_estimated = False
+        self._powder_exhausted = False
+        # The cells a powder stow actually deposited into (`_note_stow`): the network's roomy
+        # chest, not necessarily `chest_pos`. `take_blaze_powder` withdraws from these, and the
+        # exhaustion latch only fires once every remembered cell has come up empty.
+        self._powder_cells: list[tuple[int, int, int]] = []
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -518,6 +528,10 @@ class Agent:
         gs.nether_gate = self._nether_gate
         gs.nether_ticks = self._nether_ticks
         gs.powder_stowed = self._powder_stowed
+        gs.end_portal_active = self._end_portal_active
+        gs.stronghold_estimated = self._stronghold_estimated
+        gs.powder_exhausted = self._powder_exhausted
+        gs.powder_cells = tuple(self._powder_cells)
         return gs
 
     async def _scan_build_site(self, gs) -> None:
@@ -1105,6 +1119,10 @@ class Agent:
         gs.surface = self.surface
         gs.frame_complete = self._frame_complete
         gs.powder_stowed = self._powder_stowed
+        gs.end_portal_active = self._end_portal_active
+        gs.stronghold_estimated = self._stronghold_estimated
+        gs.powder_exhausted = self._powder_exhausted
+        gs.powder_cells = tuple(self._powder_cells)
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.defer_quiet = self._defer_quiet
 
@@ -1133,10 +1151,12 @@ class Agent:
         continue past the deposit until the home base is in order too, and it will stop on the
         first tick where both hold. The cost is that a run which never finds a fortress no longer
         stops early; it runs to the iteration limit and says `"stop": "limit"`, which is the
-        honest report for an unfinished playthrough.
+        honest report for an unfinished playthrough. The stronghold phase joins the AND the same
+        way (docs/stronghold.md): its latch (`gs.end_portal_active`) only ever sets too.
         """
         return (bool(self.settings.loop.stop_when_complete)
-                and tech_tree_complete(gs) and nether_expedition_complete(gs))
+                and tech_tree_complete(gs) and nether_expedition_complete(gs)
+                and stronghold_complete(gs))
 
     def _stop_state(self, gs, iteration: int) -> dict:
         """`done`/`stop` for the next state: the goal ends the run early, else the limit does -
@@ -1400,6 +1420,63 @@ class Agent:
             return
         if (delta.get("inventory_delta", {}) or {}).get("blaze_powder", 0) < 0:
             self._powder_stowed = True
+            # A fresh stow refills the chest a stronghold withdraw had found empty: the
+            # second-Nether top-up is done and `take_blaze_powder` may offer again.
+            self._powder_exhausted = False
+            # Remember where the powder actually went: `stow_blaze_powder` deposits into the
+            # network's roomy chest, which may be an overflow chest rather than `chest_pos`.
+            # The withdraw has to look in the same cell, or it reads an empty main chest and
+            # sends the bot back through the gate for powder that is sitting a few blocks away.
+            args = action.args or {}
+            cell = (args.get("x"), args.get("y"), args.get("z"))
+            if None not in cell and cell not in self._powder_cells:
+                self._powder_cells.append(cell)
+
+    def _note_take_powder(self, action, ok: bool, text: str | None, delta: dict) -> None:
+        """Remember that the gate chest holds no more blaze powder for the eyes.
+
+        Only a withdraw that reached the chest counts: one that succeeded, or one the server
+        answered with the chest's own shortfall (`[NO_MATCHING_ITEMS]`,
+        `[CONTAINER_BATCH_INCOMPLETE]`). If that withdraw put no powder in the pack, the bank is
+        empty and the eyes still owed can only be paid for by a second Nether trip
+        (`predicates._nether_topup_wanted`). A walk to the chest or a fight on the way says nothing
+        about what is inside it.
+        """
+        if action.label != "take_blaze_powder" or action.tool != "use_container":
+            return
+        reached = ok or any(code in (text or "")
+                            for code in ("NO_MATCHING_ITEMS", "CONTAINER_BATCH_INCOMPLETE"))
+        if not reached:
+            return
+        if (delta.get("inventory_delta", {}) or {}).get(BLAZE_POWDER_ITEM, 0) <= 0:
+            # The cell the withdraw stood at is out of powder; the bank is only truly empty
+            # when every cell a stow remembered has come up empty. A top-up aimed at the main
+            # chest while the powder sits in an overflow chest is a walk to the wrong lid, not
+            # a lost haul.
+            args = action.args or {}
+            cell = (args.get("x"), args.get("y"), args.get("z"))
+            if None not in cell:
+                self._powder_cells = [c for c in self._powder_cells if c != cell]
+            if not self._powder_cells:
+                self._powder_exhausted = True
+
+    def _note_locate(self, action, ok: bool) -> None:
+        """Remember that the eye-of-ender estimate is saved, so the next locate travels.
+
+        `locate_stronghold` keeps the bearing under the durable `search_id` on the server; the
+        loop only needs to know the `estimate` phase succeeded once to send `locate` next.
+        """
+        if action.label == "locate_stronghold" and ok and (action.args or {}).get("phase") == "estimate":
+            self._stronghold_estimated = True
+
+    def _note_portal(self, action, ok: bool) -> None:
+        """Remember that the end portal stands active (the stronghold goal).
+
+        `activate_portal` confirms every interior portal block before it answers ok, so its own
+        success is the latch, the same shape as `_note_stow`; a refused fill leaves the goal open.
+        """
+        if action.label == "activate_end_portal" and ok:
+            self._end_portal_active = True
 
     def _note_build(self, action, ok: bool, delta: dict) -> None:
         """Remember that the frame build has nothing left to place.
@@ -1922,6 +1999,9 @@ class Agent:
         self._note_hurt(before, after)
         self._note_build(action, _ok, delta)
         self._note_stow(action, _ok, delta)
+        self._note_take_powder(action, _ok, _text, delta)
+        self._note_locate(action, _ok)
+        self._note_portal(action, _ok)
         progressed = vmod.progressed(action.label, delta, _ok)
         self._track_stuck(action.label, _ok, _text, progressed)
         # After the stuck guard: it owns the countdown and the offer window, and a wandering

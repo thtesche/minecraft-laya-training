@@ -93,6 +93,12 @@ CRITERIA: dict[str, str] = {
     "swap_to_diamond_helmet": "wear the diamond helmet again now that the bot is back in the Overworld",
     "craft_blaze_powder": "craft the carried blaze rods into blaze powder, one rod to two powder",
     "stow_blaze_powder": "deposit the blaze powder into the chest at the Overworld portal",
+    # The stronghold phase (the step after the Nether haul); see docs/stronghold.md.
+    "hunt_enderman": "kill an enderman and take its ender pearl, one of the two halves of an eye of ender",
+    "take_blaze_powder": "take the banked blaze powder back out of the chest at the portal, so eyes of ender can be crafted from it",
+    "craft_ender_eye": "craft an eye of ender from one ender pearl and one blaze powder; twelve of them open the end portal",
+    "locate_stronghold": "throw an eye of ender to find the stronghold, then travel to it and stand at the end portal frame",
+    "activate_end_portal": "fill the end portal frame's empty sockets with the carried eyes of ender until the portal opens",
 }
 
 EDIBLE = {
@@ -184,6 +190,17 @@ BLAZE_HUNT_RANGE = 24.0
 # Blazes set themselves on fire when struck and answer with fireballs, so a hunt only starts from a
 # healthy bot that is not already in a fight. This mirrors `_safe_spider_hunt`.
 BLAZE_HUNT_HEALTH = 14.0
+# --- The stronghold phase (phase 4) ---
+# Twelve sockets activate the end portal. Up to four may generate pre-filled, the estimate and the
+# locate each throw an eye, and about one throw in five shatters; sixteen eyes is the safe upper
+# bound that still leaves enough after the throws to fill twelve empty sockets. The Nether haul
+# banks eighteen blaze powder, two to spare over sixteen. The counts live here because the Nether
+# gates need them: `nether_expedition_open` asks whether a top-up trip is wanted, and that
+# predicate cannot reach into `stronghold` without an import cycle.
+ENDER_PEARL_ITEM = "ender_pearl"
+ENDER_EYE_ITEM = "ender_eye"
+ENDER_EYES = 16
+ENDER_PEARLS = ENDER_EYES
 # When the Nether trip has to end. Blazes hit hard, so the bot leaves at a quarter of its health
 # and well before it is hungry; both thresholds are checked on the state, never guessed at runtime.
 NETHER_RETURN_HEALTH = 8.0

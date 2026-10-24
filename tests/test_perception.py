@@ -376,6 +376,15 @@ class StorageNetworkParseTest(unittest.TestCase):
         # hashable, because every predicate that aims at a chest tests it against a set:
         self.assertIn((0, 71, 1), rebuilt.chests_full)
 
+    def test_the_powder_cells_survive_the_log_round_trip(self) -> None:
+        # The cells a stow actually filled are what `take_blaze_powder` aims at, so a logged
+        # tick has to answer "where did the powder go" after the fact - tuples through JSON.
+        import json as jsonlib
+        g = GameState(powder_stowed=True,
+                      powder_cells=((-196, -46, -98), (-190, -46, -100)))
+        rebuilt = GameState.from_state(jsonlib.loads(jsonlib.dumps(g.as_state())))
+        self.assertEqual(rebuilt.powder_cells, ((-196, -46, -98), (-190, -46, -100)))
+
     def test_an_old_log_yields_an_empty_network_not_a_crash(self) -> None:
         # run79's own entries predate the fields: defaults, not guesses.
         g = GameState.from_state({"chest_pos": [0, 71, 1]})
@@ -586,12 +595,26 @@ class PhasePersonaTest(unittest.TestCase):
                          "You are a Minecraft player working toward a full diamond kit")
 
     def test_no_phase_is_claimed_about_a_run_nothing_observed(self) -> None:
-        # Stronghold has no signal in the state yet, so no overworld field combination may
-        # produce it: a phase invented from a wish is a guess about the run in the prompt.
+        # Without the banked powder nothing says the run is past the Nether haul, so no other
+        # overworld field combination may produce the stronghold sentence.
         from mlaya.perception import PHASE_STRONGHOLD, phase_persona
         self.assertEqual(phase_persona({"dimension": "minecraft:overworld"}),
                          "You are a Minecraft player working toward a full diamond kit")
         self.assertNotIn(PHASE_STRONGHOLD, phase_persona({"dimension": "minecraft:overworld"}))
+
+    def test_the_banked_powder_turns_the_overworld_to_the_stronghold(self) -> None:
+        # The stronghold phase runs from the stow until the end portal stands active; both the
+        # object and the logged dict must say so, and the Nether still owns its own sentence.
+        from mlaya.perception import PHASE_NETHER, PHASE_STRONGHOLD, GameState, phase_persona
+        state = {"dimension": "minecraft:overworld", "powder_stowed": True}
+        self.assertEqual(phase_persona(state), PHASE_STRONGHOLD)
+        g = GameState(dimension="minecraft:overworld", powder_stowed=True)
+        self.assertEqual(phase_persona(g), PHASE_STRONGHOLD)
+        self.assertEqual(phase_persona(GameState.from_state(g.as_state())), PHASE_STRONGHOLD)
+        g.end_portal_active = True
+        self.assertNotEqual(phase_persona(g), PHASE_STRONGHOLD)
+        self.assertEqual(phase_persona({"dimension": "minecraft:the_nether",
+                                        "powder_stowed": True}), PHASE_NETHER)
 
 
 class FurnaceContentsParseTest(unittest.TestCase):
