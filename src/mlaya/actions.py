@@ -3431,6 +3431,9 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "craft_table":
         if (_logs(inv) < 1 and _planks(inv) < 4) or _has(inv, "crafting_table"):
             return None
+        # Require pale_oak_log (Minecraft 1.21+); hold offer until it's found
+        if inv.get("pale_oak_log", 0) < 1:
+            return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": "crafting_table"}]},
                       "craft a crafting table for 3x3 recipes")
