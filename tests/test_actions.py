@@ -3669,6 +3669,21 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertEqual(a.tool, "enter_nether_portal")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
 
+    def test_wounded_and_foodless_the_recovery_flees_the_nether(self) -> None:
+        # run93 it229-320: 9.4 health falling, hunger 7, nine rods already in the pack and nothing
+        # edible. `_cannot_heal` routes the tick to `_recovery_steps`, which runs *before* the
+        # Nether expedition chain - so its old fall-through to `explore` (no food to hunt, no base
+        # to walk to in the Nether) sent the bot wandering ~70 ticks until a blaze burned it down
+        # at 4.2 health, the rods and the diamond kit lost with it. The way out of danger in the
+        # Nether is the way home: `leave_nether`, offered alone.
+        g = self._down(blaze_rod=9)
+        g.health, g.food = 9.4, 7.0
+        g.pos = (self.EXIT[0] + 40.5, float(self.EXIT[1]), self.EXIT[2] + 40.5)
+        self.assertEqual(candidates(g), ["leave_nether"])
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+
     def test_with_no_portal_in_the_scan_the_bot_walks_back_to_its_arrival(self) -> None:
         # The exit portal only reaches the state while it is loaded. The cell the bot arrived on
         # is where the way home is, so a bot still out in the Nether walks there first.

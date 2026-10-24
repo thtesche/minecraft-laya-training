@@ -649,7 +649,15 @@ def _recovery_steps(gs: GameState) -> list[str]:
     # survival policy, which stands its ground and evades until the mobs burn at sunrise.
     if _defenceless_at_night(gs):
         return []
-    if gs.base is not None and not _at_base(gs) and not _in_nether(gs):
+    # In the Nether the way out of danger is the way home: cross back through the exit portal
+    # rather than explore deeper. A death down there drops the whole diamond kit and every rod,
+    # and there is no food to hunt and no base to retreat to, so a wounded bot flees with what it
+    # has. run93 stood at 9.4 health, hunger 7, nine rods already in the pack and nothing edible:
+    # recovery fell through to `explore`, the bot wandered the Nether ~70 ticks, and a blaze
+    # burned it down at 4.2 health - the rods and the diamond kit lost with it.
+    if _in_nether(gs):
+        return ["leave_nether"]
+    if gs.base is not None and not _at_base(gs):
         return ["go_home"]
     if gs.base is None and _gear_ready(gs) and gs.pos is not None and not _at_surface(gs):
         return ["surface_up"]
