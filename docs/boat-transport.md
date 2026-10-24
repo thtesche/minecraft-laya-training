@@ -32,14 +32,34 @@ our simulated boat?), then an explicit `navigate_water` tool, and automatic choi
 
 | Piece | State | Finding |
 |---|---|---|
-| `bot.placeEntity` for boats | 🟡 broken on 1.21.4 | `place_entity.js` maps every `*_boat` to the entity name `boat`, but since 1.21.2 each wood is its own entity (`oak_boat`, `spruce_boat`, …, `bamboo_raft`). The spawn listener also unsubscribes after the **first** entity spawn of any kind. Placing works; recognising the placed boat does not. Easy to replace in the plugin. |
+| `bot.placeEntity` for boats | 🟡 broken on 1.21.4 | `place_entity.js` maps every `*_boat` to the entity name `boat`, but since 1.21.2 each wood is its own entity (`oak_boat`, `spruce_boat`, …, `bamboo_raft`). The spawn listener also unsubscribes after the **first** entity spawn of any kind. Worse, on the official **npm 4.39.0** (2026-09-06) the boat's `use_item` lacks the `rotation` field 1.21.2 added, so the serializer throws and **disconnects the bot** — fixed on master by [PrismarineJS/mineflayer#4085](https://github.com/PrismarineJS/mineflayer/pull/4085) (merged 2026-09-21, not yet released). The plugin places with `lookAt` + `activateItem` and finds the boat itself. |
 | `bot.mount(entity)` | ✅ | a plain `use_entity` interact; `bot.vehicle` and the `mount`/`dismount` events are maintained in `entities.js`. |
-| `bot.dismount()` | ✅ | sends `player_input { jump/sneak }` on 1.21.4 (`newPlayerInputPacket`). |
+| `bot.dismount()` | ⛔ on 1.21.2+ | sends `player_input { jump }`, but vanilla leaves a vehicle on **sneak**; the server never reads the jump for this. Upstream fix open: [PrismarineJS/mineflayer#4093](https://github.com/PrismarineJS/mineflayer/pull/4093) (holds sneak until the server reports the dismount). Until then the plugin sends the sneak itself. |
 | `bot.moveVehicle(left, forward)` | ⛔ for boats | only sends `player_input`. That steers server-driven vehicles; a **boat ridden by a player is simulated by that player's client**, which reports the result with `vehicle_move`. Mineflayer neither sends `vehicle_move` nor handles the clientbound correction. |
-| Physics while mounted | ⛔ | `physics.js` switches its own physics off on `mount`; prismarine-physics knows no boats, so `bot.entity.position` goes stale in a boat. |
+| Physics while mounted | ⛔ | `physics.js` switches its own physics off on `mount`; prismarine-physics knows no boats, so `bot.entity.position` goes stale in a boat (open upstream: [#3615](https://github.com/PrismarineJS/mineflayer/issues/3615), and [#3726](https://github.com/PrismarineJS/mineflayer/issues/3726) asks for mounted control in general). |
 
 The 1.21.4 protocol has everything needed: serverbound `vehicle_move {x, y, z, yaw, pitch,
 onGround}`, `steer_boat {leftPaddle, rightPaddle}` (paddle animation only) and `player_input`.
+
+### Prior art on GitHub (searched 2026-10-23)
+
+**No reusable plugin exists**: no `mineflayer-boat` on npm, no Mineflayer boat or vehicle
+repository. But at least five AI-agent projects have built the same thing *inside* their bot, and
+all of them took the approach this study proposes — simulate the boat on the client and send
+`vehicle_move` every tick:
+
+| Project | License | What it shows |
+|---|---|---|
+| [mrubens/jevcraft](https://github.com/mrubens/jevcraft) `src/boats.js` | MIT | the most complete: vanilla boat tick (0.9 drag, 0.04/0.005 thrust, inertial turning, buoyancy), BFS route over source water with the 1.375 box sampled per cell, dock search on both shores, braking, abort on the first server correction, boat recovery by attack + pickup, dismount by sneak; land legs via `mineflayer-pathfinder` |
+| [Im-neko/AILoveShen](https://github.com/Im-neko/AILoveShen) `minecraft-bridge/src/boat.mjs` | none | kinematic model at 0.35 blocks/tick; its comment says **Paper 1.21.4 accepted it without position corrections** (tested 2026-09-27) |
+| [rmalde/minecraft-agent](https://github.com/rmalde/minecraft-agent) `boat.mjs` | none | compact client prediction, speed capped at 0.30, resync from clientbound `vehicle_move`, launch site by line of sight |
+| [thegauravgiri/minecraft-agents](https://github.com/thegauravgiri/minecraft-agents) `src/skills/boat.js` | MIT | crafts the boat from the plank type on hand, refusal reasons like `no_boat` |
+| [wehos/mc-agent-neko](https://github.com/wehos/mc-agent-neko) `skills/boatCross.js` | MIT | mindcraft fork; boat as deep-water rescue reflex, the same idea as the `escape_water` rescue below |
+
+Consequences: the core risk of the spike (does the server accept a simulated boat?) is much
+smaller than first assumed, and the MIT projects may be read and adapted with attribution; the
+two without a license may only be read. The gap a standalone plugin fills is real: everyone has
+rebuilt this privately.
 
 ### mine-ai-mcp server
 
@@ -220,7 +240,8 @@ boat item back in the inventory.
 
 1. Is a simplified boat model accepted on the LAN (integrated) server exactly like on a dedicated
    one? The integrated server skips some movement checks only for the world's owner, not for
-   the bot — to confirm in the spike.
+   the bot. AILoveShen reports Paper 1.21.4 accepting 0.35 blocks/tick without corrections;
+   the LAN world remains to confirm in the spike.
 2. ~~Should the plugin live inside `mine-ai-mcp/src/navigation` or as a separate Mineflayer
    plugin?~~ Decided: separate plugin with three seams — see
    [Where the code lives](#where-the-code-lives-a-standalone-plugin-with-three-seams).
