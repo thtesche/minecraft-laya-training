@@ -5521,5 +5521,69 @@ class StepAwayGroundReadTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(agent._drop_grid, {})
 
 
+class DefencelessAtNightTest(unittest.TestCase):
+    """A naked bot at night walks neither back to its gear nor home.
+
+    run90 died nine times in the Overworld after the Nether took its kit, all at night with no
+    tool and no armour, most of them on `recover_drops` or `go_home` walks back past the skeleton
+    that had just shot it.
+    """
+
+    def _death(self, **kw) -> GameState:
+        return gs(pos=(182.5, 72.0, 179.5), death_pos=(190.0, 72.0, 166.0),
+                  last_death_age_s=20.0, dimension="overworld", death_dim="overworld", **kw)
+
+    def test_no_walk_back_for_the_gear_at_night(self) -> None:
+        self.assertIsNone(resolve("recover_drops", self._death(phase="night")))
+        self.assertNotIn("recover_drops", candidates(self._death(phase="night")))
+
+    def test_by_day_the_walk_is_offered_again(self) -> None:
+        self.assertIsNotNone(resolve("recover_drops", self._death(phase="day")))
+
+    def test_a_sword_or_armour_lifts_it(self) -> None:
+        self.assertIsNotNone(resolve("recover_drops",
+                                     self._death(phase="night", tools={"sword": "stone"})))
+        worn = self._death(phase="night")
+        worn.armor = {"chestplate": {"item": "leather_chestplate"}}
+        self.assertIsNotNone(resolve("recover_drops", worn))
+
+    def test_wounded_and_naked_at_night_defers_instead_of_walking_home(self) -> None:
+        g = gs(pos=(182.5, 72.0, 179.5), phase="night", health=9.8, food=10,
+               base=(231, 71, 157), dimension="overworld")
+        self.assertEqual(candidates(g), [])
+        g.phase = "day"
+        self.assertEqual(candidates(g), ["go_home"])
+
+
+class DigOutTest(unittest.TestCase):
+    """A bot the pathfinder cannot move gets a tunnel, not another walk.
+
+    run90 stood 330 ticks at (182,70,181) and (182,72,180), every `explore`, `get_wood` and
+    `recover_drops` answered `no path found` after some 70 nodes, until the iteration limit.
+    """
+
+    def test_shut_in_owns_the_tick(self) -> None:
+        g = gs(pos=(182.5, 70.0, 181.5), boxed_in=True, inventory={"crafting_table": 1})
+        self.assertEqual(candidates(g), ["dig_out"])
+        self.assertNotIn("dig_out", candidates(gs(pos=(182.5, 70.0, 181.5))))
+        self.assertIsNone(resolve("dig_out", gs(pos=(182.5, 70.0, 181.5))))
+
+    def test_the_tunnel_runs_toward_the_base_at_feet_and_head(self) -> None:
+        g = gs(pos=(182.5, 70.0, 181.5), boxed_in=True, base=(231, 71, 157))
+        a = resolve("dig_out", g)
+        self.assertEqual(a.tool, "build_structure")
+        cells = {(c["x"], c["y"], c["z"]) for c in a.args["blocks"]}
+        self.assertEqual(cells, {(182 + k, 70 + h, 181) for k in (1, 2, 3) for h in (0, 1)})
+        self.assertTrue(all(c["block_name"] == "air" for c in a.args["blocks"]))
+
+    def test_each_further_try_turns_to_another_side(self) -> None:
+        sides = set()
+        for attempt in range(4):
+            g = gs(pos=(0.5, 64.0, 0.5), boxed_in=True, dig_out_try=attempt)
+            first = resolve("dig_out", g).args["blocks"][0]
+            sides.add((first["x"], first["z"]))
+        self.assertEqual(sides, {(1, 0), (0, 1), (-1, 0), (0, -1)})
+
+
 if __name__ == "__main__":
     unittest.main()

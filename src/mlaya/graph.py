@@ -69,6 +69,29 @@ BLOCKED_CODES = ("WORKSTATION_PLACEMENT_FAILED", "BED_PLACEMENT_FAILED", "PLACE_
 # site is written off and the tech tree resumes (see `Agent._note_recover`).
 RECOVER_FINAL_CODES = ("NO_MATCHING_ITEMS", "NO_RECORDED_DEATH",
                        "DEATH_DIMENSION_MISMATCH", "DEATH_RECORD_STALE")
+# A walk that cannot reach the site is final only once it repeats (`Agent._note_recover`).
+RECOVER_UNREACHABLE_CODE = "RECOVERY_SITE_UNREACHABLE"
+RECOVER_UNREACHABLE_REPEATS = 3
+
+# A walk refused `no path found` after at most `BOXED_NODES` visited nodes, its closest node
+# within `BOXED_CLOSEST_M` of the bot, means the pathfinder cannot leave the pocket the bot
+# stands in. The pathfinder's two kinds of failure lie far apart: run90's shut-in bot answered
+# 70-78 nodes, a search that really ran out answers some 100,000. `BOXED_REPEATS` such refusals
+# from one cell hand the tick to `dig_out` (`Agent._note_boxed`).
+BOXED_NODES = 200
+BOXED_CLOSEST_M = 5.0
+BOXED_REPEATS = 3
+_NO_PATH = re.compile(r"no path found after \d+ ms compute; visited (\d+) nodes"
+                      r"(?:, generated \d+)?; closest node was (-?\d+),(-?\d+),(-?\d+)")
+
+
+def shut_in(text: str | None, pos) -> bool:
+    """True when a refusal says the pathfinder cannot leave the cells around `pos`."""
+    m = _NO_PATH.search(text or "")
+    if m is None or pos is None:
+        return False
+    closest = (int(m.group(2)) + 0.5, int(m.group(3)), int(m.group(4)) + 0.5)
+    return int(m.group(1)) <= BOXED_NODES and math.dist(closest, pos) <= BOXED_CLOSEST_M
 # A gathering action is refused with `[INVENTORY_FULL]` once all 36 carried slots are taken; the
 # unblock there is not terrain but pack space (stow at the base, else drop), so it routes through
 # a separate relief step.
@@ -123,6 +146,9 @@ STEP_AWAY_GIVE_UP = 3
 # owns. Three budgets (fifteen minutes by default) say the server will not hand it back, and an
 # ended run with that reason is something the operator sees, where a silent wait is not.
 BODY_HELD_STOP = 3
+
+# A death first seen older than this was not this run's to answer (`Agent._reapply_after_death`).
+DEATH_REAPPLY_AGE_S = 90.0
 
 # The summaries the server's survival reflexes write when they act ("hostile: target died; ...",
 # "fire: dry footing; ..."): a defer that sees one of these handed the tick to someone. Eating
@@ -239,8 +265,9 @@ class Agent:
         self.brain = Brain(settings.laya)
         self.log = MemoryLog(settings.log_path())
         self.history: list[dict] = []
-        # The server restores default policy on death; re-apply once per death.
-        self._policy_for_death_done = False
+        # The server restores default policy on death; re-apply once per death. The death the
+        # policy was last re-applied for (or found already old), by its server timestamp.
+        self._death_seen: str | None = None
         # Label whose last attempt failed because the surroundings blocked it; the next
         # tick changes the surroundings before retrying it (`blocked_by_surroundings`).
         self._blocked_label: str | None = None
@@ -341,6 +368,13 @@ class Agent:
         # walk there, so the bot does not stand at an emptied death site until the window runs
         # out (live, run14: two loops, 117 ticks in all, after the kit was already lost).
         self._recover_written_off: set[tuple[int, int, int]] = set()
+        # The death cell the last recovery walks could not reach, and how many in a row
+        # (`[RECOVERY_SITE_UNREACHABLE]`): `RECOVER_UNREACHABLE_REPEATS` of them write it off.
+        self._recover_unreachable: tuple[tuple[int, int, int] | None, int] = (None, 0)
+        # The cell the last walks were refused from as shut in, and how many in a row
+        # (`_note_boxed`); and how many tunnels `dig_out` has dug from that cell.
+        self._boxed: tuple[tuple[int, int, int] | None, int] = (None, 0)
+        self._dig_out_tries = 0
         # Decisions spent off the feet in water (`GameState.water_ticks`): the rescue waits out
         # the first ones so a crossing the server can swim is not torn up on sight (live, run15).
         self._water_ticks = 0
@@ -454,6 +488,8 @@ class Agent:
         gs.stance_skip = frozenset(self._stance_skip)
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.recover_written_off = frozenset(self._recover_written_off)
+        gs.boxed_in = self._boxed[1] >= BOXED_REPEATS
+        gs.dig_out_try = self._dig_out_tries
         # One decision off the feet in water, counted here so `candidates` can hold the rescue
         # back for its first moments (live, run15).
         self._water_ticks = self._water_ticks + 1 if (gs.in_water and not gs.on_ground) else 0
@@ -1022,6 +1058,8 @@ class Agent:
         if not stop["done"]:
             await asyncio.sleep(self.settings.mcp.poll_ms / 1000)
             gs = await self._observe()
+            # A death in a defer tick (the reflex's fight lost) needs the policy back too.
+            await self._reapply_after_death(gs)
             self._note_defer(state["before"], gs)
             gs.defer_quiet = self._defer_quiet
         return {"before": gs, "iteration": iteration, **stop}
@@ -1743,13 +1781,58 @@ class Agent:
         fresh death resets the window. Live, run14: 40 + 77 ticks burned in two such loops, over
         half the run, and the second only ended when the 300 s window ran out. Remembering the
         cell drops the offer at once; a later death elsewhere is a different cell, still walked.
+        A site the walk cannot reach is written off once `RECOVER_UNREACHABLE_REPEATS` walks to
+        it in a row were refused that way.
         """
-        if ok or action.label != "recover_drops":
+        if action.label != "recover_drops":
             return
-        if not any(code in (text or "") for code in RECOVER_FINAL_CODES):
+        if ok or gs.death_pos is None:
+            self._recover_unreachable = (None, 0)
             return
-        if gs.death_pos is not None:
-            self._recover_written_off.add(_cell(gs.death_pos))
+        cell = _cell(gs.death_pos)
+        if RECOVER_UNREACHABLE_CODE in (text or ""):
+            # One unreachable walk can be a mob in the way or a door the next tick opens; the
+            # same cell refused again and again is terrain. run90 asked 231 times from one spot
+            # (182.5, 72, 179.5) for a site 50 m off until the death record went stale.
+            last, reps = self._recover_unreachable
+            reps = reps + 1 if last == cell else 1
+            self._recover_unreachable = (cell, reps)
+            if reps >= RECOVER_UNREACHABLE_REPEATS:
+                self._recover_written_off.add(cell)
+            return
+        # A walk the reflex interrupted (`[HOSTILE_CONTACT]`, the body held) says nothing about
+        # the route either way, so it leaves the count where it was.
+        if any(code in (text or "") for code in RECOVER_FINAL_CODES):
+            self._recover_written_off.add(cell)
+
+    def _note_boxed(self, gs, action, ok: bool, text: str | None) -> None:
+        """Count the walks refused from one cell because the bot is shut in (`shut_in`).
+
+        Any label counts: whatever walks fails the same way from a pocket. A success, or a walk
+        whose `no path` search ran far, starts over; a craft that wants materials or a tick the
+        reflex interrupted says nothing about the pocket and leaves the count as it was.
+        A `dig_out` that ran leaves the count one short, so a single further refusal from the
+        same cell digs the next side at once instead of after three more failed walks.
+        """
+        if gs.pos is None:
+            return
+        cell = _cell(gs.pos)
+        last, reps = self._boxed
+        if cell != last:
+            self._dig_out_tries = 0
+            reps = 0
+        if action.label == "dig_out":
+            if ok:
+                self._dig_out_tries += 1
+                self._boxed = (cell, BOXED_REPEATS - 1)
+            return
+        if ok:
+            self._boxed = (None, 0)
+            self._dig_out_tries = 0
+        elif shut_in(text, gs.pos):
+            self._boxed = (cell, reps + 1)
+        elif _fail_code(text) == "NAVIGATION_STOPPED" or "no path found" in (text or ""):
+            self._boxed = (None, 0)
 
     def _note_stow_blocked(self, action, ok: bool, text: str) -> None:
         """Only the server's full message blocks the deposit as relief.
@@ -1820,6 +1903,7 @@ class Agent:
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
         self._note_recover(before, action, _ok, _text)
+        self._note_boxed(before, action, _ok, _text)
         # Opened before the action runs: the rescue has to be down on the *next* tick, while the
         # crossing settles and the teleport fires.
         self._note_crossing(action)
@@ -1878,15 +1962,24 @@ class Agent:
                 **self._stop_state(after, iteration)}
 
     async def _reapply_after_death(self, gs) -> None:
-        """The server restores default policy on death; re-apply once per death."""
+        """The server restores default policy on death; re-apply once per death.
+
+        A death is told apart by its server timestamp, not by its age. run90 died ten times,
+        six of them within six minutes at night, and the old age window (re-arm only once a death
+        is over 120 s old) re-applied the policy for three: a death 34 s after the last one found
+        it still disarmed, and the bot fought zombies naked on the server's default. A death
+        first seen when it is already old (the run's start, after a restart) is noted, not
+        answered: the policy the run applied at its start already stands over it.
+        """
+        key = getattr(gs, "last_death_at", None)
         age = getattr(gs, "last_death_age_s", None)
-        if age is None or age > 120:
-            self._policy_for_death_done = False
+        if key is None or age is None or key == self._death_seen:
             return
-        if age < 90 and not self._policy_for_death_done:
-            self._policy_for_death_done = True
-            summary = await survival.apply_policy(self.mcp, "re-apply after death")
-            self.log.append({"stage": "policy", "reason": "death", "summary": summary})
+        self._death_seen = key
+        if age > DEATH_REAPPLY_AGE_S:
+            return
+        summary = await survival.apply_policy(self.mcp, "re-apply after death")
+        self.log.append({"stage": "policy", "reason": "death", "summary": summary})
 
     def _after_guard(self, state: AgentState) -> str:
         return "execute" if state.get("action") is not None else "defer"

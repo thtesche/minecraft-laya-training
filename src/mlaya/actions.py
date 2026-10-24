@@ -63,6 +63,7 @@ CRITERIA: dict[str, str] = {
     "explore": "walk to new terrain to find missing resources; the last fallback",
     "wait": "hold position at the home base; nothing productive is left in the lull before the expedition",
     "make_room": "dig the block a placement was refused at, or a small pocket, so a carried workstation or bed fits",
+    "dig_out": "dig a short tunnel out of the pocket the bot is shut in, so it can walk anywhere again",
     # Home base: one surface anchor the bed, the portal and the chests all stand at.
     "surface_up": "climb back out to open surface ground; the home base, the bed and the portal all belong under open sky, never on a cave floor",
     "establish_base": "walk up to open surface ground and set up the home base there",
@@ -561,6 +562,19 @@ def _food_hunt_range(gs: GameState) -> float:
     return FOOD_HUNT_RANGE_NIGHT if gs.phase == "night" else FOOD_HUNT_RANGE_DAY
 
 
+def _defenceless_at_night(gs: GameState) -> bool:
+    """Night, no weapon in hand and nothing worn: every walk is a walk past the mobs.
+
+    run90 died nine times in the Overworld after the Nether took its kit, every one of them at
+    night with no tool and no armour, and most on a walk the loop chose: `recover_drops` back to
+    the site a skeleton had just shot it at, or `go_home` to a base where another stood. The
+    skeletons and zombies that did it burn at sunrise, so a naked bot waits for the morning
+    instead (`_can_recover`, `_recovery_steps`).
+    """
+    return (gs.phase == "night" and not _armed(gs)
+            and not any((m or {}).get("item") for m in gs.armor.values()))
+
+
 def _armed(gs: GameState) -> bool:
     """Whether the bot carries a weapon a hunt can be walked up with.
 
@@ -631,6 +645,10 @@ def _recovery_steps(gs: GameState) -> list[str]:
     """
     if _hunt_ok(gs) and _food_target(gs) is not None:
         return ["hunt_food"]
+    # A naked bot at night does not walk anywhere to recover: no step, so the tick goes to the
+    # survival policy, which stands its ground and evades until the mobs burn at sunrise.
+    if _defenceless_at_night(gs):
+        return []
     if gs.base is not None and not _at_base(gs) and not _in_nether(gs):
         return ["go_home"]
     if gs.base is None and _gear_ready(gs) and gs.pos is not None and not _at_surface(gs):
@@ -2744,6 +2762,9 @@ def _can_recover(gs: GameState) -> bool:
     # finish an expedition twice.
     if _in_nether(gs) or _in_nether_dimension(gs.death_dim):
         return False
+    # The mob that dropped the bot is still standing over the gear in the dark.
+    if _defenceless_at_night(gs):
+        return False
     if _dist(gs.pos, gs.death_pos) > RECOVER_RANGE:
         return False
     # A death well below the bot has to be dug down to. By hand that is several times slower
@@ -2821,6 +2842,14 @@ def candidates(gs: GameState) -> list[str]:
     # been adrift for longer than any crossing needs.
     if gs.in_water and not gs.on_ground and gs.water_ticks >= WATER_RESCUE_AFTER:
         return ["escape_water"]
+
+    # --- shut in (rescue) ---
+    # Every walk ends `no path found` after a few dozen nodes, the closest one beside the bot:
+    # the pathfinder cannot leave the pocket it stands in, so nothing that walks can run. Live,
+    # run90: 330 ticks at (182,70,181) and (182,72,180), recover_drops, explore and get_wood
+    # refused alike, until the iteration limit. The tunnel owns the tick (`Agent._note_boxed`).
+    if gs.boxed_in and gs.pos is not None:
+        return ["dig_out"]
 
     # --- junk dropped on open ground, before it can be picked back up ---
     # When the terrain refused a disposal pit, `drop_junk` drops onto the ground where the bot
@@ -3985,6 +4014,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                  for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
         return Action(label, "build_structure", {"blocks": cells},
                       "dig a small pocket around the bot for the carried workstation or bed")
+    if label == "dig_out":
+        if gs.pos is None or not gs.boxed_in:
+            return None
+        mx, my, mz = (math.floor(v) for v in gs.pos)
+        # Toward the base first, where one is anchored; each further try at the same spot turns
+        # to the next side, so a wall that will not give is not dug at twice.
+        sides = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        if gs.base is not None:
+            bx, bz = gs.base[0] - mx, gs.base[2] - mz
+            sides.sort(key=lambda d: -(d[0] * bx + d[1] * bz))
+        dx, dz = sides[gs.dig_out_try % len(sides)]
+        # Feet and head height, three cells long: a corridor the bot walks out along, short
+        # enough to dig by hand (the shut-in bot of run90 carried no tool at all).
+        cells = [{"x": mx + dx * k, "y": my + h, "z": mz + dz * k, "block_name": "air"}
+                 for k in (1, 2, 3) for h in (0, 1)]
+        return Action(label, "build_structure", {"blocks": cells},
+                      "dig a short tunnel out of the pocket the pathfinder cannot leave")
     if label == "surface_up":
         if gs.base is not None or not _gear_ready(gs) or gs.pos is None or _at_surface(gs):
             return None

@@ -570,6 +570,9 @@ class GameState:
     players: list[str] = field(default_factory=list)
     last_death_cause: str | None = None
     last_death_age_s: float | None = None
+    # The server's timestamp of that death: the same string for every look at one death, a new
+    # one for the next, so it tells two deaths in quick succession apart where the age cannot.
+    last_death_at: str | None = None
     death_pos: tuple[float, float, float] | None = None
     death_dim: str | None = None
     activity_owner: str | None = None
@@ -781,6 +784,10 @@ class GameState:
     # there again, so a bot whose gear is gone does not stand at the death site for the whole
     # window while the tech tree waits (live, run14: two such loops, 117 ticks in all).
     recover_written_off: frozenset = frozenset()
+    # The pathfinder cannot leave the few cells around the bot (`Agent._note_boxed`): `dig_out`
+    # owns the tick, and `dig_out_try` turns each further tunnel to the next side (live, run90).
+    boxed_in: bool = False
+    dig_out_try: int = 0
     # Decisions the bot has spent off its feet in water, counted by the loop (`Agent._inject`).
     # `escape_water` owns the tick only once this reaches `actions.WATER_RESCUE_AFTER`, so a goal
     # that crosses water the server can swim is not torn up the moment an action comes back
@@ -1216,6 +1223,8 @@ def parse_status(data: dict) -> GameState:
     if isinstance(death, dict) and death.get("cause"):
         gs.last_death_cause = str(death["cause"])
         gs.last_death_age_s = _age_seconds(sit.get("observedAt"), death.get("observedAt"))
+        if isinstance(death.get("observedAt"), str):
+            gs.last_death_at = death["observedAt"]
         dpos = death.get("position") or {}
         if all(k in dpos for k in ("x", "y", "z")):
             gs.death_pos = (float(dpos["x"]), float(dpos["y"]), float(dpos["z"]))

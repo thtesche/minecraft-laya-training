@@ -21,7 +21,8 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
                           tech_tree_complete)
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, BODY_HELD_STOP, HOME_ANCHOR_TICKS, IDLE_REPEATS, PASS_TIME_LABELS,
+from mlaya.graph import (Agent, BODY_HELD_STOP, BOXED_REPEATS, HOME_ANCHOR_TICKS,
+                         RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
                          PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS, WANDER_RATIO,
                          WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
@@ -108,6 +109,9 @@ class WaterTicksTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -208,6 +212,9 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -392,6 +399,9 @@ class PourSkipTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -502,6 +512,9 @@ class StanceSkipTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
@@ -608,6 +621,9 @@ class StuckOfferTest(unittest.TestCase):
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
@@ -1203,6 +1219,9 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._stance_skip = set()
         agent._stuck_off = {}
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._water_ticks = 0
@@ -1279,6 +1298,9 @@ class FrameRefusalTest(unittest.TestCase):
         agent._stance_skip = set()
         agent._stuck_off = {}
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -1366,6 +1388,9 @@ class RecoverWriteOffTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._stuck_code = {}
@@ -1446,6 +1471,31 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent = self._agent()
         agent._recover_written_off = {(1, 2, 3)}
         self.assertEqual(agent._inject(gs()).recover_written_off, frozenset({(1, 2, 3)}))
+
+    def test_a_site_unreachable_again_and_again_is_written_off(self) -> None:
+        # run90: 231 walks from (182.5, 72, 179.5) to a site 50 m off, all
+        # `[RECOVERY_SITE_UNREACHABLE]`, until the death record went stale.
+        agent = self._agent()
+        death = gs(death_pos=(228.74, 72.0, 156.7))
+        refused = "[RECOVERY_SITE_UNREACHABLE] no path found after 2 ms compute"
+        for _ in range(RECOVER_UNREACHABLE_REPEATS - 1):
+            agent._note_recover(death, self._Action("recover_drops"), False, refused)
+        # A reflex interruption between them neither counts nor starts over.
+        agent._note_recover(death, self._Action("recover_drops"), False,
+                            "[HOSTILE_CONTACT] fight response for skeleton#1")
+        self.assertEqual(agent._recover_written_off, set())
+        agent._note_recover(death, self._Action("recover_drops"), False, refused)
+        self.assertEqual(agent._recover_written_off, {(228, 72, 156)})
+
+    def test_a_new_death_site_starts_the_count_over(self) -> None:
+        agent = self._agent()
+        refused = "[RECOVERY_SITE_UNREACHABLE] no route"
+        for _ in range(RECOVER_UNREACHABLE_REPEATS - 1):
+            agent._note_recover(gs(death_pos=(1.0, 2.0, 3.0)), self._Action("recover_drops"),
+                                False, refused)
+        agent._note_recover(gs(death_pos=(9.0, 2.0, 3.0)), self._Action("recover_drops"),
+                            False, refused)
+        self.assertEqual(agent._recover_written_off, set())
 
     def test_the_next_tick_stops_offering_the_walk(self) -> None:
         # End to end: the failed walk writes the site off, `_inject` carries it, and the same
@@ -1711,6 +1761,9 @@ class DropHoleTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = True
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -1804,6 +1857,9 @@ class ChestSupportTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -1899,6 +1955,9 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -2068,6 +2127,9 @@ class ChestLidTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -2214,6 +2276,9 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._stuck_reps = {}
         agent._stuck_off = {}
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
@@ -2411,6 +2476,9 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -2703,6 +2771,9 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._stance_skip = set()
         agent._stuck_off = set()
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
@@ -3055,6 +3126,9 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -3299,6 +3373,9 @@ class NetherCrossingTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -3560,6 +3637,9 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -3707,6 +3787,119 @@ class BodyHeldStopTest(unittest.TestCase):
         agent._note_held(SimpleNamespace(status="succeeded"))
         agent._note_held(SimpleNamespace(status="held"))
         self.assertFalse(agent._stop_state(gs(), 10)["done"])
+
+
+class DeathPolicyTest(unittest.IsolatedAsyncioTestCase):
+    """The survival policy goes back on after every death, however close the next one follows.
+
+    run90 died nine times in the Overworld, two of them 34 s apart and two 25 s apart, and the
+    old age window re-applied the policy for three of the ten deaths.
+    """
+
+    def _agent(self) -> tuple[Agent, list]:
+        agent = Agent.__new__(Agent)
+        agent._death_seen = None
+        agent.log = []
+        agent.mcp = None
+        applied: list[str] = []
+
+        async def apply(executor, reason, preset="base"):
+            applied.append(reason)
+            return {"ok": True}
+
+        from mlaya import graph
+        original = graph.survival.apply_policy
+        graph.survival.apply_policy = apply
+        self.addCleanup(setattr, graph.survival, "apply_policy", original)
+        return agent, applied
+
+    async def test_two_deaths_in_quick_succession_both_reapply(self) -> None:
+        agent, applied = self._agent()
+        await agent._reapply_after_death(gs(last_death_at="2026-10-23T19:12:30Z",
+                                            last_death_age_s=4.0))
+        await agent._reapply_after_death(gs(last_death_at="2026-10-23T19:12:30Z",
+                                            last_death_age_s=20.0))
+        await agent._reapply_after_death(gs(last_death_at="2026-10-23T19:13:04Z",
+                                            last_death_age_s=3.0))
+        self.assertEqual(len(applied), 2)
+        self.assertEqual([e["reason"] for e in agent.log], ["death", "death"])
+
+    async def test_an_old_death_found_at_the_start_is_left_alone(self) -> None:
+        agent, applied = self._agent()
+        await agent._reapply_after_death(gs(last_death_at="2026-10-22T08:00:00Z",
+                                            last_death_age_s=50462.0))
+        await agent._reapply_after_death(gs())
+        self.assertEqual(applied, [])
+
+
+class ShutInTest(unittest.TestCase):
+    """A pathfinder that cannot leave the pocket hands the tick to `dig_out`.
+
+    run90 stood its last 330 ticks shut in; every walk answered `no path found` after 70-78
+    nodes, the closest one beside the bot, where a search that truly runs out visits ~100,000.
+    """
+
+    POCKET = ("[NAVIGATION_STOPPED] Pathfinder stopped: no path found after 2 ms compute; "
+              "visited 70 nodes, generated 78; closest node was 181,70,184.")
+    FAR = ("[NAVIGATION_STOPPED] Pathfinder stopped: no path found after 900 ms compute; "
+           "visited 101324 nodes, generated 120000; closest node was 240,70,150.")
+
+    class _Action:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
+        return agent
+
+    def test_reads_the_pocket_and_not_a_long_search(self) -> None:
+        here = (182.5, 70.0, 181.5)
+        self.assertTrue(shut_in(self.POCKET, here))
+        self.assertTrue(shut_in("no path found after 1 ms compute; visited 76 nodes, generated "
+                                "105; closest node was 178,70,183", here))
+        self.assertFalse(shut_in(self.FAR, here))
+        # Few nodes but the closest one far off: a ledge to cross, not a pocket.
+        self.assertFalse(shut_in("no path found after 24 ms compute; visited 402 nodes, "
+                                 "generated 436; closest node was 223,100,16", (364.3, 101, -11.5)))
+
+    def test_three_refusals_from_one_cell_shut_the_bot_in(self) -> None:
+        agent = self._agent()
+        here = gs(pos=(182.5, 70.0, 181.5))
+        for label in ("explore", "get_wood", "explore")[:BOXED_REPEATS]:
+            self.assertFalse(agent._boxed[1] >= BOXED_REPEATS)
+            agent._note_boxed(here, self._Action(label), False, self.POCKET)
+        self.assertEqual(agent._boxed, ((182, 70, 181), BOXED_REPEATS))
+
+    def test_a_dug_tunnel_leaves_one_refusal_to_the_next_side(self) -> None:
+        agent = self._agent()
+        here = gs(pos=(182.5, 70.0, 181.5))
+        agent._boxed = ((182, 70, 181), BOXED_REPEATS)
+        agent._note_boxed(here, self._Action("dig_out"), True, "")
+        self.assertEqual((agent._boxed[1], agent._dig_out_tries), (BOXED_REPEATS - 1, 1))
+        agent._note_boxed(here, self._Action("explore"), False, self.POCKET)
+        self.assertEqual(agent._boxed[1], BOXED_REPEATS)
+        # A walk that got out clears it all.
+        agent._note_boxed(here, self._Action("explore"), True, "")
+        self.assertEqual((agent._boxed, agent._dig_out_tries), ((None, 0), 0))
+
+    def test_moving_or_a_long_search_starts_over(self) -> None:
+        agent = self._agent()
+        agent._boxed = ((182, 70, 181), 2)
+        agent._dig_out_tries = 2
+        agent._note_boxed(gs(pos=(190.5, 70.0, 181.5)), self._Action("explore"), False,
+                          self.FAR)
+        self.assertEqual((agent._boxed, agent._dig_out_tries), ((None, 0), 0))
+
+    def test_inject_hands_it_to_the_state(self) -> None:
+        agent = RecoverWriteOffTest._agent(RecoverWriteOffTest())
+        agent._boxed = ((182, 70, 181), BOXED_REPEATS)
+        agent._dig_out_tries = 2
+        agent._water_ticks = 0
+        injected = agent._inject(gs(pos=(182.5, 70.0, 181.5)))
+        self.assertTrue(injected.boxed_in)
+        self.assertEqual(injected.dig_out_try, 2)
 
 
 if __name__ == "__main__":

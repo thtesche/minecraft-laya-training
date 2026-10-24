@@ -670,6 +670,8 @@ progress. The loop now has one guard per kind of stall; each withholds the label
 | a walk off dropped junk that cannot be made | `_note_step_away` | `STEP_AWAY_GIVE_UP = 3` refusals in a row |
 | a body the server's reflex will not hand back | `MCPExecutor.call` / `_note_held` | `[mcp] action_wait_ms = 300000` per call, then `[BODY_HELD]`; `BODY_HELD_STOP = 3` in a row end the run with `"stop": "body_held"` |
 | deferring to a reflex that does nothing | `_note_defer` | `DEFER_QUIET_TICKS = 5` quiet defers (see M3); under the health band only when nothing heals in place (`_recovery_owed`) |
+| a death site the walk cannot reach | `_note_recover` | `RECOVER_UNREACHABLE_REPEATS = 3` `[RECOVERY_SITE_UNREACHABLE]` from one site write it off |
+| shut in a pocket the pathfinder cannot leave | `_note_boxed` / `dig_out` | `BOXED_REPEATS = 3` `no path found` after ≤ `BOXED_NODES = 200` nodes, closest ≤ 5 m, from one cell |
 
 Three lessons from the runs behind them:
 
@@ -821,6 +823,31 @@ Whether an answer has settled comes from the envelope's `response.data.state` (`
 run90's it76 hunt settled `partial` (two of six chicken), was read as still running, and 900
 polls — each answered at once with the same settlement — ran out in two minutes as a
 `[BODY_HELD] ... owner unknown`. The refusal now also says how long the call waited.
+
+### run90 (2026-10-23): the Nether reached, and ten deaths after it
+
+The best opening so far: by it140 the bot had built and lit the portal, crafted the gold
+helmet and a spare diamond pickaxe, and crossed with food. At it154 piglin brutes caught it at
+(-76, 35, -317), and it burned to death; `take_bed` had carried the bed along (it128), so it
+woke at world spawn, not the base, with nothing. Nine Overworld deaths followed, all at night,
+no tool and no armour, most on walks the loop chose. Four fixes:
+
+- **The policy after every death.** `_reapply_after_death` re-armed only once a death was over
+  120 s old, so deaths 25–34 s apart left the server's default policy in force (the reflex
+  `fight`ing zombies naked); three of ten deaths were answered. A death is now told by its
+  server timestamp (`GameState.last_death_at`), and the defer path checks it too.
+- **An unreachable death site.** 231 `recover_drops` from one spot answered
+  `[RECOVERY_SITE_UNREACHABLE]` until the record went stale; three in a row now write it off.
+- **Shut in.** The last 330 ticks stood at (182, 70, 181): every walk `no path found` after
+  70–78 nodes (a real search exhausted visits ~100,000). Three such refusals from one cell make
+  `dig_out` the only step: a three-cell corridor at feet and head height, toward the base first
+  and then each other side in turn.
+- **Naked at night.** With no weapon and nothing worn, at night, `recover_drops` is not offered
+  and `_recovery_steps` offers nothing, so the tick defers to the survival policy until the mobs
+  burn at sunrise (`_defenceless_at_night`).
+
+The two `[BODY_HELD]`s (it76 `hunt_food`, it503 `get_wood`) were both `partial` results read as
+still running, fixed in `5377fc7`.
 
 ## Next milestones
 
