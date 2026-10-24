@@ -673,7 +673,7 @@ progress. The loop now has one guard per kind of stall; each withholds the label
 | a death site the walk cannot reach | `_note_recover` | `RECOVER_UNREACHABLE_REPEATS = 3` `[RECOVERY_SITE_UNREACHABLE]` from one site write it off |
 | shut in a pocket the pathfinder cannot leave | `_note_boxed` / `dig_out` | `BOXED_REPEATS = 3` `no path found` after ≤ `BOXED_NODES = 200` nodes, closest ≤ 5 m, from one cell |
 
-Three lessons from the runs behind them:
+Four lessons from the runs behind them:
 
 - **Exclusive offers must ask for the withholding themselves.** A rescue or the night `sleep`
   returns from `candidates` before the final `gs.stuck_labels` filter, so a withheld label kept
@@ -687,6 +687,10 @@ Three lessons from the runs behind them:
   surplus, `251df45`).
 - **A guard must see both outcomes.** `STEP_AWAY_GIVE_UP` existed but `_note_step_away` sat under
   the success guard, so run81's 470 cliff-top refusals never reached it (`c48da18`).
+- **A one-way latch can silence a whole chain.** `_nether_entered` never clears, so after a Nether
+  death the relaunch gates offered nothing and every tick fell through to `wait` — run93's ~88
+  waits at the base. A latch that marks "has been done" must be re-opened by "is still owed"
+  (`_nether_haul_home`, `e812d83`).
 
 `wait` itself is no longer a stall: it navigates to the anchor the bot already stands on and
 settled in about a second, so run86 — its gate lit by day — spent ~300 of 600 iterations waiting
@@ -848,6 +852,47 @@ no tool and no armour, most on walks the loop chose. Four fixes:
 
 The two `[BODY_HELD]`s (it76 `hunt_food`, it503 `get_wood`) were both `partial` results read as
 still running, fixed in `5377fc7`.
+
+### run91–92 (2026-10-24): `craft_table` offered with no logs
+
+Both runs looped on `craft_table` — 43× (run91, 600/600 limit) and 28× (run92, killed by an MCP
+host restart: exit 1, `MCPError: SSE stream ended without a response`) — every call ok=False
+`[CRAFT_MATERIALS_MISSING] "Missing leaf materials"`, with `explore` wandering between the
+refusals. The world was not fresh: run91 carried over obsidian ×10, raw_gold ×5, diamond tools
+and a water bucket, but only oak_planks ×1 and stripped_oak_log ×1 stood within reach of the
+craft. The attempt to hold the offer until a `pale_oak_log` is found (MC 1.21+, `dd6dd0e`) was
+reverted the same morning (`9dc2c19`); the class stays open, and run94's fresh world crafted the
+table at it4 without trouble.
+
+### run93 (2026-10-24): the crossing, the blaze, and the closed relaunch gate
+
+The first crossing since run86, and the fastest opening of the series: full diamond armour by
+it48, `craft_flint_and_steel` it92, frame complete it95 (401.5,73,-320.4), respawn bed it107,
+`light_portal` it163 and `enter_portal` it164 — in the Nether by 12:09. Nine blaze rods reached
+the pack (it167 +7, it207 +1, it216 +1). Then the recovery gap: at 9.4 health and hunger 7 the
+`_cannot_heal` gate handed the tick to `_recovery_steps`, which knew only Overworld moves —
+`hunt_food` (no animals in the Nether), `go_home` (excluded there), `surface_up` (base exists) —
+and fell through to `explore`. The bot wandered the Nether ~70 ticks (it296–319, `explore`
+ok=False "body owner: hostile_reflex"), a blaze burned it down at 4.2 health (12:40:45,
+32.5,53,84.3), and the rods, the diamond kit, the gold helmet and the food were lost with it.
+Fix: `_recovery_steps` now offers `leave_nether` in the Nether (`985d420`) — the way out of
+danger there is the way home.
+
+The death then exposed the relaunch latch. `_nether_entered` is set on the first crossing and
+never cleared, and both relaunch gates — `_spare_pickaxe_wanted` (the trip needs two diamond
+pickaxes, one survived) and `_nether_departure_ready` (`enter_portal`) — hang off
+`not nether_entered`. With the latch set, the Overworld chain offered nothing, candidates fell
+through to the `wait` fallback, and the bot stood at the base ~25 minutes (~88 waits, ~78 of
+them in a row, by day). Fix (`e812d83`): the question is "is a haul still waiting to be
+processed?" — `_nether_haul_home` (rods or powder in the pack, or the stowed powder that
+completes the trip) replaces the latch at both gates; an empty-handed return from a death
+reopens the expedition. Before the first trip the helper is false, identical to the old latch.
+
+Codes: BODY_HELD ×4, HOSTILE ×7, NAVIGATION ×2 (`[NAVIGATION_PORTAL_INTENT_REQUIRED]`,
+`[NAVIGATION_STOPPED]`), NO_MATCHING ×3, CONTAINER ×1. The run ended at it479/600 (13:45:35,
+exit 2) not through the loop but through `perception_blind`: `view_status` answered
+`[MINECRAFT_DISCONNECTED] ... socketClosed`. The gold helmet was crafted (it116) but never
+worn — `swap_to_gold_helmet` was offered while the reflex held the body.
 
 ## Next milestones
 

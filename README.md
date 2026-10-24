@@ -48,8 +48,8 @@ rationale and the zero-shot findings behind this split are in
 | Nether prep — bow + arrows, gold helmet, cobblestone/food reserve | implemented, part of the auto-stop |
 | Storage network — chests per cell, overflow chests, provisions fetched back | reached, validated live |
 | Stall guards — refusals, wandering, idle steps, quiet defers, `wait` hold | implemented (see [`docs/architecture.md`](docs/architecture.md#stall-guards)) |
-| Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented; live up to the fortress spawner (run86), no rod home yet — see [`docs/nether-prep.md`](docs/nether-prep.md) |
-| M3, second round — run79–86 head on top of the 2026-10-14 checkpoint | trained (held-out accuracy 0.767 → 0.885), not yet run live |
+| Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented; live through a full crossing with nine rods in the pack (run93), none home yet — see [`docs/nether-prep.md`](docs/nether-prep.md) |
+| M3, second round — run79–86 head on top of the 2026-10-14 checkpoint | trained (held-out accuracy 0.767 → 0.885), served live since run87 via `LAYA_EXTRA_MODELS` |
 
 The run **stops itself** once every phase stands (`Agent._goal_reached`): the overworld goal
 (`actions.tech_tree_complete` — full diamond kit **worn** + shield in the off-hand, a bed at the

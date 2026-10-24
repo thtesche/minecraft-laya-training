@@ -171,6 +171,16 @@ The ~300 iterations the bot spent waiting for the night are gone: `place_bed` no
 day as well, and the `sleep` server sets the respawn point at a bed used in daylight, so the
 crossing follows the lit gate at once.
 
+**Live status (run93, 2026-10-24):** the crossing followed the lit gate the same day — frame
+it95, `light_portal` it163, `enter_portal` it164 — and **nine blaze rods reached the pack**
+(it167/207/216), the first rods of the series. None came home: the bot died fighting a blaze
+before the return (32.5,53,84.3), losing the rods, the diamond kit and the food. Two gaps closed
+since: a wounded, foodless bot in the Nether now recovers with `leave_nether` instead of falling
+through to `explore` (`985d420`), and a death return reopens the expedition instead of a ~88-tick
+`wait` loop — `_nether_haul_home` replaced the one-way `_nether_entered` latch at the relaunch
+gates (`e812d83`, see architecture/run93). The gold helmet is still not worn on crossing: it was
+crafted (it116), but every swap attempt landed while the reflex held the body.
+
 ## Decided: the gold helmet replaces the diamond helmet
 
 One piece of golden armour keeps piglins neutral, but the bot wears a **full diamond set** —
