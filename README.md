@@ -128,6 +128,11 @@ Tests: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests`.
   milestone-by-milestone findings from the live runs (M1–M4, homebase, Nether chain).
 - [`docs/nether-prep.md`](docs/nether-prep.md) — the Nether preparation design and the
   phase 3 visit, with its live status.
+- [`docs/stronghold.md`](docs/stronghold.md) — the phase after the Nether haul: eyes of ender,
+  the stronghold, the end portal, and the demand-sized re-supply.
+- [`docs/restart-recovery.md`](docs/restart-recovery.md) — what survives a cold start (world,
+  inventory, chests) and what the loop re-derives (the milestone latches), with the stronghold
+  phase as the worked example.
 - [`docs/operations.md`](docs/operations.md) — the runbook: world and MCP setup, how a run is
   started and archived, how a fix lands, how a head is trained.
 - [`viewer/README.md`](viewer/README.md) — the live browser view of the bot (a spectator
