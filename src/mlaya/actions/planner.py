@@ -558,6 +558,18 @@ def candidates(gs: GameState) -> list[str]:
     if gs.stuck_labels:
         out = [label for label in out if label not in gs.stuck_labels]
 
+    # A naked bot at night takes no long walk (`_defenceless_at_night`): the recovery steps already
+    # stand still in that state (`_recovery_steps` returns nothing at all), and the ordinary offer
+    # must too. run95 it274 explored at 20 health with no tool and no armour on, walked into a
+    # spider and a skeleton at 10-16 m, and was dead within three ticks; the same night's
+    # `get_wood` walks had already spent two ten-minute `[BODY_HELD]` waits. `go_home` is left in,
+    # not out of an analogy with the recovery steps: it is gated on `_gear_ready`, so a bot that
+    # lost its kit (run95's naked body) never sees it, and a still-geared bot's walk home is the
+    # walk to the bed that ends the night.
+    still = _defenceless_at_night(gs)
+    if still:
+        out = [label for label in out if label not in DEFENCELESS_WALK_LABELS]
+
     # The explicit last fallback when nothing productive is available. In the lull once the gate
     # frame stands the only work left is the prep, and wandering off just burned
     # five pathfinder timeouts and left the bot away from the base at dusk (live, from-zero run), so
@@ -565,7 +577,7 @@ def candidates(gs: GameState) -> list[str]:
     # was tried live (run19b) and reverted: the roam carried the bot 150-200 m out, where the
     # base-range latches re-open the portal chain and it stranded in water for 76 ticks.
     if not out:
-        out.append("wait" if _at_base(gs) and _nether_idle(gs) else "explore")
+        out.append("wait" if (still or (_at_base(gs) and _nether_idle(gs))) else "explore")
     return out
 
 
@@ -1413,12 +1425,20 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "wait":
         # Hold at the base: navigate to the anchor, which is at most a step away, so the tick
         # settles at once and the bot does not wander off while daylight burns.
-        if gs.base is None or not _nether_idle(gs):
-            return None
-        bx, by, bz = gs.base
-        return Action(label, "navigate",
-                      {"x": bx, "y": by + 1, "z": bz, "range": 1},
-                      "hold at the home base while nothing productive is left in the lull")
+        if gs.base is not None and _nether_idle(gs):
+            bx, by, bz = gs.base
+            return Action(label, "navigate",
+                          {"x": bx, "y": by + 1, "z": bz, "range": 1},
+                          "hold at the home base while nothing productive is left in the lull")
+        # A naked bot at night holds where it stands: `candidates` offers this instead of
+        # `explore`/`get_wood` (`_defenceless_at_night`). The walk home is exactly the long one
+        # the night forbids, so the anchor is the bot's own cell - a navigate to where it already
+        # stands, which settles at once and spends `[loop] wait_hold_s` instead of the dark.
+        if _defenceless_at_night(gs) and gs.pos is not None:
+            mx, my, mz = (math.floor(v) for v in gs.pos)
+            return Action(label, "navigate", {"x": mx, "y": my, "z": mz, "range": 1},
+                          "stand still until sunrise - no weapon and no armour at night")
+        return None
     if label == "explore":
         if x is None or z is None:
             return None

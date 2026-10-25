@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
+from mlaya.actions import _must_eat
 from mlaya.brain import (DANGER_BAND_NOTE, DANGER_DEFER_HEALTH, DANGER_DEFER_M, DANGER_QID,
                          DEFER_QUIET_TICKS, INTENT_QID, Brain, danger_matters)
 
@@ -117,6 +118,38 @@ class DangerMattersTest(unittest.TestCase):
         self.assertTrue(danger_matters(g))
         g.defer_quiet = DEFER_QUIET_TICKS
         self.assertFalse(danger_matters(g))
+
+    def test_low_health_with_a_meal_nothing_in_range_lets_the_loop_eat(self) -> None:
+        # run95 from it462: 1 health, hunger 6, two raw chicken carried, the nearest hostile 40 m
+        # off, `candidates: ['eat_food']` - and 138 defers to the end of the run. An edible in the
+        # pack makes `_cannot_heal` false, so the quiet defers never released the tick, and the
+        # server's hunger reflex does not eat raw chicken.
+        g = _gs(1.0, 40.0)
+        g.food = 6.0
+        g.inventory = {"chicken": 2, "feather": 3}
+        g.defer_quiet = 0
+        self.assertFalse(danger_matters(g))
+        self.assertTrue(_must_eat(g))
+
+    def test_a_meal_does_not_turn_the_back_on_a_mob_in_contact(self) -> None:
+        # Eating with a hostile at 2 m is how the next hit finds the bot: in contact range the
+        # policy keeps the tick (it fights, and it eats once the fight is over).
+        g = _gs(1.0, DANGER_DEFER_M)
+        g.food = 6.0
+        g.inventory = {"chicken": 2}
+        self.assertTrue(danger_matters(g))
+
+    def test_a_shut_in_body_takes_the_tick_whatever_the_health(self) -> None:
+        # run95 it125-130: suffocating in a wall at 9 health, nearest hostile 23 m, the offer one
+        # `go_home` walk that the pathfinder could not start. The policy has no answer to a body
+        # inside a block; the loop's `dig_out` has.
+        g = _gs(9.0, 23.0)
+        g.food = 20.0
+        g.inventory = {"cobblestone": 30}
+        g.boxed_in = True
+        self.assertFalse(danger_matters(g))
+        g.boxed_in = False
+        self.assertTrue(danger_matters(g))
 
 
 if __name__ == "__main__":

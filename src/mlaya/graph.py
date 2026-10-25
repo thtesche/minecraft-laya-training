@@ -143,9 +143,12 @@ STEP_AWAY_GIVE_UP = 3
 # (`[BODY_HELD]`) before the run stops with `"stop": "body_held"`. run89's hostile reflex held the
 # body in a `fight`/`hold` against a zombie 1.6 m off for nearly three hours - full health, no
 # damage, no event - and the loop could only wait; nothing it can send moves a body the reflex
-# owns. Three budgets (fifteen minutes by default) say the server will not hand it back, and an
-# ended run with that reason is something the operator sees, where a silent wait is not.
-BODY_HELD_STOP = 3
+# owns. Two budgets (ten minutes by default) say the server will not hand it back, and an ended
+# run with that reason is something the operator sees, where a silent wait is not. run95 spent
+# three such pairs of ten minutes each (it268/269, it279/280, it354/355) - both calls of a pair
+# naming the *same* action id - and never reached the third in a row, so the guard never fired
+# and 18% of the run went into waiting on a body nobody was going to release.
+BODY_HELD_STOP = 2
 
 # A death first seen older than this was not this run's to answer (`Agent._reapply_after_death`).
 DEATH_REAPPLY_AGE_S = 90.0
@@ -1125,6 +1128,11 @@ class Agent:
         gs.powder_cells = tuple(self._powder_cells)
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.defer_quiet = self._defer_quiet
+        # `_note_boxed` runs after this tick's observation (it needs the post-action cell), so
+        # the pocket it just learned about would otherwise only reach the state of the tick
+        # after. One tick is the whole difference between a tunnel and suffocating (run95).
+        gs.boxed_in = self._boxed[1] >= BOXED_REPEATS
+        gs.dig_out_try = self._dig_out_tries
 
     def _note_hurt(self, before, after) -> None:
         """A hit while the loop works hands the next contact back to the survival policy."""
@@ -1885,28 +1893,37 @@ class Agent:
     def _note_boxed(self, gs, action, ok: bool, text: str | None) -> None:
         """Count the walks refused from one cell because the bot is shut in (`shut_in`).
 
-        Any label counts: whatever walks fails the same way from a pocket. A success, or a walk
-        whose `no path` search ran far, starts over; a craft that wants materials or a tick the
-        reflex interrupted says nothing about the pocket and leaves the count as it was.
-        A `dig_out` that ran leaves the count one short, so a single further refusal from the
-        same cell digs the next side at once instead of after three more failed walks.
+        Any label counts: whatever walks fails the same way from a pocket. The body leaving the
+        cell, or a walk whose `no path` search ran far, starts over; a step that works where it
+        stands (a craft, a meal, a pickup, or a tick the reflex interrupted) says nothing about
+        the pocket and leaves the count as it was. A `dig_out` that ran leaves the count one
+        short, so a single further refusal from the same cell digs the next side at once instead
+        of after three more failed walks.
+
+        `gs` is the state *after* the action, and it has to be: the refusal names the cell the
+        pathfinder started from, which is where the body ended up, not where the tick began.
+        Read against the pre-action cell, a walk that moved first and failed at its destination
+        does not look shut in at all. run95 it125 walked 105 m and 52 blocks up, was refused with
+        `visited 1 nodes` at -216,-2,-367, and the count stayed at 0 because the tick had begun
+        far away. `ok` resets nothing in place either: the very next tick recovered drops in the
+        same buried cell, and that success would have wiped the one refusal already counted.
         """
         if gs.pos is None:
             return
         cell = _cell(gs.pos)
         last, reps = self._boxed
-        if cell != last:
-            self._dig_out_tries = 0
-            reps = 0
         if action.label == "dig_out":
             if ok:
                 self._dig_out_tries += 1
                 self._boxed = (cell, BOXED_REPEATS - 1)
             return
-        if ok:
+        if cell != last:
+            reps = 0
             self._boxed = (None, 0)
             self._dig_out_tries = 0
-        elif shut_in(text, gs.pos):
+        if ok:
+            return
+        if shut_in(text, gs.pos):
             self._boxed = (cell, reps + 1)
         elif _fail_code(text) == "NAVIGATION_STOPPED" or "no path found" in (text or ""):
             self._boxed = (None, 0)
@@ -1980,7 +1997,6 @@ class Agent:
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
         self._note_recover(before, action, _ok, _text)
-        self._note_boxed(before, action, _ok, _text)
         # Opened before the action runs: the rescue has to be down on the *next* tick, while the
         # crossing settles and the teleport fires.
         self._note_crossing(action)
@@ -1989,6 +2005,9 @@ class Agent:
         self._note_held(res)
         await self._hold_wait(action, _ok)
         after = await self._observe()
+        # After the observation, not before: the `no path found` refusal names the cell the walk
+        # started from, which is where the action left the body (see `_note_boxed`).
+        self._note_boxed(after, action, _ok, _text)
         self._note_heading(before.pos, after.pos)
         # `surface_up` answers itself through the position it lands on (a resolved probe) or
         # through the height the server names when it refuses to guess (an ambiguous column);

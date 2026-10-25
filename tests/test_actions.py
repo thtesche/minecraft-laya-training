@@ -5669,6 +5669,8 @@ class RefreshAfterTest(unittest.TestCase):
         agent._powder_cells = []
         agent._stuck_off = {}
         agent._defer_quiet = 0
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
         return agent
 
     def test_the_probe_answer_climbs_on_the_very_next_tick(self) -> None:
@@ -5699,6 +5701,19 @@ class RefreshAfterTest(unittest.TestCase):
         self.assertTrue(after.powder_stowed)
         self.assertEqual(after.stuck_labels, frozenset({"sleep"}))
         self.assertEqual(after.defer_quiet, 3)
+
+    def test_the_pocket_reaches_the_state_of_the_very_tick(self) -> None:
+        # `_note_boxed` runs after the observation now (it needs the post-action cell), so the
+        # tunnel it asks for has to be handed to that state, not to the one after it.
+        from mlaya.graph import BOXED_REPEATS
+        agent = self._agent()
+        agent._boxed = ((182, 70, 181), BOXED_REPEATS)
+        agent._dig_out_tries = 2
+        after = gs(pos=(182.5, 70.0, 181.5))
+        agent._refresh_after(after)
+        self.assertTrue(after.boxed_in)
+        self.assertEqual(after.dig_out_try, 2)
+        self.assertEqual(candidates(after), ["dig_out"])
 
 
 class WaitHoldTest(unittest.IsolatedAsyncioTestCase):
@@ -5789,6 +5804,34 @@ class DefencelessAtNightTest(unittest.TestCase):
         self.assertEqual(candidates(g), [])
         g.phase = "day"
         self.assertEqual(candidates(g), ["go_home"])
+
+    def test_the_ordinary_offer_takes_no_long_walk_either(self) -> None:
+        # run95 it274: 20 health, full hunger, no tool and no armour, and the night's `explore`
+        # walked into a spider and a skeleton at 10-16 m - dead three ticks later. Standing still
+        # is the night's work; the survival policy guards the body meanwhile.
+        g = gs(pos=(182.5, 72.0, 179.5), phase="night", health=20, food=20,
+               dimension="overworld")
+        self.assertEqual(candidates(g), ["wait"])
+        g.phase = "day"
+        self.assertEqual(candidates(g), ["get_wood"])
+
+    def test_a_weapon_keeps_the_walk_on_offer(self) -> None:
+        g = gs(pos=(182.5, 72.0, 179.5), phase="night", health=20, food=20,
+               dimension="overworld", tools={"sword": "stone"})
+        self.assertIn("get_wood", candidates(g))
+
+    def test_the_night_hold_is_where_the_bot_stands(self) -> None:
+        # Not the base: a naked bot 500 m out walking home at night is run90's death again.
+        g = gs(pos=(182.5, 72.0, 179.5), phase="night", health=20, food=20,
+               dimension="overworld", base=(231, 71, 157))
+        # The base is set, but `go_home` is gated on `_gear_ready`: a bot that lost its kit never
+        # sees it, so the offer is the in-place hold and not a walk home.
+        self.assertEqual(candidates(g), ["wait"])
+        a = resolve("wait", g)
+        self.assertIsNotNone(a)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (182, 72, 179))
+        g.phase = "day"
+        self.assertIsNone(resolve("wait", g))
 
 
 class DigOutTest(unittest.TestCase):

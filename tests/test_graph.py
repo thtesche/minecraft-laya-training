@@ -3896,7 +3896,8 @@ class BodyHeldStopTest(unittest.TestCase):
 
     run89: `hostile_reflex` held the body in `fight`/`hold` against a zombie 1.6 m off for nearly
     three hours, full health, no event. Each tick sat 31 and then 93 minutes in `wait_for_action`
-    and the run neither moved nor ended.
+    and the run neither moved nor ended. run95 spent three *pairs* of five-minute waits on one
+    held action id each (it268/269, it279/280, it354/355) and never saw a third in a row.
     """
 
     def _agent(self) -> Agent:
@@ -3907,9 +3908,10 @@ class BodyHeldStopTest(unittest.TestCase):
         agent._held_ticks = 0
         return agent
 
-    def test_three_held_calls_in_a_row_stop_the_run(self) -> None:
+    def test_two_held_calls_in_a_row_stop_the_run(self) -> None:
         agent = self._agent()
         held = SimpleNamespace(status="held")
+        self.assertEqual(BODY_HELD_STOP, 2)
         for _ in range(BODY_HELD_STOP - 1):
             agent._note_held(held)
             self.assertFalse(agent._stop_state(gs(), 10)["done"])
@@ -3977,6 +3979,9 @@ class ShutInTest(unittest.TestCase):
 
     POCKET = ("[NAVIGATION_STOPPED] Pathfinder stopped: no path found after 2 ms compute; "
               "visited 70 nodes, generated 78; closest node was 181,70,184.")
+    # run95 it125: the walk began 105 m away and 52 blocks below the cell it was refused at.
+    RUN95 = ("[NAVIGATION_STOPPED] Pathfinder stopped: no path found after 0 ms compute; "
+             "visited 1 nodes, generated 1; closest node was -216,-2,-367.")
     FAR = ("[NAVIGATION_STOPPED] Pathfinder stopped: no path found after 900 ms compute; "
            "visited 101324 nodes, generated 120000; closest node was 240,70,150.")
 
@@ -4016,9 +4021,22 @@ class ShutInTest(unittest.TestCase):
         self.assertEqual((agent._boxed[1], agent._dig_out_tries), (BOXED_REPEATS - 1, 1))
         agent._note_boxed(here, self._Action("explore"), False, self.POCKET)
         self.assertEqual(agent._boxed[1], BOXED_REPEATS)
-        # A walk that got out clears it all.
-        agent._note_boxed(here, self._Action("explore"), True, "")
+        # A walk that got out clears it all: the body left the cell.
+        agent._note_boxed(gs(pos=(190.5, 70.0, 181.5)), self._Action("explore"), True, "")
         self.assertEqual((agent._boxed, agent._dig_out_tries), ((None, 0), 0))
+
+    def test_work_done_in_place_keeps_the_count(self) -> None:
+        # run95 it126: the tick after the first refused `go_home`, `collect_drops` succeeded in
+        # the very cell the bot was suffocating in. A pickup, a craft or a meal proves nothing
+        # about whether the pathfinder can leave, so it must not start the count over.
+        agent = self._agent()
+        here = gs(pos=(-215.4, -2.0, -366.4))
+        agent._note_boxed(here, self._Action("go_home"), False, self.RUN95)
+        agent._note_boxed(here, self._Action("collect_drops"), True, "")
+        self.assertEqual(agent._boxed, ((-216, -2, -367), 1))
+        agent._note_boxed(here, self._Action("go_home"), False, self.RUN95)
+        agent._note_boxed(here, self._Action("go_home"), False, self.RUN95)
+        self.assertEqual(agent._boxed, ((-216, -2, -367), BOXED_REPEATS))
 
     def test_moving_or_a_long_search_starts_over(self) -> None:
         agent = self._agent()
@@ -4027,6 +4045,27 @@ class ShutInTest(unittest.TestCase):
         agent._note_boxed(gs(pos=(190.5, 70.0, 181.5)), self._Action("explore"), False,
                           self.FAR)
         self.assertEqual((agent._boxed, agent._dig_out_tries), ((None, 0), 0))
+
+    def test_the_refusal_counts_at_the_cell_the_walk_ended_in(self) -> None:
+        # run95 it125: the tick began at (-299,-54,-402), `go_home` left the body inside the wall
+        # and the refusal named that very cell. Read against the pre-action cell it looked like a
+        # walk that had simply run out of path, the count stayed at 0 of 3, and the bot answered
+        # `go_home` from inside the block until it suffocated.
+        agent = self._agent()
+        agent._note_boxed(gs(pos=(-215.4, -2.0, -366.4)), self._Action("go_home"), False,
+                          self.RUN95)
+        self.assertEqual(agent._boxed, ((-216, -2, -367), 1))
+        agent._note_boxed(gs(pos=(-215.4, -2.0, -366.4)), self._Action("go_home"), False,
+                          self.RUN95)
+        self.assertEqual(agent._boxed[1], 2)
+
+    def test_the_pre_action_cell_is_not_what_the_refusal_speaks_about(self) -> None:
+        # The same refusal read against the cell the tick *began* in: nothing is near the closest
+        # node, so this is the shape that hid the pocket from run95's loop.
+        agent = self._agent()
+        agent._note_boxed(gs(pos=(-299.4, -54.0, -402.4)), self._Action("go_home"), False,
+                          self.RUN95)
+        self.assertEqual(agent._boxed, (None, 0))
 
     def test_inject_hands_it_to_the_state(self) -> None:
         agent = RecoverWriteOffTest._agent(RecoverWriteOffTest())

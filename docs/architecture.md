@@ -539,7 +539,8 @@ a **food acquisition** that fits "actually survive".
   fixes apply: (1) `perception.parse_status` now reads the hostile distance **directly** from
   `nearby.hostiles` (previously from `nearest.distance`, where it is missing → every distance was `None`, the
   narrative without "at Xm"); (2) `brain.danger_matters` bounds the gate: a `yes` passes the tick
-  **only** if a hostile is ≤ `DANGER_DEFER_M` m away or health < `DANGER_DEFER_HEALTH = 15`.
+  **only** if a hostile is ≤ `DANGER_DEFER_M` m away or health < `DANGER_DEFER_HEALTH = 15`
+  (with the in-place releases listed further down: `_recovery_owed`, `_must_eat`, `boxed_in`).
   `DANGER_DEFER_M` was 8 m ("a wider threshold than the training floor"), but run13 showed the
   price: a skeleton/creeper holding 5–8 m (in shot range, never in contact) deferred for ~60
   ticks while the policy was idle — the loop froze in a cave. The threshold is therefore now
@@ -562,6 +563,17 @@ a **food acquisition** that fits "actually survive".
   band still defers, and the first hit — also during the loop's own action (`_note_hurt`) —
   resets the count. Tested in `tests/test_brain.py::DangerMattersTest` and
   `tests/test_actions.py::DeferQuietTest`.
+- **The band releases what only the loop can do (2026-10-25, run95):** two more deferrals that
+  could not end. (1) The bot suffocated in a wall at 9 health, nearest hostile 23 m: the policy
+  has no answer to a body inside a block, and the band held the tick for the ten ticks to the
+  death while the one useful step, `dig_out`, waited on `boxed_in`. `gs.boxed_in` now releases
+  the band whatever the health. (2) At 1 health and hunger 6 it carried two raw chicken; the
+  offer was `['eat_food']` for the last 138 ticks, because an edible in the pack makes
+  `_cannot_heal` (and so `_recovery_owed`) false, while the server's hunger reflex does not eat
+  raw chicken (`FOOD_MOBS_LAST`). `actions._must_eat` now releases the band too, unless a
+  hostile is inside `DANGER_DEFER_M`: eating with a mob at 2 m is how the next hit finds the bot.
+  Both are the same principle as `_recovery_owed` — the defer is only worth its tick while the
+  policy has something to do with it. Tested in `tests/test_brain.py::DangerMattersTest`.
 - **Second training round: run79–86 (2026-10-23, `775d0d2`):** three changes to the pipeline.
   (1) **Several logs:** `mlaya dataset --log A --log B …` reads them as one set (dedup across
   them). (2) **Ping-pong filter:** the verifier reads a walk as progress, so the loops of the
@@ -668,10 +680,10 @@ progress. The loop now has one guard per kind of stall; each withholds the label
 | walking far, arriving nowhere | `_track_wander` | ≥ `WANDER_WALK = 80` m walked at a ratio worse than `WANDER_RATIO = 6`, `WANDER_REPEATS = 2`× |
 | succeeding at nothing | `_track_idle` | `IDLE_REPEATS = 3` ticks with no change at all (`wait`/`sleep` exempt) |
 | a walk off dropped junk that cannot be made | `_note_step_away` | `STEP_AWAY_GIVE_UP = 3` refusals in a row |
-| a body the server's reflex will not hand back | `MCPExecutor.call` / `_note_held` | `[mcp] action_wait_ms = 300000` per call, then `[BODY_HELD]`; `BODY_HELD_STOP = 3` in a row end the run with `"stop": "body_held"` |
-| deferring to a reflex that does nothing | `_note_defer` | `DEFER_QUIET_TICKS = 5` quiet defers (see M3); under the health band only when nothing heals in place (`_recovery_owed`) |
+| a body the server's reflex will not hand back | `MCPExecutor.call` / `_note_held` | `[mcp] action_wait_ms = 300000` per call, then `[BODY_HELD]`; `BODY_HELD_STOP = 2` of them in a row end the run with `"stop": "body_held"` |
+| deferring to a reflex that does nothing | `_note_defer` | `DEFER_QUIET_TICKS = 5` quiet defers (see M3); under the health band only when nothing heals in place (`_recovery_owed`), the loop owes a meal it can eat with nothing in contact range (`_must_eat`), or the body is shut in (`boxed_in`) |
 | a death site the walk cannot reach | `_note_recover` | `RECOVER_UNREACHABLE_REPEATS = 3` `[RECOVERY_SITE_UNREACHABLE]` from one site write it off |
-| shut in a pocket the pathfinder cannot leave | `_note_boxed` / `dig_out` | `BOXED_REPEATS = 3` `no path found` after ≤ `BOXED_NODES = 200` nodes, closest ≤ 5 m, from one cell |
+| shut in a pocket the pathfinder cannot leave | `_note_boxed` / `dig_out` | `BOXED_REPEATS = 3` `no path found` after ≤ `BOXED_NODES = 200` nodes, closest ≤ 5 m, from one cell — counted at the cell the action *ended* in, and not reset by work done in place |
 
 Four lessons from the runs behind them:
 
@@ -818,9 +830,11 @@ up to three times, so it311 came 31 minutes after it310 and it317 93 minutes aft
 drains and its own wait. A call that runs out of it returns `[BODY_HELD]` with the holder the
 last progress answer named (owner, response kind/phase, phase ticks) and status `held`, without
 resubmitting. `Agent._note_held` counts such calls in a row — a defer between them does not reset
-the count — and `BODY_HELD_STOP = 3` of them end the run with `"stop": "body_held"`. Nothing the
+the count — and `BODY_HELD_STOP = 2` of them end the run with `"stop": "body_held"`. Nothing the
 loop can send moves a body the reflex owns; the fix for the endless `hold` itself belongs in
-`mine-ai-mcp`.
+`mine-ai-mcp`. The second call is what makes the report timely: run95 spent three *pairs* of
+five-minute waits on one held action id each (it268/269, it279/280, it354/355) and never saw a
+third in a row, so 18% of that run went into waiting on a body nobody was going to release.
 
 Whether an answer has settled comes from the envelope's `response.data.state` (`accepted` and
 `pending` run, everything else is final), not from the first `status` a depth-first search finds.
@@ -848,7 +862,12 @@ no tool and no armour, most on walks the loop chose. Four fixes:
   and then each other side in turn.
 - **Naked at night.** With no weapon and nothing worn, at night, `recover_drops` is not offered
   and `_recovery_steps` offers nothing, so the tick defers to the survival policy until the mobs
-  burn at sunrise (`_defenceless_at_night`).
+  burn at sunrise (`_defenceless_at_night`). The ordinary offer follows the same rule
+  (`DEFENCELESS_WALK_LABELS`): `explore` and `get_wood` are withheld, and an otherwise empty
+  offer is `wait` rather than the fallback `explore` — holding **where it stands** (`resolve`
+  anchors on the bot's own cell, not the base), since the walk home is the same long walk. run95
+  it274 was 20 health and full hunger with no gear, and the night's `explore` walked into a
+  spider and a skeleton at 10–16 m.
 
 The two `[BODY_HELD]`s (it76 `hunt_food`, it503 `get_wood`) were both `partial` results read as
 still running, fixed in `5377fc7`.

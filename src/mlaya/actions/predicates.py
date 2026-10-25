@@ -108,6 +108,13 @@ def _food_hunt_range(gs: GameState) -> float:
     return FOOD_HUNT_RANGE_NIGHT if gs.phase == "night" else FOOD_HUNT_RANGE_DAY
 
 
+# The offer's own long walks, withheld while `_defenceless_at_night` holds (`candidates`). The
+# recovery path already stands still in that state; the ordinary offer did not, and run95 it274
+# spent a night's `explore` at 20 health and no gear walking straight into a spider and a skeleton.
+# Only the walks that go looking for something are here: `go_home` is a walk back to shelter.
+DEFENCELESS_WALK_LABELS = ("explore", "get_wood")
+
+
 def _defenceless_at_night(gs: GameState) -> bool:
     """Night, no weapon in hand and nothing worn: every walk is a walk past the mobs.
 

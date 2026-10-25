@@ -4,7 +4,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from .actions import CRITERIA, DEFER_QUIET_TICKS, RECOVER_HEALTH, _recovery_owed
+from .actions import (CRITERIA, DEFER_QUIET_TICKS, RECOVER_HEALTH, _must_eat,
+                      _recovery_owed)
 from .config import LLMConfig, LayaConfig
 from .perception import phase_persona
 
@@ -53,6 +54,19 @@ DANGER_BAND_NOTE = "danger band: no mob in range -> keep working"
 # lets the loop work again; the first hit hands the tick back. Under the health band the quiet
 # defers release the tick only when nothing heals in place (`actions._recovery_owed`), and the
 # loop then offers food or a retreat alone. `DEFER_QUIET_TICKS` lives in `actions` beside it.
+#
+# run95 paid for two more holes in the band, both of them a defer that could never end:
+#   - the bot suffocated in a wall at 9 health with the nearest hostile 23 m off. The policy has
+#     no answer to a body inside a block, so the only step that helps is the loop's own `dig_out`
+#     (`gs.boxed_in`), and the band held it for every one of the ten ticks to the death.
+#   - at 1 health, hunger 6, two raw chicken in the pack, the offer was `['eat_food']` for the
+#     last 138 ticks: an edible in the pack makes `_cannot_heal` false, so the quiet defers never
+#     released it, while the server's hunger reflex left the chicken alone (`FOOD_MOBS_LAST`).
+#     It died with the meal still carried.
+# A meal the body needs now (`actions._must_eat`) and a pocket the pathfinder cannot leave are
+# both things the loop can answer and the policy cannot, so each releases the band - the meal
+# only with no hostile in contact range, because eating with a mob at 2 m is how the next hit
+# finds the bot. `_recovery_owed` stays as it was: it is the case with nothing to eat at all.
 
 
 def danger_matters(gs: Any) -> bool:
@@ -63,19 +77,24 @@ def danger_matters(gs: Any) -> bool:
     `None` state (a bare `decide` call, or a caller with no perception) keeps the old,
     unconditional defer.
 
-    Under the band the defer holds while the policy can still heal the body - except when
-    `_recovery_owed`: quiet defers, no food carried and hunger too low to regenerate. Then
-    deferring only waits (run88: 536 ticks at 8.5 health), and the tick goes to the loop's
-    recovery steps.
+    Under the band the defer holds while the policy can still heal the body - except when the
+    loop owns the only step that helps: `_recovery_owed` (quiet defers, no food carried and
+    hunger too low to regenerate - run88's 536 ticks at 8.5 health), a meal the body needs now
+    with nothing in contact range (`_must_eat`), or a body shut in a pocket (`gs.boxed_in`).
+    `_defer_quiet` is no help in any of the three: a health loss resets it, and a suffocating or
+    starving body loses health every tick without the policy doing anything.
     """
     if gs is None:
         return True
+    nearest = gs.nearest_hostile
+    contact = nearest is not None and nearest <= DANGER_DEFER_M
     if gs.health is not None and gs.health < DANGER_DEFER_HEALTH:
-        return not _recovery_owed(gs)
+        if _recovery_owed(gs) or getattr(gs, "boxed_in", False):
+            return False
+        return not (_must_eat(gs) and not contact)
     if getattr(gs, "defer_quiet", 0) >= DEFER_QUIET_TICKS:
         return False
-    nearest = gs.nearest_hostile
-    return nearest is not None and nearest <= DANGER_DEFER_M
+    return contact
 
 
 INTENT_INSTRUCTIONS = "The bot is safe enough to work. What should it do next?"
