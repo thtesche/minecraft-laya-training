@@ -3,7 +3,7 @@
 A Minecraft agent whose **System-1 decisions are made by
 [Laya](https://github.com/NandhaKishorM/laya)** — a non-autoregressive
 typed-decision engine (`choice` / `score` / `noul`) — and which acts through the
-**mine-ai MCP server**. A generative LLM (OpenRouter) serves as **System 2**
+**mine-ai MCP server**. A generative LLM (the local Strata server) serves as **System 2**
 for rare escalations.
 
 Laya produces no text and no tool arguments. The code therefore filters the currently
@@ -25,7 +25,7 @@ through every layer — **code filters, Laya chooses**:
 | Verify | `src/mlaya/verify.py` | the target/actual delta decides whether an action made progress |
 | Memory | `src/mlaya/memory.py` | every decision + outcome in `runs/decisions.jsonl` |
 | Survival | `src/mlaya/survival.py` | sets the server policy (`base` / `hunt`) at start and after every death |
-| System 2 | `brain.escalate_to_system2` | OpenRouter picks a valid alternative when a label cannot be resolved |
+| System 2 | `brain.escalate_to_system2` | Strata (local) picks a valid alternative when a label cannot be resolved |
 
 The executor's gating state machine (submission IDs, `ACTION_BUSY` /
 `RESULT_NOT_RETRIEVED` recovery, foreground waits) lives in `src/mlaya/mcp.py`. Design
@@ -67,7 +67,7 @@ the powder home ends with `"stop": "limit"`, and `--ignore-goal` (or
 ```bash
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e .
-cp .env.example .env        # enter OPENROUTER_API_KEY (only for System-2 escalation)
+cp .env.example .env        # enter STRATA_API_KEY (only for System-2 escalation)
 ```
 
 `.env` is loaded automatically on every CLI run (real environment variables take

@@ -275,13 +275,11 @@ def escalate_to_system2(
         )
         r = client.chat.completions.create(
             model=cfg.model,
-            # Generous budget: nemotron is a reasoning model, so reasoning tokens
-            # are spent before the JSON is emitted (a small cap yields empty content).
-            # 4096 was not enough -- live, the free nemotron returned `finish_reason
-            # length` with empty content, so the one designed System-2 trigger produced
-            # nothing and the loop fell back on `get_wood`. The cap follows `[llm]
-            # max_tokens` again, which a user can raise further.
-            max_tokens=min(cfg.max_tokens, 16384),
+            # Reasoning model: thinking tokens are emitted before the JSON (the local
+            # Strata server reports them as `reasoning_content`), so the cap must leave
+            # room for both. `[llm] max_tokens` follows the model's 4096 output limit;
+            # a user can raise it if the server allows more.
+            max_tokens=cfg.max_tokens,
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
             response_format={"type": "json_object"},

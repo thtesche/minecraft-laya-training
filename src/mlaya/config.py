@@ -29,10 +29,12 @@ def load_env(path: Path | None = None, override: bool = False) -> bool:
 
 
 class LLMConfig(BaseModel):
-    model: str = "nvidia/nemotron-3-super-120b-a12b:free"
-    api_key_env: str = "OPENROUTER_API_KEY"
-    max_tokens: int = 16384
-    base_url: str = "https://openrouter.ai/api/v1"
+    # System 2 escalation: the local Strata server (OpenAI-compatible), mirroring the
+    # provider configured in OpenCode. The key comes from the environment (.env).
+    model: str = "qwen3.8-flash-next-q2_0"
+    api_key_env: str = "STRATA_API_KEY"
+    max_tokens: int = 4096
+    base_url: str = "http://192.168.0.109:8080/v1"
 
 
 class MCPConfig(BaseModel):

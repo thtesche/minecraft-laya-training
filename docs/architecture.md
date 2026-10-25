@@ -12,7 +12,7 @@ mine-ai-MCP.
 |---|---|
 | Language | Python ≥3.10, virtual environment via `uv` |
 | System 1 | Laya **in-process** (`laya.Router`), **zero-shot**, checkpoint `english` |
-| System 2 | OpenRouter `nvidia/nemotron-3-super-120b-a12b:free` (`max_tokens=16384`) |
+| System 2 | Strata (local llama.cpp) `qwen3.8-flash-next-q2_0` (`max_tokens=4096`) |
 | Orchestration | **LangGraph** (async, `MemorySaver`) |
 | MCP | Streamable HTTP `http://localhost:25575/mcp` |
 | Knowledge | zero-shot, in the `criteria` texts; no knowledge file |
@@ -83,7 +83,7 @@ later head fine-tuning (M3) improves.
 [6] Memory        (src/mlaya/memory.py)
     runs/decisions.jsonl (every decision + outcome)
 [7] System 2      (brain.escalate_to_system2)
-    structural trigger (label not resolvable) -> OpenRouter chooses a valid alternative
+    structural trigger (label not resolvable) -> Strata chooses a valid alternative
 [8] Survival      (src/mlaya/survival.py)
     sets the server survival policy in two stages (`base`/`hunt`) at start and again
     after every death; `read_policy` reads revision/`effective`/`overrides`
