@@ -21,6 +21,12 @@ END_PORTAL_FRAME = "end_portal_frame"
 ENDERMAN_HUNT_RANGE = 24.0
 ENDERMAN_HUNT_HEALTH = 14.0
 
+# The end portal frame has twelve sockets; `activate_portal` needs a carried eye for every one not
+# already generated filled. Twelve is the floor the locate travel has to keep in hand, while
+# `ENDER_EYES` (sixteen) is the build target - the extra four a buffer for eyes shattered on a
+# throw. Once the estimate throw is behind the bot, a shaved eye must not drag it back to sixteen.
+END_PORTAL_SOCKETS = 12
+
 # The labels this module owns; `planner.resolve` hands each of them to `resolve_stronghold`.
 STRONGHOLD_LABELS = frozenset({
     "hunt_enderman", "take_blaze_powder", "craft_ender_eye",
@@ -131,12 +137,18 @@ def stronghold_candidates(gs: GameState) -> list[str]:
         # Standing at the frame with eyes in hand: fill it and nothing else.
         out.append("activate_end_portal")
         return out
-    if _ender_eyes(inv) >= ENDER_EYES:
+    # Before the first (estimate) throw the buffer is built to ENDER_EYES; once the estimate is
+    # saved, the frame needs only END_PORTAL_SOCKETS, so an eye shattered on that throw does not
+    # send the bot back to re-craft - the locate travel proceeds on that floor.
+    locate_need = END_PORTAL_SOCKETS if gs.stronghold_estimated else ENDER_EYES
+    if _ender_eyes(inv) >= locate_need:
         # The eyes are crafted; go find the stronghold.
         out.append("locate_stronghold")
         return out
-    # Procurement, all offered together while any still has work; the order sets the priority.
-    if _ender_pearls(inv) < ENDER_PEARLS and _safe_enderman_hunt(gs):
+    # Procurement, all offered together while any still has work; the order sets the priority. The
+    # pearl target is the eyes still owed, not a flat sixteen: a re-supply for a couple of shattered
+    # eyes must not over-hunt a dozen teleporting endermen it does not need.
+    if _ender_pearls(inv) < _eyes_owed(gs) and _safe_enderman_hunt(gs):
         out.append("hunt_enderman")
     if _take_powder_wanted(gs):
         out.append("take_blaze_powder")
@@ -155,7 +167,7 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
     if label == "hunt_enderman":
         if not _overworld(gs) or not _safe_enderman_hunt(gs):
             return None
-        want = ENDER_PEARLS - _ender_pearls(inv)
+        want = _eyes_owed(gs) - _ender_pearls(inv)
         return Action(label, "collect_mob_drop",
                       {"mob_name": ENDERMAN_MOB, "drop_name": ENDER_PEARL_ITEM,
                        "count": min(3, want), "allow_without_shield": True},
@@ -194,7 +206,8 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
                        "temporary_workstation": True},
                       f"craft {want} eyes of ender, one ender pearl and one blaze powder each")
     if label == "locate_stronghold":
-        if not _overworld(gs) or _ender_eyes(inv) < ENDER_EYES or _at_stronghold(gs):
+        need = END_PORTAL_SOCKETS if gs.stronghold_estimated else ENDER_EYES
+        if not _overworld(gs) or _ender_eyes(inv) < need or _at_stronghold(gs):
             return None
         # Two phases, keyed by a loop latch: `estimate` saves the eye-of-ender triangulation
         # without travelling, then `locate` reuses the same durable `search_id` to travel there

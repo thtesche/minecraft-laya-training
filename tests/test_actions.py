@@ -4055,6 +4055,7 @@ class StrongholdPhaseTest(unittest.TestCase):
     CHEST = (-196, -46, -98)
     GATE = (-195, -46, -98)
     OVERWORLD = "minecraft:overworld"
+    NETHER = "minecraft:the_nether"
 
     def _home(self, mobs=(), **inv) -> GameState:
         """A stocked bot at its base, haul banked, gate burning - the stronghold's starting state."""
@@ -4176,6 +4177,47 @@ class StrongholdPhaseTest(unittest.TestCase):
         g = self._home(ender_pearl=16, blaze_powder=18)
         self.assertFalse(nether_expedition_open(g))
         self.assertNotIn("enter_portal", candidates(g))
+
+    def test_the_enderman_hunt_sizes_to_the_eyes_still_owed(self) -> None:
+        # Shattered eyes, not a cold start: the bot holds fourteen, owes two and has no pearls, so
+        # the hunt asks for two more - not a fresh sixteen. Each enderman is a teleporting fight;
+        # over-hunting a dozen of them to replace two eyes risks the diamond kit for nothing.
+        g = self._home(ender_eye=14, mobs=[("enderman", "hostile", 12, 18.0)])
+        self.assertIn("hunt_enderman", candidates(g))
+        self.assertEqual(resolve("hunt_enderman", g).args["count"], 2)
+
+    def test_the_pearls_already_owed_are_not_re_hunted(self) -> None:
+        # Two eyes owed, two pearls already in the pack: the hunt is done even though the pack is
+        # far short of the sixteen a cold start gathers.
+        g = self._home(ender_eye=14, ender_pearl=2, mobs=[("enderman", "hostile", 12, 18.0)])
+        self.assertNotIn("hunt_enderman", candidates(g))
+
+    def test_a_shattered_eye_after_the_estimate_does_not_force_a_rebuild(self) -> None:
+        # The estimate throw costs an eye. Before the estimate the bot builds the full sixteen;
+        # after it, the frame needs only twelve, so a shaved eye lets the locate travel proceed
+        # instead of dragging the bot back to re-craft (and maybe back to the Nether) for one eye.
+        g = self._home(ender_eye=13)
+        self.assertNotIn("locate_stronghold", candidates(g))
+        g.stronghold_estimated = True
+        self.assertIn("locate_stronghold", candidates(g))
+        self.assertEqual(resolve("locate_stronghold", g).args["phase"], "locate")
+
+    def test_a_top_up_hauls_only_the_rods_the_broken_eyes_owe(self) -> None:
+        # Two eyes shattered and the bank is empty, so the top-up reopens the Nether. It owes two
+        # powder = one rod, not the first trip's nine; the hunt asks for exactly that one rod.
+        g = self._home(ender_eye=14, mobs=[("blaze", "hostile", 1, 5.0)])
+        g.powder_exhausted = True
+        g.dimension = self.NETHER
+        self.assertTrue(nether_expedition_open(g))
+        self.assertEqual(resolve("hunt_blaze", g).args["count"], 1)
+
+    def test_a_top_up_crafts_only_the_powder_the_eyes_owe(self) -> None:
+        # Home with the one rod the top-up hauled: it becomes two powder, not eighteen.
+        g = self._home(ender_eye=14, blaze_rod=1, crafting_table=1)
+        g.powder_exhausted = True
+        g.nether_entered = True
+        self.assertIn("craft_blaze_powder", candidates(g))
+        self.assertEqual(resolve("craft_blaze_powder", g).args["items"][0]["count"], 2)
 
 
 class DiamondsForTheSparePickaxeTest(unittest.TestCase):

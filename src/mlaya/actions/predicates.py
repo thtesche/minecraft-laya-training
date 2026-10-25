@@ -941,8 +941,37 @@ def _nether_topup_wanted(gs: GameState) -> bool:
     """
     return (nether_expedition_complete(gs) and not gs.end_portal_active
             and gs.powder_exhausted
-            and max(0, ENDER_EYES - int(gs.inventory.get(ENDER_EYE_ITEM, 0)))
-            > _blaze_powder(gs.inventory))
+            and _eyes_still_owed(gs) > _blaze_powder(gs.inventory))
+
+
+def _eyes_still_owed(gs: GameState) -> int:
+    """Eyes of ender the stronghold phase still owes, read here without importing `stronghold`.
+
+    `stronghold._eyes_owed` is the same number; the Nether haul can only size itself on it through
+    a local copy, since `predicates` cannot import `stronghold` without a cycle - the same reason
+    `_nether_topup_wanted` lives here.
+    """
+    return max(0, ENDER_EYES - int(gs.inventory.get(ENDER_EYE_ITEM, 0)))
+
+
+def _rods_target(gs: GameState) -> int:
+    """How many blaze rods the current expedition should haul.
+
+    The first trip hauls the full `BLAZE_RODS` (nine, two powder to spare). A stronghold top-up is
+    a *replacement*, not a re-haul: it only owes the powder the shattered eyes cost, so it is sized
+    to `ceil((eyes_owed - carried_powder) / 2)`, clamped to `[1, BLAZE_RODS]`. Going back for nine
+    rods to replace two broken eyes is seven needless fortress fights, each one another fireball
+    between the bot and its own portal.
+    """
+    if not _nether_topup_wanted(gs):
+        return BLAZE_RODS
+    short = max(0, _eyes_still_owed(gs) - _blaze_powder(gs.inventory))
+    return max(1, min(BLAZE_RODS, -(-short // 2)))
+
+
+def _powder_target(gs: GameState) -> int:
+    """How much blaze powder the current expedition should end up with (two powder to a rod)."""
+    return BLAZE_POWDER if not _nether_topup_wanted(gs) else _rods_target(gs) * 2
 
 
 def _safe_blaze_hunt(gs: GameState) -> bool:

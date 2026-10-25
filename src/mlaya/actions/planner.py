@@ -422,7 +422,7 @@ def candidates(gs: GameState) -> list[str]:
             # `_nether_must_return` fired on the slots, `leave_nether` offered every tick).
             junk_full = (gs.slots_used >= INVENTORY_NEAR_FULL and _droppable(gs, inv))
             rods = _blaze_rods(inv)
-            if rods >= BLAZE_RODS:
+            if rods >= _rods_target(gs):
                 # The haul is complete; every extra blaze down there is another fireball between
                 # the bot and its own portal.
                 out.append("leave_nether")
@@ -462,8 +462,8 @@ def candidates(gs: GameState) -> list[str]:
                 if _worn(gs, GOLD_HELMET_ITEM) and (_has(inv, "diamond_helmet")
                                                     or _worn(gs, "diamond_helmet")):
                     out.append("swap_to_diamond_helmet")
-                if _blaze_rods(inv) >= BLAZE_RODS and _has(inv, "crafting_table") \
-                        and _blaze_powder(inv) < BLAZE_POWDER:
+                if _blaze_rods(inv) >= _rods_target(gs) and _has(inv, "crafting_table") \
+                        and _blaze_powder(inv) < _powder_target(gs):
                     out.append("craft_blaze_powder")
                 if _blaze_powder(inv) > 0 and _chest_ready(gs):
                     out.append("stow_blaze_powder")
@@ -1034,7 +1034,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "hunt_blaze":
         if not _in_nether(gs) or not _safe_blaze_hunt(gs):
             return None
-        want = BLAZE_RODS - _blaze_rods(inv)
+        want = _rods_target(gs) - _blaze_rods(inv)
         return Action(label, "collect_mob_drop",
                       {"mob_name": BLAZE_MOB, "drop_name": BLAZE_ROD_ITEM,
                        "count": min(3, want), "allow_without_shield": True},
@@ -1079,10 +1079,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                                                   "destination": "head"}]},
                       "wear the diamond helmet again, now that the bot is back in the Overworld")
     if label == "craft_blaze_powder":
-        if (_in_nether(gs) or _blaze_rods(inv) < BLAZE_RODS or not _has(inv, "crafting_table")
-                or _blaze_powder(inv) >= BLAZE_POWDER):
+        if (_in_nether(gs) or _blaze_rods(inv) < _rods_target(gs) or not _has(inv, "crafting_table")
+                or _blaze_powder(inv) >= _powder_target(gs)):
             return None
-        want = BLAZE_POWDER - _blaze_powder(inv)
+        want = _powder_target(gs) - _blaze_powder(inv)
         return Action(label, "craft_item",
                       {"items": [{"item_name": BLAZE_POWDER_ITEM, "count": want}],
                        "temporary_workstation": True},
