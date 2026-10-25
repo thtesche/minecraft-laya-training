@@ -1,8 +1,9 @@
 # Stronghold phase (the step after the Nether haul)
 
-Status: **design + refactor** — the `actions` package split lands first (behaviour-preserving),
-then the stronghold chain is wired on top of it. `PHASE_STRONGHOLD` already exists in
-`perception.py` as a deliberate stub (`phase_persona`); this phase gives it its real trigger.
+Status: **implemented and committed** — the `actions` package split landed first
+(behaviour-preserving, `f09edd4`), then the stronghold chain on top of it (`34079f5`); the suite
+is 990 green. `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
+One open design point remains: the re-supply is not demand-sized (see the section near the end).
 
 Scope of this phase, as the user set it: **gather eyes of ender, navigate to the stronghold and
 remember it, activate the end portal, and top up blaze rods from the Nether only if needed.** It
@@ -73,9 +74,10 @@ Offered only once the Overworld goal and the Nether haul stand (`tech_tree_compl
 3. **`craft_ender_eye`** (`craft_item ender_eye`, pearl + powder, needs a crafting table) until
    `_ender_eyes >= _eyes_goal`.
 4. **`locate_stronghold`** — `phase: estimate` first (saves the throw, no travel), then
-   `phase: locate` with the same `search_id` (travels, refines, confirms the frame). The two calls
-   are two labels or one label with a loop-owned phase latch; the confirmed frame coordinate is
-   stored as a loop fact (`gs.stronghold_frame`), the same latch shape as `gs.nether_arrival`.
+   `phase: locate` with the same `search_id` (travels, refines, confirms the frame). One label; the
+   phase is chosen by a loop latch (`gs.stronghold_estimated`, `_note_locate`). The frame is read
+   straight off the scan (`_at_stronghold`; `end_portal_frame` is in `CHAIN_NAMES`/`NAMED_RESOURCES`)
+   and its cell comes from `_frame_cell`, so a cancelled locate simply resumes — no frame latch.
 5. **`activate_end_portal`** (`activate_portal` at `gs.stronghold_frame`) — fills the sockets from
    the carried eyes and confirms the active portal.
 
@@ -116,6 +118,34 @@ n.startswith("__")]`, so a downstream `from .predicates import *` brings the pri
 no call site is rewritten. Import graph: `constants → predicates → stronghold → planner`, no cycle.
 Further splitting `predicates.py` is a possible follow-up, deliberately left for later to keep this
 step's risk at zero.
+
+## Known limitation: the re-supply is not demand-sized (review 2026-10-25)
+
+The initial build is correct, but the *re-supply* after thrown eyes shatter is sized to fixed
+constants, not to the eyes still owed:
+
+- **The Nether top-up hauls a fixed nine rods / eighteen powder** (`BLAZE_RODS` / `BLAZE_POWDER`,
+  read in `planner` at the `hunt_blaze`, `leave_nether`, `craft_blaze_powder` and
+  `stow_blaze_powder` steps), whatever the deficit. A top-up fired to replace two broken eyes
+  still sends the bot to kill nine blazes — each one "another fireball between the bot and its own
+  portal", so needless risk to the diamond kit.
+- **`hunt_enderman` targets a fixed sixteen pearls** (`ENDER_PEARLS`), not the eyes owed, so a
+  re-supply over-hunts endermen the same way. (`take_blaze_powder` and `craft_ender_eye` *are*
+  already `_eyes_owed`-sized, so the pattern is only half applied.)
+
+Two related robustness gaps share the root cause:
+
+- `locate_stronghold` is offered only at a full sixteen eyes (`_ender_eyes >= ENDER_EYES`), so an
+  eye thrown in the `estimate` phase forces a rebuild to sixteen — possibly a whole top-up — before
+  the `locate` travel can run.
+- At the frame, `stronghold_candidates` returns *only* `activate_end_portal`; if heavy breakage on
+  the way left too few eyes to fill the frame, there is no path back to craft or hunt more, so the
+  phase can stall.
+
+Fix sketch: a demand-sized target (`BLAZE_RODS` / `ENDER_PEARLS` normally, `ceil(eyes_short / 2)`
+rods and `_eyes_owed - pearls` during a top-up), used wherever the Nether chain and `hunt_enderman`
+read the constants; offer `locate` once there are enough eyes for the frame rather than the full
+sixteen; and let the frame step fall back to procurement when eyes are short. Not yet done.
 
 ## Out of reach / later (deliberately not in this phase)
 

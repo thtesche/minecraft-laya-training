@@ -1,9 +1,15 @@
 # Stronghold phase — implementation handoff
 
-This document hands off a **mid-implementation, uncommitted** change: the
-Stronghold-search phase for the survival bot. It is written so the work can
+> **Status (2026-10-25): DONE.** The phase is implemented, tested and committed
+> (`34079f5`, suite 990 green); both open bugs recorded below are fixed. The body
+> of this file is the historical handoff record — follow the dated updates at the
+> end. One open *design* point remains (the re-supply is not demand-sized): see the
+> 2026-10-25 update below and `docs/stronghold.md`.
+
+This document originally handed off a **mid-implementation, uncommitted** change: the
+Stronghold-search phase for the survival bot. It was written so the work could
 continue in a different harness. Read `docs/stronghold.md` first for the design;
-this file records only *where the code currently stands* and *what remains*.
+this file records *how the code got to where it is* and *what is still open*.
 
 ## Status at handoff
 
@@ -188,3 +194,19 @@ unit from the refactor. Suite: 990 green.
   (test_graph.py) pins the cell bookkeeping (stow remembers, one empty lid does not close the
   bank, a fresh stow clears exhaustion); the `powder_cells` round-trip is tested in
   test_perception.py.
+
+## Update (fourth session, 2026-10-25) — review finding
+
+A code review raised the re-supply sizing, now recorded as a known limitation in
+`docs/stronghold.md` ("the re-supply is not demand-sized"):
+
+- The Nether **top-up** still hauls a fixed nine rods / eighteen powder
+  (`BLAZE_RODS` / `BLAZE_POWDER`), and `hunt_enderman` a fixed sixteen pearls
+  (`ENDER_PEARLS`), regardless of how many eyes actually broke. `take_blaze_powder`
+  and `craft_ender_eye` are already `_eyes_owed`-sized, so the pattern is only half applied.
+- Two robustness gaps share the cause: `locate_stronghold` is gated on a full sixteen
+  eyes (a throw in the `estimate` phase forces a rebuild before `locate` travels), and
+  `stronghold_candidates` offers only `activate_end_portal` at the frame (no path to make
+  more eyes if breakage left too few).
+
+Not yet fixed — awaiting the user's word. The fix sketch is in the design doc.
