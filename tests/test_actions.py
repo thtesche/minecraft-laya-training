@@ -4219,6 +4219,28 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertIn("craft_blaze_powder", candidates(g))
         self.assertEqual(resolve("craft_blaze_powder", g).args["items"][0]["count"], 2)
 
+    def test_too_few_eyes_at_the_frame_re_supplies_instead_of_dead_ending(self) -> None:
+        # The frame took more eyes than the bot carried in, so it now stands at the sockets with
+        # none left. The old block re-offered an `activate` it could not complete; now it falls
+        # through to procurement - hunt more pearls here, craft eyes, and `locate` carries the bot
+        # back to finish the frame. No un-completable activate, and no locate on the frame itself.
+        g = self._home(mobs=[("enderman", "hostile", 12, 18.0)])
+        g.stronghold_estimated = True
+        g.resource_found = {"end_portal_frame": 7}
+        self.assertNotIn("activate_end_portal", candidates(g))
+        self.assertNotIn("locate_stronghold", candidates(g))
+        self.assertIn("hunt_enderman", candidates(g))
+
+    def test_a_partial_fill_still_activates_while_eyes_remain(self) -> None:
+        # Fewer eyes than empty sockets, but more than none: fill what the frame will take now.
+        # Each pass fills >= 1 socket and the fill persists, so the activate <-> procurement loop
+        # converges rather than waiting for a full set before placing anything.
+        g = self._home(ender_eye=5)
+        g.stronghold_estimated = True
+        g.resource_found = {"end_portal_frame": 7}
+        self.assertIn("activate_end_portal", candidates(g))
+        self.assertNotIn("locate_stronghold", candidates(g))
+
 
 class DiamondsForTheSparePickaxeTest(unittest.TestCase):
     """The two gates for `mine_diamond` asked different questions, sixty-two times.

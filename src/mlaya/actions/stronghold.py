@@ -133,15 +133,23 @@ def stronghold_candidates(gs: GameState) -> list[str]:
     # `_nether_topup_wanted`, not this one.
     if not _overworld(gs):
         return out
-    if _at_stronghold(gs) and not gs.end_portal_active:
-        # Standing at the frame with eyes in hand: fill it and nothing else.
-        out.append("activate_end_portal")
-        return out
     # Before the first (estimate) throw the buffer is built to ENDER_EYES; once the estimate is
     # saved, the frame needs only END_PORTAL_SOCKETS, so an eye shattered on that throw does not
     # send the bot back to re-craft - the locate travel proceeds on that floor.
     locate_need = END_PORTAL_SOCKETS if gs.stronghold_estimated else ENDER_EYES
-    if _ender_eyes(inv) >= locate_need:
+    if _at_stronghold(gs) and not gs.end_portal_active:
+        # Standing at the frame. With eyes in hand, fill it and nothing else. With none left -
+        # the frame took more eyes than the bot carried in - do not re-offer an activate it cannot
+        # complete: fall through to procurement so the bot gathers more, and `locate` (durable
+        # search_id) carries it back to finish the frame. Each pass fills >= 1 of the twelve
+        # sockets and the fill persists, so the activate <-> procurement loop is self-terminating.
+        if _ender_eyes(inv) > 0:
+            out.append("activate_end_portal")
+            return out
+    # Not reached at the stronghold itself: the block above has already matched there (with eyes it
+    # returned, with none it fell through to procurement below), so `locate` is never re-offered on
+    # the frame it just arrived at.
+    elif _ender_eyes(inv) >= locate_need:
         # The eyes are crafted; go find the stronghold.
         out.append("locate_stronghold")
         return out

@@ -1,10 +1,10 @@
 # Stronghold phase — implementation handoff
 
 > **Status (2026-10-25): DONE.** The phase is implemented, tested and committed
-> (`34079f5`, suite 990 green); both open bugs recorded below are fixed. The body
-> of this file is the historical handoff record — follow the dated updates at the
-> end. One open *design* point remains (the re-supply is not demand-sized): see the
-> 2026-10-25 update below and `docs/stronghold.md`.
+> (`34079f5`, then `acd4795` + follow-up; suite 997 green); every open bug and the
+> re-supply sizing recorded below are fixed. The body of this file is the historical
+> handoff record — follow the dated updates at the end; the latest closes the last
+> open point. See also `docs/stronghold.md`.
 
 This document originally handed off a **mid-implementation, uncommitted** change: the
 Stronghold-search phase for the survival bot. It was written so the work could
@@ -210,3 +210,20 @@ A code review raised the re-supply sizing, now recorded as a known limitation in
   more eyes if breakage left too few).
 
 Not yet fixed — awaiting the user's word. The fix sketch is in the design doc.
+
+## Update (fifth session, 2026-10-25) — the re-supply is demand-sized
+
+All of the above is now fixed, in two commits, suite 997 green:
+
+- **`acd4795`** — demand-sizing + the locate floor. `predicates._rods_target` / `_powder_target`
+  size the Nether top-up to `ceil((eyes_owed - carried_powder) / 2)` rods (clamped `[1, BLAZE_RODS]`),
+  read at every `planner` Nether-chain site instead of the flat constants; the first trip is
+  unchanged (its fixtures never stow powder, so the top-up latch stays off). `hunt_enderman` targets
+  `_eyes_owed - pearls`. `END_PORTAL_SOCKETS` (12) is the locate-travel floor once the estimate is
+  saved, so a shaved eye no longer forces a rebuild to sixteen. +5 tests.
+- **follow-up** — the frame fall-through. `stronghold_candidates` became `if/elif`: at the frame
+  with eyes it offers only `activate_end_portal` and returns; with **none** it falls through to
+  procurement (hunt → walk back for powder → craft) and `locate` carries the bot back. The activate
+  the frame returns and the procurement it falls through to are mutually exclusive, so `locate` is
+  never re-offered on the frame. `activate_portal` latches only on a full frame, so each pass fills
+  ≥ 1 of twelve sockets and the loop is self-terminating. +2 tests.

@@ -2,8 +2,9 @@
 
 Status: **implemented and committed** — the `actions` package split landed first
 (behaviour-preserving, `f09edd4`), then the stronghold chain on top of it (`34079f5`); the suite
-is 990 green. `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
-One open design point remains: the re-supply is not demand-sized (see the section near the end).
+is 997 green. `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
+The re-supply after shattered eyes is now demand-sized, and both robustness gaps are closed (see
+the section near the end).
 
 Scope of this phase, as the user set it: **gather eyes of ender, navigate to the stronghold and
 remember it, activate the end portal, and top up blaze rods from the Nether only if needed.** It
@@ -119,33 +120,36 @@ no call site is rewritten. Import graph: `constants → predicates → stronghol
 Further splitting `predicates.py` is a possible follow-up, deliberately left for later to keep this
 step's risk at zero.
 
-## Known limitation: the re-supply is not demand-sized (review 2026-10-25)
+## Resolved: the re-supply is demand-sized (review 2026-10-25, fixed `acd4795` + follow-up)
 
-The initial build is correct, but the *re-supply* after thrown eyes shatter is sized to fixed
-constants, not to the eyes still owed:
+The initial build was correct, but the *re-supply* after thrown eyes shatter was sized to fixed
+constants, not to the eyes still owed. All three parts are now fixed:
 
-- **The Nether top-up hauls a fixed nine rods / eighteen powder** (`BLAZE_RODS` / `BLAZE_POWDER`,
-  read in `planner` at the `hunt_blaze`, `leave_nether`, `craft_blaze_powder` and
-  `stow_blaze_powder` steps), whatever the deficit. A top-up fired to replace two broken eyes
-  still sends the bot to kill nine blazes — each one "another fireball between the bot and its own
-  portal", so needless risk to the diamond kit.
-- **`hunt_enderman` targets a fixed sixteen pearls** (`ENDER_PEARLS`), not the eyes owed, so a
-  re-supply over-hunts endermen the same way. (`take_blaze_powder` and `craft_ender_eye` *are*
-  already `_eyes_owed`-sized, so the pattern is only half applied.)
-
-Two related robustness gaps share the root cause:
-
-- `locate_stronghold` is offered only at a full sixteen eyes (`_ender_eyes >= ENDER_EYES`), so an
-  eye thrown in the `estimate` phase forces a rebuild to sixteen — possibly a whole top-up — before
-  the `locate` travel can run.
-- At the frame, `stronghold_candidates` returns *only* `activate_end_portal`; if heavy breakage on
-  the way left too few eyes to fill the frame, there is no path back to craft or hunt more, so the
-  phase can stall.
-
-Fix sketch: a demand-sized target (`BLAZE_RODS` / `ENDER_PEARLS` normally, `ceil(eyes_short / 2)`
-rods and `_eyes_owed - pearls` during a top-up), used wherever the Nether chain and `hunt_enderman`
-read the constants; offer `locate` once there are enough eyes for the frame rather than the full
-sixteen; and let the frame step fall back to procurement when eyes are short. Not yet done.
+- **The Nether top-up is sized to the deficit.** `predicates._rods_target` / `_powder_target`
+  return `BLAZE_RODS` / `BLAZE_POWDER` on the first trip (the top-up latch `_nether_topup_wanted`
+  is off) and, during a stronghold top-up, `ceil((eyes_owed - carried_powder) / 2)` rods clamped to
+  `[1, BLAZE_RODS]` with the matching powder. The Nether chain in `planner` (`hunt_blaze`,
+  `leave_nether`, both `craft_blaze_powder` sites) reads these helpers instead of the flat
+  constants, so a top-up for two broken eyes kills **one** blaze, not nine. The helpers live in
+  `predicates` (not `stronghold`) because `predicates` cannot import `stronghold` without a cycle —
+  `_eyes_still_owed` is a local copy of `stronghold._eyes_owed`.
+- **`hunt_enderman` targets the eyes owed.** `stronghold_candidates` offers it while
+  `_ender_pearls < _eyes_owed(gs)`, and the resolver asks for `_eyes_owed - pearls`, so a re-supply
+  no longer over-hunts a dozen teleporting endermen. (`take_blaze_powder` and `craft_ender_eye`
+  were already `_eyes_owed`-sized.)
+- **A shaved eye after the estimate no longer forces a rebuild.** `END_PORTAL_SOCKETS` (12) is the
+  locate-travel floor: the buffer is still built to `ENDER_EYES` (16) before the first `estimate`
+  throw, but once `stronghold_estimated` is set the frame needs only twelve, so an eye shattered on
+  that throw lets the `locate` travel proceed instead of dragging the bot back to re-craft (and
+  maybe back to the Nether). Both the candidate gate and the `locate_stronghold` resolver read
+  this floor.
+- **The frame no longer dead-ends.** `stronghold_candidates` still returns only `activate_end_portal`
+  while the bot carries eyes, but if heavy breakage left it at the frame with **none**, it falls
+  through to procurement (hunt pearls, walk back to the gate chest for powder via `take_blaze_powder`
+  — `_chest_ready` is distance-independent — craft eyes) and `locate` (durable `search_id`) carries
+  it back to finish the frame. `activate_portal` only latches `end_portal_active` on a *full* frame,
+  so a partial fill stays not-done; each pass fills ≥ 1 of the twelve sockets and the fill persists,
+  so the activate ↔ procurement loop is self-terminating.
 
 ## Out of reach / later (deliberately not in this phase)
 
