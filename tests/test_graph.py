@@ -3984,6 +3984,11 @@ class ShutInTest(unittest.TestCase):
              "visited 1 nodes, generated 1; closest node was -216,-2,-367.")
     FAR = ("[NAVIGATION_STOPPED] Pathfinder stopped: no path found after 900 ms compute; "
            "visited 101324 nodes, generated 120000; closest node was 240,70,150.")
+    # run96: the body did not move on a re-issued route, reported with no node count for
+    # `shut_in` to read. The first code is `[NAVIGATION_STOPPED]`, which is what used to reset
+    # the count instead of raising it.
+    STUCK = ("[NAVIGATION_STOPPED] Pathfinder stopped: repeated_movement_failure: "
+             "Server confirmation deadline elapsed.")
 
     class _Action:
         def __init__(self, label: str) -> None:
@@ -4012,6 +4017,19 @@ class ShutInTest(unittest.TestCase):
             self.assertFalse(agent._boxed[1] >= BOXED_REPEATS)
             agent._note_boxed(here, self._Action(label), False, self.POCKET)
         self.assertEqual(agent._boxed, ((182, 70, 181), BOXED_REPEATS))
+
+    def test_a_body_that_cannot_move_shuts_the_bot_in(self) -> None:
+        # run96: 100 `explore` from one spawn cell walled in birch logs and leaves, every one
+        # `repeated_movement_failure`, never a step. `shut_in` reads no node count off it, so the
+        # count rose only once this refusal fed the tunnel directly; before, its
+        # `[NAVIGATION_STOPPED]` code reset the count on the very tick that should have raised it.
+        agent = self._agent()
+        here = gs(pos=(-64.6, 73.0, 3.5))
+        self.assertFalse(shut_in(self.STUCK, (-64.6, 73.0, 3.5)))
+        for label in ("explore", "explore", "explore")[:BOXED_REPEATS]:
+            self.assertFalse(agent._boxed[1] >= BOXED_REPEATS)
+            agent._note_boxed(here, self._Action(label), False, self.STUCK)
+        self.assertEqual(agent._boxed, ((-65, 73, 3), BOXED_REPEATS))
 
     def test_a_dug_tunnel_leaves_one_refusal_to_the_next_side(self) -> None:
         agent = self._agent()

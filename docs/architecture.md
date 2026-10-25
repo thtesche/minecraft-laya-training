@@ -1084,9 +1084,17 @@ worn — `swap_to_gold_helmet` was offered while the reflex held the body.
   get anywhere on a re-issued route — the bot is physically enclosed.
   Live run10: in a 1-block-wide, flooded shaft, `navigate`, `collect_block` and
   `build_structure` all answered like this, and the forced `escape_water` rescue ran **endlessly** against it. That
-  code now counts as `blocked_by_surroundings`, so the existing unblock ladder engages — dig a pocket
-  (`make_room`), otherwise to open ground (`explore`) — instead of an endless loop without a
-  Laya choice. (In the same case the server additionally rejected digging/building with `Underwater stance
+  code counts as `blocked_by_surroundings`, so the unblock ladder engages first — dig a pocket
+  (`make_room`), otherwise to open ground (`explore`). But neither a feet-pocket nor another walk
+  frees a bot walled in on every side: **live run96** spawned in birch logs and leaves and answered
+  **100 `explore`** from the one cell (-64.6, 73, 3.5), never a step, the ladder cycling
+  make_room/explore for 220 iterations. So `repeated_movement_failure` now also feeds the shut-in
+  count (`_note_boxed`), exactly like a short `no path` search — `shut_in` cannot read it (no node
+  count in the message, and its `[NAVIGATION_STOPPED]` code used to *reset* the count). Once
+  `BOXED_REPEATS` such refusals from one cell have shown the ladder cannot free the bot, `dig_out`
+  owns the tick and carves a tunnel out, one side per try. Tested in
+  `tests/test_graph.py::ShutInTest::test_a_body_that_cannot_move_shuts_the_bot_in`.
+  (In the run10 case the server additionally rejected digging/building with `Underwater stance
   unavailable` as long as the head stood in water — a server-side guard, `src/navigation/
   diving.ts`; only when the head reaches into air is work allowed.) Tested in
   `tests/test_graph.py::BlockedBySurroundingsTest`.

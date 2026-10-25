@@ -1923,7 +1923,17 @@ class Agent:
             self._dig_out_tries = 0
         if ok:
             return
-        if shut_in(text, gs.pos):
+        if shut_in(text, gs.pos) or "repeated_movement_failure" in (text or ""):
+            # `repeated_movement_failure` is the body not moving on a re-issued route: the bot is
+            # physically enclosed, the same shut-in as a short `no path` search but reported with
+            # no node count for `shut_in` to read. It counts as `blocked_by_surroundings` too, so
+            # the unblock ladder (`make_room`, then `explore`) answers it first -- but neither a
+            # feet pocket nor another walk frees a bot walled in on every side (live, run96: 100
+            # `explore` from one spawn cell in birch logs and leaves, never a step, the ladder
+            # cycling make_room/explore the whole run). Counting it toward the tunnel lets
+            # `dig_out` take over once the ladder has proven it cannot, and carve a way out. Left
+            # out of the `elif` below, which would otherwise read its `[NAVIGATION_STOPPED]` code
+            # and reset the count on the very refusal that should raise it.
             self._boxed = (cell, reps + 1)
         elif _fail_code(text) == "NAVIGATION_STOPPED" or "no path found" in (text or ""):
             self._boxed = (None, 0)
