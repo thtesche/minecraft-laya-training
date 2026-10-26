@@ -2430,6 +2430,21 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         self.assertEqual(a.tool, "craft_item")
         self.assertEqual(a.args["items"], [{"item_name": "diamond_pickaxe"}])
 
+    def test_the_spare_fetches_wood_for_its_sticks_instead_of_waiting(self) -> None:
+        # run100 it~285-319: one diamond pickaxe, three diamonds, a crafting table and a healthy
+        # tool, but no wood. The spare cannot be crafted (no sticks), `mine_diamond` is not short,
+        # and the `get_wood` that supplies the sticks was gated on the tool being worn
+        # (`_pickaxe_due_for_spare`), not on the trip still wanting its second pickaxe
+        # (`_spare_pickaxe_wanted`) -- so the lull fell through to `wait` and the gate was never lit.
+        # The table is carried on purpose: without it the `craft_table` plank need masks the bug,
+        # offering `get_wood` for the table rather than for the sticks, and the test proves nothing.
+        g = self._standing(diamond_pickaxe=1, stick=0, crafting_table=1)
+        g.inventory.pop("stick", None)
+        out = candidates(g)
+        self.assertIn("get_wood", out)
+        self.assertNotEqual(out, ["wait"])
+        self.assertNotIn("craft_pickaxe_spare", out)   # no sticks yet: offered once the wood is in
+
     def test_a_walked_away_bot_is_brought_back_for_the_crossing(self) -> None:
         # The gate is base-gated and nothing else pulls a stocked bot home, which is how run30
         # sat fully stocked and lit with `enter_portal` never offered.

@@ -199,7 +199,14 @@ def candidates(gs: GameState) -> list[str]:
             need_planks = max(need_planks, 4)           # craft_table
         if not bed and (wool >= 3 or string >= 12):
             need_planks = max(need_planks, 3)           # craft_bed
-        if _pickaxe_due_for_spare(gs) and not _can_sticks(inv, logs, planks):
+        # The spare pickaxe's sticks, due either because the worn tool wants a same-tier backup
+        # (`_pickaxe_due_for_spare`) or because the banked trip is still short of its second pickaxe
+        # (`_spare_pickaxe_wanted`, `NETHER_PICKAXES`). The second need was missing here, so a lull
+        # that had the diamonds but no wood could not fetch it: live run100 stood at the base with one
+        # diamond pickaxe, three diamonds and a healthy tool but no logs -- `craft_pickaxe_spare`
+        # could not build (no sticks), `mine_diamond` was not short, and nothing supplied the wood,
+        # so the candidates fell through to `wait` for 300+ ticks and the gate was never lit.
+        if (_pickaxe_due_for_spare(gs) or _spare_pickaxe_wanted(gs)) and not _can_sticks(inv, logs, planks):
             need_planks = max(need_planks, 2)           # sticks for the spare pickaxe
         # A lost shield is a hard gate on the Nether departure (`_gear_ready`), and its six planks
         # are a *unit* need, not a "no log carried" one: two logs make eight, one log only four,
