@@ -1281,6 +1281,26 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._note_build(self._Action("build_portal"), False, {"inventory_delta": {}})
         self.assertFalse(agent._frame_complete)
 
+    def test_the_plane_read_latches_a_finished_frame(self) -> None:
+        # The build that finishes the frame *spends* its obsidian, so `_note_build` does not latch
+        # (that is the no-op build only). The plane read is what proves it finished, and it must
+        # latch too: the read goes blank once the bot roams off the base and the chunks unload, and
+        # a frame read back as unbuilt reopened the obsidian chain (live run97 it142-145, 290 m out).
+        agent = self._agent()
+        agent.base = (-197, -47, -98)
+        agent._frame_names = {cell: "obsidian"
+                              for cell in perception.frame_obsidian_cells(agent.base)}
+        self.assertTrue(agent._inject(gs()).frame_complete)
+        self.assertTrue(agent._frame_complete)
+
+    def test_a_partial_plane_read_does_not_latch(self) -> None:
+        agent = self._agent()
+        agent.base = (-197, -47, -98)
+        agent._frame_names = {cell: "obsidian"
+                              for cell in perception.frame_obsidian_cells(agent.base)[:-1]}
+        self.assertFalse(agent._inject(gs()).frame_complete)
+        self.assertFalse(agent._frame_complete)
+
 
 class FrameRefusalTest(unittest.TestCase):
     """A frame cell the build refused is remembered and cleared with an explicit dig.

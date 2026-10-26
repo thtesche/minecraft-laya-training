@@ -9,7 +9,8 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _hoard_surplus,
+from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _frame_needs_obsidian,
+                         _hoard_surplus,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
@@ -3353,6 +3354,41 @@ class WoodGateDeadZoneTest(unittest.TestCase):
         # With the bed already carried the bed branch is satisfied, so the wood gate stays shut.
         g = self._lull(white_wool=4, jungle_planks=1, white_bed=1)
         self.assertNotIn("get_wood", candidates(g))
+
+
+class FrameCompleteLatchTest(unittest.TestCase):
+    """A finished frame stays finished when the bot roams off and the plane read goes blank.
+
+    `_frame_needs_obsidian` reads the frame-plane scan, which only exists with the base chunks
+    loaded. 290 m out it reads blank, "no frame" looks true, and the obsidian chain reopened and
+    mined a second ten for a gate already built (live run97 it142-145). The `gs.frame_complete`
+    latch - set from the plane the moment it showed the frame, and location-independent - keeps
+    the chain shut wherever the bot stands.
+    """
+
+    def _away(self, **inv) -> GameState:
+        g = geared(**inv)
+        g.base = (-197, -47, -98)
+        g.pos = (100.0, 64.0, 100.0)      # well off the base, where the plane read is blank
+        return g
+
+    def test_a_blank_plane_off_the_base_would_reopen_the_chain(self) -> None:
+        # The bug the latch closes: no frame names, obsidian spent, not latched -> "needs obsidian".
+        g = self._away()
+        self.assertFalse(g.frame_names)
+        self.assertTrue(_frame_needs_obsidian(g, g.inventory))
+
+    def test_the_latch_keeps_the_chain_shut_off_the_base(self) -> None:
+        g = self._away()
+        g.frame_complete = True
+        self.assertFalse(_frame_needs_obsidian(g, g.inventory))
+
+    def test_the_latch_takes_mine_obsidian_and_fill_bucket_out_of_the_offer(self) -> None:
+        g = self._away(flint_and_steel=1)
+        g.frame_complete = True
+        cand = candidates(g)
+        self.assertNotIn("mine_obsidian", cand)
+        self.assertNotIn("fill_bucket", cand)
 
 
 class GoldHelmetSlotTest(unittest.TestCase):

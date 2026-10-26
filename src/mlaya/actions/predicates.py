@@ -2274,8 +2274,14 @@ def _frame_needs_obsidian(gs: GameState, inv: dict) -> bool:
     off for the rest of the run, with no way to raise the frame. The frame plane itself tells
     "our frame is up" apart from "we still owe obsidian" where the igniter cannot, so the chain
     gates on that instead: mine while no frame stands at the base and the pack is short.
+
+    `gs.frame_complete` is read ahead of the plane: the plane scan is blank once the base chunks
+    unload, so a bot that finished the frame and roamed off read "no frame" and mined a second ten
+    for a built gate (live run97 it142-145, 290 m out). The latch is set from the plane the moment
+    it showed the frame and is location-independent, so it keeps the chain shut wherever the bot is.
     """
-    return not _frame_started_at_base(gs) and inv.get("obsidian", 0) < PORTAL_OBSIDIAN
+    return (not gs.frame_complete and not _frame_started_at_base(gs)
+            and inv.get("obsidian", 0) < PORTAL_OBSIDIAN)
 
 
 def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:

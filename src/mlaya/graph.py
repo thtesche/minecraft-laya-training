@@ -13,6 +13,7 @@ from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
+                      _frame_complete_at_base,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM)
 from .brain import Brain, escalate_to_system2
 from .mcp import _find
@@ -522,9 +523,17 @@ class Agent:
         gs.blocked_cell = self._blocked_cell
         gs.chest_above = self._chest_above
         gs.portal_blocked = list(self._portal_blocked)
-        gs.frame_complete = self._frame_complete
         gs.refused_frame = tuple(sorted(self._refused_frame))
         gs.frame_names = dict(self._frame_names)
+        # The frame-plane read only exists with the base chunks loaded, so a bot that finished the
+        # frame and walked off reads it back as blank, `_frame_needs_obsidian` sees "no frame", and
+        # the obsidian chain reopens for a gate already built (live run97 it142-145: 290 m out, a
+        # blank scan, a second ten obsidian mined). Latch completion the moment the plane shows it -
+        # the same one-way flag `_note_build` sets from a no-op build - so it holds wherever the bot
+        # roams and a later blank scan can never read the frame back to unbuilt.
+        if not self._frame_complete and _frame_complete_at_base(gs):
+            self._frame_complete = True
+        gs.frame_complete = self._frame_complete
         gs.enter_intent = self._enter_intent_ticks > 0
         gs.nether_entered = self._nether_entered
         gs.nether_arrival = self._nether_arrival
