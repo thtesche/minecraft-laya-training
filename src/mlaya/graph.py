@@ -939,6 +939,26 @@ class Agent:
         """
         if self.base is None and self._bed_base is not None:
             self.base = self._bed_base
+        if self.base is not None:
+            # Every chest the network owns sits within reach of the base it belongs to -- the main
+            # one at `(bx, by+1, bz+1)` and each overflow in `STORAGE_SITES` fall inside
+            # `ADOPT_CHEST_RADIUS`, and adoption below only ever takes a chest that close. A cell
+            # that does not is a leftover of a base this run has moved off: `_walk_home_to_memory`
+            # seeds `chest_pos` from the server's cross-run memory while the run has no base, and
+            # when that remembered home proves unreachable (`_settle_home_anchor` gives it up) and
+            # `establish_base` raises a fresh base elsewhere, the inherited chest is stranded. Kept,
+            # it makes `_chest_ready` true at the new base, so `place_chest`/`craft_chest` is never
+            # offered there and `stow_surplus` walks the pack back to a phantom cell -- run100
+            # it67-88 chased a stale (265,72,207) 322 blocks from its (-57,70,44) base until a
+            # deposit finally met `[CONTAINER_NOT_PRESENT]` there. Drop the stranded cells so the
+            # new base builds and works its own.
+            bx, by, bz = self.base
+            network = ([tuple(self.chest_pos)] if self.chest_pos is not None else []) \
+                + [tuple(c) for c in self._extra_chests]
+            for cx, cy, cz in network:
+                if (abs(cx - bx) > ADOPT_CHEST_RADIUS or abs(cz - bz) > ADOPT_CHEST_RADIUS
+                        or abs(cy - (by + 1)) > ADOPT_CHEST_RADIUS):
+                    self._forget_chest_cell((cx, cy, cz))
         if self.chest_pos is None and self.base is not None:
             bx, by, bz = self.base
             for hit in gs.resources.get("chest", []):

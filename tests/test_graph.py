@@ -884,6 +884,30 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent._home_ticks, HOME_ANCHOR_TICKS - 1)
         self.assertEqual(agent.base, (229, 61, 225))
 
+    def test_a_new_base_drops_a_chest_stranded_at_the_base_it_moved_off(self) -> None:
+        # run100: `_walk_home_to_memory` seeded `chest_pos` from a previous run's chest 322 blocks
+        # away, the guess was given up (`_settle_home_anchor`) and `establish_base` raised a fresh
+        # base. The stranded chest must not keep `_chest_ready` true at the new base, or no chest is
+        # ever built there and `stow_surplus` walks the pack back to a phantom cell.
+        agent = self._agent(_bed_base=None, _furnace_blocked=False, base=(-57, 70, 44),
+                            chest_pos=(265, 72, 207), _chests_full={(265, 72, 207)},
+                            _banked_stores=(((265, 72, 207), "rotten_flesh", 43),),
+                            banked={"rotten_flesh": 43})
+        agent._adopt_homebase(gs())
+        self.assertIsNone(agent.chest_pos)
+        self.assertEqual(agent._banked_stores, ())
+        self.assertEqual(agent.banked, {})
+        self.assertEqual(agent._chests_full, set())
+
+    def test_a_chest_within_reach_of_the_base_is_kept(self) -> None:
+        # The real network: the main chest beside the base at `(bx, by+1, bz+1)` and an overflow at
+        # the far end of `STORAGE_SITES`. Both sit inside `ADOPT_CHEST_RADIUS`, so neither strands.
+        agent = self._agent(_bed_base=None, _furnace_blocked=False, base=(-57, 70, 44),
+                            chest_pos=(-57, 71, 45), _extra_chests=[(-55, 71, 48)])
+        agent._adopt_homebase(gs())
+        self.assertEqual(agent.chest_pos, (-57, 71, 45))
+        self.assertEqual(agent._extra_chests, [(-55, 71, 48)])
+
 
 class IdleOfferGuardTest(unittest.TestCase):
     """A step that keeps succeeding at nothing is dropped like any other unending offer.
