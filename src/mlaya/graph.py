@@ -13,7 +13,7 @@ from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
-                      _frame_complete_at_base,
+                      _frame_complete_at_base, _frame_short_at_base,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM)
 from .brain import Brain, escalate_to_system2
 from .mcp import _find
@@ -538,7 +538,15 @@ class Agent:
         # blank scan, a second ten obsidian mined). Latch completion the moment the plane shows it -
         # the same one-way flag `_note_build` sets from a no-op build - so it holds wherever the bot
         # roams and a later blank scan can never read the frame back to unbuilt.
-        if not self._frame_complete and _frame_complete_at_base(gs):
+        if _frame_short_at_base(gs):
+            # The latch is one-way, and a frame can lose blocks after it fires: live, run103 -
+            # ten obsidian spent at it114, the plane read latched it complete, two of those cells
+            # were air again by it191, and the bot held the two blocks in its pack and `wait`ed at
+            # its own gate for fifty ticks while `build_portal` stayed stepped over. The read that
+            # names the frame's own obsidian is the frame talking about itself, so it may undo the
+            # latch; a blank read names nothing and leaves it standing (run97).
+            self._frame_complete = False
+        elif not self._frame_complete and _frame_complete_at_base(gs):
             self._frame_complete = True
         gs.frame_complete = self._frame_complete
         gs.enter_intent = self._enter_intent_ticks > 0

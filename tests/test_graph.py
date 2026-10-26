@@ -1325,6 +1325,57 @@ class FrameCompleteLatchTest(unittest.TestCase):
         self.assertFalse(agent._inject(gs()).frame_complete)
         self.assertFalse(agent._frame_complete)
 
+    def test_a_frame_that_lost_obsidian_unlatches(self) -> None:
+        # run103: the build spent its ten obsidian at it114 and the plane read latched the frame
+        # complete on the next tick; by it191 two of those cells were air again (the pack had
+        # picked the two blocks back up at it140). With the latch still set `candidates` stepped
+        # over `build_portal`, `light_portal` refused on the same read, and the bot `wait`ed at
+        # its own gate with two obsidian in the pack for fifty ticks.
+        agent = self._agent()
+        agent.base = (-181, 64, 101)
+        cells = perception.frame_obsidian_cells(agent.base)
+        agent._frame_complete = True
+        agent._frame_names = {cell: "obsidian" for cell in cells}
+        for cell in cells[2:4]:
+            agent._frame_names[cell] = "air"
+        self.assertFalse(agent._inject(gs()).frame_complete)
+        self.assertFalse(agent._frame_complete)
+
+    def test_the_unlatch_reopens_the_build_with_the_two_blocks_left(self) -> None:
+        agent = self._agent()
+        agent.base = (-181, 64, 101)
+        cells = perception.frame_obsidian_cells(agent.base)
+        agent._frame_complete = True
+        agent._frame_names = {cell: "obsidian" for cell in cells}
+        for cell in cells[2:4]:
+            agent._frame_names[cell] = "air"
+        g = agent._inject(gs(base=agent.base, pos=(-181.5, 65.0, 101.5), offhand="shield",
+                             inventory={"obsidian": 2, "cobblestone": 58, "flint_and_steel": 1},
+                             tools={"pickaxe": "diamond", "sword": "diamond"},
+                             armor={slot: {"item": f"diamond_{slot}"}
+                                    for slot in ("helmet", "chestplate", "leggings", "boots")}))
+        self.assertIn("build_portal", candidates(g))
+
+    def test_a_blank_plane_read_keeps_the_latch(self) -> None:
+        # The run97 protection stays: a bot roaming off the base reads the plane blank, and a
+        # frame read back as unbuilt reopened the obsidian chain 290 m out. A read that names
+        # nothing is not the frame talking about itself, so it cannot undo the latch.
+        agent = self._agent()
+        agent.base = (-197, -47, -98)
+        agent._frame_complete = True
+        agent._frame_names = {}
+        self.assertTrue(agent._inject(gs()).frame_complete)
+
+    def test_an_all_air_plane_read_keeps_the_latch(self) -> None:
+        # No obsidian named in the plane at all: nothing here says "our frame is short", so the
+        # latch holds and the lull work keeps the tick instead of a rebuild that cannot fill.
+        agent = self._agent()
+        agent.base = (-197, -47, -98)
+        agent._frame_complete = True
+        agent._frame_names = {cell: "air"
+                             for cell in perception.frame_obsidian_cells(agent.base)}
+        self.assertTrue(agent._inject(gs()).frame_complete)
+
 
 class FrameRefusalTest(unittest.TestCase):
     """A frame cell the build refused is remembered and cleared with an explicit dig.

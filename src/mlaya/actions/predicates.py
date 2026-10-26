@@ -2338,6 +2338,25 @@ def _frame_complete_at_base(gs: GameState) -> bool:
                for cell in frame_obsidian_cells(gs.base))
 
 
+def _frame_short_at_base(gs: GameState) -> bool:
+    """The frame the plane read shows is short: some of its obsidian stands, some does not.
+
+    `Agent._frame_complete` is a one-way latch, and a frame can lose blocks after it fires. Live,
+    run103: the build spent its ten obsidian at it114, the plane read latched the frame complete on
+    the next tick, and by it191 two of those cells were air again (the pack had picked the two
+    blocks back up at it140). With the latch still set `candidates` stepped over `build_portal`,
+    `light_portal` refused on the same plane read that now said the frame was *not* finished, and
+    the bot stood at its own gate with two obsidian in the pack for fifty ticks. A read that names
+    the frame's own obsidian is the frame talking about itself, so it is allowed to undo the latch;
+    a blank read (the base chunks unloaded, run97) names nothing and leaves it standing.
+    """
+    if gs.base is None or not gs.frame_names:
+        return False
+    cells = frame_obsidian_cells(gs.base)
+    standing = sum(1 for cell in cells if gs.frame_names.get(cell) == "obsidian")
+    return 0 < standing < len(cells)
+
+
 def _portal_ignite_cell(gs: GameState) -> tuple[int, int, int] | None:
     """A frame obsidian cell to strike with the flint and steel.
 
