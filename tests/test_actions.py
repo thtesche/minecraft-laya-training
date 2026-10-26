@@ -1150,6 +1150,44 @@ class ShieldTest(unittest.TestCase):
         self.assertNotIn("equip_shield", candidates(self._ready()))
         self.assertIsNone(resolve("equip_shield", self._ready()))
 
+    def test_a_lost_shield_asks_for_its_planks(self) -> None:
+        # The dead zone this closes, from run98's gate state: a geared bot with a table, one ingot
+        # and five planks had `mine_iron`/`place_chest` on offer and no wood step, so `craft_shield`
+        # could never run - while `_gear_ready` holds the Nether departure on exactly that shield.
+        g = at_home(geared(oak_planks=5, iron_ingot=1))
+        g.offhand = None  # the shield is what was lost
+        self.assertNotIn("craft_shield", candidates(g))
+        self.assertIn("get_wood", candidates(g))
+
+    def test_one_log_is_short_of_the_shields_six_planks(self) -> None:
+        # `logs == 0` is not the question here: one log is four planks, the shield wants six.
+        g = self._ready(oak_planks=0, oak_log=1)
+        self.assertNotIn("craft_shield", candidates(g))
+        self.assertIn("get_wood", candidates(g))
+
+    def test_two_logs_are_enough_so_no_walk(self) -> None:
+        g = self._ready(oak_planks=0, oak_log=2)
+        self.assertIn("craft_shield", candidates(g))
+        self.assertNotIn("get_wood", candidates(g))
+
+    def test_a_worn_shield_asks_for_no_wood(self) -> None:
+        g = self._ready(oak_planks=0)
+        g.offhand = "shield"
+        self.assertNotIn("get_wood", candidates(g))
+
+    def test_a_stone_pickaxe_asks_for_no_wood_for_the_shield(self) -> None:
+        # The craft itself waits for the iron pickaxe; gathering for it earlier is a walk to a
+        # craft the offer cannot satisfy.
+        g = gs(tools={"pickaxe": "stone"},
+               inventory={"crafting_table": 1, "iron_ingot": 1})
+        self.assertNotIn("craft_shield", candidates(g))
+        self.assertNotIn("get_wood", candidates(g))
+
+    def test_the_nether_never_asks_for_wood_for_the_shield(self) -> None:
+        g = self._ready(oak_planks=0)
+        g.dimension = "minecraft:the_nether"
+        self.assertNotIn("get_wood", candidates(g))
+
     def test_missing_combat_pieces_pull_iron(self) -> None:
         # The kit (shield, sword, armour) is the reason to dig iron once the pickaxe exists; the
         # mine is capped to one batch, so a 27-ingot goal is not a single unbounded dig.

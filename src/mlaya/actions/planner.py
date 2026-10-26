@@ -201,7 +201,16 @@ def candidates(gs: GameState) -> list[str]:
             need_planks = max(need_planks, 3)           # craft_bed
         if _pickaxe_due_for_spare(gs) and not _can_sticks(inv, logs, planks):
             need_planks = max(need_planks, 2)           # sticks for the spare pickaxe
-        if logs == 0 and planks < need_planks and _overworld(gs):
+        # A lost shield is a hard gate on the Nether departure (`_gear_ready`), and its six planks
+        # are a *unit* need, not a "no log carried" one: two logs make eight, one log only four,
+        # and the `logs == 0` gate below stays shut for both. Without this a bot with a table, an
+        # ingot and one log had only `mine_iron`/`place_chest` on offer and never re-armed
+        # (checked against `candidates()` on run98's gate state, shield dropped, 5 planks).
+        shield_short = (not _has_shield(gs) and table and tier >= IRON_PICK_TIER
+                        and _plank_units(inv) < SHIELD_PLANKS)
+        if shield_short:
+            need_planks = max(need_planks, SHIELD_PLANKS)
+        if _overworld(gs) and ((logs == 0 and planks < need_planks) or shield_short):
             # Overworld only, like `craft_bed` and `place_bed`: the Nether has no trees, so a chop-a-tree
             # step can never succeed there and burns every tick it is offered. The bed chain is what
             # asks for wood most often (wool in the pack, no bed yet), which is why it kept winning the
