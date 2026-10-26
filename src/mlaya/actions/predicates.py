@@ -447,17 +447,21 @@ def _armor_to_wear(gs: GameState) -> list[str]:
     iron one sits back in the pack must not be traded away: only a *better* piece is worn, and
     the iron piece it displaced is skipped rather than re-equipped on every tick.
 
-    The helmet slot has a second owner. In the Nether the gold helmet replaces the diamond one
+    The helmet slot has a second owner. The gold helmet replaces the diamond one
     (`swap_to_gold_helmet`, so piglins stay neutral) and the swap leaves the diamond helmet in
     the pack; read as "a better piece is waiting", that puts it straight back on the head and the
     two steps undo each other every tick (live, run36: `equip_armor` and `swap_to_gold_helmet`
-    alternating, each action succeeding, none of them progress). So the helmet is skipped there
-    while the gold piece is to hand, and the swap owns that slot for the whole trip.
+    alternating, each action succeeding, none of them progress). So the helmet is skipped while
+    the gold piece owns the slot: the whole Nether trip, and at the base from the moment the bot
+    is about to cross (`_nether_departure_ready`), where the gold piece now goes on before the
+    crossing - otherwise the same ping-pong plays out on the Overworld side. On the way home the
+    gate is no longer departure-ready (the haul holds it shut), so the diamond helmet goes back on.
     """
     inv = gs.inventory
     out: list[str] = []
     slots = [slot for slot, _ in IRON_ARMOR]
-    if _in_nether(gs) and (inv.get(GOLD_HELMET_ITEM, 0) > 0 or _worn(gs, GOLD_HELMET_ITEM)):
+    if ((_in_nether(gs) or _nether_departure_ready(gs))
+            and (inv.get(GOLD_HELMET_ITEM, 0) > 0 or _worn(gs, GOLD_HELMET_ITEM))):
         slots = [slot for slot in slots if slot != "helmet"]
     for slot in slots:
         worn = (gs.armor.get(slot) or {}).get("item")
@@ -512,7 +516,16 @@ def _gear_ready(gs: GameState) -> bool:
         return False
     if not (_has(inv, "diamond_sword") or str(gs.tools.get("sword", "")).lower() == "diamond"):
         return False
-    if any(not _worn(gs, f"diamond_{slot}") for slot, _ in DIAMOND_ARMOR):
+    for slot, _ in DIAMOND_ARMOR:
+        if _worn(gs, f"diamond_{slot}"):
+            continue
+        # The helmet slot is shared with the gold piece the bot wears for piglin neutrality. Once
+        # it puts the gold helmet on at the base before crossing (`swap_to_gold_helmet`), the
+        # diamond helmet sits in the pack - held in reserve, not missing - so the kit still counts
+        # as ready. Without this the gold swap would read as a bare slot and collapse the whole
+        # departure chain the swap hangs off (gear ready -> expedition ready -> the gate itself).
+        if slot == "helmet" and _worn(gs, GOLD_HELMET_ITEM) and _has(inv, "diamond_helmet"):
+            continue
         return False
     return _offhand(gs, SHIELD_ITEM)
 
@@ -1142,11 +1155,15 @@ def _nether_departure_ready(gs: GameState) -> bool:
     (live, run30: fully stocked, portal burning, bot 40 m off in a hole, `enter_portal` never
     offered and no step willing to walk it home).
 
-    The gold helmet is read from the pack, not through `_all_nether_prep_steps`. That list drops
-    any step whose material it cannot reach *right now*, so a bot with no coal has no gold step in
-    it, the empty list reads as "prep done", and the crossing opens - into the Nether, where piglins
-    are hostile and the trip dies. A burning gate is what makes this reachable: after a death down
-    there the bot comes home to a gate that already burns and may have lost the helmet on the way.
+    The gold helmet counts whether it is in the pack or already worn, not through
+    `_all_nether_prep_steps`. That list drops any step whose material it cannot reach *right now*,
+    so a bot with no coal has no gold step in it, the empty list reads as "prep done", and the
+    crossing opens - into the Nether, where piglins are hostile and the trip dies. A burning gate
+    is what makes this reachable: after a death down there the bot comes home to a gate that
+    already burns and may have lost the helmet on the way. Worn counts because the bot now puts
+    the gold piece on at the base before crossing (`swap_to_gold_helmet`, so no bare diamond
+    helmet shows to the piglins on arrival); reading only the pack would make the gate read as
+    unstocked the moment the helmet moved to the head and the departure could never finish.
 
     The bow is deliberately *not* treated this way, and the difference is supply, not importance:
     string needs a spider in reach and run34 waited at its own gate for hours for one, while gold
@@ -1164,7 +1181,7 @@ def _nether_departure_ready(gs: GameState) -> bool:
     """
     return (nether_expedition_open(gs) and not _nether_haul_home(gs)
             and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
-            and _has(gs.inventory, GOLD_HELMET_ITEM))
+            and (_has(gs.inventory, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)))
 
 
 def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
@@ -1212,8 +1229,15 @@ def _gold_helmet_needed(gs: GameState) -> bool:
 
     One worn piece of gold armour is enough to keep piglins from attacking on sight, and the
     helmet is the slot it has to share with the diamond piece, so this is the swap both ways.
+
+    The swap is wanted on both sides of the crossing. In the Nether it keeps a trip already down
+    there neutral; at the base it goes on *before* the bot crosses, so no bare diamond helmet
+    shows to the piglins on arrival (live, run99: both entries - it231, it336 - crossed in the
+    diamond helmet and the gold piece went on only at it342, six Nether ticks deep, the bot
+    piglin-exposed the whole gap). `_nether_departure_ready` already requires the gold helmet in
+    hand, so it only ever reads true where the gate is stocked and about to open.
     """
-    return (_in_nether(gs) and _worn(gs, "diamond_helmet")
+    return ((_in_nether(gs) or _nether_departure_ready(gs)) and _worn(gs, "diamond_helmet")
             and (gs.inventory.get(GOLD_HELMET_ITEM, 0) > 0 or _worn(gs, GOLD_HELMET_ITEM)))
 
 

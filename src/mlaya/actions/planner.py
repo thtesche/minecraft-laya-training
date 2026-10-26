@@ -479,6 +479,12 @@ def candidates(gs: GameState) -> list[str]:
                 # of leaving an unbuildable label to be escalated away by System 2 every tick.
                 out.append("mine_diamond")
             if _at_base(gs) and _nether_departure_ready(gs):
+                # The gold helmet goes on at the base, before the crossing - a diamond helmet
+                # worn into the Nether leaves the bot piglin-exposed until it swaps down there
+                # (live, run99: the swap came six Nether ticks after each entry). Offered ahead of
+                # `enter_portal` so the helmet is on the head before the bot steps through.
+                if _gold_helmet_needed(gs):
+                    out.append("swap_to_gold_helmet")
                 out.append("enter_portal")
             if gs.nether_entered and not _in_nether(gs):
                 if _worn(gs, GOLD_HELMET_ITEM) and (_has(inv, "diamond_helmet")

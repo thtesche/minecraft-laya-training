@@ -3868,6 +3868,34 @@ class NetherExpeditionTest(unittest.TestCase):
         g.enter_intent = True
         self.assertNotEqual(candidates(g), ["leave_portal"])
 
+    def test_the_gold_helmet_goes_on_before_the_crossing(self) -> None:
+        # Live, run99: both entries (it231, it336) crossed wearing the diamond helmet with the
+        # gold piece still in the pack, and the swap came only at it342 - six Nether ticks deep,
+        # the bot piglin-exposed the whole gap. The helmet now goes on at the base, offered ahead
+        # of the crossing so it is on the head before the bot steps through.
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        cand = candidates(g)
+        self.assertIn("swap_to_gold_helmet", cand)
+        self.assertLess(cand.index("swap_to_gold_helmet"), cand.index("enter_portal"))
+        a = resolve("swap_to_gold_helmet", g)
+        self.assertEqual(a.tool, "equip")
+        self.assertEqual(a.args["items"], [{"item_name": "golden_helmet", "destination": "head"}])
+
+    def test_the_gold_helmet_on_the_head_still_opens_the_gate(self) -> None:
+        # Once the swap has run the gold piece is worn and the diamond helmet sits in the pack.
+        # The departure must not read as unstocked just because the helmet moved to the head, or
+        # the gate the swap was meant to walk through could never open. Worn gold counts as having
+        # the helmet, so the crossing is still offered - and the swap is not, there being no bare
+        # diamond helmet left to replace.
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        g.inventory["golden_helmet"] = 0
+        g.inventory["diamond_helmet"] = 1
+        cand = candidates(g)
+        self.assertIn("enter_portal", cand)
+        self.assertNotIn("swap_to_gold_helmet", cand)
+        self.assertEqual(resolve("enter_portal", g).tool, "enter_nether_portal")
+
     # --- down there ---
     def test_the_gold_helmet_goes_on_first(self) -> None:
         g = self._down(golden_helmet=1)
