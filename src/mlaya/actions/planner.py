@@ -1115,9 +1115,24 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if gs.pos is not None and math.dist((gs.pos[0], gs.pos[2]), (ax, az)) <= 2.0:
             return Action(label, "enter_nether_portal", {"x": ax, "y": ay, "z": az},
                           "cross back through the Nether exit portal with the rods")
+        # The walk never aims at the portal cell itself: `navigate` refuses an active portal cell
+        # outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED]`, whatever the `range` - so a target
+        # equal to the arrival cell is refused at step zero and the bot never moves (live, run99
+        # it347-599: 178 refusals, the way home never walked, the bot starving at a gate it could
+        # see but never reach). Aim `NETHER_GATE_APPROACH` blocks short on the bot's own side: a
+        # standable doorstep clear of the portal's two-wide interior and frame, close enough that
+        # the portal block loads into the scan and `_exit_portal_cell` crosses on the next tick.
+        tx, tz = float(ax), float(az)
+        if gs.pos is not None:
+            dx, dz = gs.pos[0] - ax, gs.pos[2] - az
+            span = math.hypot(dx, dz)
+            if span > 1e-6:
+                tx = ax + dx / span * NETHER_GATE_APPROACH
+                tz = az + dz / span * NETHER_GATE_APPROACH
         return Action(label, "navigate",
-                      {"x": ax, "y": ay, "z": az, "range": 2, "dig": True, "scaffold": True},
-                      "walk back to where the Nether trip started, where the exit portal stands")
+                      {"x": round(tx), "y": ay, "z": round(tz),
+                       "range": 2, "dig": True, "scaffold": True},
+                      "walk up to the Nether exit portal's doorstep, where the trip started")
     if label == "swap_to_diamond_helmet":
         if _in_nether(gs) or not _worn(gs, GOLD_HELMET_ITEM):
             return None

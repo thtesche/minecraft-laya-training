@@ -17,7 +17,7 @@ from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _frame_needs
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
-                           NETHER_HOPELESS_TICKS, resolve, stronghold_complete,
+                           NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, resolve, stronghold_complete,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources)
@@ -3785,6 +3785,24 @@ class NetherExpeditionTest(unittest.TestCase):
                                                    *self.EXIT, 2.0)]}
         return g
 
+    def _assert_doorstep(self, a: Action, portal: tuple[int, int, int],
+                         bot: tuple[float, float, float]) -> None:
+        """The way-home walk aims at a standable doorstep, never the portal cell itself.
+
+        `navigate` refuses a target that is an active portal cell (live, run99: 178 refusals,
+        the walk never started). So the target must differ from the portal, sit at its height,
+        stand `NETHER_GATE_APPROACH` blocks out on the bot's own side, and be closer to the bot
+        than the portal is.
+        """
+        self.assertEqual(a.tool, "navigate")
+        tx, ty, tz = a.args["x"], a.args["y"], a.args["z"]
+        self.assertNotEqual((tx, tz), (portal[0], portal[2]))
+        self.assertEqual(ty, portal[1])
+        gap = math.dist((tx, tz), (portal[0], portal[2]))
+        self.assertLessEqual(abs(gap - NETHER_GATE_APPROACH), 1.0)
+        self.assertLess(math.dist((tx, tz), (bot[0], bot[2])),
+                        math.dist((portal[0], portal[2]), (bot[0], bot[2])))
+
     # --- crossing in ---
     def test_the_gate_opens_once_the_expedition_is_stocked(self) -> None:
         g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
@@ -3912,17 +3930,32 @@ class NetherExpeditionTest(unittest.TestCase):
         g.pos = (self.EXIT[0] + 40.5, float(self.EXIT[1]), self.EXIT[2] + 40.5)
         self.assertEqual(candidates(g), ["leave_nether"])
         a = resolve("leave_nether", g)
-        self.assertEqual(a.tool, "navigate")
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+        self._assert_doorstep(a, self.EXIT, g.pos)
 
     def test_with_no_portal_in_the_scan_the_bot_walks_back_to_its_arrival(self) -> None:
         # The exit portal only reaches the state while it is loaded. The cell the bot arrived on
-        # is where the way home is, so a bot still out in the Nether walks there first.
+        # is where the way home is, so a bot still out in the Nether walks there first - but not
+        # onto the portal cell itself: `navigate` refuses an active portal cell outright (live,
+        # run99 it347-599), so the walk aims at a standable doorstep a few blocks short of it.
         g = self._down(blaze_rod=9)
         g.pos = (self.EXIT[0] + 40.5, float(self.EXIT[1]), self.EXIT[2] + 40.5)
         a = resolve("leave_nether", g)
+        self._assert_doorstep(a, self.EXIT, g.pos)
+
+    def test_far_from_the_gate_the_walk_never_aims_at_the_portal_cell(self) -> None:
+        # Live, run99 it347-599: the bot sat ~220 blocks from its arrival gate with no portal in
+        # the scan, and the way-home walk aimed straight at the portal cell - which `navigate`
+        # refuses outright (`[NAVIGATION_PORTAL_INTENT_REQUIRED]`, prog=False, whatever the
+        # `range`). 178 refusals, the walk never took a step, and the bot starved at a gate it
+        # could see but never reach (~170 iterations lost). The target must never be the portal
+        # cell: a doorstep on the bot's own side is a standable cell `navigate` accepts, and
+        # closing that distance loads the portal so the crossing fires on the next tick.
+        g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] - 220.3, float(self.EXIT[1]), self.EXIT[2] + 18.7)
+        a = resolve("leave_nether", g)
         self.assertEqual(a.tool, "navigate")
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+        self.assertNotEqual((a.args["x"], a.args["z"]), (self.EXIT[0], self.EXIT[2]))
+        self._assert_doorstep(a, self.EXIT, g.pos)
 
     def test_standing_on_the_arrival_cell_crosses_instead_of_walking(self) -> None:
         # `navigate` into an active portal is refused outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED]
@@ -3932,9 +3965,9 @@ class NetherExpeditionTest(unittest.TestCase):
         # of the run. Arrival first, then the crossing, is the server's own two-step.
         g = self._down(blaze_rod=9)
         self.assertEqual(resolve("leave_nether", g).tool, "enter_nether_portal")
-        # And the boundary is the arrival cell itself: `navigate` is only refused by the portal,
-        # so two cells out it is still a walk - and the walk's own `range` is 2, which is why the
-        # crossing starts where the walk stops.
+        # The boundary is the two-block entry zone around the arrival cell: inside it the bot
+        # crosses, outside it the bot walks to the doorstep first (the walk never aims at the
+        # portal cell, which `navigate` refuses - the doorstep is a standable cell short of it).
         g.pos = (self.EXIT[0] + 2.5, float(self.EXIT[1]), self.EXIT[2])
         self.assertEqual(resolve("leave_nether", g).tool, "navigate")
         g.pos = (self.EXIT[0] + 1.5, float(self.EXIT[1]), self.EXIT[2])
@@ -3952,8 +3985,7 @@ class NetherExpeditionTest(unittest.TestCase):
         g.nether_gate = self.EXIT
         g.pos = (self.EXIT[0] + 40.5, float(self.EXIT[1]), self.EXIT[2] + 40.5)
         a = resolve("leave_nether", g)
-        self.assertEqual(a.tool, "navigate")
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+        self._assert_doorstep(a, self.EXIT, g.pos)
         # Standing beside the remembered gate is the crossing, not the walk: the same two-step
         # as the arrival, because `navigate` into an active portal is refused outright.
         g.pos = (self.EXIT[0] + 1.5, float(self.EXIT[1]), self.EXIT[2])
@@ -3975,7 +4007,11 @@ class NetherExpeditionTest(unittest.TestCase):
         g.nether_gate = (self.EXIT[0] + 60, self.EXIT[1], self.EXIT[2] + 60)
         g.pos = (self.EXIT[0] + 40.5, float(self.EXIT[1]), self.EXIT[2] + 40.5)
         a = resolve("leave_nether", g)
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
+        # The doorstep hugs the arrival portal, not the stale gate 60 blocks off: it stays within
+        # the approach distance of the arrival and far from the remembered gate.
+        self._assert_doorstep(a, self.EXIT, g.pos)
+        self.assertGreater(math.dist((a.args["x"], a.args["z"]),
+                                     (g.nether_gate[0], g.nether_gate[2])), 40.0)
 
     def test_the_axis_sweep_points_at_the_remembered_gate(self) -> None:
         # Without the world's frontier compass, the fallback march should at least point back

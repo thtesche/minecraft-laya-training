@@ -223,6 +223,15 @@ NETHER_RETURN_FOOD = 8.0
 # long before this number matters.
 NETHER_SEARCH_M = 700.0
 NETHER_HOPELESS_TICKS = 120
+# How many blocks short of the exit portal the way-home walk aims. `navigate` refuses a target
+# that is an active portal cell outright (`[NAVIGATION_PORTAL_INTENT_REQUIRED] Use
+# enter_nether_portal to enter this active portal`), whatever its `range` - so the walk aims at a
+# standable doorstep this many blocks out on the bot's own side instead, clear of the two-wide
+# interior and its obsidian frame. Three keeps the stop at the gate's threshold yet well inside
+# the scan radius, so the portal block loads and `_exit_portal_cell` crosses on the next tick
+# (live, run99 it347-599: the old aim straight at the portal cell was refused 178 times, the
+# walk never started, and the bot starved at a gate it could see but never reach).
+NETHER_GATE_APPROACH = 3
 # How far a lone spider may be for a *single* string (`_safe_string_hunt`, repairing the Nether
 # bow). Wider than the bed-chain's spider guard, which is about three strings at once.
 STRING_HUNT_RANGE = 24.0
