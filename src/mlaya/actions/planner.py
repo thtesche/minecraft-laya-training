@@ -185,10 +185,23 @@ def candidates(gs: GameState) -> list[str]:
 
     if not _in_nether(gs):
         # Bootstrap, then crafts/smelts (in tech-tree order), then gathering.
-        need_wood = (tier == 0 or not table
-                     or (not bed and (wool >= 3 or string >= 12))
-                     or (_pickaxe_due_for_spare(gs) and not _can_sticks(inv, logs, planks)))
-        if logs == 0 and planks == 0 and need_wood and _overworld(gs):
+        # The planks each wood craft below needs when no log is carried - a log always suffices,
+        # since the craft makes its own planks from it. `need_planks` is the deepest of the crafts
+        # still owed, so `get_wood` and the craft it feeds share one boundary with no gap between
+        # them. The old gate (`logs == 0 and planks == 0`) left exactly such a gap: a single
+        # leftover plank was too little for the bed (three planks) yet cleared the `== 0` test, so
+        # neither `get_wood` nor `craft_bed` fired and the Nether lull fell through to `wait` (live
+        # run97 it149-162: 4 wool, 1 jungle_planks, 0 logs, no bed, 14 `wait` ticks at the base).
+        need_planks = 0
+        if tier == 0:
+            need_planks = max(need_planks, 5)           # craft_pickaxe
+        if not table:
+            need_planks = max(need_planks, 4)           # craft_table
+        if not bed and (wool >= 3 or string >= 12):
+            need_planks = max(need_planks, 3)           # craft_bed
+        if _pickaxe_due_for_spare(gs) and not _can_sticks(inv, logs, planks):
+            need_planks = max(need_planks, 2)           # sticks for the spare pickaxe
+        if logs == 0 and planks < need_planks and _overworld(gs):
             # Overworld only, like `craft_bed` and `place_bed`: the Nether has no trees, so a chop-a-tree
             # step can never succeed there and burns every tick it is offered. The bed chain is what
             # asks for wood most often (wool in the pack, no bed yet), which is why it kept winning the

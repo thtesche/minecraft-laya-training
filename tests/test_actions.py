@@ -3307,6 +3307,54 @@ class CraftBedDimensionTest(unittest.TestCase):
         self.assertNotIn("craft_bed", candidates(g))
 
 
+class WoodGateDeadZoneTest(unittest.TestCase):
+    """`get_wood` and `craft_bed` must share one boundary, with no gap between them.
+
+    Live run97 (it149-162): a geared bot at a lit gate held 4 wool, one leftover `jungle_planks`
+    and no logs, no bed. `craft_bed` wants three planks or a log; `get_wood` fired only on an
+    empty wood pack (`logs == 0 and planks == 0`). The single plank was too little to craft yet
+    enough to clear the `== 0` gate, so neither step was offered, the candidate list emptied and
+    the Nether lull fell through to 14 `wait` ticks at the base. The gate now asks whether the
+    carried wood can actually pay for the craft it is for.
+    """
+
+    def _lull(self, **inv) -> GameState:
+        # A geared bot at a lit gate (the Nether lull), by day, with no bed.
+        g = lit_portal(at_home(geared(**inv)))
+        g.phase = "day"
+        g.health = 20.0
+        g.food = 18.0
+        return g
+
+    def test_one_leftover_plank_still_asks_for_wood(self) -> None:
+        g = self._lull(white_wool=4, jungle_planks=1)
+        cand = candidates(g)
+        self.assertIn("get_wood", cand)
+        self.assertNotIn("craft_bed", cand)   # one plank cannot craft the bed yet
+
+    def test_two_planks_still_ask_for_wood(self) -> None:
+        self.assertIn("get_wood", candidates(self._lull(white_wool=4, jungle_planks=2)))
+
+    def test_three_planks_craft_the_bed_and_stop_chopping(self) -> None:
+        # The boundary: three planks pay for the bed, so the craft fires and `get_wood` stands down.
+        g = self._lull(white_wool=4, jungle_planks=3)
+        cand = candidates(g)
+        self.assertIn("craft_bed", cand)
+        self.assertNotIn("get_wood", cand)
+
+    def test_a_single_log_pays_for_the_bed(self) -> None:
+        # A log always suffices (the craft makes its own planks), so no `get_wood` on one log.
+        g = self._lull(white_wool=4, oak_log=1)
+        cand = candidates(g)
+        self.assertIn("craft_bed", cand)
+        self.assertNotIn("get_wood", cand)
+
+    def test_no_wood_is_asked_for_once_a_bed_is_at_hand(self) -> None:
+        # With the bed already carried the bed branch is satisfied, so the wood gate stays shut.
+        g = self._lull(white_wool=4, jungle_planks=1, white_bed=1)
+        self.assertNotIn("get_wood", candidates(g))
+
+
 class GoldHelmetSlotTest(unittest.TestCase):
     """In the Nether the helmet slot belongs to the gold helmet.
 
