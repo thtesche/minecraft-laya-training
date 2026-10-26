@@ -21,7 +21,7 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
                           tech_tree_complete)
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, BODY_HELD_STOP, BOXED_REPEATS, HOME_ANCHOR_TICKS,
+from mlaya.graph import (Agent, BODY_HELD_STOP, BOXED_REPEATS, DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
                          RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
                          PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS, WANDER_RATIO,
                          WANDER_REPEATS, WANDER_WALK,
@@ -4100,6 +4100,27 @@ class ShutInTest(unittest.TestCase):
         self.assertEqual(agent._boxed[1], BOXED_REPEATS)
         # A walk that got out clears it all: the body left the cell.
         agent._note_boxed(gs(pos=(190.5, 70.0, 181.5)), self._Action("explore"), True, "")
+        self.assertEqual((agent._boxed, agent._dig_out_tries), ((None, 0), 0))
+
+    def test_a_refused_dig_turns_to_the_next_side_then_gives_up(self) -> None:
+        # run101 it6-181: boxed on a fractional-y perch on the old world's leftover frame, every
+        # `dig_out` refused `[BUILD_INCOMPLETE] ... no path found; visited 1 node`. The side only
+        # advanced on a dig that went through, so `dig_out_try` stayed 0 and the same east cells
+        # were dug at 176 times to the iteration limit. A refused dig now turns to the next side,
+        # and once every side has been tried round without giving the latch drops, so the tick is
+        # no longer spent on `dig_out` alone.
+        refused = ("[BUILD_INCOMPLETE] 3 cells still wrong: 3 were refused (-56,72,45: no path "
+                   "found after 0 ms compute; visited 1 nodes, generated 1; closest node was "
+                   "-57,72,45)")
+        agent = self._agent()
+        here = gs(pos=(-56.5, 72.56, 45.5))
+        agent._boxed = ((-57, 72, 45), BOXED_REPEATS)
+        for n in range(1, DIG_OUT_MAX_TRIES):
+            agent._note_boxed(here, self._Action("dig_out"), False, refused)
+            self.assertEqual(agent._dig_out_tries, n)   # the side turns on the refusal
+            self.assertTrue(agent._boxed[1] >= BOXED_REPEATS)   # still shut in, dig_out still owns the tick
+        # Every side tried round and none gave: the latch drops so the rest of the ladder runs.
+        agent._note_boxed(here, self._Action("dig_out"), False, refused)
         self.assertEqual((agent._boxed, agent._dig_out_tries), ((None, 0), 0))
 
     def test_work_done_in_place_keeps_the_count(self) -> None:

@@ -82,6 +82,13 @@ RECOVER_UNREACHABLE_REPEATS = 3
 BOXED_NODES = 200
 BOXED_CLOSEST_M = 5.0
 BOXED_REPEATS = 3
+# `dig_out` rotates through the four sides (`planner`), one per try. A refused dig turns to the
+# next side too, not only one that went through, so one unreachable wall is not dug at forever;
+# after this many refusals from the one cell every side has been tried round and the pocket is
+# judged undiggable from here, so the latch drops and the tick is freed for the rest of the
+# ladder (live run101 it6-181: 176 refused digs at one east wall, the budget spent on a tunnel
+# the build reach would never give).
+DIG_OUT_MAX_TRIES = 8
 _NO_PATH = re.compile(r"no path found after \d+ ms compute; visited (\d+) nodes"
                       r"(?:, generated \d+)?; closest node was (-?\d+),(-?\d+),(-?\d+)")
 
@@ -1945,6 +1952,23 @@ class Agent:
             if ok:
                 self._dig_out_tries += 1
                 self._boxed = (cell, BOXED_REPEATS - 1)
+                return
+            # A dig_out that could not even start -- `[BUILD_INCOMPLETE] ... no path found after
+            # 0 ms; visited 1 node` -- means the build reach cannot touch *this* side's cells from
+            # the perch the bot stands on. Turn to the next side on the refusal too, not only on a
+            # dig that went through: otherwise one unreachable wall is dug at forever, with
+            # `dig_out_try` frozen at the side it started on (live run101 it6-181, 176 refusals at
+            # the same east cells from a fractional-y perch on the old world's leftover frame).
+            self._dig_out_tries += 1
+            if self._dig_out_tries >= DIG_OUT_MAX_TRIES:
+                # Every side tried round and none would give: the pocket cannot be dug out of from
+                # here. Drop the latch so the tick stops going to `dig_out` alone and the shut-in
+                # ladder and System 2 get to try something else, rather than the run spending its
+                # whole budget on a tunnel the build reach refuses.
+                self._boxed = (None, 0)
+                self._dig_out_tries = 0
+            else:
+                self._boxed = (cell, reps)
             return
         if cell != last:
             reps = 0
