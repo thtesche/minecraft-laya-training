@@ -2077,8 +2077,8 @@ def _base_steps_ready(gs: GameState) -> bool:
     """Whether some base step is ready to run once the bot is back at the base.
 
     Used only to justify `go_home`: the bot walks back exactly when there is work that needs
-    the base (a frame to raise, a bed to lay, a chest to place, surplus to store), never as an
-    idle stroll.
+    the base (a frame to raise, a bed to lay, a chest to place once the pack fills, surplus to
+    store), never as an idle stroll.
     """
     inv = gs.inventory
     # A base re-adopted from a lit portal a previous run left standing is not reached yet: walk
@@ -2115,7 +2115,14 @@ def _base_steps_ready(gs: GameState) -> bool:
     # was never offered the placement).
     if _furnace_worth_placing(gs):
         return True
-    if not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs):
+    # A carried chest only pulls the bot home once the pack is filling. The chest is placed for
+    # the room it frees, not for its own sake, and a light pack owes it nothing: live, run99
+    # it153-165, a bot on 29 of 36 slots hunted the trip's food 70 m out, and the carried chest
+    # walked it back every time it arrived - `go_home` and `hunt_food` handed each other the same
+    # 70 m four times over. At the base the chest is still offered (`place_chest`), so the early
+    # placement a bot that happens to be home can make is not lost; only the walk is deferred.
+    if (not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs)
+            and gs.slots_used >= INVENTORY_NEAR_FULL):
         return True
     if (_chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(gs, inv)
             and not _storage_reachable(gs)):

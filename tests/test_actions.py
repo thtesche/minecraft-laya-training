@@ -2636,6 +2636,37 @@ class HomeBaseTest(unittest.TestCase):
         self.assertNotIn("go_home", candidates(g))
         self.assertIsNone(resolve("go_home", g))
 
+    def test_a_carried_chest_waits_for_a_filling_pack_before_it_walks_the_bot_home(self) -> None:
+        # Live, run99 it153-165: a bot on 29 of the 36 slots left the base for the trip's food,
+        # and the carried chest drew it straight back every time it reached the animals -
+        # `go_home` and `hunt_food` swapped the same 70 m four times over. The chest is placed
+        # for the room it frees, so a light pack owes it no walk; once the pack fills, it does.
+        g = self._geared(chest=1)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)
+        g.slots_used = INVENTORY_NEAR_FULL - 4
+        self.assertNotIn("go_home", candidates(g))
+        self.assertIsNone(resolve("go_home", g))
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertIn("go_home", candidates(g))
+        self.assertIsNotNone(resolve("go_home", g))
+
+    def test_a_carried_chest_is_still_placed_at_the_base_with_a_light_pack(self) -> None:
+        # The walk is deferred, not the placement: a bot that is home with a light pack still
+        # gets the chest set down, whatever made it come home (run99 laid it at it167).
+        g = self._home(self._geared(chest=1))
+        g.slots_used = INVENTORY_NEAR_FULL - 4
+        self.assertIn("place_chest", candidates(g))
+
+    def test_other_base_work_still_walks_a_lightly_packed_bot_home(self) -> None:
+        # Only the chest reason changed: a frame waiting to be raised pulls the same light pack
+        # home.
+        g = self._geared(flint_and_steel=1, obsidian=10, cobblestone=4)
+        g.base = (-197, -47, -98)
+        g.pos = (-250.5, 64.0, -120.5)
+        g.slots_used = INVENTORY_NEAR_FULL - 4
+        self.assertIn("go_home", candidates(g))
+
     def test_stow_surplus_deposits_into_the_base_chest(self) -> None:
         g = self._home(self._geared(tuff=64))
         g.chest_pos = (-197, -46, -97)
