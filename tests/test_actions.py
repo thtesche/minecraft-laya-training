@@ -354,6 +354,7 @@ class FoodChainTest(unittest.TestCase):
         self.assertEqual(resolve("hunt_food", g).args["count"], HUNT_HURRY)
         g.food, g.health = 17.0, 8.5
         self.assertEqual(resolve("hunt_food", g).args["count"], HUNT_HURRY)
+        g.mobs = [("zombie", "hostile", 12, 10.0)]
         self.assertEqual(_hunt_count(g, "zombie"), HUNT_HURRY)
         g.food, g.health = 20.0, 20.0
         self.assertEqual(_hunt_count(g, "zombie"), ZOMBIE_FLESH_BATCH)
@@ -372,7 +373,32 @@ class FoodChainTest(unittest.TestCase):
         a = resolve("hunt_food", g)
         self.assertEqual(a.args["mob_name"], "zombie")
         self.assertEqual(a.args["drop_name"], "rotten_flesh")
-        self.assertEqual(a.args["count"], 10)
+        # One animal standing within the melee band: one drop. run102 it43 asked for the whole
+        # `ZOMBIE_FLESH_BATCH` of ten from that one zombie, and the server went looking for the
+        # other nine - 614 blocks in 181 s, no swing, `[BODY_HELD]`.
+        self.assertEqual(a.args["count"], 1)
+
+    def test_the_zombie_batch_is_cut_by_the_zombies_in_reach(self) -> None:
+        # run102 it43: one zombie at 24 m, 24 more loaded across the chunks. The batch is cut by
+        # what stands within the melee band, not by the loaded count, because `collect_mob_drop`
+        # retargets to the next animal of the kind anywhere loaded until the count is met.
+        g = gs(mobs=[("zombie", "hostile", 1, 24.0), ("zombie", "hostile", 24, 60.0)],
+               health=20.0, food=17.0, tools=self.SWORD)
+        self.assertEqual(_hunt_count(g, "zombie"), 1)
+        g.mobs = [("zombie", "hostile", 12, 12.0)]
+        self.assertEqual(_hunt_count(g, "zombie"), ZOMBIE_FLESH_BATCH)
+
+    def test_a_well_fed_bot_does_not_hunt_a_zombie_for_flesh(self) -> None:
+        # Rotten flesh is edible but never a provision, so a zombie hunt asked for as a reserve
+        # can never close the gap it was offered for. run102 offered `hunt_food` at hunger 17 with
+        # nothing but a zombie in reach; the hunt roamed, the body stayed held, and the run ended
+        # three ticks later on `body_held`.
+        g = gs(mobs=[("zombie", "hostile", 1, 10.0)], health=20.0, food=17.0, tools=self.SWORD)
+        self.assertIsNone(resolve("hunt_food", g))
+        self.assertNotIn("hunt_food", candidates(g))
+        g.food = 12.0
+        self.assertEqual(resolve("hunt_food", g).args["mob_name"], "zombie")
+        self.assertIn("hunt_food", candidates(g))
 
     def test_no_food_target(self) -> None:
         self.assertIsNone(resolve("hunt_food", gs()))

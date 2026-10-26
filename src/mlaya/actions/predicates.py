@@ -87,20 +87,40 @@ def _mob_count(gs: GameState, name: str) -> int:
     return sum(count for n, _, count, _ in gs.mobs if n == name)
 
 
+def _mob_in_reach(gs: GameState, name: str, max_range: float) -> int:
+    """How many of this kind stand within `max_range` of the body, not merely loaded somewhere.
+
+    The distinction is what a hunt turns on: `collect_mob_drop` has no range limit of its own and
+    retargets to the next animal of the kind anywhere loaded until the count is met, so a count
+    cut by the loaded area is a count the server walks off to find.
+    """
+    return sum(count for n, _, count, d in gs.mobs
+               if n == name and d is not None and d <= max_range)
+
+
+def _hunt_reach(gs: GameState, mob: str) -> float:
+    """The band a hunt of this kind may work in: the food range for an animal, the melee band for
+    the zombie `hunt_food` falls back to."""
+    return _food_hunt_range(gs) if mob in FOOD_MOBS else ZOMBIE_HUNT_RANGE
+
+
 def _hunt_count(gs: GameState, mob: str) -> int:
-    """Drops one hunt asks for: the batch, or `HUNT_HURRY` when hungry or wounded, and for an
-    animal never more than the ones of that kind in view, so the server has no reason to walk
-    past them. A zombie drops up to two rotten flesh and is hunted one at a time anyway, so its
-    batch (`ZOMBIE_FLESH_BATCH`) stays, cut only by the hurry."""
+    """Drops one hunt asks for: the batch, or `HUNT_HURRY` when hungry or wounded, and never more
+    than the animals of that kind standing within the hunt's own reach, so the server has no
+    reason to walk past them.
+
+    The reach cap used to cover `FOOD_MOBS` only, which is how a zombie hunt escaped it: run102
+    it43, hunger 17, health 20, no animal within the night's 16 m, one zombie at 24 m, and the
+    hunt asked for `ZOMBIE_FLESH_BATCH` = 10 rotten flesh from it. The server walked the body 614
+    blocks in 181 s from zombie to zombie, swung at none, and the tick came back `[BODY_HELD]`.
+    """
     hungry = gs.food is not None and gs.food < EAT_HUNGER
     hurt = gs.health is not None and gs.health < RECOVER_HEALTH
     if hungry or hurt:
         want = HUNT_HURRY
     else:
         want = HUNT_BATCH if mob in FOOD_MOBS else ZOMBIE_FLESH_BATCH
-    if mob in FOOD_MOBS:
-        want = min(want, max(1, _mob_count(gs, mob)))
-    return want
+    return min(want, max(1, _mob_in_reach(gs, mob, _hunt_reach(gs, mob))))
 
 
 def _food_hunt_range(gs: GameState) -> float:
@@ -308,12 +328,29 @@ def _safe_zombie_hunt(gs: GameState) -> bool:
     return len(hostiles) <= 2 and all(n == "zombie" for n, _ in hostiles)
 
 
+def _eating_now(gs: GameState) -> bool:
+    """Whether the pack needs a meal this tick, as opposed to a reserve for a later trip.
+
+    Rotten flesh is `EDIBLE` but never `PROVISIONS` (see the chest of 96 that read as a full
+    larder), so a zombie hunt cannot move `_provisioned` toward `_food_goal`: asked for as
+    banking, it is a hunt that can never end. run102 it43-45: hunger 17, health 20, nothing but a
+    zombie in reach; the hunt roamed 614 blocks, came back `[BODY_HELD]`, and the two ticks that
+    followed came back `[BODY_HELD]` too - the run ended at 46 iterations on `body_held`.
+    """
+    return gs.food is None or gs.food <= EAT_HUNGER
+
+
 def _food_target(gs: GameState) -> tuple[str, str] | None:
-    """The safest available food source: a passive animal in walking reach, else a lone zombie."""
+    """The safest available food source: a passive animal in walking reach, else a zombie close
+    enough to eat off right now.
+
+    The zombie is the emergency branch, not the reserve branch: it is only taken when the pack is
+    at or under the eating floor, because its flesh does not count as a provision.
+    """
     mob = _nearest_food_mob(gs, _food_hunt_range(gs))
     if mob is not None:
         return mob, FOOD_MOBS[mob]
-    if _safe_zombie_hunt(gs):
+    if _safe_zombie_hunt(gs) and _eating_now(gs):
         return "zombie", "rotten_flesh"
     return None
 
