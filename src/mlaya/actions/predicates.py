@@ -911,15 +911,23 @@ FORTRESS_BLOCKS = ("spawner", "nether_bricks", "nether_brick_fence", "nether_bri
 
 
 def _fortress_hit(gs: GameState):
-    """The nearest fortress landmark in reach, or None.
+    """The nearest fortress landmark worth walking to, or None.
 
     Blazes exist only in a Nether fortress, so the bricks and the spawner cage are the landmark
     worth walking to rather than the local greedy step `explore` would otherwise take.
+
+    Two readings the live runs forced. A landmark underfoot is not a destination: run104 stood on a
+    spawner at (94,39,86) for 100+ ticks, `navigate` answering `ok` with 0 metres moved. And a cage
+    the bot has already walked onto and got nothing out of is searched - offering it again next tick
+    is the same 0-metre step (`gs.nether_landmarks`, Agent `_note_landmark`).
     """
     for name in FORTRESS_BLOCKS:
         hit = gs.resource_nearest(name)
-        if hit is not None:
-            return hit
+        if hit is None or hit.distance < FORTRESS_MIN_M:
+            continue
+        if hit.pos in gs.nether_landmarks:
+            continue
+        return hit
     return None
 
 

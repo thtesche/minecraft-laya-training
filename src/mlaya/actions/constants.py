@@ -190,6 +190,10 @@ BLAZE_HUNT_RANGE = 24.0
 # Blazes set themselves on fire when struck and answer with fireballs, so a hunt only starts from a
 # healthy bot that is not already in a fight. This mirrors `_safe_spider_hunt`.
 BLAZE_HUNT_HEALTH = 14.0
+# How far a fortress landmark has to be to be worth walking to. Live, run104: the bot stood on a
+# spawner at (94,39,86) for 100+ ticks, `navigate` answering `ok` with 0 metres moved, because the
+# landmark it was told to walk to was the block under its own feet.
+FORTRESS_MIN_M = 2.0
 # --- The stronghold phase (phase 4) ---
 # Twelve sockets activate the end portal. Up to four may generate pre-filled, the estimate and the
 # locate each throw an eye, and about one throw in five shatters; sixteen eyes is the safe upper

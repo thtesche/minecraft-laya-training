@@ -89,6 +89,7 @@ class WaterTicksTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -200,6 +201,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.log = self._Log()
         agent._blocked_label = None
         agent._blocked_kind = "surroundings"
@@ -395,6 +397,7 @@ class PourSkipTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._stuck_code = {}
@@ -476,6 +479,124 @@ class PourSkipTest(unittest.TestCase):
         self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
 
 
+class NetherLandmarkWriteOffTest(unittest.TestCase):
+    """A fortress landmark the explore walk never stepped towards is searched, not retried.
+
+    Live, run104 it155-266: `explore` navigated to the spawner the bot was standing on, the server
+    answered `ok` with 0 metres moved, and the identical cell was offered for 112 ticks - magma
+    cubes under the feet, no blaze in reach, no rods to get.
+    """
+
+    class _Action:
+        def __init__(self, label: str, tool: str, args: dict) -> None:
+            self.label = label
+            self.tool = tool
+            self.args = args
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
+        agent._drop_hole_blocked = False
+        agent._drop_open_pending = False
+        agent._defer_quiet = 0
+        agent._drop_pos = None
+        agent._held_ticks = 0
+        agent._drop_heading = None
+        agent._heading = None
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._furnace_contents = {}
+        agent._furnace_occupied = False
+        agent.furnace_pos = None
+        agent.smoker_pos = None
+        agent._portal_blocked = []
+        agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
+        agent._nether_ticks = 0
+        agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
+        agent._powder_stowed = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
+        agent._blocked_cell = None
+        agent._chest_above = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
+        agent.surface = None
+        agent.base = None
+        agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
+        agent.banked = {}
+        agent._water_ticks = 0
+        return agent
+
+    def test_a_stepless_walk_writes_the_cell_off(self) -> None:
+        agent = self._agent()
+        agent._note_landmark(self._Action("explore", "navigate",
+                                         {"x": 94, "y": 39, "z": 86, "dig": True, "scaffold": True}),
+                            {"pos_delta": 0.0})
+        self.assertEqual(agent._nether_landmarks, [(94, 39, 86)])
+
+    def test_a_walk_that_moved_keeps_the_landmark_open(self) -> None:
+        agent = self._agent()
+        agent._note_landmark(self._Action("explore", "navigate", {"x": 40, "y": 66, "z": 4}),
+                            {"pos_delta": 22.4})
+        self.assertEqual(agent._nether_landmarks, [])
+
+    def test_other_labels_and_tools_are_left_alone(self) -> None:
+        agent = self._agent()
+        agent._note_landmark(self._Action("leave_nether", "navigate", {"x": 12, "y": 65, "z": -4}),
+                            {"pos_delta": 0.0})
+        agent._note_landmark(self._Action("explore", "explore_frontier", {"heading": 90.0}),
+                            {"pos_delta": 0.0})
+        agent._note_landmark(self._Action("explore", "navigate", {"heading": 90.0}),
+                            {"pos_delta": 0.0})
+        self.assertEqual(agent._nether_landmarks, [])
+
+    def test_the_note_reaches_the_state(self) -> None:
+        agent = self._agent()
+        agent._nether_landmarks = [(94, 39, 86)]
+        state = agent._inject(GameState())
+        self.assertEqual(state.nether_landmarks, frozenset({(94, 39, 86)}))
+
+    def test_coming_home_clears_the_written_off_cages(self) -> None:
+        # A new trip searches a new stretch of the world; the cage the last one stood in is not
+        # this one's target.
+        agent = self._agent()
+        agent._nether_landmarks = [(94, 39, 86)]
+        agent._last_dimension = "minecraft:the_nether"
+        agent._nether_entered = True
+        agent._nether_ticks = 40
+        agent._nether_travel = 300.0
+        agent._nether_last_pos = (94.4, 86.4)
+        agent._note_dimension(GameState(dimension="minecraft:overworld", pos=(-179.4, 66.0, 104.6)))
+        self.assertEqual(agent._nether_landmarks, [])
+
+
 def _pond_state(**inv):
     """A geared bot far from a two-cell lava pond, the shape a `mine_obsidian` walk is aimed at.
 
@@ -512,6 +633,7 @@ class StanceSkipTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._stuck_code = {}
@@ -625,6 +747,7 @@ class StuckOfferTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -780,6 +903,7 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, **over):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.base = None
         agent.chest_pos = None
         agent._extra_chests = []
@@ -925,6 +1049,7 @@ class IdleOfferGuardTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent._stuck_off = {}
         agent._idle_reps = {}
         agent.log = []
@@ -1027,6 +1152,7 @@ class WanderGuardTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent._wander_reps = {}
         agent._stuck_off = {}
         agent.log = []
@@ -1151,6 +1277,7 @@ class FurnaceDrainReadTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._furnace_blocked = False
         agent._furnace_contents = {}
         agent._furnace_occupied = False
@@ -1228,6 +1355,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._frame_complete = False
         agent._refused_frame = set()
         agent._frame_names = {}
@@ -1395,6 +1523,7 @@ class FrameRefusalTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -1506,6 +1635,7 @@ class RecoverWriteOffTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._recover_written_off = set()
         agent._recover_unreachable = (None, 0)
         agent._boxed = (None, 0)
@@ -1652,6 +1782,7 @@ class BuildSiteSurfaceGateTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.base = None
         agent.build_site = None
         agent._build_site_scanned = None
@@ -1687,6 +1818,7 @@ class SurfaceNoteTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.surface = None
         return agent
 
@@ -1736,6 +1868,7 @@ class BaseAnchorRepairTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.base = (419, 73, 594)
         agent.build_site = (419, 73, 594)
         agent._build_site_scanned = (419.0, 594.0)
@@ -1804,6 +1937,7 @@ class DropHoleTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._drop_hole_blocked = False
         agent._drop_open_pending = False
         agent._defer_quiet = 0
@@ -1918,6 +2052,7 @@ class ChestSupportTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.base = None
         agent.chest_pos = None
         agent.banked = {}
@@ -2019,6 +2154,7 @@ class FurnaceSupportTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._chest_blocked = False
         agent._furnace_blocked = False
         agent._furnace_contents = {}
@@ -2198,6 +2334,7 @@ class ChestLidTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._chest_above = None
         return agent
 
@@ -2292,6 +2429,7 @@ class GoalStopTest(unittest.TestCase):
 
     def _agent(self, stop_when_complete: bool = True) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.settings = Settings()
         agent.settings.loop.max_iterations = 10
         agent.settings.loop.stop_when_complete = stop_when_complete
@@ -2396,6 +2534,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.settings = Settings()
         agent.base = None
         agent.surface = None
@@ -2567,6 +2706,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, cells) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.base = (-197, -47, -98)
         agent.chest_pos = None
         agent._extra_chests = []
@@ -2699,6 +2839,7 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, mcp) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.base = (-197, -47, -98)
         agent.chest_pos = (229, 62, 224)
         agent._extra_chests = []
@@ -2766,6 +2907,7 @@ class ContainerMissingTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.chest_pos = ContainerMissingTest.MAIN
         agent._extra_chests = [ContainerMissingTest.OVERFLOW]
         agent._chests_full = {ContainerMissingTest.OVERFLOW}
@@ -2914,6 +3056,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, data=None) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.base = self.BASE
         agent.chest_pos = None
         agent.banked = {}
@@ -3161,6 +3304,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, data) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.base = None
         agent.chest_pos = None
         agent._extra_chests = []
@@ -3393,6 +3537,7 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, grid) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.base = None
         agent.chest_pos = None
         agent._extra_chests = []
@@ -3507,6 +3652,7 @@ class SearchIsPaidForInMetresTest(unittest.IsolatedAsyncioTestCase):
         from mlaya.graph import Agent
         from mlaya.config import Settings
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.settings = Settings()
         agent._enter_intent_ticks = 0
         agent._nether_entered = False
@@ -3532,6 +3678,7 @@ class NetherCrossingTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -3859,6 +4006,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, **over):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._nether_landmarks = []
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -3946,6 +4094,7 @@ class StoppedBuildFrameMarkingTest(unittest.TestCase):
     @staticmethod
     def _agent(**over) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.base = None
         agent._portal_blocked = []
         agent._frame_names = {}
@@ -4012,6 +4161,7 @@ class BodyHeldStopTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.settings = Settings()
         agent.settings.loop.max_iterations = 600
         agent.settings.loop.stop_when_complete = True
@@ -4046,6 +4196,7 @@ class DeathPolicyTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> tuple[Agent, list]:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._death_seen = None
         agent.log = []
         agent.mcp = None
@@ -4106,6 +4257,7 @@ class ShutInTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         return agent

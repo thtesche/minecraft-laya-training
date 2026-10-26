@@ -3342,6 +3342,30 @@ class NetherSearchHeadingTest(unittest.TestCase):
         self.assertEqual(a.tool, "navigate")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (31, 64, -8))
 
+    def test_a_landmark_underfoot_is_not_a_destination(self) -> None:
+        # Live, run104 it155-266: 112 ticks on one spawner at (94,39,86). The bot stood on the cage,
+        # `navigate` answered `ok` with 0 metres moved, and the identical cell came back every tick.
+        # A landmark the body is already on is not somewhere to walk to.
+        g = self._down(10.0, spawner=[BlockHit("spawner", "spawner", 11, 65, 0, 1.0)])
+        self.assertEqual(resolve("explore", g).tool, "explore_frontier")
+
+    def test_a_cage_the_search_already_walked_onto_is_written_off(self) -> None:
+        # The ping-pong the write-off stops: the march carries the bot 22 m out, the cage is the
+        # nearest landmark again, and the search walks straight back onto the block it just stood
+        # on. A landmark that produced no step has been searched.
+        g = self._down(10.0, spawner=[BlockHit("spawner", "spawner", 40, 66, 4, 22.0)])
+        g.nether_landmarks = frozenset({(40, 66, 4)})
+        self.assertEqual(resolve("explore", g).tool, "explore_frontier")
+
+    def test_a_landmark_still_a_walk_away_is_walked_to(self) -> None:
+        # The write-off only removes cells the bot has stood on; a cage it has not reached yet is
+        # still the target the search is for.
+        g = self._down(10.0, spawner=[BlockHit("spawner", "spawner", 40, 66, 4, 22.0)])
+        g.nether_landmarks = frozenset({(94, 39, 86)})
+        a = resolve("explore", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (40, 66, 4))
+
     def test_the_overworld_wander_is_untouched(self) -> None:
         # Home, a fortress is nothing to walk to - the walk-at-the-bricks is the Nether's, and
         # `explore` there keeps the ordinary branch it always had.
@@ -4188,6 +4212,7 @@ class NetherExpeditionTest(unittest.TestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.settings = Settings()
         agent._drop_open_pending = True
         agent._drop_pos = (12.5, 65.0, -3.5)
@@ -5914,6 +5939,7 @@ class StepAwayDropsWholeCellTest(unittest.TestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.settings = Settings()
         agent._drop_open_pending = True
         agent._drop_pos = (-89.5, 70.0, -4.5)
@@ -5931,6 +5957,7 @@ class DeferQuietTest(unittest.TestCase):
     def _agent(self):
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._defer_quiet = 0
         return agent
 
@@ -5965,6 +5992,7 @@ class RefreshAfterTest(unittest.TestCase):
     def _agent(self):
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.surface = None
         agent._frame_complete = False
         agent._powder_stowed = False
@@ -6028,6 +6056,7 @@ class WaitHoldTest(unittest.IsolatedAsyncioTestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.settings = Settings()
         agent.settings.loop.wait_hold_s = hold
         return agent
@@ -6055,6 +6084,7 @@ class StepAwayGroundReadTest(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent.mcp = object()
         agent._drop_open_pending = True
         agent._drop_pos = (-89.5, 70.0, -4.5)

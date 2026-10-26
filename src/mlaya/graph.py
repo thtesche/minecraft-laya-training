@@ -487,6 +487,10 @@ class Agent:
         # chest, not necessarily `chest_pos`. `take_blaze_powder` withdraws from these, and the
         # exhaustion latch only fires once every remembered cell has come up empty.
         self._powder_cells: list[tuple[int, int, int]] = []
+        # Fortress landmark cells the bot has already stood on with nothing to show for it
+        # (`_note_landmark`); `_fortress_hit` refuses them, so the Nether search moves on instead
+        # of re-walking a cage it is already on.
+        self._nether_landmarks: list[tuple[int, int, int]] = []
         self.graph = self._build()
 
     def _inject(self, gs):
@@ -559,6 +563,7 @@ class Agent:
         gs.stronghold_estimated = self._stronghold_estimated
         gs.powder_exhausted = self._powder_exhausted
         gs.powder_cells = tuple(self._powder_cells)
+        gs.nether_landmarks = frozenset(self._nether_landmarks)
         return gs
 
     async def _scan_build_site(self, gs) -> None:
@@ -859,6 +864,26 @@ class Agent:
             # Reset on the way home as well as on arrival. Left alone, the next trip would start
             # with the last trip's ground already counted and end its search before it began.
             self._nether_travel = 0.0
+            # Same for the cages already written off: a new trip searches a new stretch of the
+            # world, and the fortress the last one stood in is not this one's target.
+            self._nether_landmarks = []
+
+    def _note_landmark(self, action, delta: dict) -> None:
+        """Write off a fortress landmark the walk to it never took a step towards.
+
+        `explore` in the Nether navigates to the nearest spawner or brick. When the body is already
+        on that cell, `navigate` answers `ok` with 0 metres moved and the same cell is offered again
+        the next tick: live, run104 it155-266 - 112 ticks on one spawner at (94,39,86), the bot
+        standing on the cage, magma cubes under it, no blaze in reach. A landmark that produced no
+        step has been searched, so the march moves on rather than re-walking it.
+        """
+        if action.label != "explore" or action.tool != "navigate":
+            return
+        cell = (action.args.get("x"), action.args.get("y"), action.args.get("z"))
+        if None in cell or cell in self._nether_landmarks:
+            return
+        if (delta.get("pos_delta") or 0.0) < 1.0:
+            self._nether_landmarks.append(cell)
 
     async def _adopt_portal_base(self, gs) -> None:
         """Re-anchor the home base on a lit portal a previous run left standing, once.
@@ -1170,6 +1195,7 @@ class Agent:
         gs.stronghold_estimated = self._stronghold_estimated
         gs.powder_exhausted = self._powder_exhausted
         gs.powder_cells = tuple(self._powder_cells)
+        gs.nether_landmarks = frozenset(self._nether_landmarks)
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.defer_quiet = self._defer_quiet
         # `_note_boxed` runs after this tick's observation (it needs the post-action cell), so
@@ -2092,6 +2118,7 @@ class Agent:
         self._note_take_powder(action, _ok, _text, delta)
         self._note_locate(action, _ok)
         self._note_portal(action, _ok)
+        self._note_landmark(action, delta)
         progressed = vmod.progressed(action.label, delta, _ok)
         self._track_stuck(action.label, _ok, _text, progressed)
         # After the stuck guard: it owns the countdown and the offer window, and a wandering

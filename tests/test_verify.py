@@ -55,6 +55,7 @@ class CollectSmeltedProgressTest(unittest.TestCase):
         # threshold. `_track_stuck` is what reads this verdict, so the guard is what this pins.
         from mlaya.graph import Agent, STUCK_REPEATS
         agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
         agent._stuck_reps = {}
         agent._stuck_code = {}
         agent._stuck_off = {}
