@@ -589,8 +589,22 @@ def candidates(gs: GameState) -> list[str]:
     # hold at the base and wait it out rather than explore. Roaming to fill an open food reserve
     # was tried live (run19b) and reverted: the roam carried the bot 150-200 m out, where the
     # base-range latches re-open the portal chain and it stranded in water for 76 ticks.
+    #
+    # `wait` holds only *at* the base, though, so an idle bot that has drifted off it (a
+    # `collect_drops` a few metres out) fell through to `explore` and marched away with no tether
+    # home - `wait` never re-fired and the base was lost (live run97 it163-193: `explore` ratcheted
+    # 332 -> 652 m out and oscillated there to the end). So an idle geared Overworld bot off its
+    # base walks home first (`_idle_off_base`), where `wait` can hold it; `explore` stays the
+    # fallback in the Nether (the march to the fortress) and before a base or a kit is in hand. A
+    # home walk that keeps failing is stuck-listed like any other step, and then `explore` takes
+    # over so the bot is not frozen pathing to a base it cannot reach.
     if not out:
-        out.append("wait" if (still or (_at_base(gs) and _nether_idle(gs))) else "explore")
+        if still or (_at_base(gs) and _nether_idle(gs)):
+            out.append("wait")
+        elif _idle_off_base(gs) and "go_home" not in gs.stuck_labels:
+            out.append("go_home")
+        else:
+            out.append("explore")
     return out
 
 
@@ -1321,8 +1335,16 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": tx, "y": ty + 1, "z": tz, "dig": True, "scaffold": True},
                       f"walk up to the surface at {tx},{ty + 1},{tz} and set the base")
     if label == "go_home":
-        if (gs.base is None or _at_base(gs) or _in_nether(gs)
-                or not _go_home_wanted(gs)):
+        if gs.base is None or _at_base(gs) or _in_nether(gs):
+            return None
+        # Two reasons walk the bot home: base work waits (`_go_home_wanted`), or it is the idle
+        # geared Overworld bot the empty-candidate fallback sends home (`_idle_off_base`). The
+        # fallback reason is honoured only when it is in fact the fallback - `go_home` the single
+        # thing on offer - so a tick with real work the bot was *not* sent home for cannot bind a
+        # home walk here (the `_go_home_wanted` two-gates note). `candidates` is pure and never
+        # calls `resolve`, so re-reading it in this one narrow branch is safe.
+        if not _go_home_wanted(gs) and not (
+                _idle_off_base(gs) and candidates(gs) == ["go_home"]):
             return None
         bx, by, bz = gs.base
         return Action(label, "navigate",

@@ -1475,6 +1475,28 @@ def _go_home_wanted(gs: GameState) -> bool:
             or (gs.phase == "night" and _bed_at_base(gs)) or _cannot_heal(gs))
 
 
+def _idle_off_base(gs: GameState) -> bool:
+    """A geared Overworld bot standing off its base - the state the empty-candidate fallback walks
+    home from, rather than letting `explore` march it to the horizon.
+
+    `wait` holds an idle bot only *at* the base (`BASE_RADIUS` = 4 m). The moment a step drifts it
+    off - a `collect_drops` a few metres out - the empty-candidate fallback used to flip to
+    `explore`, which has no tether home: each frontier step pushed the bot further, `wait` never
+    re-fired, and the base was lost (live run97 it163-193: a collect_drops to 10 m, then `explore`
+    ratcheted 332 -> 652 m out and oscillated there to the run's end). Walking home lands the bot
+    back where `wait` can hold it. Once geared with a base, there is nothing in the Overworld worth
+    walking *outward* for - the next phase waits at the gate the base holds - so home is right
+    whenever the lull has run dry. The Nether is excluded: there the fallback `explore` is the
+    march to the fortress, not wandering, so `_overworld` keeps this to the Overworld.
+
+    This is a second, narrower reason than `_go_home_wanted` and shared the same way: the fallback
+    offers `go_home` exactly in this state and `resolve` accepts it exactly here, so the two gates
+    cannot disagree. It is deliberately read only by the empty-candidate fallback, never added to
+    the ordinary offer, so no non-empty candidate set the policy was trained on changes.
+    """
+    return _gear_ready(gs) and gs.base is not None and not _at_base(gs) and _overworld(gs)
+
+
 def _junk_carried(inv: dict[str, int]) -> list[str]:
     """Carried low-value blocks no recipe wants, in the fixed shedding order."""
     return [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]

@@ -10,7 +10,7 @@ import math
 import unittest
 
 from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _frame_needs_obsidian,
-                         _hoard_surplus,
+                         _hoard_surplus, _idle_off_base,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
@@ -3389,6 +3389,68 @@ class FrameCompleteLatchTest(unittest.TestCase):
         cand = candidates(g)
         self.assertNotIn("mine_obsidian", cand)
         self.assertNotIn("fill_bucket", cand)
+
+
+class IdleWalksHomeTest(unittest.TestCase):
+    """An idle geared bot off its base walks home, so `wait` can hold it there.
+
+    `wait` is the empty-candidate fallback only *at* the base (`BASE_RADIUS` = 4 m). The moment an
+    idle bot drifts off - a `collect_drops` a few metres out - the fallback used to flip to
+    `explore`, which has no tether home: each frontier step pushed it further, `wait` never
+    re-fired, and the base was lost (live run97 it163-193: a collect_drops to 10 m, then `explore`
+    ratcheted 332 -> 652 m out and oscillated there to the run's end). The fallback now walks an
+    idle geared Overworld bot home first (`_idle_off_base`), and `resolve` honours that offer so the
+    two gates cannot disagree. `explore` stays the fallback in the Nether (the march to the
+    fortress) and when a home walk keeps failing and is stuck-listed.
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _idle_off(self, **inv) -> GameState:
+        # The daytime lull with nothing on offer: geared, every reserve met, no mob or resource in
+        # reach - exactly where the old fallback fell through to `explore` (cf. `CookFoodReachTest`).
+        g = geared(furnace=1, coal=8, beef=5, cobblestone=64, diamond_pickaxe=2, **inv)
+        g.base = self.BASE
+        g.pos = (100.0, 64.0, 100.0)      # well past BASE_RADIUS
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 18.0
+        return g
+
+    def test_the_idle_bot_off_base_is_sent_home_not_out(self) -> None:
+        g = self._idle_off()
+        self.assertEqual(candidates(g), ["go_home"])
+        self.assertTrue(_idle_off_base(g))
+
+    def test_the_home_offer_resolves_and_is_not_refused(self) -> None:
+        # The whole point of the shared reason: a fallback that offered `go_home` only to have
+        # `resolve` refuse it would look like a dead end and burn the tick (cf. `_go_home_wanted`).
+        g = self._idle_off()
+        a = resolve("go_home", g)
+        self.assertIsNotNone(a)
+        self.assertEqual((a.args["x"], a.args["z"]), (self.BASE[0], self.BASE[2]))
+
+    def test_at_the_base_the_fallback_is_unchanged(self) -> None:
+        # Standing on the base is not the idle-off-base state; the base's own fallback owns the tick.
+        g = self._idle_off()
+        g.pos = (float(self.BASE[0]), float(self.BASE[1] + 1), float(self.BASE[2]))
+        self.assertNotIn("go_home", candidates(g))
+        self.assertFalse(_idle_off_base(g))
+
+    def test_the_nether_keeps_exploring(self) -> None:
+        # Down in the Nether the fallback `explore` is the march to the fortress, not wandering, so
+        # the home walk must not take it: `base` names an Overworld cell no Nether path should chase.
+        g = self._idle_off()
+        g.dimension = "minecraft:the_nether"
+        self.assertEqual(candidates(g), ["explore"])
+        self.assertFalse(_idle_off_base(g))
+
+    def test_a_stuck_home_walk_hands_the_tick_back_to_explore(self) -> None:
+        # A home walk that keeps failing is stuck-listed like any step; the bot must not freeze
+        # pathing to a base it cannot reach, so `explore` takes the tick instead.
+        g = self._idle_off()
+        g.stuck_labels = ("go_home",)
+        self.assertEqual(candidates(g), ["explore"])
 
 
 class GoldHelmetSlotTest(unittest.TestCase):
