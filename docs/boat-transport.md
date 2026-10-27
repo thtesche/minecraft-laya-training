@@ -21,7 +21,7 @@ our simulated boat?), then an explicit `navigate_water` tool, and automatic choi
 - **Water has cost this agent repeatedly.** The archived decision logs hold **603 `escape_water`
   decisions**; run8 drowned treading water, run15 stranded in a flooded flat, the base-range
   latches once left it in water for 76 ticks, and run89 was killed by a drowned
-  (see the comments around `WATER_RESCUE_AFTER` in `src/mlaya/actions.py`). A seated body does
+  (see the comments around `WATER_RESCUE_AFTER` in `src/mlaya/actions/`). A seated body does
   not lose breath on the surface and is not pushed under.
 - **Exploration stops at coasts.** `explore`/`view_frontier` already know `surface_water`, but an
   ocean or a wide lake is effectively a wall for a walking bot, or a long swim at night.

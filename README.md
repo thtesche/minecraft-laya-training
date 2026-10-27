@@ -21,7 +21,7 @@ through every layer — **code filters, Laya chooses**:
 |---|---|---|
 | Perception | `src/mlaya/perception.py` | `view_status` + events + `view_blocks` → `GameState` and a compact English narrative |
 | Brain (S1) | `src/mlaya/brain.py` | one Laya `predict`: the `in_danger` gate, then the `intent` choice among the valid labels (and, for `explore`, the target cell) |
-| Actions | `src/mlaya/actions.py` | `candidates(gs)`: valid labels by precondition; `resolve(label, gs)`: label → MCP tool + arguments |
+| Actions | `src/mlaya/actions/` | `candidates(gs)`: valid labels by precondition; `resolve(label, gs)`: label → MCP tool + arguments (split into `constants` / `predicates` / `planner`) |
 | Verify | `src/mlaya/verify.py` | the target/actual delta decides whether an action made progress |
 | Memory | `src/mlaya/memory.py` | every decision + outcome in `runs/decisions.jsonl` |
 | Survival | `src/mlaya/survival.py` | sets the server policy (`base` / `hunt`) at start and after every death |
@@ -48,8 +48,10 @@ rationale and the zero-shot findings behind this split are in
 | Nether prep — bow + arrows, gold helmet, cobblestone/food reserve | implemented, part of the auto-stop |
 | Storage network — chests per cell, overflow chests, provisions fetched back | reached, validated live |
 | Stall guards — refusals, wandering, idle steps, quiet defers, `wait` hold | implemented (see [`docs/architecture.md`](docs/architecture.md#stall-guards)) |
-| Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented; live through a full crossing with nine rods in the pack (run93), none home yet — see [`docs/nether-prep.md`](docs/nether-prep.md) |
+| Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented; live through the fortress and the blaze hunt (run104–107, up to 12 rods carried out in run106), **no powder banked home yet** — see [`docs/nether-prep.md`](docs/nether-prep.md) |
+| Stronghold → End portal (phase 4) — eyes of ender, stronghold search, end-portal activation, demand-sized re-supply | implemented; not yet live (the Nether haul is not home yet) — see [`docs/stronghold.md`](docs/stronghold.md) |
 | M3, second round — run79–86 head on top of the 2026-10-14 checkpoint | trained (held-out accuracy 0.767 → 0.885), served live since run87 via `LAYA_EXTRA_MODELS` |
+| M5 — stronger training signal: relative narrative + offline teacher/judge labels | planned (see [`docs/architecture.md`](docs/architecture.md#next-milestones)) |
 
 The run **stops itself** once every phase stands (`Agent._goal_reached`): the overworld goal
 (`actions.tech_tree_complete` — full diamond kit **worn** + shield in the off-hand, a bed at the

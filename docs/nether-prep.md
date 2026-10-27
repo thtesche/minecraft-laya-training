@@ -181,6 +181,22 @@ through to `explore` (`985d420`), and a death return reopens the expedition inst
 gates (`e812d83`, see architecture/run93). The gold helmet is still not worn on crossing: it was
 crafted (it116), but every swap attempt landed while the reflex held the body.
 
+**Live status (run104–107, 2026-10-26 … 27):** the fortress search and the walk home matured; the
+powder is still not banked. run104 spent 438 explore ticks, 112 of them on one magma-cube spawner
+at (94,39,86) with no blaze ever loaded — a landmark underfoot was treated as an explore target and
+a reached cage was written off at 0 m moved (`d763e44`); the gold-helmet swap also lost 52 of 66
+Nether ticks to `explore` and now owns the tick outright (`89c3a71`). run105 closed the reverse
+case: a landmark the walk *reached* was written off even when the step moved, so the bot
+ping-ponged 94↔150↔207 instead of re-navigating (`8e7d824`). run106 was the closest yet — **12
+rods carried out** — but the run ended on `body_held`: two `leave_nether` ticks held 300 s each at
+the spawner under the hostile reflex, so the walk home never started; the flee stage now raises the
+pursuit floor past full health so the reflex evades and frees `navigate`, and a hold that healed
+the bot or brought in a rod no longer ends the run (`38c4e8c`). run107 lost the whole kit to a
+Nether death (it131) and then ping-ponged `explore`↔`go_home` at the base until it nearly starved,
+because the nearest animal sat past the day-hunt range cap; below `HUNT_STARVE` the cap now drops so
+recovery reaches the far animal (`e902b7e`). So the crossing, the fortress and the rod haul all run
+live, but no run has yet carried the powder back to the chest at the gate.
+
 ## Decided: the gold helmet replaces the diamond helmet
 
 One piece of golden armour keeps piglins neutral, but the bot wears a **full diamond set** —

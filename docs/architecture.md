@@ -62,7 +62,7 @@ later head fine-tuning (M3) improves.
                                        (hostile ≤ 4 m contact or health < 15, otherwise the loop keeps working)
       danger     (score, logging only)
       intent     (choice)            -> among the filtered candidates
-[4] Actions       (src/mlaya/actions.py)
+[4] Actions       (src/mlaya/actions/ package)
     candidates(gs): valid labels by preconditions (tech-tree order)
     resolve(label, gs): label -> real MCP tool + arguments
     Cascade: get_wood -> craft_pickaxe -> craft_table -> mine_stone ->
@@ -623,7 +623,7 @@ just one level deeper.
   larger pool is narrowed via `laya.shortlist.predict_shortlist`, whose `embed_fn` comes from the
   already loaded checkpoint (`embed_fn_from_agent(router.load(model))`, cached once).
   No hit ⇒ fallback to the most distant candidate.
-- **Graph/Actions** (`src/mlaya/graph.py`, `actions.py`): `TARGET_LABELS = {"explore"}`. `_decide`
+- **Graph/Actions** (`src/mlaya/graph.py`, `src/mlaya/actions/`): `TARGET_LABELS = {"explore"}`. `_decide`
   builds `ground_targets` for such a label and records the choice as `Decision.target` (+
   `target_meta`); `_guard` calls `resolve(label, gs, target)`. `explore` then binds
   `navigate {x, y, z, dig, scaffold}` to the **real** goal position (with `y`, otherwise `navigate`
@@ -913,6 +913,49 @@ exit 2) not through the loop but through `perception_blind`: `view_status` answe
 `[MINECRAFT_DISCONNECTED] ... socketClosed`. The gold helmet was crafted (it116) but never
 worn — `swap_to_gold_helmet` was offered while the reflex held the body.
 
+## Live findings run94–107 (2026-10-25 … 27)
+
+Distilled from the commit log (`ceace70..HEAD`); the detailed per-run subsections above stop at
+run93. Two structural changes land in this window and the layer references elsewhere in this doc
+still name the old shapes: **`actions.py` was split into an `actions/` package** (`constants` /
+`predicates` / `planner`, `f09edd4`), and the **stronghold → end-portal phase shipped**
+(`34079f5`: hunt endermen, craft eyes, locate and activate the end portal; re-supply sized to the
+eyes actually owed, `acd4795`/`7158fe0`; documented in `docs/stronghold.md`, `95f1d44`). System 2
+escalation moved from OpenRouter to the local Strata server (`fd709db`).
+
+Overworld / base fixes (no run number in several, symptom-named): a roaming bot no longer re-mines
+a built gate (frame-complete latch, `c303844`), an idle geared bot off its base walks home instead
+of exploring away (`3970d05`), a lost shield asks for its six planks instead of waiting (`eff72bd`),
+a carried chest only walks the bot home once the pack is filling (`986938a`), a fresh base stops
+sending `stow_surplus` to a phantom cross-run chest cell (`383cf26`), the base lull fetches wood for
+the spare pickaxe's sticks on expedition need (`8db2424`), a refused `dig_out` turns to the next
+side and gives up after a full round (`ed6ae22`), a hunt never asks for more drops than the animals
+within reach and a zombie is only hunted when the pack needs eating now (`bb980df`). run95 closed
+four danger-band holes (`040f589`), `repeated_movement_failure` now escalates to `dig_out`
+(`c9f11ba`), and run97's bed-wood dead zone that stalled on `wait` is closed by `get_wood`
+(`dccf3f6`). run103 rebuilt a gate it lost obsidian from instead of waiting at an unlit portal
+(`0c5366a`).
+
+Nether / fortress series — the arc toward the first powder home:
+- **run104** (`d763e44`, `89c3a71`): 438 explore ticks, 112 on one magma-cube spawner at (94,39,86),
+  no blaze loaded — a fortress landmark underfoot was treated as an explore target and a reached cage
+  written off at 0 m moved; the gold-helmet swap lost 52 of 66 Nether ticks to `explore` and now
+  owns the tick outright.
+- **run105** (`8e7d824`): the reverse write-off — a landmark the walk *reached* was discarded even
+  when the step moved, so the bot ping-ponged 94↔150↔207 instead of re-navigating straight back.
+- **run106** (`38c4e8c`): the closest yet, **12 rods carried out**, but the run ended on `body_held`
+  — two `leave_nether` ticks held 300 s each at the spawner under the hostile reflex. The flee stage
+  now raises the pursuit floor past full health so the reflex evades and frees `navigate`, and a hold
+  that healed the bot, brought in a rod or thinned the pack no longer counts as the end.
+- **run107** (`e902b7e`): the kit was lost to a Nether death (it131), then 365 ticks of
+  `explore`↔`go_home` at the base until the bot nearly starved — the nearest animal (a pig at 113 m)
+  sat past the day-hunt range cap, so `_recovery_steps` found no food target and degenerated into a
+  two-cell loop (hunger 6→0, health 12→1). Below `HUNT_STARVE` in daylight the cap now drops so
+  recovery reaches the far animal.
+
+Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
+powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
+
 ## Next milestones
 
 - **Open after run86:** (1) the October fixes above are unit-tested but not yet seen live;
@@ -929,6 +972,32 @@ worn — `swap_to_gold_helmet` was offered while the reflex held the body.
   errors. A real accuracy gain would need a stronger signal than
   imitation (e.g. verifier reward directly) or more/more diverse runs. Both `in_danger` classes
   are represented with the defer fix; the new upper bound only caps the distant `yes`.
+- **M5 — stronger training signal (planned): relative narrative + offline teacher/judge.**
+  Extends the M3+ gap above: imitating the logged choice cannot fix the choice's own errors, so
+  the head needs a signal stronger than imitation. Two parts, both **offline** — the live loop
+  (`graph.py`) is untouched, so this adds a post-run analysis step, not a change to the running bot.
+  - *Relative narrative.* The narrative Laya reads (`perception.narrative`) still carries absolute
+    `x/y/z` for the bot, the base and the death site, while resources and hostiles are already
+    relative (`logs at 2m`, `zombie at 9m`). Absolute x/z are per-world random and carry no
+    transferable signal — the head would have to *learn to ignore* them, the same reasoning that
+    deleted the `players nearby` line (noise that spends the model's attention). Make bot/base/death
+    relative (distance + coarse direction); keep `y` only as a **depth band** (a true global frame —
+    bedrock ≈ −64, sea level ≈ 63, diamonds < 16), and unify the distance word (1 block = 1 m, no
+    legend sentence — the head learns the scale from consistent data). `as_state` stays absolute
+    (diagnosis, S2 rebuild, `from_state`). **Retrofittable:** the log stores both `narrative` and
+    `state`, so `GameState.from_state` + `narrative` re-render the whole run history before a retrain.
+  - *Offline teacher/judge.* Replay an archived log; for each action tick with ≥ 2 candidates ask
+    System 2 (`brain.escalate_to_system2`) on the **same** `narrative`/`candidates` and log agreement
+    + S2's reason. On disagreement a third model judges the two candidates **blind**, with abstention
+    and a "neither" option. `dataset.build_rows` reads the resulting side file
+    (`runs/history/teacher-runNN.jsonl`) as an extra label source for the contested ticks and the
+    currently-dropped no-progress ticks. The **verifier stays the grounded primary truth** — a tick
+    that demonstrably progressed is not overridden by an (ungrounded) judge opinion; the teacher only
+    fills what the verifier cannot see (opportunity cost, dropped ticks). Scope: `intent` only; the
+    `in_danger` gate's floor/ceiling heuristic in `dataset.py` is left as is. New CLI step `teacher`
+    between `run` and `dataset`. Validated against **real run outcomes** (goal, deaths,
+    ticks-to-milestone), not judge agreement — otherwise the head is tuned to please the big model
+    rather than to survive.
 - **Iron chain (re-)validated live (tier 0 → 3):** `craft_pickaxe` → `mine_stone` →
   `craft_stone_pickaxe` → `mine_iron` → `mine_coal` → `craft_furnace` → `smelt_iron` →
   `craft_iron_pickaxe` has **run through live**, including the new unblock recovery
