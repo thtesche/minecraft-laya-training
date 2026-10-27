@@ -72,7 +72,27 @@ HUNT_CHANGES["combat"].update({
     "retreat": False,
 })
 
-PRESETS: dict[str, dict] = {"base": BASE_CHANGES, "hunt": HUNT_CHANGES}
+# Full health in Minecraft: ten hearts, twenty points. An engagement floor above it can
+# never be met, so the reflex never *pursues* - the mirror of the hunt stage's zero floor.
+MAX_HEALTH = 20
+
+# The flee stage. The exact inverse of the hunt stage: where the hunt drops the pursuit
+# floor to zero so the reflex fights, the flee raises it past full health so the reflex
+# never pursues - it evades to `evade_safe_range` and hands the body back. That is what
+# frees a `navigate` the model issued (the way home, haul done) from being held behind an
+# endless spawner fight. Live, run106: `leave_nether` came back `[BODY_HELD]` twice at a
+# blaze spawner (eleven-twelve blazes at five metres, owner hostile_reflex, 300 s each),
+# and the run stopped on `body_held` with twelve rods it never carried out. `critical_health`
+# is left at the base floor so a cornered bot still defends itself below ten; only the
+# pursuit of a fight it should be walking away from is switched off. Restored to base the
+# moment the crossing ends, like the hunt stage.
+FLEE_CHANGES = copy.deepcopy(BASE_CHANGES)
+FLEE_CHANGES["combat"].update({
+    "engage_min_health": MAX_HEALTH + 1,
+    "retreat": True,
+})
+
+PRESETS: dict[str, dict] = {"base": BASE_CHANGES, "hunt": HUNT_CHANGES, "flee": FLEE_CHANGES}
 
 # The base combat floor; a hunt at or above it would pass unmodified.
 BASE_ENGAGE_MIN_HEALTH = BASE_CHANGES["combat"]["engage_min_health"]
@@ -128,6 +148,12 @@ async def apply_policy(executor, reason: str, preset: str = "base") -> dict:
 async def apply_hunt(executor, reason: str) -> dict:
     """Enter the hunt stage: aggressive combat floor for a deliberately requested hunt."""
     return await apply_policy(executor, reason, preset="hunt")
+
+
+async def apply_flee(executor, reason: str) -> dict:
+    """Enter the flee stage: a pursuit floor past full health, so the reflex evades instead of
+    fighting and frees the body for the way home."""
+    return await apply_policy(executor, reason, preset="flee")
 
 
 async def restore_base(executor, reason: str) -> dict:

@@ -15,7 +15,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
                       _frame_complete_at_base, _frame_short_at_base,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
-                      FORTRESS_MIN_M)
+                      FORTRESS_MIN_M, BLAZE_ROD_ITEM)
 from .brain import Brain, escalate_to_system2
 from .mcp import _find
 from .memory import MemoryLog
@@ -161,6 +161,15 @@ BODY_HELD_STOP = 2
 
 # A death first seen older than this was not this run's to answer (`Agent._reapply_after_death`).
 DEATH_REAPPLY_AGE_S = 90.0
+
+
+def _hostile_count(gs) -> int:
+    """How many hostiles the perception sees - the sum of the per-kind counts, not the kinds.
+
+    `GameState.hostiles` is `(name, count, distance)`, so two packs of blazes read as their total,
+    and a held fight that thins the crowd by one is progress even while new blazes keep the kinds.
+    """
+    return sum(c for _, c, _ in (gs.hostiles or []))
 
 # The summaries the server's survival reflexes write when they act ("hostile: target died; ...",
 # "fire: dry footing; ..."): a defer that sees one of these handed the tick to someone. Eating
@@ -1120,15 +1129,28 @@ class Agent:
         # would otherwise block the engagement ([HUNT_CAPABILITY_BLOCKED]). Restore
         # immediately afterwards: the zero floor would otherwise hold the body and
         # block navigation until the next policy change.
-        staged = is_hostile_hunt(action)
-        if staged:
+        #
+        # `leave_nether` is the opposite case and gets the opposite stage: it is a `navigate`
+        # the model issued to cross home with the haul done, and the base floor keeps the reflex
+        # fighting whatever is in reach - at a blaze spawner that is an endless fight that holds
+        # the body and never lets the walk start (run106: two held `leave_nether` ticks, 300 s
+        # each, ended the run on `body_held` with twelve rods aboard). The flee stage raises the
+        # pursuit floor past full health so the reflex evades instead of fighting and the walk
+        # home runs. Restored to base the same way, the moment the crossing settles.
+        hunting = is_hostile_hunt(action)
+        fleeing = action.label == "leave_nether"
+        if hunting:
             await survival.apply_hunt(self.mcp, f"open the hunt stage for {action.label}")
             self.log.append({"stage": "policy", "reason": "hunt_stage_on",
+                             "label": action.label})
+        elif fleeing:
+            await survival.apply_flee(self.mcp, f"open the flee stage for {action.label}")
+            self.log.append({"stage": "policy", "reason": "flee_stage_on",
                              "label": action.label})
         try:
             res = await self.mcp.call(action.tool, action.args, action.rationale)
         finally:
-            if staged:
+            if hunting or fleeing:
                 await survival.restore_base(
                     self.mcp, f"restore the base stage after {action.label}")
         return {"result": res}
@@ -1252,13 +1274,27 @@ class Agent:
         return {"done": goal or limit or held,
                 "stop": "goal" if goal else ("body_held" if held else ("limit" if limit else ""))}
 
-    def _note_held(self, res) -> None:
+    def _note_held(self, res, before, after) -> None:
         """Count the foreground calls in a row that ran out of wait budget with the body held.
 
         A defer between them does not reset the count - it calls nothing and so learns nothing
         about the body - only an action whose result came back does.
+
+        But a held tick that moved the fight forward is not run89's dead standoff (three hours
+        against one zombie 1.6 m off, nothing changing): the reflex is winning the ground it holds.
+        A hold that healed the bot, brought in a blaze rod, or thinned the pack is progress, so it
+        breaks the streak rather than counting toward the stop - run106's holds ran HP 7->13->20
+        and rods 10->12 while a blaze spawner was being cleared, yet `BODY_HELD_STOP` ended the run
+        as though the body were simply stuck. Only a hold that moved none of the three - the true
+        deadlock - is counted.
         """
-        self._held_ticks = self._held_ticks + 1 if getattr(res, "status", None) == "held" else 0
+        if getattr(res, "status", None) != "held":
+            self._held_ticks = 0
+            return
+        healed = (after.health or 0) > (before.health or 0)
+        rods = after.inventory.get(BLAZE_ROD_ITEM, 0) > before.inventory.get(BLAZE_ROD_ITEM, 0)
+        thinned = _hostile_count(after) < _hostile_count(before)
+        self._held_ticks = 0 if (healed or rods or thinned) else self._held_ticks + 1
 
     def _note_block(self, label: str, ok: bool, text: str | None) -> None:
         """Update the surroundings-block bookkeeping from one action's result.
@@ -2106,7 +2142,6 @@ class Agent:
         self._note_crossing(action)
         self._note_stow_blocked(action, _ok, _text)
         self._note_result(action, _ok)
-        self._note_held(res)
         await self._hold_wait(action, _ok)
         after = await self._observe()
         # After the observation, not before: the `no path found` refusal names the cell the walk
@@ -2119,6 +2154,7 @@ class Agent:
         self._note_surface(action, _ok, _text, after.pos)
         await self._reapply_after_death(after)
         delta = vmod.diff(before, after)
+        self._note_held(res, before, after)
         self._note_hurt(before, after)
         self._note_build(action, _ok, delta)
         self._note_stow(action, _ok, delta)

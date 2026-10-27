@@ -4178,23 +4178,108 @@ class BodyHeldStopTest(unittest.TestCase):
         agent._held_ticks = 0
         return agent
 
-    def test_two_held_calls_in_a_row_stop_the_run(self) -> None:
+    def test_two_dead_held_calls_in_a_row_stop_the_run(self) -> None:
         agent = self._agent()
         held = SimpleNamespace(status="held")
+        # run89's standoff: full health, no drop, the same lone zombie off the feet - a hold that
+        # moves nothing on either side, which is the only kind that counts toward the stop.
+        flat = dict(health=20.0, inventory={}, hostiles=[("zombie", 1, 1.6)])
         self.assertEqual(BODY_HELD_STOP, 2)
         for _ in range(BODY_HELD_STOP - 1):
-            agent._note_held(held)
+            agent._note_held(held, gs(**flat), gs(**flat))
             self.assertFalse(agent._stop_state(gs(), 10)["done"])
-        agent._note_held(held)
+        agent._note_held(held, gs(**flat), gs(**flat))
         self.assertEqual(agent._stop_state(gs(), 10), {"done": True, "stop": "body_held"})
 
     def test_a_result_that_came_back_starts_the_count_over(self) -> None:
         agent = self._agent()
-        agent._note_held(SimpleNamespace(status="held"))
-        agent._note_held(SimpleNamespace(status="held"))
-        agent._note_held(SimpleNamespace(status="succeeded"))
-        agent._note_held(SimpleNamespace(status="held"))
+        flat = dict(health=20.0, inventory={}, hostiles=[("zombie", 1, 1.6)])
+        agent._note_held(SimpleNamespace(status="held"), gs(**flat), gs(**flat))
+        agent._note_held(SimpleNamespace(status="held"), gs(**flat), gs(**flat))
+        agent._note_held(SimpleNamespace(status="succeeded"), gs(**flat), gs(**flat))
+        agent._note_held(SimpleNamespace(status="held"), gs(**flat), gs(**flat))
         self.assertFalse(agent._stop_state(gs(), 10)["done"])
+
+    def test_a_winning_hold_does_not_count_toward_the_stop(self) -> None:
+        # Live, run106: the held ticks at the blaze spawner ran HP 7->13->20 while the fortress
+        # was being cleared, yet two of them ended the run on `body_held`. A hold that heals the
+        # bot is the reflex winning the ground it holds, not run89's dead standoff, so it breaks
+        # the streak rather than counting - two healing holds in a row never stop the run.
+        agent = self._agent()
+        held = SimpleNamespace(status="held")
+        crowd = [("blaze", 11, 5.0)]
+        agent._note_held(held, gs(health=7.0, inventory={}, hostiles=crowd),
+                               gs(health=13.0, inventory={}, hostiles=crowd))
+        self.assertEqual(agent._held_ticks, 0)
+        agent._note_held(held, gs(health=13.0, inventory={}, hostiles=crowd),
+                               gs(health=20.0, inventory={}, hostiles=crowd))
+        self.assertFalse(agent._stop_state(gs(), 10)["done"])
+
+    def test_a_rod_or_a_thinned_pack_is_progress_too(self) -> None:
+        agent = self._agent()
+        held = SimpleNamespace(status="held")
+        crowd = [("blaze", 11, 5.0)]
+        # A rod came in, health flat at full: the haul is still growing.
+        agent._note_held(held, gs(health=20.0, inventory={"blaze_rod": 10}, hostiles=crowd),
+                               gs(health=20.0, inventory={"blaze_rod": 11}, hostiles=crowd))
+        self.assertEqual(agent._held_ticks, 0)
+        # The pack thinned by two, no new rod yet: a kill landed.
+        agent._note_held(held, gs(health=20.0, inventory={"blaze_rod": 11}, hostiles=crowd),
+                               gs(health=20.0, inventory={"blaze_rod": 11}, hostiles=[("blaze", 9, 5.0)]))
+        self.assertEqual(agent._held_ticks, 0)
+
+
+class FleeStageTest(unittest.IsolatedAsyncioTestCase):
+    """`leave_nether` crosses home under the flee stage, so the reflex stops fighting whatever is
+    in reach and the walk is not held behind an endless spawner fight.
+
+    Live, run106: two `leave_nether` ticks came back `[BODY_HELD]` 300 s each at a blaze spawner
+    (owner hostile_reflex), and the run ended on `body_held` with twelve rods it never carried out.
+    """
+
+    class _Action:
+        def __init__(self, label: str, tool: str, args: dict | None = None) -> None:
+            self.label = label
+            self.tool = tool
+            self.args = args or {}
+            self.rationale = "test"
+
+    def _agent(self, order: list) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.log = []
+
+        class _MCP:
+            async def call(self, tool, args, rationale):
+                order.append(("call", tool))
+                return SimpleNamespace(ok=True, text="", status="succeeded", action_id=None)
+
+        agent.mcp = _MCP()
+        from mlaya import graph
+        for name in ("apply_flee", "apply_hunt", "restore_base"):
+            tag = name.replace("apply_", "").replace("restore_base", "restore")
+
+            async def staged(executor, reason, _tag=tag):
+                order.append((_tag, reason))
+                return {"ok": True}
+
+            original = getattr(graph.survival, name)
+            setattr(graph.survival, name, staged)
+            self.addCleanup(setattr, graph.survival, name, original)
+        return agent
+
+    async def test_leave_nether_runs_under_the_flee_stage(self) -> None:
+        order: list = []
+        agent = self._agent(order)
+        await agent._execute({"action": self._Action("leave_nether", "navigate", {"x": 1})})
+        self.assertEqual([k for k, _ in order], ["flee", "call", "restore"])
+        self.assertEqual(agent.log[0]["reason"], "flee_stage_on")
+
+    async def test_an_ordinary_nether_walk_is_not_staged(self) -> None:
+        order: list = []
+        agent = self._agent(order)
+        await agent._execute({"action": self._Action("explore", "navigate", {"heading": 90.0})})
+        self.assertEqual([k for k, _ in order], ["call"])
+        self.assertEqual(agent.log, [])
 
 
 class DeathPolicyTest(unittest.IsolatedAsyncioTestCase):
