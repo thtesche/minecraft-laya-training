@@ -3954,6 +3954,24 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertEqual(a.tool, "equip")
         self.assertEqual(a.args["items"], [{"item_name": "golden_helmet", "destination": "head"}])
 
+    def test_the_helmet_swap_is_the_only_choice_until_it_is_on(self) -> None:
+        # Live, run104: the swap sat on the list beside `explore` and the model took `explore` on
+        # 52 of the 66 Nether ticks it was offered, standing the bot piglin-exposed. A worn gold
+        # piece is a hard precondition, so the swap owns the tick outright - nothing else is
+        # offered while the diamond helmet is still on a gold piece's slot.
+        g = self._down(golden_helmet=1)
+        self.assertEqual(candidates(g), ["swap_to_gold_helmet"])
+        # The exploration/search steps that shared the list before are gone until the swap runs.
+        g.resources = {"netherrack": [BlockHit("netherrack", "netherrack", 20, 65, 0, 9.0)]}
+        self.assertEqual(candidates(g), ["swap_to_gold_helmet"])
+
+    def test_a_meal_the_body_needs_still_outranks_the_swap(self) -> None:
+        # The helmet is a hard gate, but survival is a harder one: a bot that must eat eats first,
+        # which the top of `candidates` already returns before the expedition branch is reached.
+        g = self._down(golden_helmet=1, cooked_mutton=4)
+        g.food = 2.0
+        self.assertEqual(candidates(g), ["eat_food"])
+
     def test_the_helmet_swap_waits_for_the_gold_piece(self) -> None:
         # Piglin neutrality needs a *worn* gold piece; without one there is nothing to swap to.
         g = self._down()

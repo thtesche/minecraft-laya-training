@@ -440,10 +440,18 @@ def candidates(gs: GameState) -> list[str]:
     # closes the expedition again and clears the exhaustion latch, so the eye-crafting resumes.
     if nether_expedition_open(gs):
         if _in_nether(gs):
-            # The helmet first: piglins attack on sight without a worn gold piece, and the whole
-            # trip is fought around them.
+            # The helmet first, and *only* the helmet: piglins attack on sight without a worn gold
+            # piece, and the whole trip is fought around them, so until it is on there is no safe
+            # second choice to leave on the list. Offered alongside `explore` the model took the
+            # explore 52 of the 66 Nether ticks it was on the list (run104), and training cannot
+            # fix that: a non-progressing `explore` carries no known-good alternative, so the
+            # dataset drops it and never learns the swap was the move (`dataset.py`). A worn gold
+            # piece is a hard precondition, not a preference, so it is a filter and not a choice -
+            # the swap owns the tick outright, like the rescues at the top of this function.
+            # (Urgent survival - a meal the body needs, a drowning, a shut-in - has already
+            # returned above, so nothing it would preempt is lost here.)
             if _gold_helmet_needed(gs):
-                out.append("swap_to_gold_helmet")
+                return ["swap_to_gold_helmet"]
             # A pack full of droppable junk (netherrack) reads as "out of room" and would send the
             # bot home with nothing. The junk frees itself with `drop_junk`; the room does not. So
             # while the pack is full of something that can be dropped, the bot sheds it and keeps
