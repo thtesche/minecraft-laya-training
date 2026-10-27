@@ -14,7 +14,8 @@ from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
                       _frame_complete_at_base, _frame_short_at_base,
-                      nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM)
+                      nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
+                      FORTRESS_MIN_M)
 from .brain import Brain, escalate_to_system2
 from .mcp import _find
 from .memory import MemoryLog
@@ -868,21 +869,27 @@ class Agent:
             # world, and the fortress the last one stood in is not this one's target.
             self._nether_landmarks = []
 
-    def _note_landmark(self, action, delta: dict) -> None:
-        """Write off a fortress landmark the walk to it never took a step towards.
+    def _note_landmark(self, action, delta: dict, after) -> None:
+        """Write off a fortress landmark the search reached and found no blaze at.
 
-        `explore` in the Nether navigates to the nearest spawner or brick. When the body is already
-        on that cell, `navigate` answers `ok` with 0 metres moved and the same cell is offered again
-        the next tick: live, run104 it155-266 - 112 ticks on one spawner at (94,39,86), the bot
-        standing on the cage, magma cubes under it, no blaze in reach. A landmark that produced no
-        step has been searched, so the march moves on rather than re-walking it.
+        `explore` in the Nether navigates to the nearest spawner or brick. A real blaze fortress
+        answers with a blaze in reach, so `hunt_blaze` - not `explore` - takes the tick; a lone
+        magma-cube cage or a bastion scrap does not, yet it stays the nearest `_fortress_hit`, so
+        the search navigates straight back to it the moment the frontier march steps off it.
+        Writing it off only on a 0-metre step was not enough: once the underfoot rule marched the
+        body away, every return walk *did* move (live, run105: the cage at (94,39,86) re-acquired
+        from 56-113 m out, the bot ping-ponging 94<->150<->207 every other tick). So a landmark the
+        body has *reached* - arrived within `FORTRESS_MIN_M`, whether it walked there or was already
+        standing on it (run104 it155-266, 112 ticks on that same cage) - is searched and written
+        off, and `_fortress_hit` skips it for the rest of the trip.
         """
         if action.label != "explore" or action.tool != "navigate":
             return
         cell = (action.args.get("x"), action.args.get("y"), action.args.get("z"))
         if None in cell or cell in self._nether_landmarks:
             return
-        if (delta.get("pos_delta") or 0.0) < 1.0:
+        reached = after.pos is not None and math.dist(after.pos, cell) < FORTRESS_MIN_M
+        if reached or (delta.get("pos_delta") or 0.0) < 1.0:
             self._nether_landmarks.append(cell)
 
     async def _adopt_portal_base(self, gs) -> None:
@@ -2118,7 +2125,7 @@ class Agent:
         self._note_take_powder(action, _ok, _text, delta)
         self._note_locate(action, _ok)
         self._note_portal(action, _ok)
-        self._note_landmark(action, delta)
+        self._note_landmark(action, delta, after)
         progressed = vmod.progressed(action.label, delta, _ok)
         self._track_stuck(action.label, _ok, _text, progressed)
         # After the stuck guard: it owns the countdown and the offer window, and a wandering

@@ -558,23 +558,33 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent = self._agent()
         agent._note_landmark(self._Action("explore", "navigate",
                                          {"x": 94, "y": 39, "z": 86, "dig": True, "scaffold": True}),
-                            {"pos_delta": 0.0})
+                            {"pos_delta": 0.0}, GameState(pos=(94.4, 40.0, 86.4)))
         self.assertEqual(agent._nether_landmarks, [(94, 39, 86)])
 
-    def test_a_walk_that_moved_keeps_the_landmark_open(self) -> None:
+    def test_a_walk_that_reached_the_cage_writes_it_off(self) -> None:
+        # Live, run105: the cage at (94,39,86) was re-acquired from 56-113 m out and the walk back
+        # *did* move, so the 0-metre rule never fired - the bot ping-ponged 94<->150<->207. A walk
+        # that ends standing on the landmark has reached it, however far it came.
+        agent = self._agent()
+        agent._note_landmark(self._Action("explore", "navigate", {"x": 94, "y": 39, "z": 86}),
+                            {"pos_delta": 56.5}, GameState(pos=(94.4, 40.0, 86.4)))
+        self.assertEqual(agent._nether_landmarks, [(94, 39, 86)])
+
+    def test_a_walk_still_short_of_the_landmark_keeps_it_open(self) -> None:
         agent = self._agent()
         agent._note_landmark(self._Action("explore", "navigate", {"x": 40, "y": 66, "z": 4}),
-                            {"pos_delta": 22.4})
+                            {"pos_delta": 22.4}, GameState(pos=(20.0, 66.0, 4.0)))
         self.assertEqual(agent._nether_landmarks, [])
 
     def test_other_labels_and_tools_are_left_alone(self) -> None:
         agent = self._agent()
+        on_cell = GameState(pos=(12.4, 65.0, -3.6))
         agent._note_landmark(self._Action("leave_nether", "navigate", {"x": 12, "y": 65, "z": -4}),
-                            {"pos_delta": 0.0})
+                            {"pos_delta": 0.0}, on_cell)
         agent._note_landmark(self._Action("explore", "explore_frontier", {"heading": 90.0}),
-                            {"pos_delta": 0.0})
+                            {"pos_delta": 0.0}, on_cell)
         agent._note_landmark(self._Action("explore", "navigate", {"heading": 90.0}),
-                            {"pos_delta": 0.0})
+                            {"pos_delta": 0.0}, on_cell)
         self.assertEqual(agent._nether_landmarks, [])
 
     def test_the_note_reaches_the_state(self) -> None:
