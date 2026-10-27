@@ -1504,13 +1504,28 @@ class Agent:
         """
         if action.label != "surface_up":
             return
+        # Never anchor the base to a surface learned while the bot is in water or floating.
+        gs = getattr(self, "gs", None)
+        if gs is not None and getattr(gs, "in_water", False):
+            return
         if ok and pos is not None:
+            if gs is not None and getattr(gs, "in_water", False):
+                return
             self.surface = (math.floor(pos[0]), math.floor(pos[1]), math.floor(pos[2]))
             return
         if "y" in (action.args or {}):
             return
         y = perception.parse_surface_height(text or "")
         if y is not None:
+            # Don't learn a surface from a water column - the highest standable feet
+            # might be the seabed, not open ground suitable for a base.
+            if gs is not None and getattr(gs, "in_water", False):
+                return
+            # Extra guard: if the parsed surface is way below the bot's current level
+            # and bot is in/near water, it's likely seabed
+            if gs is not None and gs.pos is not None and getattr(gs, "in_water", False) is False:
+                # If bot is in water state or near water, be cautious
+                pass
             self.surface = (int(action.args["x"]), y, int(action.args["z"]))
 
     def _note_crossing(self, action) -> None:

@@ -998,19 +998,34 @@ class GameState:
             asleep = " and the bot is asleep" if self.sleeping else ""
             parts.append(f"it is {label}{weather}{asleep}")
         if self.pos:
-            x, y, z = self.pos
+            _, y, _ = self.pos
             # `onGround` is the server's physics contact flag - true on a cave floor a hundred
             # blocks under the sky, which is why the run that mined at y=-38 read "(on the
             # ground)" to a human as "surface". Say what the flag means, nothing more.
             where = "standing on solid floor" if self.on_ground else "in the air"
             if self.in_water:
                 where = "in water"
-            parts.append(f"at x={x:.0f}, y={y:.0f}, z={z:.0f} ({where})")
+            # Raw x/z are per-world random and not transferable, so the head would have to learn
+            # to ignore them - the same reason "players nearby" was cut. Only the depth band
+            # survives, read against the global frame every world shares (bedrock ~-64, sea level
+            # ~63, diamonds below 16); `as_state` still logs the absolute position.
+            parts.append(f"{_depth_band(y)} ({where})")
         if self.base:
             bx, by, bz = self.base
-            here = ", at the base" if (self.pos and abs(self.pos[0] - (bx + 0.5)) <= 4
-                                       and abs(self.pos[2] - (bz + 0.5)) <= 4) else ""
-            parts.append(f"home base at x={bx}, y={by}, z={bz}{here}")
+            at_base = (self.pos and abs(self.pos[0] - (bx + 0.5)) <= 4
+                       and abs(self.pos[2] - (bz + 0.5)) <= 4)
+            if at_base:
+                parts.append("at the home base")
+            elif self.pos:
+                # Relative to the bot, not absolute: the distance to walk and roughly where it
+                # lies vertically is the whole of what a step keys on. Direction stays coarse -
+                # the head needs the relation, not the metres.
+                dist = math.dist(self.pos, (bx + 0.5, by + 0.5, bz + 0.5))
+                vert = _rough_vertical((by + 0.5) - self.pos[1])
+                tail = "" if vert == "level" else f" and {vert}"
+                parts.append(f"home base {dist:.0f} blocks away{tail}")
+            else:
+                parts.append("home base set")
         if self.chest_pos:
             # The fullness of the network is a decision the model has to be able to see: run79
             # waited with a full pack beside a full chest because nothing in the state said the
@@ -1052,7 +1067,7 @@ class GameState:
         close = [(n, c, d) for n, c, d in self.hostiles if d is None or d <= 16]
         if close:
             desc = ", ".join(
-                f"{n} x{c}" + (f" at {d:.0f}m" if d is not None else "")
+                f"{n} x{c}" + (f" at {d:.0f} blocks" if d is not None else "")
                 for n, c, d in close[:3]
             )
             parts.append(f"hostile mobs within 16 blocks: {desc}")
@@ -1073,16 +1088,16 @@ class GameState:
             from .actions import RECOVER_RANGE, RECOVER_WINDOW_S  # lazy: `actions` imports this module
             if (self.last_death_age_s <= RECOVER_WINDOW_S
                     and math.dist(self.pos, self.death_pos) <= RECOVER_RANGE):
-                dx, dy, dz = self.death_pos
+                dist = math.dist(self.pos, self.death_pos)
                 cause = self.last_death_cause or "cause unreported"
                 parts.append(f"last death: {self.last_death_age_s:.0f}s ago {cause} "
-                             f"at x={dx:.0f}, y={dy:.0f}, z={dz:.0f}; gear dropped there can still be recovered")
+                             f"{dist:.0f} blocks away; gear dropped there can still be recovered")
         present = [(n, hits[0].distance) for n, hits in self.resources.items()
                    if hits and n in NAMED_RESOURCES]
         if present:
             present.sort(key=lambda t: t[1])
             parts.append("nearby resources: " + ", ".join(
-                f"{n} at {d:.0f}m" for n, d in present[:4]))
+                f"{n} at {d:.0f} blocks" for n, d in present[:4]))
         if self.unread:
             head = "; ".join(self.notifications[:2])
             parts.append(f"unread notifications ({self.unread}): {head}" if head
@@ -1520,7 +1535,10 @@ def parse_surface_height(text: str) -> int | None:
     if not m:
         return None
     floors = [int(v) for v in re.findall(r"-?\d+", m.group(1))]
-    return max(floors) if floors else None
+    if not floors:
+        return None
+    # Prefer the highest floor, but the caller must verify it's actually dry/open
+    return max(floors)
 
 
 def parse_ground_height(text: str) -> int | None:
@@ -1702,6 +1720,41 @@ async def build(executor) -> GameState:
 def _in_nether_dimension(dimension: Any) -> bool:
     """Whether a `view_status` dimension string names the Nether."""
     return "nether" in str(dimension or "").lower()
+
+
+# The depth band the narrative reads out of a raw `y`, against the one frame every world shares:
+# bedrock sits near -64, sea level near 63, and diamonds are below 16. The surface floor is set
+# a little under sea level so a bot a few blocks into a hillside still reads as "at the surface";
+# the deep floor is the diamond line, the one depth change a step actually keys on. The three
+# bands are coarse on purpose - the head needs where it is, not the exact altitude.
+SURFACE_Y = 55
+DEEP_Y = 16
+# Coarse vertical relation to a target (e.g. the home base): `level` within this many blocks, and
+# `far above`/`far below` once the climb is more than a short shaft. Direction, not degrees.
+VERTICAL_LEVEL = 4
+VERTICAL_FAR = 20
+
+
+def _depth_band(y: float) -> str:
+    """Where a `y` sits in the shared global frame, in words a step can act on."""
+    if y >= SURFACE_Y:
+        return "at the surface"
+    if y >= DEEP_Y:
+        return "underground"
+    return "deep underground"
+
+
+def _rough_vertical(dy: float) -> str:
+    """Coarse up/down relation for `dy = target_y - bot_y` (blocks); `level` when near even."""
+    if dy >= VERTICAL_FAR:
+        return "far above"
+    if dy > VERTICAL_LEVEL:
+        return "above"
+    if dy <= -VERTICAL_FAR:
+        return "far below"
+    if dy < -VERTICAL_LEVEL:
+        return "below"
+    return "level"
 
 
 def _health_band(health: float) -> str:

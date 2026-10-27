@@ -526,8 +526,8 @@ class NarrativeSaysWhatTheRulesDoTest(unittest.TestCase):
         self.assertNotIn("Last death", gs.narrative())
 
     def test_the_open_window_names_the_site_it_asks_to_walk_back_to(self) -> None:
-        # Inside the window the sentence is useful - and only now, with the cell, which the old
-        # wording never gave and the recovery walk has to have.
+        # Inside the window the sentence is useful - and the distance to walk back, relative to
+        # the bot, is what the recovery walk needs; the absolute cell is per-world noise.
         gs = GameState(health=20.0, food=20.0)
         gs.pos = (0.0, 64.0, 0.0)
         gs.death_pos = (-9.0, 72.0, 102.0)
@@ -536,7 +536,8 @@ class NarrativeSaysWhatTheRulesDoTest(unittest.TestCase):
         text = gs.narrative()
         # The clause is capitalised by the narrative's own rule, like every other.
         self.assertIn("Last death: 120s ago MineAI was slain by Zombie", text)
-        self.assertIn("z=102", text)
+        self.assertIn("103 blocks away", text)
+        self.assertNotIn("z=102", text)
         self.assertIn("can still be recovered", text)
 
     def test_a_death_too_far_to_walk_is_not_offered_as_information(self) -> None:
@@ -547,6 +548,103 @@ class NarrativeSaysWhatTheRulesDoTest(unittest.TestCase):
         gs.last_death_cause = "MineAI was slain by Zombie"
         gs.last_death_age_s = 60.0
         self.assertNotIn("Last death", gs.narrative())
+
+
+class RelativeNarrativeTest(unittest.TestCase):
+    """Position, base and death read relative to the bot, never as absolute x/z.
+
+    Raw x/z are per-world random and carry no transferable signal, so the head would only have
+    to learn to ignore them - exactly why "players nearby" was cut. `y` survives as a depth band
+    against the frame every world shares (bedrock ~-64, sea level ~63, diamonds below 16), and the
+    base and the death site are told as a distance to walk plus a coarse up/down relation.
+    `as_state()` keeps the absolute coordinates for the log and the System 2 rebuild.
+    """
+
+    def test_no_absolute_x_or_z_survives_in_the_narrative(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (123.0, 70.0, -456.0)
+        gs.base = (200, 12, -400)
+        gs.death_pos = (130.0, 68.0, -450.0)
+        gs.last_death_cause = "MineAI was slain by Zombie"
+        gs.last_death_age_s = 100.0
+        text = gs.narrative()
+        self.assertNotIn("x=", text)
+        self.assertNotIn("z=", text)
+        # The raw figures must not leak in some other shape either.
+        self.assertNotIn("123", text)
+        self.assertNotIn("456", text)
+
+    def test_the_depth_band_reads_from_y_alone(self) -> None:
+        surface = GameState(health=20.0, food=20.0)
+        surface.pos = (0.0, 63.0, 0.0)
+        surface.on_ground = True
+        self.assertIn("At the surface (standing on solid floor)", surface.narrative())
+
+        mid = GameState(health=20.0, food=20.0)
+        mid.pos = (0.0, 30.0, 0.0)
+        mid.on_ground = True
+        self.assertIn("Underground (standing on solid floor)", mid.narrative())
+
+        deep = GameState(health=20.0, food=20.0)
+        deep.pos = (0.0, -38.0, 0.0)
+        deep.in_water = True
+        self.assertIn("Deep underground (in water)", deep.narrative())
+
+    def test_the_base_is_a_distance_and_a_coarse_direction(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.0, 70.0, 0.0)
+        # Far away horizontally and deep below the bot -> a distance plus "far below".
+        gs.base = (30, 20, 40)
+        text = gs.narrative()
+        self.assertRegex(text, r"Home base \d+ blocks away and far below")
+        self.assertNotIn("home base at", text.lower())
+
+    def test_a_base_within_reach_still_reads_as_at_the_base(self) -> None:
+        # The proximity clause (within 4 blocks of the base in x/z) is unchanged.
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.3, 71.0, 1.4)
+        gs.base = (0, 71, 1)
+        text = gs.narrative()
+        self.assertIn("At the home base", text)
+        self.assertNotIn("blocks away", text)
+
+    def test_the_base_level_with_the_bot_drops_the_direction(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.5, 70.0, 0.5)
+        gs.base = (40, 70, 0)  # roughly level with the bot, well out in x/z
+        text = gs.narrative()
+        self.assertRegex(text, r"Home base \d+ blocks away\.")
+        self.assertNotIn("and above", text)
+        self.assertNotIn("and below", text)
+
+    def test_the_death_site_is_a_distance_not_a_cell(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.death_pos = (3.0, 68.0, 0.0)  # 5 blocks away (3,4,0)
+        gs.last_death_cause = "MineAI was slain by Zombie"
+        gs.last_death_age_s = 60.0
+        text = gs.narrative()
+        self.assertIn("Last death: 60s ago MineAI was slain by Zombie 5 blocks away", text)
+        self.assertIn("can still be recovered", text)
+
+
+class RelativeRenderHelpersTest(unittest.TestCase):
+    """The depth band and the vertical relation are the two coarse scales the narrative reads."""
+
+    def test_depth_band_boundaries(self) -> None:
+        from mlaya.perception import DEEP_Y, SURFACE_Y, _depth_band
+        self.assertEqual(_depth_band(SURFACE_Y), "at the surface")
+        self.assertEqual(_depth_band(SURFACE_Y - 1), "underground")
+        self.assertEqual(_depth_band(DEEP_Y), "underground")
+        self.assertEqual(_depth_band(DEEP_Y - 1), "deep underground")
+
+    def test_vertical_relation_is_coarse(self) -> None:
+        from mlaya.perception import _rough_vertical
+        self.assertEqual(_rough_vertical(0.0), "level")
+        self.assertEqual(_rough_vertical(5.0), "above")
+        self.assertEqual(_rough_vertical(-5.0), "below")
+        self.assertEqual(_rough_vertical(25.0), "far above")
+        self.assertEqual(_rough_vertical(-25.0), "far below")
 
 
 class PhasePersonaTest(unittest.TestCase):
@@ -955,7 +1053,7 @@ class HostileParseTest(unittest.TestCase):
         gs = parse_status(st)
         self.assertEqual(gs.hostiles, [("zombie", 1, 13.0)])
         self.assertEqual(gs.nearest_hostile, 13.0)
-        self.assertIn("zombie x1 at 13m", gs.narrative())
+        self.assertIn("zombie x1 at 13 blocks", gs.narrative())
 
     def test_nested_hostile_distance_is_read_from_the_mob_list(self) -> None:
         st = _status({"nearby": {"mobs": [

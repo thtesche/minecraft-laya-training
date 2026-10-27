@@ -1347,6 +1347,9 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "surface_up":
         if gs.base is not None or not _gear_ready(gs) or gs.pos is None or _at_surface(gs):
             return None
+        # Don't try to build base from water - need to get to dry land first
+        if gs.in_water:
+            return None
         mx, mz = math.floor(gs.pos[0]), math.floor(gs.pos[2])
         # A `navigate` without a height asks the server for a column's surface. It walks the bot
         # up to open sky when the answer is unambiguous, and otherwise stops with
@@ -1358,6 +1361,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return Action(label, "navigate", {"x": mx, "z": mz},
                           "ask the server for this column's surface height")
         sx, sy, sz = gs.surface
+        # Don't climb to a surface that's far below current level if we're near water
+        # (could be seabed, not suitable for base)
+        if gs.pos is not None and sy < gs.pos[1] - 10:
+            # If surface is much lower, it's likely not the open air surface we want
+            # Clear it and re-probe
+            gs.surface = None
+            return Action(label, "navigate", {"x": mx, "z": mz},
+                          "ask the server for this column's surface height (re-probe, likely seabed)")
         return Action(label, "navigate",
                       {"x": sx, "y": sy, "z": sz, "dig": True, "scaffold": True},
                       "climb back onto open surface ground before the base is anchored")

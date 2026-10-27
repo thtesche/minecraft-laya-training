@@ -2148,8 +2148,14 @@ def _at_surface(gs: GameState) -> bool:
     """
     if gs.surface is None or gs.pos is None:
         return False
+    # Don't consider it "at surface" if in water - could be seabed
+    if getattr(gs, "in_water", False):
+        return False
     sx, sy, sz = gs.surface
     if (math.floor(gs.pos[0]), math.floor(gs.pos[2])) != (sx, sz):
+        return False
+    # If surface is much below us and we're near water, it's likely seabed
+    if sy < gs.pos[1] - 15:
         return False
     return abs(gs.pos[1] - sy) <= BASE_SURFACE_TOL
 
