@@ -570,6 +570,24 @@ class RecoveryTest(unittest.TestCase):
         g.inventory["cooked_beef"] = 3
         self.assertEqual(candidates(g), ["eat_food"])
 
+    def test_starving_reaches_food_past_the_day_cap(self) -> None:
+        # run107: the kit lost to a Nether death, then 365 ticks ping-ponging `explore` <->
+        # `go_home` at the base while the nearest animal (a pig at 113 m) sat past the 64 m day
+        # cap - `_recovery_steps` found no food target and looped the body between two cells until
+        # it starved (hunger 6 -> 0, health 12 -> 1). Below the starvation floor the cap gives way
+        # so the one step that heals (a walk to the far animal) is taken instead of the loop.
+        g = self._hurt(food=6.0, health=12.0, base=(-36, -14, 122),
+                       mobs=[("pig", "animal", 2, 113.0), ("chicken", "animal", 7, 87.0)])
+        self.assertEqual(candidates(g), ["hunt_food"])
+        self.assertEqual(resolve("hunt_food", g).args["mob_name"], "pig")
+
+    def test_merely_hungry_keeps_the_day_cap(self) -> None:
+        # Above the starvation floor the thrift still holds: a pig 113 m off is not worth the walk,
+        # so the bot retreats home rather than roam (the old far-roam stayed reverted).
+        g = self._hurt(food=12.0, health=12.0, base=(-36, -14, 122),
+                       mobs=[("pig", "animal", 2, 113.0)])
+        self.assertEqual(candidates(g), ["go_home"])
+
 
 class NetherLullWaitTest(unittest.TestCase):
     """The lull after the portal is lit and the bed laid: nothing productive is left, so the bot

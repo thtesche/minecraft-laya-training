@@ -350,6 +350,18 @@ def _food_target(gs: GameState) -> tuple[str, str] | None:
     mob = _nearest_food_mob(gs, _food_hunt_range(gs))
     if mob is not None:
         return mob, FOOD_MOBS[mob]
+    # Starving in daylight with nothing inside the ordinary reach: drop the range cap and walk to
+    # the nearest loaded food animal. The cap is a thrift rule, not a safety one - `collect_mob_drop`
+    # retargets to any loaded animal regardless of distance - and below the starvation floor a far
+    # walk to food is the only way off a starve. run107 lost its kit to a Nether death, then burned
+    # 365 ticks ping-ponging `explore` <-> `go_home` at its base while the nearest animal (a pig at
+    # 113 m) sat past the 64 m day cap: `_cannot_heal` routed every tick to `_recovery_steps`, which
+    # found no food target and degenerated into the two-cell loop; hunger fell 6 -> 0, health to 1,
+    # and the run starved. Held to daylight so it never reopens the old far night roam.
+    if gs.food is not None and gs.food <= HUNT_STARVE and gs.phase != "night":
+        mob = _nearest_food_mob(gs)
+        if mob is not None:
+            return mob, FOOD_MOBS[mob]
     if _safe_zombie_hunt(gs) and _eating_now(gs):
         return "zombie", "rotten_flesh"
     return None
