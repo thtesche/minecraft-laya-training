@@ -108,5 +108,46 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(a1, a2)
 
 
+class FlipTest(unittest.TestCase):
+    """The flip test: the same disagreement judged with the blind pair's slots swapped."""
+
+    def _judged(self, judge_fn):
+        records = [_act(1, ["mine_stone", "get_wood"], "get_wood")]
+        judgments = t.replay(records, s2_fn=lambda s, c, h: ("mine_stone", ""), judge_fn=judge_fn)
+        return records, judgments
+
+    def test_an_order_blind_judge_does_not_flip(self):
+        # A judge that prefers the action, not the letter, gives the same label both ways.
+        judge = lambda s, a, b, c: (("A" if a == "mine_stone" else "B"), None, "")
+        records, judgments = self._judged(judge)
+        flips = t.flip_verdicts(records, judgments, judge)
+        self.assertEqual(len(flips) == 1, True)
+        self.assertFalse(flips[0]["flip"])
+        self.assertEqual(flips[0]["judge_label"], "mine_stone")
+        self.assertEqual(flips[0]["flip_label"], "mine_stone")
+
+    def test_a_slot_bias_flips(self):
+        judge = lambda s, a, b, c: ("A", None, "A reads better")
+        records, judgments = self._judged(judge)
+        flips = t.flip_verdicts(records, judgments, judge)
+        self.assertTrue(flips[0]["flip"])
+        self.assertEqual({flips[0]["judge_label"], flips[0]["flip_label"]}
+                         , {"mine_stone", "get_wood"})
+
+    def test_an_unsure_flip_counts_as_a_flip(self):
+        # A judge that cannot tell on the second pass cannot be trusted to have preferred
+        # something on the first.
+        records, judgments = self._judged(lambda s, a, b, c: ("A", None, ""))
+        flips = t.flip_verdicts(records, judgments, lambda s, a, b, c: ("unsure", None, ""))
+        self.assertTrue(flips[0]["flip"])
+        self.assertIsNone(flips[0]["flip_label"])
+
+    def test_agreements_are_not_rejudged(self):
+        records = [_act(1, ["mine_stone", "get_wood"], "get_wood")]
+        judgments = t.replay(records, s2_fn=lambda s, c, h: ("get_wood", ""),
+                             judge_fn=lambda *a: ("A", None, ""))
+        self.assertEqual(t.flip_verdicts(records, judgments, lambda *a: ("A", None, "")), [])
+
+
 if __name__ == "__main__":
     unittest.main()

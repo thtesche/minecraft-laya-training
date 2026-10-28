@@ -193,6 +193,32 @@ def cmd_teacher(args) -> int:
     s2_key = "set" if settings.api_key() else f"MISSING ({settings.llm.api_key_env})"
     judge_key = "set" if settings.judge_api_key() else f"MISSING ({settings.judge.api_key_env})"
     records = ds._read_records(log)
+
+    if args.flip_from:
+        # The flip test: the same disagreements, the same judge, the two actions in the opposite
+        # slots. System 2 is not asked again - its pick is read from the side-file it wrote.
+        side = _resolve(args.flip_from)
+        if not side.exists():
+            print(json.dumps({"error": "teacher side-file not found", "path": str(side)}))
+            return 2
+        judgments = ds._read_records(side)
+        flips = tmod.flip_verdicts(records, judgments,
+                                   tmod.make_judge_fn(settings.judge, settings.judge_api_key()))
+        out = _resolve(args.out) if args.out else _teacher_out_path(log).with_name(
+            _teacher_out_path(log).stem + "-flip.jsonl")
+        ds.write_jsonl(out, flips)
+        flipped = sum(1 for f in flips if f["flip"])
+        print(json.dumps({
+            "log": str(log),
+            "side_file": str(side),
+            "flip_path": str(out),
+            "judge_key": judge_key,
+            "disagreements": len(flips),
+            "flipped": flipped,
+            "flip_rate": round(flipped / len(flips), 3) if flips else 0.0,
+        }, indent=2, ensure_ascii=False))
+        return 0
+
     judgments = tmod.run_teacher(records, settings)
 
     out = _resolve(args.out) if args.out else _teacher_out_path(log)
@@ -332,6 +358,9 @@ def main(argv: list[str] | None = None) -> int:
     tch.add_argument("--log", required=True, help="archived run log to review")
     tch.add_argument("--out", default="",
                      help="teacher side-file (default: teacher-<run>.jsonl beside the log)")
+    tch.add_argument("--flip-from", default="",
+                     help="instead of running the teacher, re-judge the disagreements in this "
+                           "side-file with the blind pair's A/B slots swapped (the flip test)")
 
     trn = sub.add_parser("train", help="fine-tune a Laya checkpoint head on the dataset")
     trn.add_argument("--data", default="", help="training JSONL (default data/train.jsonl)")

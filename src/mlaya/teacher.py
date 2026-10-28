@@ -69,10 +69,17 @@ def _blind_pair(laya_label: str, s2_label: str, seed: str) -> tuple[str, str, bo
 
 
 def judge_tick(rec: dict, laya_label: str, s2_label: str, candidates: list[str],
-               judge_fn: JudgeFn) -> dict:
-    """Run the blind judge for one disagreement and map its verdict back to a concrete label."""
+               judge_fn: JudgeFn, swap: bool = False) -> dict:
+    """Run the blind judge for one disagreement and map its verdict back to a concrete label.
+
+    `swap` puts the same two actions in the opposite slots. That is the flip test: a verdict that
+    survives the swap is a judgement about the actions, a verdict that flips is a reaction to which
+    letter they were handed under.
+    """
     narrative = render_narrative(rec) or ""
     a_label, b_label, a_is_laya = _blind_pair(laya_label, s2_label, narrative)
+    if swap:
+        a_label, b_label = b_label, a_label
     verdict, better, note = judge_fn(rec.get("state") or {}, a_label, b_label, candidates)
     label: str | None = None
     if verdict == "A":
@@ -135,6 +142,48 @@ def replay(records: list[dict], *, s2_fn: S2Fn, judge_fn: JudgeFn) -> list[dict]
             entry.update(judge_tick(rec, laya_label, s2_label, candidates, judge_fn))
         out.append(entry)
         history.append(rec)
+    return out
+
+
+def flip_verdicts(records: list[dict], judgments: list[dict], judge_fn: JudgeFn) -> list[dict]:
+    """Re-judge every recorded disagreement with the blind pair's A/B slots swapped.
+
+    The judge is blind by construction, but blindness is only a claim until it is tested: if the
+    verdict flips when the same two actions are handed over in the opposite order, the verdict was
+    about the slot, not the actions, and the label it produced is noise the dataset should not
+    learn from. This costs one judge call per disagreement and nothing else - System 2 is not asked
+    again, its pick is read from the side-file.
+
+    Returns one entry per disagreement: the original verdict and label, the swapped verdict and
+    label, and `flip` - whether the two entries name different actions. A verdict that comes back
+    "unsure" on either side counts as a flip, since an unsure judge cannot be trusted to have
+    preferred one of the two in the first place.
+    """
+    by_iteration = {r.get("iteration"): r for r in records}
+    out: list[dict] = []
+    for j in judgments:
+        if j.get("s2_label") is None or j.get("agree"):
+            continue
+        rec = by_iteration.get(j.get("iteration"))
+        if rec is None:
+            continue
+        flipped = judge_tick(rec, j["laya_label"], j["s2_label"],
+                             j.get("candidates") or [], judge_fn, swap=True)
+        original = j.get("judge_label")
+        new = flipped.get("judge_label")
+        out.append({
+            "iteration": j.get("iteration"),
+            "narrative_hash": j.get("narrative_hash"),
+            "laya_label": j.get("laya_label"),
+            "s2_label": j.get("s2_label"),
+            "progressed": j.get("progressed"),
+            "judge_verdict": j.get("judge_verdict"),
+            "judge_label": original,
+            "flip_verdict": flipped.get("judge_verdict"),
+            "flip_label": new,
+            "flip_note": flipped.get("judge_note", ""),
+            "flip": original != new,
+        })
     return out
 
 
