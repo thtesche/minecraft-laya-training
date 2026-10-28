@@ -447,6 +447,24 @@ BARTER_MAX_ATTEMPTS = 2
 # piglin itself, and a long walk to a distant one is the same off-base drift the Overworld pearl
 # hunt stalled on (run110). Beyond this range the bot marches the frontier instead.
 BARTER_PIGLIN_RANGE = 32
+# --- The pearl waves (docs/stronghold.md, "Nether in Wellen") ---
+# The pearls are hunted in waves: the first Nether trip hauls only blaze rods and comes home to
+# stow them (a death down there drops the whole pack), and only then do the pearl trips begin -
+# gold dug fresh, carried down to barter, and endermen hunted in the Nether. Barter buys roughly
+# one pearl a reserve, so most of the sixteen come from kills, and endermen live in the Nether's
+# warped forests rather than at the fortress the rod trip targeted - so a pearl trip may have to
+# roam to find one. This budget bounds that roam the way `NETHER_SEARCH_M` bounds the fortress
+# hunt: metres of ground covered, not decisions, so the reflex ticks the bot stood still being
+# shot at do not spend it. Shorter than the fortress budget on purpose - a warped forest is not a
+# guaranteed region feature, so an empty stretch should send the bot home to stow and relaunch
+# rather than burn the whole trip wandering.
+NETHER_PEARL_SEARCH_M = 400.0
+# How many pearl trips the waves make before the Overworld enderman roam takes over as the
+# fallback. Each trip crosses, hunts, and comes home to stow whatever pearls it got, so the cap
+# bounds the round trips, not the time in any one of them (`_nether_must_return` already does
+# that). Five, because a trip that barters once and kills a few endermen brings home two or three
+# pearls, so five waves cover the sixteen with room for the ones a trip comes home empty.
+PEARL_WAVE_MAX_TRIPS = 5
 NETHER_COBBLE = 64
 # How far the Nether stack may run below `NETHER_COBBLE` before `mine_stone` refills it. The surplus
 # drop leaves exactly `NETHER_COBBLE` (`HOARD_KEEP`), and the next scaffold block took it to 63:

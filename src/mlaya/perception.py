@@ -808,6 +808,13 @@ class GameState:
     end_portal_active: bool = False
     stronghold_estimated: bool = False
     powder_exhausted: bool = False
+    # Pearl trips the waves have made (Agent `_note_dimension`): a crossing counted once the rod
+    # haul is already stowed (`powder_stowed`), so it never counts the rod trip itself. The waves
+    # relaunch into the Nether to hunt pearls until the eyes are paid for or `PEARL_WAVE_MAX_TRIPS`
+    # trips are spent, after which the Overworld enderman roam is the fallback. A per-run latch like
+    # `barter_attempts`, reset on a cold restart (nothing in the world re-derives it); a restart
+    # mid-hunt simply grants a fresh five, which is the safe direction - it never strands the bot.
+    pearl_wave_trips: int = 0
     # The cells a blaze-powder stow actually deposited into (Agent `_note_stow`): the storage
     # network's roomy chest, which is not always `chest_pos`. `take_blaze_powder` withdraws from
     # these remembered cells, and `powder_exhausted` only latches once every one of them has
@@ -931,6 +938,7 @@ class GameState:
             # The stronghold latches, logged for the same reason the Nether facts are.
             "powder_stowed": self.powder_stowed,
             "powder_exhausted": self.powder_exhausted,
+            "pearl_wave_trips": self.pearl_wave_trips,
             "stronghold_estimated": self.stronghold_estimated,
             "end_portal_active": self.end_portal_active,
             "powder_cells": [list(cell) for cell in self.powder_cells],
@@ -959,7 +967,7 @@ class GameState:
                       "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
                       "nether_entered", "nether_arrival", "nether_gate", "nether_ticks",
-                      "nether_travel", "powder_stowed", "powder_exhausted",
+                      "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
                       "stronghold_estimated", "end_portal_active", "powder_cells",
                       "nether_landmarks"):
             value = data.get(field)

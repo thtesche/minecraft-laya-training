@@ -493,6 +493,10 @@ class Agent:
         self._end_portal_active = False
         self._stronghold_estimated = False
         self._powder_exhausted = False
+        # Pearl trips the waves have made (`_note_dimension`), counted once the rod haul is
+        # stowed so the rod trip itself never counts. After `PEARL_WAVE_MAX_TRIPS` the Overworld
+        # enderman roam takes over; a per-run latch, reset on a cold start like `_barter_attempts`.
+        self._pearl_wave_trips = 0
         # Barter calls the run has made (`_note_barter`). The gold reserve is dug only while the
         # cap is not reached, so a route that keeps missing pearls does not turn the lull into a
         # permanent gold farm.
@@ -577,6 +581,7 @@ class Agent:
         gs.end_portal_active = self._end_portal_active
         gs.stronghold_estimated = self._stronghold_estimated
         gs.powder_exhausted = self._powder_exhausted
+        gs.pearl_wave_trips = self._pearl_wave_trips
         gs.powder_cells = tuple(self._powder_cells)
         gs.nether_landmarks = frozenset(self._nether_landmarks)
         return gs
@@ -895,6 +900,14 @@ class Agent:
                 # goes back down, the next trip's exit cell is the one this line records.
                 self._nether_arrival = (math.floor(gs.pos[0]), math.floor(gs.pos[1]),
                                         math.floor(gs.pos[2]))
+                # A crossing made once the rod haul is already stowed is a pearl trip, and the cap
+                # on those (`PEARL_WAVE_MAX_TRIPS`) is what hands the pearl hunt back to the
+                # Overworld roam. Counted on the crossing itself, not on arrival or exit, so one
+                # trip is one count however long the bot roams down there. A powder top-up is not
+                # one: the bank is empty there and the trip is a blaze hunt, so charging it against
+                # the pearl cap would close the waves before the pearls were ever hunted.
+                if self._powder_stowed and not self._powder_exhausted:
+                    self._pearl_wave_trips += 1
             elif gs.pos is not None and self._nether_last_pos is not None:
                 # Ground covered since the crossing, which is the only thing a search budget can
                 # honestly be spent on. `nether_ticks` counted decisions, and a decision is not
@@ -1266,6 +1279,7 @@ class Agent:
         gs.end_portal_active = self._end_portal_active
         gs.stronghold_estimated = self._stronghold_estimated
         gs.powder_exhausted = self._powder_exhausted
+        gs.pearl_wave_trips = self._pearl_wave_trips
         gs.powder_cells = tuple(self._powder_cells)
         gs.nether_landmarks = frozenset(self._nether_landmarks)
         gs.stuck_labels = frozenset(self._stuck_off)

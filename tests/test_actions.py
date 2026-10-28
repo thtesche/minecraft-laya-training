@@ -12,12 +12,14 @@ import unittest
 from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _diamond_reason,
                          _expedition_prepared, _frame_needs_obsidian, _gold_reserve_short,
                          _hoard_surplus, _idle_off_base, _nether_prep_steps,
+                         _pearl_wave_trip, _search_enderman_wanted,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
                          BARTER_GOLD_BUDGET, BARTER_MAX_ATTEMPTS, BARTER_PEARL_BATCH,
                          BARTER_PIGLIN_RANGE, GOLD_BARTER_RESERVE,
+                         NETHER_PEARL_SEARCH_M, PEARL_WAVE_MAX_TRIPS,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, resolve, stronghold_complete,
@@ -4251,6 +4253,7 @@ class NetherExpeditionTest(unittest.TestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
         agent._drop_open_pending = True
@@ -4401,13 +4404,33 @@ class NetherExpeditionTest(unittest.TestCase):
         g.powder_stowed = True
         self.assertTrue(nether_expedition_complete(g))
 
-    def test_a_stowed_expedition_closes_the_chain(self) -> None:
+    def test_a_stowed_expedition_closes_the_blaze_chain(self) -> None:
+        # The rod trip is over: no blaze hunt, no powder craft, no stow. But the pearl waves
+        # reopen the gate - the pearls the eyes owe are hunted down there, not in the Overworld.
         g = self._home()
         g.powder_stowed = True
         out = candidates(g)
-        for label in ("enter_portal", "hunt_blaze", "leave_nether", "craft_blaze_powder",
-                      "stow_blaze_powder"):
+        for label in ("hunt_blaze", "leave_nether", "craft_blaze_powder", "stow_blaze_powder"):
             self.assertNotIn(label, out)
+        self.assertTrue(nether_expedition_open(g))
+        self.assertIn("enter_portal", out)
+
+    def test_a_stowed_expedition_with_pearls_in_hand_stays_closed(self) -> None:
+        # Pearls just brought home are crafted into eyes before another wave launches; the
+        # chain only reopens when the pack is empty of pearls again.
+        g = self._home(ender_pearl=4)
+        g.powder_stowed = True
+        self.assertFalse(nether_expedition_open(g))
+        self.assertNotIn("enter_portal", candidates(g))
+
+    def test_the_pearl_waves_close_after_the_trip_cap(self) -> None:
+        # Five waves spent and the pearls still owed: the gate stays shut and the Overworld
+        # enderman roam takes the hunt over, so the goal is never stranded on an empty Nether.
+        g = self._home()
+        g.powder_stowed = True
+        g.pearl_wave_trips = PEARL_WAVE_MAX_TRIPS
+        self.assertFalse(nether_expedition_open(g))
+        self.assertNotIn("enter_portal", candidates(g))
 
 
 class PiglinBarterTest(unittest.TestCase):
@@ -4449,9 +4472,15 @@ class PiglinBarterTest(unittest.TestCase):
         g.piglins = [(412, 12.0)]
         return g
 
-    # --- the reserve: dug in the lull, never gating the gate ---
-    def test_the_reserve_is_dug_once_the_helmet_is_banked(self) -> None:
+    # --- the reserve: dug for the wave that spends it, never gating the gate ---
+    def test_the_reserve_is_dug_in_the_pearl_wave_not_before_it(self) -> None:
+        # The user's waves put the barter gold in the trip that trades it: while the rod haul is
+        # still to be made, the lull digs nothing for pearls.
         g = self._lull()
+        self.assertFalse(_gold_reserve_short(g))
+        self.assertNotIn("mine_gold_reserve", candidates(g))
+        g.powder_stowed = True
+        self.assertTrue(_gold_reserve_short(g))
         self.assertIn("mine_gold_reserve", candidates(g))
         a = resolve("mine_gold_reserve", g)
         self.assertEqual(a.tool, "collect_block")
@@ -4462,18 +4491,21 @@ class PiglinBarterTest(unittest.TestCase):
         # Without a worn gold piece the bot that walks up to trade gets torn apart, and the
         # helmet line already digs the gold it needs.
         g = self._lull(golden_helmet=0)
+        g.powder_stowed = True
         self.assertNotIn("mine_gold_reserve", candidates(g))
         self.assertIn("mine_gold", candidates(g))
         self.assertIsNone(resolve("mine_gold_reserve", g))
 
     def test_the_reserve_is_not_dug_for_pearls_already_held(self) -> None:
         g = self._lull(ender_pearl=16)
+        g.powder_stowed = True
         self.assertFalse(_gold_reserve_short(g))
         self.assertNotIn("mine_gold_reserve", candidates(g))
         self.assertIsNone(resolve("mine_gold_reserve", g))
 
     def test_the_reserve_needs_a_loaded_deposit(self) -> None:
         g = self._lull()
+        g.powder_stowed = True
         g.resources = {k: v for k, v in g.resources.items() if k != "gold_ore"}
         self.assertIsNone(resolve("mine_gold_reserve", g))
 
@@ -4481,6 +4513,7 @@ class PiglinBarterTest(unittest.TestCase):
         # The crossing gate reads `_all_nether_prep_steps`; the reserve rides on top of it in
         # `_nether_prep_steps`, so a bot short of barter gold still walks through the gate.
         g = self._lull()
+        g.powder_stowed = True
         self.assertEqual(_all_nether_prep_steps(g), [])
         self.assertEqual(_nether_prep_steps(g), ["mine_gold_reserve"])
         self.assertTrue(_expedition_prepared(g))
@@ -4490,6 +4523,7 @@ class PiglinBarterTest(unittest.TestCase):
         # The helmet is already crafted, so the five ingots went into it; the raw gold in the
         # pack still becomes barter money.
         g = self._lull(raw_gold=10, coal=4)
+        g.powder_stowed = True
         self.assertIn("smelt_gold", candidates(g))
         a = resolve("smelt_gold", g)
         self.assertEqual(a.args["item_name"], "raw_gold")
@@ -4497,12 +4531,14 @@ class PiglinBarterTest(unittest.TestCase):
 
     def test_smelt_gold_stops_once_the_reserve_is_banked(self) -> None:
         g = self._lull(raw_gold=GOLD_BARTER_RESERVE, coal=4)
+        g.powder_stowed = True
         self.assertFalse(_gold_reserve_short(g))
         self.assertIsNone(resolve("smelt_gold", g))
 
     # --- the barter: gold, a piglin in reach, pearls still owed ---
     def test_barter_trades_gold_with_the_nearest_adult_piglin(self) -> None:
         g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        g.powder_stowed = True
         self.assertTrue(_barter_pearls_wanted(g))
         a = resolve("barter_pearls", g)
         self.assertEqual(a.tool, "barter")
@@ -4512,6 +4548,7 @@ class PiglinBarterTest(unittest.TestCase):
 
     def test_barter_needs_gold_in_the_pack(self) -> None:
         g = self._down(blaze_rod=9)
+        g.powder_stowed = True
         self.assertFalse(_barter_pearls_wanted(g))
         self.assertIsNone(resolve("barter_pearls", g))
 
@@ -4519,31 +4556,50 @@ class PiglinBarterTest(unittest.TestCase):
         # `barter` navigates to the piglin; a walk to a distant one is the same off-base drift
         # that stalled the Overworld pearl hunt (run110), so the bot marches instead.
         g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        g.powder_stowed = True
         g.piglins = [(412, BARTER_PIGLIN_RANGE + 8.0)]
         self.assertFalse(_barter_pearls_wanted(g))
         self.assertIsNone(resolve("barter_pearls", g))
 
     def test_barter_needs_pearls_still_owed(self) -> None:
         g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE, ender_pearl=16)
+        g.powder_stowed = True
         self.assertFalse(_barter_pearls_wanted(g))
         self.assertIsNone(resolve("barter_pearls", g))
 
-    def test_the_rod_haul_waits_for_the_pearls(self) -> None:
+    def test_the_rod_trip_never_stops_to_barter(self) -> None:
+        # Welle 1 hauls rods and comes straight home: the barter that used to ride the rods-done
+        # tick (commit 584a51a) is now a pearl-wave job, so a full pack of rods walks back
+        # through the gate even with gold and a piglin at hand.
         g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        out = candidates(g)
+        self.assertIn("leave_nether", out)
+        self.assertNotIn("barter_pearls", out)
+
+    def test_a_pearl_wave_barters_before_it_hunts(self) -> None:
+        # The wave trades the reserve first - one reserve buys about a pearl - and only then
+        # turns to the endermen.
+        g = self._down(gold_ingot=GOLD_BARTER_RESERVE)
+        g.powder_stowed = True
         out = candidates(g)
         self.assertIn("barter_pearls", out)
         self.assertNotIn("leave_nether", out)
+        self.assertNotIn("hunt_blaze", out)
 
-    def test_a_piglin_out_of_range_sends_the_bot_marching(self) -> None:
-        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+    def test_a_piglin_out_of_range_sends_the_wave_roaming(self) -> None:
+        # A piglin beyond reach is not worth the walk in a pearl wave: the wave roams the warped
+        # forest for endermen instead, and the next wave may find a piglin closer.
+        g = self._down(gold_ingot=GOLD_BARTER_RESERVE)
+        g.powder_stowed = True
         g.piglins = [(412, BARTER_PIGLIN_RANGE + 20.0)]
         out = candidates(g)
-        self.assertIn("explore", out)
+        self.assertIn("search_enderman", out)
         self.assertNotIn("barter_pearls", out)
+        self.assertNotIn("explore", out)
 
     def test_the_bot_comes_home_when_the_gold_is_spent(self) -> None:
-        # Pearls owed but no ingots left to offer: the trip is done, and the Overworld hunt is
-        # the fallback the stronghold phase still has.
+        # Pearls owed but no ingots left to offer: the trip is done, and the next wave (or the
+        # Overworld hunt, once the waves are spent) carries on.
         g = self._down(blaze_rod=9, ender_pearl=4)
         out = candidates(g)
         self.assertIn("leave_nether", out)
@@ -4553,6 +4609,7 @@ class PiglinBarterTest(unittest.TestCase):
         # A 16-ingot reserve buys about one pearl; without the cap the lull would dig gold for a
         # barter that keeps missing until the run ran out of iterations.
         g = self._lull()
+        g.powder_stowed = True
         g.barter_attempts = BARTER_MAX_ATTEMPTS
         self.assertFalse(_gold_reserve_short(g))
         self.assertNotIn("mine_gold_reserve", candidates(g))
@@ -4560,12 +4617,20 @@ class PiglinBarterTest(unittest.TestCase):
 
     def test_the_barter_closes_after_its_tries(self) -> None:
         g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        g.powder_stowed = True
         g.barter_attempts = BARTER_MAX_ATTEMPTS
         self.assertFalse(_barter_pearls_wanted(g))
         self.assertIsNone(resolve("barter_pearls", g))
         out = candidates(g)
-        self.assertIn("leave_nether", out)
+        # The trade is closed, but the wave is not over: with pearl budget left it roams for
+        # endermen, and only when that is spent does it come home.
+        self.assertIn("search_enderman", out)
+        self.assertNotIn("leave_nether", out)
         self.assertNotIn("explore", out)
+        g.nether_travel = NETHER_PEARL_SEARCH_M
+        out = candidates(g)
+        self.assertIn("leave_nether", out)
+        self.assertNotIn("search_enderman", out)
 
 
 class StrongholdPhaseTest(unittest.TestCase):
@@ -4668,9 +4733,16 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertIn("hunt_enderman", candidates(g))
 
     def test_no_enderman_in_reach_roams_to_find_one(self) -> None:
-        # Pearls still owed and no enderman loaded within reach: the phase roams new ground
-        # instead of idling at the base (run109 sat on `wait` to the run limit here).
+        # Pearls still owed and no enderman loaded within reach. In the Overworld the roam is
+        # only the fallback: while the pearl waves still have trips left, the bot relaunches
+        # through the gate rather than wandering the base's frontier (run110's off-base drift
+        # is the reason the hunt moved into the Nether at all).
         g = self._home(mobs=[])
+        cand = candidates(g)
+        self.assertNotIn("search_enderman", cand)
+        self.assertIn("enter_portal", cand)
+        # The five waves spent, the Overworld roam takes over.
+        g.pearl_wave_trips = PEARL_WAVE_MAX_TRIPS
         cand = candidates(g)
         self.assertIn("search_enderman", cand)
         self.assertNotIn("hunt_enderman", cand)
@@ -4685,6 +4757,37 @@ class StrongholdPhaseTest(unittest.TestCase):
         g.mobs = []
         g.health = 10.0
         self.assertNotIn("search_enderman", candidates(g))
+
+    def test_a_pearl_wave_hunts_the_enderman_it_find(self) -> None:
+        # Down in the Nether the hunt is dimension-blind: `_safe_enderman_hunt` is the whole
+        # precondition, so a warped-forest enderman in reach is fought the same way. The gold
+        # helmet is worn - without it the piglin filter owns the tick before the pearl ladder.
+        g = self._home(mobs=[("enderman", "hostile", 12, 18.0)])
+        g.powder_stowed = True
+        g.dimension = self.NETHER
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        self.assertIn("hunt_enderman", candidates(g))
+        self.assertNotIn("search_enderman", candidates(g))
+        a = resolve("hunt_enderman", g)
+        self.assertEqual(a.args["mob_name"], "enderman")
+        self.assertEqual(a.args["drop_name"], "ender_pearl")
+
+    def test_the_wave_roams_until_the_pearl_budget_is_spent(self) -> None:
+        # No enderman loaded: the wave roams new ground, bounded in metres like the fortress
+        # hunt, so an empty stretch sends the bot home to stow and relaunch instead of burning
+        # the trip wandering.
+        g = self._home()
+        g.powder_stowed = True
+        g.dimension = self.NETHER
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        g.nether_travel = 0.0
+        self.assertTrue(_search_enderman_wanted(g))
+        self.assertIn("search_enderman", candidates(g))
+        g.nether_travel = NETHER_PEARL_SEARCH_M
+        self.assertFalse(_search_enderman_wanted(g))
+        out = candidates(g)
+        self.assertNotIn("search_enderman", out)
+        self.assertIn("leave_nether", out)
 
     def test_sixteen_eyes_send_the_bot_to_the_stronghold(self) -> None:
         g = self._home(ender_eye=16)
@@ -6157,6 +6260,7 @@ class StepAwayDropsWholeCellTest(unittest.TestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
         agent._drop_open_pending = True
@@ -6175,6 +6279,7 @@ class DeferQuietTest(unittest.TestCase):
     def _agent(self):
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._defer_quiet = 0
         return agent
@@ -6210,6 +6315,7 @@ class RefreshAfterTest(unittest.TestCase):
     def _agent(self):
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.surface = None
         agent._frame_complete = False
@@ -6274,6 +6380,7 @@ class WaitHoldTest(unittest.IsolatedAsyncioTestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
         agent.settings.loop.wait_hold_s = hold
@@ -6302,6 +6409,7 @@ class StepAwayGroundReadTest(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.mcp = object()
         agent._drop_open_pending = True

@@ -458,43 +458,65 @@ def candidates(gs: GameState) -> list[str]:
             # searching instead of turning back (live: the pack sat at 34/36 of netherrack and
             # `_nether_must_return` fired on the slots, `leave_nether` offered every tick).
             junk_full = (gs.slots_used >= INVENTORY_NEAR_FULL and _droppable(gs, inv))
-            rods = _blaze_rods(inv)
-            if rods >= _rods_target(gs):
-                # The rod haul is complete. Before walking back through the gate, trade the gold
-                # reserve with a piglin for the pearls the eyes need: the bot is already down here,
-                # the helmet is on, and piglins are everywhere in the Nether - the pearl hunt that
-                # failed in the Overworld (run110) never has to happen. Only once the pearls are in
-                # the pack does `leave_nether` take the tick.
-                if _barter_pearls_wanted(gs):
-                    out.append("barter_pearls")
-                elif (gs.barter_attempts < BARTER_MAX_ATTEMPTS and _pearls_owed(gs) > 0
-                        and gs.inventory.get(GOLD_INGOT, 0) > 0):
-                    # Pearls still owed, gold carried, the trade still open, but no piglin within
-                    # reach: march the frontier to load one rather than leave empty-handed.
-                    out.append("explore")
-                else:
+            if _pearl_wave_trip(gs):
+                # --- Pearl wave (Welle 2+) ---
+                # The rod haul is already home and stowed, so the blaze hunt and the fortress march
+                # are behind the bot: this trip is down here only for the pearls the eyes still
+                # owe. Barter the gold reserve with a piglin first (one reserve buys about a pearl),
+                # then kill an enderman in reach, then roam a warped forest to find one within the
+                # pearl budget; out of budget, out of health, or forced back, come home and stow -
+                # a death down here would drop the whole wave, which is why the waves exist.
+                # `barter_pearls` moved here from the rod trip (it used to ride the rods-done tick,
+                # commit 584a51a): the user's waves keep the risky trades off the rod haul.
+                if _nether_must_return(gs) and not junk_full:
                     out.append("leave_nether")
-            elif _safe_blaze_hunt(gs):
-                out.append("hunt_blaze")
-            elif (_nether_must_return(gs) and not junk_full) or _nether_hopeless(gs):
-                # Out of health, out of room, or out of chances: come home with what was got
-                # rather than die down there. The rods in the pack are already worth the trip.
-                # "Out of room" is suppressed while the room is full of droppable junk: that is
-                # `drop_junk`'s job, not a reason to abandon the trip.
-                out.append("leave_nether")
-            else:
-                # No blaze in reach, no reason to turn back: the fortress search. It is offered
-                # first-class here, the way `mine_diamond` is in the Overworld - not buried in
-                # the `explore` fallback, which a pack full of netherrack (the tech tree reading
-                # as incomplete) kept from ever firing, so the bot never marched to the bricks
-                # it could see (live: `found: 0` for every fortress block, `explore` offered on
-                # 1 of 2499 Nether ticks). `explore`'s Nether branch walks to the spawner/bricks
-                # when they are in view and marches the frontier toward them when they are not.
-                if junk_full:
-                    # Shed the netherrack first, so the next tick's slots are free and the march
-                    # does not start from a full pack. Offered ahead of `explore` on purpose.
+                elif junk_full:
+                    # A pack full of droppable junk reads as "out of room" and would send the bot
+                    # home empty; shed it first so the next pearl has somewhere to land.
                     out.append("drop_junk")
-                out.append("explore")
+                elif _barter_pearls_wanted(gs):
+                    out.append("barter_pearls")
+                elif _safe_enderman_hunt(gs):
+                    out.append("hunt_enderman")
+                elif _search_enderman_wanted(gs):
+                    # No enderman in reach but the pearl budget still has ground to cover: roam new
+                    # terrain to load one, the `explore_frontier` march `search_enderman` resolves
+                    # to. `_search_enderman_wanted` carries the budget (`NETHER_PEARL_SEARCH_M`).
+                    out.append("search_enderman")
+                else:
+                    # Pearls still owed but nothing to do for them here - none in reach, the budget
+                    # spent, the trade closed: home with what pearls were got, stow, and (if trips
+                    # remain) the next wave relaunches from the base.
+                    out.append("leave_nether")
+            else:
+                # --- Rod wave (Welle 1) ---
+                rods = _blaze_rods(inv)
+                if rods >= _rods_target(gs):
+                    # The rod haul is complete: walk back through the gate and stow it. The pearls
+                    # are a later wave's job, not this trip's - a death with the rods in the pack
+                    # would lose the whole haul, so securing them at home comes first.
+                    out.append("leave_nether")
+                elif _safe_blaze_hunt(gs):
+                    out.append("hunt_blaze")
+                elif (_nether_must_return(gs) and not junk_full) or _nether_hopeless(gs):
+                    # Out of health, out of room, or out of chances: come home with what was got
+                    # rather than die down there. The rods in the pack are already worth the trip.
+                    # "Out of room" is suppressed while the room is full of droppable junk: that is
+                    # `drop_junk`'s job, not a reason to abandon the trip.
+                    out.append("leave_nether")
+                else:
+                    # No blaze in reach, no reason to turn back: the fortress search. It is offered
+                    # first-class here, the way `mine_diamond` is in the Overworld - not buried in
+                    # the `explore` fallback, which a pack full of netherrack (the tech tree reading
+                    # as incomplete) kept from ever firing, so the bot never marched to the bricks
+                    # it could see (live: `found: 0` for every fortress block, `explore` offered on
+                    # 1 of 2499 Nether ticks). `explore`'s Nether branch walks to the spawner/bricks
+                    # when they are in view and marches the frontier toward them when they are not.
+                    if junk_full:
+                        # Shed the netherrack first, so the next tick's slots are free and the march
+                        # does not start from a full pack. Offered ahead of `explore` on purpose.
+                        out.append("drop_junk")
+                    out.append("explore")
         else:
             # Overworld side: the gate is the way in, and it opens once the expedition is stocked.
             if _spare_pickaxe_missing(gs):

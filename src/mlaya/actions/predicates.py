@@ -1021,6 +1021,46 @@ def _nether_topup_wanted(gs: GameState) -> bool:
             and _eyes_still_owed(gs) > _blaze_powder(gs.inventory))
 
 
+def _nether_pearl_wave_wanted(gs: GameState) -> bool:
+    """Whether a pearl wave should run: the rod haul is stowed and the eyes are still owed, with
+    pearls to hunt for them. The second reopener of `nether_expedition_open`, beside the powder
+    top-up.
+
+    The waves are the user's structure for a Nether that kills easily (docs/stronghold.md, "Nether
+    in Wellen"): Welle 1 hauls the rods and banks the powder (`nether_expedition_complete`), and
+    only then do the pearl trips begin - gold dug fresh in the Overworld, carried down to barter,
+    and endermen hunted in the Nether. The trip is split from the rod haul so a death down there
+    drops at most one wave's pearls, not the whole run's progress.
+
+    Two faces, because the trip count means one thing at home and another below. In the Nether the
+    wave stays open until the bot comes home, whatever the count, so `leave_nether` is always on the
+    pearl ladder (the count is already spent on the crossing). In the Overworld it only relaunches
+    with *empty hands* - pearls just brought home are crafted into eyes first, the eye chain owning
+    that tick - and only while trips remain: after `PEARL_WAVE_MAX_TRIPS` the Overworld enderman
+    roam takes the pearl hunt over (`stronghold._search_enderman_wanted`), so the goal is never
+    stranded on an empty Nether.
+    """
+    if not (nether_expedition_complete(gs) and not gs.end_portal_active
+            and _eyes_still_owed(gs) > 0):
+        return False
+    if _in_nether(gs):
+        return not gs.powder_exhausted
+    return (int(gs.inventory.get(ENDER_PEARL_ITEM, 0)) == 0
+            and gs.pearl_wave_trips < PEARL_WAVE_MAX_TRIPS)
+
+
+def _pearl_wave_trip(gs: GameState) -> bool:
+    """Whether the bot's Nether trip is a pearl trip rather than a rod trip.
+
+    The planner's Nether block splits on this: a trip made after the rod haul is banked hunts
+    pearls, a trip before it (or a powder top-up, where the bank was lost) hunts blazes. The
+    top-up is the exception that keeps the rod chain: `powder_stowed` is still latched there, so
+    `nether_expedition_complete` reads done, but the eyes cannot be crafted without fresh powder,
+    and the trip that reopened the gate is a blaze hunt, not a pearl hunt.
+    """
+    return nether_expedition_complete(gs) and not gs.powder_exhausted
+
+
 def _eyes_still_owed(gs: GameState) -> int:
     """Eyes of ender the stronghold phase still owes, read here without importing `stronghold`.
 
@@ -1363,9 +1403,15 @@ def _gold_reserve_short(gs: GameState) -> bool:
 
     The attempt cap closes the dig: a 16-ingot reserve buys about one pearl, and without the cap
     the lull would dig gold for a barter that keeps missing until the run ran out of iterations.
+
+    Gated on the rod haul being home (`nether_expedition_complete`), because the user wants the
+    barter gold dug *in the pearl wave* that spends it, not banked ahead during the rod trip's prep
+    ("Gold für Welle 2 erst in Welle 2 abbauen"): the dig runs in the lull before each pearl
+    crossing, so a rod trip that dies never dropped a reserve it had not yet needed.
     """
     inv = gs.inventory
-    return (gs.barter_attempts < BARTER_MAX_ATTEMPTS
+    return (nether_expedition_complete(gs)
+            and gs.barter_attempts < BARTER_MAX_ATTEMPTS
             and _pearls_owed(gs) > 0
             and inv.get(GOLD_INGOT, 0) + inv.get(RAW_GOLD, 0) < GOLD_BARTER_RESERVE)
 
@@ -2555,8 +2601,14 @@ def nether_expedition_open(gs: GameState) -> bool:
     banked powder lost, the eyes uncraftable (`_nether_topup_wanted`). Without this predicate a
     top-up could never relaunch - `candidates` reopened the chain, yet `enter_portal` refused on
     the completion latch, and the bot stood home at an empty chest with an open goal.
+
+    The pearl waves are the second reopener (`_nether_pearl_wave_wanted`): once the rod haul is
+    stowed the chain reopens for the pearl trips, the Nether side running the pearl ladder rather
+    than the blaze hunt (see `planner`).
     """
-    return not nether_expedition_complete(gs) or _nether_topup_wanted(gs)
+    return (not nether_expedition_complete(gs)
+            or _nether_topup_wanted(gs)
+            or _nether_pearl_wave_wanted(gs))
 
 
 def _diamond_craft_ready(gs: GameState, item: str) -> bool:

@@ -43,10 +43,10 @@ eye; each socket has a 10% chance of generating pre-filled, but 16 is the safe u
 The server exposes `barter(piglin_id, item_name, count, gold_budget)`: the bot walks to a loaded
 **adult** piglin and offers gold ingots one at a time until the requested net gain is in the pack or
 the budget is spent. That is the route the user asked for, and it is now the pearl source the
-expedition aims at: the reserve is dug in the same lull as the helmet, smelted at the base furnace
-(there is no coal to smelt with down there), carried through the gate as ingots, and traded after
-the rod haul - `leave_nether` only takes the tick once the pearls are in the pack or the gold is
-spent.
+expedition aims at: the reserve is dug in the lull before a pearl wave, smelted at the base furnace
+(there is no coal to smelt with down there), carried through the gate as ingots, and traded in that
+same wave - `leave_nether` only takes the tick once the pearl budget is spent or the roam is out of
+ground to cover.
 
 The arithmetic the reserve is sized against is unforgiving. A piglin rolls once per ingot, the pearl
 entry of that roll is about 2% for a stack of 2-4, so a barter nets roughly **0.06 pearls per ingot**
@@ -70,6 +70,30 @@ And the route is capped: `BARTER_MAX_ATTEMPTS` (2) barter calls per run, counted
 the lull would keep digging gold for a trade that keeps missing until the run ran out of
 iterations; once the cap is reached the enderman hunt is the pearl source again.
 
+### The pearl waves (added 2026-10-28)
+
+A death in the Nether drops the whole pack, so the pearl hunt is not bolted onto the rod trip - it
+runs in **waves** that come home in between (the user's structure, reversing commit 584a51a, which
+had put the barter inside the rods trip because "the bot is already down there"):
+
+- **Welle 1 - rods only.** The expedition banks the blaze powder and closes (`powder_stowed` →
+  `nether_expedition_complete`). Nothing else is attempted down there: no barter, no endermen. The
+  haul is safe at home before any risk is taken again.
+- **Welle 2+ - gold, barter, endermen.** `_nether_pearl_wave_wanted` reopens `nether_expedition_open`
+  the way `_nether_topup_wanted` does, and the Nether block in `planner.candidates` splits on
+  `_pearl_wave_trip`: the pearl ladder is `barter_pearls` → `hunt_enderman` → `search_enderman` →
+  `leave_nether`. The gold for the trade is dug in the lull *before that wave*, not banked ahead of
+  the rod trip (`_gold_reserve_short` is gated on `nether_expedition_complete`).
+- **The cap.** `graph._note_dimension` counts a crossing as a pearl trip only once the powder is
+  stowed and the bank is not exhausted (a powder top-up is a rod trip, not a pearl trip). After
+  `PEARL_WAVE_MAX_TRIPS` (5) crossings the waves shut and the Overworld `search_enderman` roam
+  becomes the fallback, so the goal is never stranded on an empty Nether.
+
+The roam is bounded in metres, not ticks, like the fortress hunt: `NETHER_PEARL_SEARCH_M` (400 m) of
+ground covered. Endermen spawn in the Nether's warped forests, not at the fortress the rod trip
+targeted, so an empty stretch has to send the bot home to stow and relaunch rather than burn the trip
+wandering.
+
 ### Why no second Nether trip by default
 
 The first expedition already targets nine rods / eighteen powder, which is more than the sixteen
@@ -91,7 +115,9 @@ already grew (`_nether_haul_home`, `e812d83`) is the hook for reopening the expe
   `search_enderman` roam (`explore_frontier` along the remembered frontier, same as the Overworld
   `explore` fallback) sends a healthy bot out to load fresh ground until one comes into range, then
   the hunt takes the tick. Without it a bot that banked its powder sat on `wait` to the run limit
-  (run109). A wounded bot (`< ENDERMAN_HUNT_HEALTH`) does neither and heals at the base first.
+  (run109). A wounded bot (`< ENDERMAN_HUNT_HEALTH`) does neither and heals at the base first. The
+  roam is dimension-blind now, and the dimension decides its budget: in a pearl wave it is bounded by
+  `NETHER_PEARL_SEARCH_M`; in the Overworld it only runs once the waves are spent.
 - **The respawn bed at the stronghold** — for the *later* End phase, `enter_end_portal` needs a bed
   within 128 blocks. When that phase lands, the chain lays and sleeps a bed at the stronghold before
   entering. This phase stops before that, so the bed is noted here only as the seam to the next one.

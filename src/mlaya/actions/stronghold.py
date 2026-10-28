@@ -71,15 +71,27 @@ def _search_enderman_wanted(gs: GameState) -> bool:
     fires once an enderman is already within `ENDERMAN_HUNT_RANGE`. Nothing sent the bot out to
     meet one, so a bot that banked its powder sat at the base on `wait` to the run limit, no
     enderman ever wandering the twenty-four metres into range (run109 it312-599: the stronghold
-    phase was open, `stronghold_candidates` empty, only `wait` on offer). This is the overworld
-    mirror of the Nether fortress march: roam new ground until an enderman loads, then
-    `_safe_enderman_hunt` turns the tick over to `hunt_enderman`. Held to a healthy bot so a
-    wounded one heals at the base rather than wandering off after a teleporting mob.
+    phase was open, `stronghold_candidates` empty, only `wait` on offer). This roams new ground
+    until an enderman loads, then `_safe_enderman_hunt` turns the tick over to `hunt_enderman`.
+    Held to a healthy bot so a wounded one heals rather than wandering off after a teleporting mob.
+
+    The roam happens in two places, and the dimension picks which. In the *Nether*, during a pearl
+    wave, it is the warped-forest search the waves depend on - endermen live there, not at the
+    fortress the rod trip targeted - bounded by `NETHER_PEARL_SEARCH_M` of ground covered so an
+    empty stretch sends the bot home to stow and relaunch rather than burn the trip (the pearl
+    twin of `_nether_hopeless`'s `NETHER_SEARCH_M`). In the *Overworld*, it is only the fallback
+    once the pearl waves are spent (`pearl_wave_trips >= PEARL_WAVE_MAX_TRIPS`): before that the
+    pearls come from the Nether, and an Overworld roam here is the off-base drift that laundered
+    Laya's "walk away from the full base" picks into verifier positives (the reason this path was
+    moved into the Nether at all).
     """
-    return (_overworld(gs)
-            and _ender_pearls(gs.inventory) < _eyes_owed(gs)
-            and not _safe_enderman_hunt(gs)
-            and (gs.health or 0) >= ENDERMAN_HUNT_HEALTH)
+    inv = gs.inventory
+    if (_ender_pearls(inv) >= _eyes_owed(gs) or _safe_enderman_hunt(gs)
+            or (gs.health or 0) < ENDERMAN_HUNT_HEALTH):
+        return False
+    if _in_nether(gs):
+        return gs.nether_travel < NETHER_PEARL_SEARCH_M
+    return gs.pearl_wave_trips >= PEARL_WAVE_MAX_TRIPS
 
 
 def _at_stronghold(gs: GameState) -> bool:
@@ -196,7 +208,10 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
     """
     inv = gs.inventory
     if label == "hunt_enderman":
-        if not _overworld(gs) or not _safe_enderman_hunt(gs):
+        # No dimension gate: the reactive hunt is good wherever an enderman is in reach - the
+        # Overworld, and now the Nether during a pearl wave (`planner`'s pearl ladder offers it
+        # there). `_safe_enderman_hunt` carries the whole precondition (one in reach, bot healthy).
+        if not _safe_enderman_hunt(gs):
             return None
         want = _eyes_owed(gs) - _ender_pearls(inv)
         return Action(label, "collect_mob_drop",
