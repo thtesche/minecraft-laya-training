@@ -253,6 +253,28 @@ class RenderNarrativeTest(unittest.TestCase):
         self.assertIn("At the surface", rerendered[0]["state"])
         self.assertNotIn("x=", rerendered[0]["state"])
 
+    def test_reverify_relabels_a_roam_the_old_verifier_missed(self):
+        # run111's search_enderman roams were logged no-progress (the verifier had no rule for
+        # the label), so the corpus threw them away and the teacher's opinion had to fill them.
+        # Today's rule reads the logged delta's movement as progress, turning the roam into the
+        # verifier positive it is -- without reverify the tick stays unverified.
+        with tempfile.TemporaryDirectory() as d:
+            rec = _rec("roam state", ["search_enderman", "go_home"], "search_enderman",
+                       progressed=False)
+            rec["delta"] = {"inventory_delta": {}, "pos_delta": 20.0}
+            rec["ok"] = True
+            p = _write(Path(d), [rec])
+            plain = ds.build_rows(p)
+            reverified = ds.build_rows(p, reverify=True)
+        self.assertEqual(plain, [])  # logged no-progress, nothing from the old verifier
+        self.assertEqual(len(reverified), 1)
+        self.assertEqual(reverified[0]["expected"][INTENT_QID], "search_enderman")
+
+    def test_reverify_leaves_a_tick_without_a_delta_on_its_logged_label(self):
+        # An old log or a hand-written fixture carries no delta to re-judge; the logged value stands.
+        self.assertFalse(ds.reverified_progress({"label": "search_enderman", "progressed": False}))
+        self.assertTrue(ds.reverified_progress({"label": "mine_stone", "progressed": True}))
+
 
 class TeacherSourceTest(unittest.TestCase):
     """The teacher side-file fills no-progress ticks; the verifier always wins a collision (B4)."""

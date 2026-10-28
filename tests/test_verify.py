@@ -207,5 +207,39 @@ class GoldAndNetherPrepProgressTest(unittest.TestCase):
                                          gs(inventory={"feather": 2}))))
 
 
+class PearlHuntProgressTest(unittest.TestCase):
+    """The stronghold pearl run had no rule at all, so a working hunt read as no progress: the
+    kill that drops a pearl, the roam that loads fresh ground to find an enderman, the banked
+    powder withdrawn, the eye assembled. A roam that reads as stuck gets dropped from the offer
+    and the bot strands; an unverified tick is thrown to the offline teacher's opinion."""
+
+    def test_hunt_enderman_is_the_pearl_the_kill_drops(self) -> None:
+        self.assertTrue(progressed("hunt_enderman",
+                                   diff(gs(inventory={}), gs(inventory={"ender_pearl": 1}))))
+        # A hunt that moved the bot but dropped no pearl made no progress -- the pearl is the proof.
+        self.assertFalse(progressed("hunt_enderman",
+                                    diff(gs(pos=(0.0, 64.0, 0.0)), gs(pos=(20.0, 64.0, 0.0)))))
+
+    def test_search_enderman_is_the_ground_it_roams(self) -> None:
+        # Pure roam: nothing lands until a hunt, so movement to new ground is the proof, the same
+        # rule `explore` uses -- a roam that read as no progress looked stuck and got dropped.
+        self.assertTrue(progressed("search_enderman",
+                                   diff(gs(pos=(0.0, 64.0, 0.0)), gs(pos=(20.0, 64.0, 0.0)))))
+        # A pearl that lands while roaming counts too; standing still does not.
+        self.assertTrue(progressed("search_enderman",
+                                   diff(gs(inventory={}), gs(inventory={"ender_pearl": 1}))))
+        self.assertFalse(progressed("search_enderman",
+                                    diff(gs(pos=(0.0, 64.0, 0.0)), gs(pos=(1.0, 64.0, 0.0)))))
+
+    def test_take_blaze_powder_is_the_powder_withdrawn(self) -> None:
+        self.assertTrue(progressed("take_blaze_powder",
+                                   diff(gs(inventory={}), gs(inventory={"blaze_powder": 6}))))
+
+    def test_craft_ender_eye_is_the_eye_assembled(self) -> None:
+        d = diff(gs(inventory={"ender_pearl": 1, "blaze_powder": 1}),
+                 gs(inventory={"ender_eye": 1}))
+        self.assertTrue(progressed("craft_ender_eye", d))
+
+
 if __name__ == "__main__":
     unittest.main()

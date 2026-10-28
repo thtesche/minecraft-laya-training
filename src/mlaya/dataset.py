@@ -49,6 +49,7 @@ from typing import Any, Iterable
 from .actions import CRITERIA
 from .brain import DANGER_Q, INTENT_QID, DANGER_QID, intent_question
 from .perception import GameState
+from .verify import progressed as _progressed
 
 # Heuristic `in_danger` label, used only when a state carries no logged Laya answer. Mirrors the
 # criteria text: a hostile close enough to be hitting the bot, or health low enough that the next
@@ -86,6 +87,27 @@ def render_narrative(rec: dict) -> str | None:
             return rendered
     narrative = rec.get("narrative")
     return narrative if isinstance(narrative, str) and narrative else None
+
+
+def reverified_progress(rec: dict) -> bool:
+    """Whether a tick progressed, re-judged from its logged `delta` through today's `verify`.
+
+    The reward signal `progressed` is written at run time by whatever verifier was live then, so a
+    later rule change (the pearl hunt getting a rule it never had) leaves the archived corpus
+    labelled by the old, blinder verifier. The log stores the raw `delta` (the state diff) and
+    `ok` (whether the call succeeded), which is exactly what `verify.progressed` reads, so the
+    label can be recomputed offline - the reward-signal twin of `render_narrative` re-reading the
+    narrative, and the same training = inference principle. A tick with no logged `delta` (an old
+    log, a hand-written fixture) keeps its logged `progressed`.
+    """
+    delta = rec.get("delta")
+    label = rec.get("label")
+    if not isinstance(delta, dict) or not isinstance(label, str):
+        return bool(rec.get("progressed"))
+    try:
+        return bool(_progressed(label, delta, bool(rec.get("ok", True))))
+    except Exception:
+        return bool(rec.get("progressed"))
 
 
 def _narrative_hash(narrative: str) -> str:
@@ -293,6 +315,7 @@ def build_rows(
     with_danger: bool = True,
     limit: int | None = None,
     rerender: bool = False,
+    reverify: bool = False,
     teacher: Path | Iterable[Path] | None = None,
 ) -> list[dict]:
     """Turn the run log into `{state, questions, expected}` training rows.
@@ -310,7 +333,11 @@ def build_rows(
 
     `rerender` re-reads each tick's narrative through today's `narrative()` (see
     `render_narrative`), so an archived corpus logged under an older wording trains the head on
-    exactly the rendering it meets at run time.
+    exactly the rendering it meets at run time. `reverify` does the same for the reward signal:
+    `progressed` is recomputed from the logged `delta` through today's `verify` (see
+    `reverified_progress`), so a verifier rule added after the run - the pearl hunt getting one -
+    retroactively turns a roam that worked into the verifier positive it now is, instead of
+    leaving it an unverified tick the offline teacher's opinion has to fill.
 
     `teacher` adds the offline teacher side-file(s) (`teacher.py`) as a second, *opinion* label
     source. It never overrides the verifier: it fills a tick only where the grounded signal
@@ -355,10 +382,11 @@ def build_rows(
 
         candidates = tuple(c for c in (rec.get("candidates") or []) if c in CRITERIA)
         label = rec.get("label")
+        progress = reverified_progress(rec) if reverify else bool(rec.get("progressed"))
         teachable = (len(candidates) >= 2 and label in candidates and index not in loops
                      # The walk to the chest is no deposit: only an item leaving the pack is.
                      and (label != "stow_surplus" or _deposited(rec)))
-        if teachable and (rec.get("progressed") or include_failed):
+        if teachable and (progress or include_failed):
             key = (narrative, candidates)
             if key in seen:
                 continue
@@ -385,7 +413,7 @@ def build_rows(
         # here: the grounded signal already owns it, and the judge's "another would be better" is
         # the weak opinion the plan holds below the verifier.
         teach = _teacher_label(teacher_map, rec, narrative, candidates, label)
-        if teachable and not rec.get("progressed") and not include_failed and teach is not None:
+        if teachable and not progress and not include_failed and teach is not None:
             key = (narrative, candidates)
             if key not in seen:
                 seen.add(key)

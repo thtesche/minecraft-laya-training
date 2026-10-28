@@ -136,6 +136,7 @@ def cmd_dataset(args) -> int:
         with_danger=not args.no_danger,
         limit=args.limit or None,
         rerender=args.rerender,
+        reverify=args.reverify,
         teacher=[_resolve(p) for p in args.teacher] if args.teacher else None,
     )
     train, ev = ds.split(rows, args.eval_frac, args.seed)
@@ -319,6 +320,9 @@ def main(argv: list[str] | None = None) -> int:
     dset.add_argument("--rerender", action="store_true",
                       help="re-render each tick's narrative from its logged state with today's "
                            "renderer (rebuild an archived corpus in the current wording)")
+    dset.add_argument("--reverify", action="store_true",
+                      help="recompute progressed from each tick's logged delta with today's "
+                           "verifier (a rule added after the run re-labels the archived corpus)")
     dset.add_argument("--teacher", action="append", default=[],
                       help="teacher side-file (runs/history/teacher-runNN.jsonl) as an extra "
                            "label source; repeat for several. The verifier stays primary")

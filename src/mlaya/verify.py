@@ -136,6 +136,21 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label == "stow_blaze_powder":
         # The powder leaving the pack; the walk to the network chest with room is progress too.
         return d["inventory_delta"].get("blaze_powder", 0) < 0 or (ok and (d["pos_delta"] or 0) > 2)
+    # The stronghold run to the eyes of ender. Each pearl action had no rule at all, so a kill that
+    # dropped a pearl and a roam that loaded fresh ground both read as no progress -- the stuck
+    # tracker never saw the hunt move (so a roam that was working looked stuck), and the dataset
+    # threw every one of these ticks away as unverified, handing the whole pearl hunt to the offline
+    # teacher's opinion (run111: all eleven teacher fills were `search_enderman` no-progress ticks).
+    # `hunt_enderman` proves itself by the pearl the kill drops; `search_enderman` by the ground it
+    # roams to find one, since nothing lands until a hunt (the same movement rule `explore` uses).
+    if label == "hunt_enderman":
+        return d["inventory_delta"].get("ender_pearl", 0) > 0
+    if label == "search_enderman":
+        return d["inventory_delta"].get("ender_pearl", 0) > 0 or (d["pos_delta"] or 0) > 2
+    if label == "take_blaze_powder":
+        return d["inventory_delta"].get("blaze_powder", 0) > 0
+    if label == "craft_ender_eye":
+        return d["inventory_delta"].get("ender_eye", 0) > 0
     # Home base. Walking home (or up to the surface) shows as movement; the chest shows as the
     # item entering or leaving the pack; stowing/dropping shows as any carried item going down.
     if label in ("surface_up", "establish_base", "go_home"):
