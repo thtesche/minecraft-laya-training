@@ -85,6 +85,14 @@ progress on. Everything runs on the archived log; the live loop (`graph.py`) is 
    the same tick — the builder then falls back to the tick's identity (`iteration`, Laya's label,
    the eligible labels) rather than silently adding zero rows. Regenerating the side-file is still
    the right thing after a renderer change; the fallback just keeps an expensive batch usable.
-3. Validate at step 4 above against **real run outcomes** (goal/deaths/ticks-to-milestone), never
+ 3. Test the blindness: `teacher --log <run log> --flip-from runs/history/teacher-runNN.jsonl`
+    re-judges every recorded disagreement with the blind pair's A/B slots swapped (System 2 is not
+    asked again; its pick is read from the side-file) and writes `teacher-runNN-flip.jsonl` with the
+    two verdicts side by side. A verdict that survives the swap is a judgement about the actions;
+    one that flips was a reaction to which letter they arrived under, and its label is noise the
+    dataset should not learn from. Measured on run111: **1 flip in 29** (3.4%) — the judge is
+    order-blind in practice, and the tick that flipped (`search_enderman` vs `go_home` at it38) is
+    a genuinely close call rather than a slot artifact.
+4. Validate at step 4 above against **real run outcomes** (goal/deaths/ticks-to-milestone), never
    against judge-agreement — optimising Laya to please the big model instead of to survive is the
    failure mode this ordering exists to avoid. Go live only once it at least matches.
