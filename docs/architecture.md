@@ -972,32 +972,42 @@ powder back to the chest at the gate** — `nether_expedition_complete` is still
   errors. A real accuracy gain would need a stronger signal than
   imitation (e.g. verifier reward directly) or more/more diverse runs. Both `in_danger` classes
   are represented with the defer fix; the new upper bound only caps the distant `yes`.
-- **M5 — stronger training signal (planned): relative narrative + offline teacher/judge.**
+- **M5 — stronger training signal (built): relative narrative + offline teacher/judge.**
   Extends the M3+ gap above: imitating the logged choice cannot fix the choice's own errors, so
   the head needs a signal stronger than imitation. Two parts, both **offline** — the live loop
-  (`graph.py`) is untouched, so this adds a post-run analysis step, not a change to the running bot.
-  - *Relative narrative.* The narrative Laya reads (`perception.narrative`) still carries absolute
-    `x/y/z` for the bot, the base and the death site, while resources and hostiles are already
-    relative (`logs at 2m`, `zombie at 9m`). Absolute x/z are per-world random and carry no
-    transferable signal — the head would have to *learn to ignore* them, the same reasoning that
-    deleted the `players nearby` line (noise that spends the model's attention). Make bot/base/death
-    relative (distance + coarse direction); keep `y` only as a **depth band** (a true global frame —
-    bedrock ≈ −64, sea level ≈ 63, diamonds < 16), and unify the distance word (1 block = 1 m, no
-    legend sentence — the head learns the scale from consistent data). `as_state` stays absolute
-    (diagnosis, S2 rebuild, `from_state`). **Retrofittable:** the log stores both `narrative` and
-    `state`, so `GameState.from_state` + `narrative` re-render the whole run history before a retrain.
-  - *Offline teacher/judge.* Replay an archived log; for each action tick with ≥ 2 candidates ask
-    System 2 (`brain.escalate_to_system2`) on the **same** `narrative`/`candidates` and log agreement
-    + S2's reason. On disagreement a third model judges the two candidates **blind**, with abstention
-    and a "neither" option. `dataset.build_rows` reads the resulting side file
-    (`runs/history/teacher-runNN.jsonl`) as an extra label source for the contested ticks and the
-    currently-dropped no-progress ticks. The **verifier stays the grounded primary truth** — a tick
-    that demonstrably progressed is not overridden by an (ungrounded) judge opinion; the teacher only
-    fills what the verifier cannot see (opportunity cost, dropped ticks). Scope: `intent` only; the
-    `in_danger` gate's floor/ceiling heuristic in `dataset.py` is left as is. New CLI step `teacher`
-    between `run` and `dataset`. Validated against **real run outcomes** (goal, deaths,
-    ticks-to-milestone), not judge agreement — otherwise the head is tuned to please the big model
-    rather than to survive.
+  (`graph.py`) is untouched, so this is a post-run analysis step, not a change to the running bot.
+  The **code** is in; the retrain + live validation are a run-the-user-owns step (below).
+  - *Relative narrative (done).* `perception.narrative()` now renders the bot, the base and the
+    death site **relative**: the bot's `x/z` are dropped and `y` becomes a **depth band** against
+    the one global frame (`_depth_band`: bedrock ≈ −64, sea level ≈ 63, diamonds < 16 →
+    "at the surface"/"underground"/"deep underground"); the base is a distance + a coarse vertical
+    word (`_rough_vertical`: level/above/below/far); the death site a distance. Absolute x/z are
+    per-world random and carry no transferable signal — the head would only *learn to ignore* them,
+    the same reasoning that deleted the `players nearby` line. The distance word is unified to
+    `blocks` (1 block = 1 m), no legend sentence — the head learns the scale from consistent data.
+    `as_state` stays **absolute** (diagnosis, S2 rebuild, `from_state`). **Retrofittable:** the log
+    stores both `narrative` and `state`, so `dataset --rerender` (`dataset.render_narrative` =
+    `GameState.from_state(state).narrative()`) rebuilds a whole archived corpus in the new wording
+    before a retrain — training = inference. (The death clause cannot be reconstructed, its age is
+    not in `as_state`, so a re-rendered death tick drops that one sentence; everything a step keys
+    on survives.)
+  - *Offline teacher/judge (done).* `mlaya teacher --log …` (`teacher.py`) replays an archived log;
+    for each action tick with ≥ 2 candidates it asks System 2 (`[llm]`, via
+    `brain.escalate_to_system2`, Laya's own pick withheld so S2 is not biased) over the **same**
+    `narrative`/`candidates` and logs agreement + S2's reason. On disagreement a third model, the
+    judge (`[judge]` — its own model, so it does not grade its own earlier opinion), sees the two
+    actions **blind** (A/B order seeded by the tick's narrative hash, not told which is S1/S2) and
+    rules A/B/neither/unsure; only a clear verdict carries a label. Output:
+    `runs/history/teacher-runNN.jsonl`, keyed `(iteration, narrative_hash)`. `dataset.build_rows`
+    reads it with `--teacher` as an extra label source: a **no-progress** teachable tick whose
+    judge clearly sided against Laya's pick becomes a positive row for the judge's label. The
+    **verifier stays the grounded primary truth** — a tick that demonstrably progressed is not
+    overridden, and any de-dup collision goes to the verifier. Scope: `intent` only; the
+    `in_danger` gate's floor/ceiling heuristic in `dataset.py` is untouched.
+  - *Still owed (user step):* rebuild the corpus (`dataset --rerender [--teacher …]`), train, and
+    validate against **real run outcomes** (goal, deaths, ticks-to-milestone), not judge agreement —
+    otherwise the head is tuned to please the big model rather than to survive. Go live via
+    `LAYA_EXTRA_MODELS` only once it at least matches.
 - **Iron chain (re-)validated live (tier 0 → 3):** `craft_pickaxe` → `mine_stone` →
   `craft_stone_pickaxe` → `mine_iron` → `mine_coal` → `craft_furnace` → `smelt_iron` →
   `craft_iron_pickaxe` has **run through live**, including the new unblock recovery

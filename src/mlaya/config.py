@@ -37,6 +37,18 @@ class LLMConfig(BaseModel):
     base_url: str = "http://192.168.0.109:8080/v1"
 
 
+class JudgeConfig(BaseModel):
+    # The third LLM in the offline teacher path (`teacher.py`): it adjudicates, blind, only
+    # when System 1 (Laya) and System 2 disagree. A separate model from `[llm]` is the point -
+    # a different judge removes the bias of one model grading its own earlier opinion - but it
+    # defaults to the same Strata server so the path works out of the box. The key comes from
+    # the environment (.env) like System 2's, its own env name so the two can differ.
+    model: str = "qwen3.8-flash-next-q2_0"
+    api_key_env: str = "STRATA_API_KEY"
+    max_tokens: int = 4096
+    base_url: str = "http://192.168.0.109:8080/v1"
+
+
 class MCPConfig(BaseModel):
     url: str = "http://localhost:25575/mcp"
     health_url: str = "http://localhost:25575/health"
@@ -99,6 +111,7 @@ class LoopConfig(BaseModel):
 
 class Settings(BaseModel):
     llm: LLMConfig = LLMConfig()
+    judge: JudgeConfig = JudgeConfig()
     mcp: MCPConfig = MCPConfig()
     laya: LayaConfig = LayaConfig()
     loop: LoopConfig = LoopConfig()
@@ -110,6 +123,9 @@ class Settings(BaseModel):
 
     def api_key(self) -> str | None:
         return os.environ.get(self.llm.api_key_env)
+
+    def judge_api_key(self) -> str | None:
+        return os.environ.get(self.judge.api_key_env)
 
     def log_path(self) -> Path:
         p = Path(self.loop.log_path)

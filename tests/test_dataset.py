@@ -216,6 +216,101 @@ class DangerLabelTest(unittest.TestCase):
         self.assertEqual(ds.danger_label({"health": 20.0}, answers), "yes")
 
 
+class RenderNarrativeTest(unittest.TestCase):
+    """A tick is re-read through today's `narrative()` from its logged `state` (A4)."""
+
+    def test_a_tick_with_state_is_rerendered(self):
+        rec = {"narrative": "old absolute wording x=1, y=2, z=3",
+               "state": {"health": 20.0, "food": 20.0, "position": [1000.0, 72.0, -500.0],
+                         "on_ground": True, "hostiles": []}}
+        out = ds.render_narrative(rec)
+        self.assertIn("At the surface", out)
+        self.assertNotIn("x=", out)
+
+    def test_a_tick_without_state_keeps_its_logged_narrative(self):
+        self.assertEqual(ds.render_narrative({"narrative": "logged only"}), "logged only")
+
+    def test_rerender_changes_the_row_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            rec = _rec("old absolute x=5", ["mine_stone", "get_wood"], "mine_stone")
+            rec["state"] = {"health": 20.0, "food": 20.0, "position": [5.0, 70.0, 5.0],
+                            "on_ground": True, "hostiles": []}
+            p = _write(Path(d), [rec])
+            plain = ds.build_rows(p)
+            rerendered = ds.build_rows(p, rerender=True)
+        self.assertEqual(plain[0]["state"], "old absolute x=5")
+        self.assertIn("At the surface", rerendered[0]["state"])
+        self.assertNotIn("x=", rerendered[0]["state"])
+
+
+class TeacherSourceTest(unittest.TestCase):
+    """The teacher side-file fills no-progress ticks; the verifier always wins a collision (B4)."""
+
+    def _tick(self, iteration, candidates, label, *, progressed, narrative, state=None):
+        rec = _rec(narrative, candidates, label, progressed=progressed)
+        rec["iteration"] = iteration
+        if state is not None:
+            rec["state"] = state
+        return rec
+
+    def _teacher(self, rec, judge_label):
+        return {"iteration": rec["iteration"],
+                "narrative_hash": ds._narrative_hash(ds.render_narrative(rec)),
+                "candidates": rec["candidates"], "laya_label": rec["label"],
+                "judge_label": judge_label}
+
+    def test_a_no_progress_tick_is_filled_by_the_judge(self):
+        with tempfile.TemporaryDirectory() as d:
+            rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                             progressed=False, narrative="safe no-progress")
+            log = _write(Path(d), [rec])
+            tf = Path(d) / "teacher.jsonl"
+            tf.write_text(json.dumps(self._teacher(rec, "mine_stone")) + "\n", encoding="utf-8")
+            plain = ds.build_rows(log)
+            taught = ds.build_rows(log, teacher=tf)
+        self.assertEqual(plain, [])  # no progress, nothing from the verifier
+        self.assertEqual(len(taught), 1)
+        self.assertEqual(taught[0]["expected"][INTENT_QID], "mine_stone")
+
+    def test_the_verifier_wins_a_progressed_tick(self):
+        # Laya's action progressed: the grounded row stands, the judge's dissent is dropped.
+        with tempfile.TemporaryDirectory() as d:
+            rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                             progressed=True, narrative="safe progressed")
+            log = _write(Path(d), [rec])
+            tf = Path(d) / "teacher.jsonl"
+            tf.write_text(json.dumps(self._teacher(rec, "mine_stone")) + "\n", encoding="utf-8")
+            rows = ds.build_rows(log, teacher=tf)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["expected"][INTENT_QID], "get_wood")
+
+    def test_a_judge_label_equal_to_layas_is_not_a_fill(self):
+        with tempfile.TemporaryDirectory() as d:
+            rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                             progressed=False, narrative="safe")
+            log = _write(Path(d), [rec])
+            tf = Path(d) / "teacher.jsonl"
+            tf.write_text(json.dumps(self._teacher(rec, "get_wood")) + "\n", encoding="utf-8")
+            rows = ds.build_rows(log, teacher=tf)
+        self.assertEqual([r for r in rows if INTENT_QID in r["expected"]], [])
+
+    def test_the_join_survives_rerender(self):
+        # Side-file hashes the canonical re-rendered narrative, so the join holds whether or not
+        # the dataset itself is built with rerender.
+        state = {"health": 20.0, "food": 20.0, "position": [5.0, 70.0, 5.0],
+                 "on_ground": True, "hostiles": []}
+        with tempfile.TemporaryDirectory() as d:
+            rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                             progressed=False, narrative="old absolute x=5", state=state)
+            log = _write(Path(d), [rec])
+            tf = Path(d) / "teacher.jsonl"
+            tf.write_text(json.dumps(self._teacher(rec, "mine_stone")) + "\n", encoding="utf-8")
+            rows = ds.build_rows(log, teacher=tf, rerender=True)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["expected"][INTENT_QID], "mine_stone")
+        self.assertIn("At the surface", rows[0]["state"])
+
+
 class SplitTest(unittest.TestCase):
     def test_reproducible(self):
         rows = [{"state": f"s{i}", "questions": {}, "expected": {}} for i in range(10)]

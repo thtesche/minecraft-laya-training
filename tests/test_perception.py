@@ -647,6 +647,86 @@ class RelativeRenderHelpersTest(unittest.TestCase):
         self.assertEqual(_rough_vertical(-25.0), "far below")
 
 
+class RelativeNarrativeTest(unittest.TestCase):
+    """Position, base and death speak in relations, not absolute cells.
+
+    Raw x/z are per-world random and not transferable, so the head would only learn to ignore
+    them - the same reason "players nearby" was cut. The depth band is read against the one frame
+    every world shares (bedrock ~-64, sea level ~63, diamonds below 16), and the base and the
+    death site are a distance to walk plus a coarse vertical relation. `as_state` still logs the
+    absolute cells; only what Laya reads goes relative.
+    """
+
+    def test_the_depth_band_reads_against_the_shared_frame(self) -> None:
+        from mlaya.perception import _depth_band, DEEP_Y, SURFACE_Y
+        self.assertEqual(_depth_band(SURFACE_Y), "at the surface")
+        self.assertEqual(_depth_band(72.0), "at the surface")
+        self.assertEqual(_depth_band(30.0), "underground")
+        self.assertEqual(_depth_band(DEEP_Y), "underground")
+        self.assertEqual(_depth_band(DEEP_Y - 1), "deep underground")
+        self.assertEqual(_depth_band(-38.0), "deep underground")
+
+    def test_the_vertical_relation_is_coarse_and_signed(self) -> None:
+        from mlaya.perception import _rough_vertical
+        self.assertEqual(_rough_vertical(0.0), "level")
+        self.assertEqual(_rough_vertical(3.0), "level")
+        self.assertEqual(_rough_vertical(10.0), "above")
+        self.assertEqual(_rough_vertical(40.0), "far above")
+        self.assertEqual(_rough_vertical(-10.0), "below")
+        self.assertEqual(_rough_vertical(-40.0), "far below")
+
+    def test_position_says_the_band_not_the_cell(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (1234.0, 72.0, -987.0)
+        gs.on_ground = True
+        text = gs.narrative()
+        self.assertIn("At the surface (standing on solid floor)", text)
+        self.assertNotIn("x=", text)
+        self.assertNotIn("z=", text)
+        self.assertNotIn("y=", text)
+        # The absolute cell is still logged for diagnosis and the S2 rebuild.
+        self.assertEqual(gs.as_state()["position"], (1234.0, 72.0, -987.0))
+
+    def test_the_base_is_a_distance_and_a_direction_not_a_cell(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.0, 70.0, 0.0)
+        gs.base = (30, 12, 0)  # far below and a walk off
+        text = gs.narrative()
+        self.assertIn("Home base", text)
+        self.assertIn("blocks away", text)
+        self.assertIn("far below", text)
+        self.assertNotIn("x=", text)
+
+    def test_standing_at_the_base_reads_as_the_base(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.base = (10, 64, 10)
+        gs.pos = (10.4, 64.0, 10.4)  # inside the 4-block proximity box
+        text = gs.narrative()
+        self.assertIn("At the home base", text)
+        self.assertNotIn("blocks away", text)
+
+    def test_a_level_base_names_no_direction(self) -> None:
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.base = (40, 64, 0)  # same depth, a walk away
+        text = gs.narrative()
+        self.assertIn("blocks away", text)
+        self.assertNotIn("above", text)
+        self.assertNotIn("below", text)
+
+    def test_one_distance_word_not_two(self) -> None:
+        # A block is a metre; the narrative says it one way so the head learns one scale.
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (0.0, 64.0, 0.0)
+        gs.base = (40, 64, 0)
+        gs.resources = {"diamond_ore": [BlockHit(query="diamond_ore", name="diamond_ore",
+                                                 x=5, y=60, z=0, distance=6.0)]}
+        text = gs.narrative()
+        self.assertIn("diamond_ore at 6 blocks", text)
+        self.assertNotIn("at 6m", text)
+        self.assertIn("blocks away", text)
+
+
 class PhasePersonaTest(unittest.TestCase):
     """One sentence, one phase, both model interfaces from the same truth.
 

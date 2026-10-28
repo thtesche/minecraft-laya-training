@@ -48,6 +48,7 @@ from typing import Any, Iterable
 
 from .actions import CRITERIA
 from .brain import DANGER_Q, INTENT_QID, DANGER_QID, intent_question
+from .perception import GameState
 
 # Heuristic `in_danger` label, used only when a state carries no logged Laya answer. Mirrors the
 # criteria text: a hostile close enough to be hitting the bot, or health low enough that the next
@@ -61,6 +62,73 @@ DANGER_LOW_HEALTH = 8.0
 # Between the floor and this ceiling the logged answer wins.
 DANGER_SAFE_M = 8.0
 DANGER_SAFE_HEALTH = 15.0
+
+
+def render_narrative(rec: dict) -> str | None:
+    """The narrative a tick reads, re-rendered from its logged `state` when one is present.
+
+    The log stores both the rendered `narrative` and the structured `state` (`as_state`), and
+    `GameState.from_state` is the inverse, so an archived tick can be re-read through *today's*
+    `narrative()` - the same renderer inference uses. That is what keeps training = inference
+    after the renderer changes (the relative-narrative switch): a corpus logged under the old
+    absolute wording is rebuilt in the new relative wording instead of being thrown away. When a
+    tick carries no usable `state` (an old log, a hand-written fixture) the logged narrative
+    stands. The death clause cannot be reconstructed - its age is not in `as_state` - so a
+    re-rendered death tick simply drops that one sentence; everything a step keys on survives.
+    """
+    state = rec.get("state")
+    if isinstance(state, dict) and state:
+        try:
+            rendered = GameState.from_state(state).narrative()
+        except Exception:
+            rendered = None
+        if rendered:
+            return rendered
+    narrative = rec.get("narrative")
+    return narrative if isinstance(narrative, str) and narrative else None
+
+
+def _narrative_hash(narrative: str) -> str:
+    """Stable short key for a narrative, used to pin a side-file judgment to its tick."""
+    return hashlib.sha256(narrative.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_teacher(teacher: Path | Iterable[Path] | None) -> dict[tuple[Any, str], dict]:
+    """Index the teacher side-file(s) by `(iteration, narrative_hash)`, the key a tick is joined on.
+
+    Two coordinates, not one, because an iteration number repeats across run logs: the narrative
+    hash pins a judgment to the exact tick it reviewed even when several logs are built as one set.
+    """
+    if teacher is None:
+        return {}
+    paths = [teacher] if isinstance(teacher, (str, Path)) else list(teacher)
+    out: dict[tuple[Any, str], dict] = {}
+    for path in paths:
+        for j in _read_records(Path(path)):
+            h = j.get("narrative_hash")
+            if isinstance(h, str):
+                out[(j.get("iteration"), h)] = j
+    return out
+
+
+def _teacher_label(teacher_map: dict[tuple[Any, str], dict], rec: dict, narrative: str,
+                   candidates: tuple[str, ...], laya_label: Any) -> str | None:
+    """The label the judge carried for this tick, if it clearly sided against Laya's choice.
+
+    The join hash is always taken over the *canonical* re-rendered narrative (what the teacher
+    wrote), so a judgment is found whether or not the dataset itself was built with `rerender`.
+    Only a judge label that is a real candidate here and differs from Laya's own pick counts.
+    """
+    if not teacher_map:
+        return None
+    key = (rec.get("iteration"), _narrative_hash(render_narrative(rec) or narrative))
+    j = teacher_map.get(key)
+    if not j:
+        return None
+    jl = j.get("judge_label")
+    if isinstance(jl, str) and jl in candidates and jl != laya_label:
+        return jl
+    return None
 
 
 def _read_records(log_path: Path) -> list[dict]:
@@ -206,6 +274,8 @@ def build_rows(
     include_failed: bool = False,
     with_danger: bool = True,
     limit: int | None = None,
+    rerender: bool = False,
+    teacher: Path | Iterable[Path] | None = None,
 ) -> list[dict]:
     """Turn the run log into `{state, questions, expected}` training rows.
 
@@ -219,6 +289,15 @@ def build_rows(
     When the reason is danger that is a labelled `in_danger = yes` example - the case an
     action-only dataset never sees. It becomes a danger-only row. A defer for another reason
     ("no valid action") is ignored.
+
+    `rerender` re-reads each tick's narrative through today's `narrative()` (see
+    `render_narrative`), so an archived corpus logged under an older wording trains the head on
+    exactly the rendering it meets at run time.
+
+    `teacher` adds the offline teacher side-file(s) (`teacher.py`) as a second, *opinion* label
+    source. It never overrides the verifier: it fills a tick only where the grounded signal
+    produced nothing - a teachable tick whose action did not progress - and the judge clearly
+    sided against Laya's choice. On any de-dup collision with a verifier row, the verifier wins.
     """
     paths = [log_path] if isinstance(log_path, (str, Path)) else list(log_path)
     records: list[dict] = []
@@ -227,6 +306,7 @@ def build_rows(
         part = _read_records(Path(path))
         loops |= {len(records) + i for i in _loop_ticks(part)}
         records.extend(part)
+    teacher_map = _load_teacher(teacher)
     rows: list[dict] = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
     for index, rec in enumerate(records):
@@ -236,6 +316,10 @@ def build_rows(
         narrative = rec.get("narrative")
         if not isinstance(narrative, str) or not narrative:
             continue
+        if rerender:
+            rendered = render_narrative(rec)
+            if rendered:
+                narrative = rendered
         state = rec.get("state") if isinstance(rec.get("state"), dict) else {}
 
         if stage == "defer":
@@ -274,6 +358,30 @@ def build_rows(
             if limit and len(rows) >= limit:
                 break
             continue
+
+        # Teacher fill (opinion, never over the verifier): a tick that *would* have been a
+        # verifier positive but for its action not progressing, where the blind judge clearly
+        # sided against Laya's choice. The verifier row for the same (state, candidates) wins any
+        # collision - if it was emitted above, this tick already `continue`d; here `key in seen`
+        # guards the cross-tick case. A tick Laya progressed on is deliberately not re-labelled
+        # here: the grounded signal already owns it, and the judge's "another would be better" is
+        # the weak opinion the plan holds below the verifier.
+        teach = _teacher_label(teacher_map, rec, narrative, candidates, label)
+        if teachable and not rec.get("progressed") and not include_failed and teach is not None:
+            key = (narrative, candidates)
+            if key not in seen:
+                seen.add(key)
+                questions = {INTENT_QID: intent_question(list(candidates))}
+                expected = {INTENT_QID: teach}
+                if with_danger:
+                    dlabel = danger_label(state, rec.get("answers"))
+                    if dlabel:
+                        questions[DANGER_QID] = DANGER_Q
+                        expected[DANGER_QID] = dlabel
+                rows.append({"state": narrative, "questions": questions, "expected": expected})
+                if limit and len(rows) >= limit:
+                    break
+                continue
 
         # A refused action (no progress) carries no usable intent, but in danger it is a `yes`
         # example for the gate - the low-health tick an action-only dataset would drop.

@@ -51,7 +51,11 @@ head is trained. Run-by-run findings live in [`architecture.md`](architecture.md
 
 1. Build the dataset from the archived runs into its own files:
    `.venv/bin/python -m mlaya.cli dataset --log runs/history/decisions-runA.jsonl --log … --out data/<name>-train.jsonl --eval data/<name>-eval.jsonl`.
-   Ping-pong windows and walk-only deposits are filtered out (see architecture, M3).
+   Ping-pong windows and walk-only deposits are filtered out (see architecture, M3). Add
+   `--rerender` to re-read each archived tick's narrative through today's `narrative()` (rebuild
+   an old corpus in the current wording — needed after the relative-narrative switch, so the head
+   trains on the rendering it meets at run time). The absolute cells stay in the log's `state`;
+   only the narrative Laya reads is re-rendered.
 2. Dry run: `.venv/bin/python -m mlaya.cli train --dry-run --data … --eval …` — check that `base` is the checkpoint you
    mean. The base is `[train] base_model` resolved through `LAYA_EXTRA_MODELS`, or `--base`.
 3. Train: `.venv/bin/python -m mlaya.cli train --data … --eval … > runs/train-<name>.log 2>&1` → a new
@@ -59,3 +63,24 @@ head is trained. Run-by-run findings live in [`architecture.md`](architecture.md
    `LAYA_EXTRA_MODELS` value that serves it.
 4. A held-out split from the training runs is close to in-distribution; only a live run (or a
    whole unseen run as held-out) shows whether the head decides better.
+
+## Teacher path (offline System 2 + judge)
+
+The verifier (`progressed`) is the grounded primary label source and stays that way. The teacher
+is *opinion* and fills only the gaps the verifier leaves — disputed ticks and the no-progress
+ticks a verifier-only dataset throws away. It never overrules a tick the world showed real
+progress on. Everything runs on the archived log; the live loop (`graph.py`) is untouched.
+
+1. Review a run: `.venv/bin/python -m mlaya.cli teacher --log runs/history/decisions-runNN.jsonl`
+   → `runs/history/teacher-runNN.jsonl`. Per action tick with ≥2 eligible labels it asks System 2
+   (`[llm]`) the same question over the same candidates; on disagreement a third model — the judge
+   (`[judge]`, its own model so it does not grade its own earlier opinion) — sees both actions
+   *blind* (not told which came from S1/S2) and rules A/B/neither/unsure. Only a clear, confident
+   verdict carries a label forward. Both keys come from `.env` (`STRATA_API_KEY` by default).
+2. Fold it into a dataset: add `--teacher runs/history/teacher-runNN.jsonl` to the `dataset`
+   build (pair it with `--rerender`, as the side-file keys on the re-rendered narrative). A
+   no-progress tick whose judge clearly sided against Laya's pick becomes a positive row for the
+   judge's label; on any de-dup collision with a verifier row the verifier wins.
+3. Validate at step 4 above against **real run outcomes** (goal/deaths/ticks-to-milestone), never
+   against judge-agreement — optimising Laya to please the big model instead of to survive is the
+   failure mode this ordering exists to avoid. Go live only once it at least matches.

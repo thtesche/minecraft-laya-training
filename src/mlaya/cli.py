@@ -135,6 +135,8 @@ def cmd_dataset(args) -> int:
         include_failed=args.include_failed,
         with_danger=not args.no_danger,
         limit=args.limit or None,
+        rerender=args.rerender,
+        teacher=[_resolve(p) for p in args.teacher] if args.teacher else None,
     )
     train, ev = ds.split(rows, args.eval_frac, args.seed)
 
@@ -161,6 +163,59 @@ def cmd_dataset(args) -> int:
         ds.write_jsonl(ev_path, ev)
         result["eval_path"] = str(ev_path)
     print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _teacher_out_path(log: Path) -> Path:
+    """Where a run log's teacher judgments land: `decisions-runNN.jsonl` -> `teacher-runNN.jsonl`,
+    beside the log, so the side-file sits next to the run it reviews."""
+    name = log.name
+    out = ("teacher-" + name[len("decisions-"):]) if name.startswith("decisions-") \
+        else f"teacher-{log.stem}.jsonl"
+    return log.parent / out
+
+
+def cmd_teacher(args) -> int:
+    """Replay an archived run log through the offline teacher path (System 2 + judge).
+
+    Opinion only, written to a side-file `dataset` reads as an extra label source; the verifier
+    stays primary. No world action, no touch of the live loop.
+    """
+    from . import dataset as ds
+    from . import teacher as tmod
+
+    settings = load_settings()
+    log = _resolve(args.log)
+    if not log.exists():
+        print(json.dumps({"error": "run log not found", "path": str(log)}))
+        return 2
+    s2_key = "set" if settings.api_key() else f"MISSING ({settings.llm.api_key_env})"
+    judge_key = "set" if settings.judge_api_key() else f"MISSING ({settings.judge.api_key_env})"
+    records = ds._read_records(log)
+    judgments = tmod.run_teacher(records, settings)
+
+    out = _resolve(args.out) if args.out else _teacher_out_path(log)
+    ds.write_jsonl(out, judgments)
+
+    agree = sum(1 for j in judgments if j.get("agree"))
+    disagree = sum(1 for j in judgments if j.get("s2_label") is not None and not j.get("agree"))
+    verdicts: dict[str, int] = {}
+    for j in judgments:
+        v = j.get("judge_verdict")
+        if v:
+            verdicts[v] = verdicts.get(v, 0) + 1
+    labelled = sum(1 for j in judgments if j.get("judge_label"))
+    print(json.dumps({
+        "log": str(log),
+        "teacher_path": str(out),
+        "s2_key": s2_key,
+        "judge_key": judge_key,
+        "teachable_ticks": len(judgments),
+        "agree": agree,
+        "disagree": disagree,
+        "judge_verdicts": verdicts,
+        "judge_labelled": labelled,
+    }, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -261,6 +316,18 @@ def main(argv: list[str] | None = None) -> int:
                       help="also keep ticks whose action made no progress (plain imitation)")
     dset.add_argument("--no-danger", action="store_true",
                       help="omit in_danger rows (only if the gate is trained elsewhere)")
+    dset.add_argument("--rerender", action="store_true",
+                      help="re-render each tick's narrative from its logged state with today's "
+                           "renderer (rebuild an archived corpus in the current wording)")
+    dset.add_argument("--teacher", action="append", default=[],
+                      help="teacher side-file (runs/history/teacher-runNN.jsonl) as an extra "
+                           "label source; repeat for several. The verifier stays primary")
+
+    tch = sub.add_parser("teacher", help="replay a run log through the offline teacher path "
+                                         "(System 2 + blind judge) into a side-file")
+    tch.add_argument("--log", required=True, help="archived run log to review")
+    tch.add_argument("--out", default="",
+                     help="teacher side-file (default: teacher-<run>.jsonl beside the log)")
 
     trn = sub.add_parser("train", help="fine-tune a Laya checkpoint head on the dataset")
     trn.add_argument("--data", default="", help="training JSONL (default data/train.jsonl)")
@@ -288,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(cmd_policy(args))
     if cmd == "dataset":
         return cmd_dataset(args)
+    if cmd == "teacher":
+        return cmd_teacher(args)
     if cmd == "train":
         return cmd_train(args)
     return asyncio.run(cmd_run(args))

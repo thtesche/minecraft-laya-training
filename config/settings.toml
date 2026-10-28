@@ -4,6 +4,12 @@ api_key_env = "STRATA_API_KEY"             # key lives in the gitignored .env, n
 max_tokens = 4096                          # the model's output limit (reasoning tokens included)
 base_url = "http://192.168.0.109:8080/v1"
 
+[judge]                                    # offline teacher path only (`mlaya teacher`), never the live loop
+model = "qwen3.8-flash-next-q2_0"          # ideally a *different* model from [llm] so it does not grade its own opinion
+api_key_env = "STRATA_API_KEY"             # same .env key as System 2 unless the judge lives elsewhere
+max_tokens = 4096
+base_url = "http://192.168.0.109:8080/v1"
+
 [mcp]
 url = "http://localhost:25575/mcp"
 health_url = "http://localhost:25575/health"
