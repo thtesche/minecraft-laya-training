@@ -1329,6 +1329,86 @@ def _gold_goal(inv: dict[str, int]) -> int:
     return max(0, GOLD_HELMET_INGOTS - inv.get(GOLD_INGOT, 0) - inv.get(RAW_GOLD, 0))
 
 
+def _pearls_owed(gs: GameState) -> int:
+    """Ender pearls still needed to craft the eyes of ender, counting the pearls in the pack.
+
+    The pearl half of an eye comes from piglin barter in the Nether (docs/stronghold.md), so the
+    expedition sizes its gold reserve and its barter calls on this number.
+    """
+    return max(0, ENDER_PEARLS - int(gs.inventory.get(ENDER_PEARL_ITEM, 0)))
+
+
+def _gold_ingots_wanted(gs: GameState) -> int:
+    """Ingots the pack has to hold for the trip: the helmet piece, plus the barter reserve.
+
+    The helmet is counted only while it is still in the pack - once it is crafted the five ingots
+    are gone into it, and only the barter reserve remains to be banked.
+    """
+    inv = gs.inventory
+    want = 0
+    if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+        want += GOLD_HELMET_INGOTS
+    if _pearls_owed(gs) > 0:
+        want += GOLD_BARTER_RESERVE
+    return want
+
+
+def _gold_reserve_short(gs: GameState) -> bool:
+    """The piglin barter reserve of gold ingots is not yet banked.
+
+    Deliberately *not* part of `_all_nether_prep_steps`: that list is the crossing gate, and a gate
+    that waits for a stack of barter gold waits for a dig the trip does not need to survive. The
+    helmet is the piglin pass; the reserve is only the pearl budget. So the reserve is offered in
+    the same lull but never holds the gate shut.
+
+    The attempt cap closes the dig: a 16-ingot reserve buys about one pearl, and without the cap
+    the lull would dig gold for a barter that keeps missing until the run ran out of iterations.
+    """
+    inv = gs.inventory
+    return (gs.barter_attempts < BARTER_MAX_ATTEMPTS
+            and _pearls_owed(gs) > 0
+            and inv.get(GOLD_INGOT, 0) + inv.get(RAW_GOLD, 0) < GOLD_BARTER_RESERVE)
+
+
+def _barter_pearls_wanted(gs: GameState) -> bool:
+    """Whether to trade gold with a piglin for pearls right now.
+
+    In the Nether, pearls still owed, gold ingots in the pack, and an adult piglin within
+    `BARTER_PIGLIN_RANGE`. The range is the whole point: `barter` navigates to the piglin, and a
+    walk to a distant one is the same off-base drift that stalled the Overworld pearl hunt (run110)
+    - so beyond the range the bot marches the frontier instead of chasing a single mob.
+    """
+    if not _in_nether(gs) or _pearls_owed(gs) <= 0:
+        return False
+    if gs.inventory.get(GOLD_INGOT, 0) <= 0:
+        return False
+    if gs.barter_attempts >= BARTER_MAX_ATTEMPTS:
+        # The route has had its tries; the enderman hunt is the pearl source again.
+        return False
+    near = gs.piglin_nearest()
+    return near is not None and near[1] <= BARTER_PIGLIN_RANGE
+
+
+def _gold_reserve_steps(gs: GameState) -> list[str]:
+    """The barter reserve dig, in order, or [] - extra ingots to trade with piglins for pearls.
+
+    Only once the helmet is in hand: a bot that walks up to a piglin without a worn gold piece gets
+    torn apart, and the helmet line already digs the gold it needs. Smelting comes before digging,
+    so raw gold already in the pack becomes the ingots the barter needs first.
+    """
+    if not _nether_idle(gs) or not _gold_reserve_short(gs):
+        return []
+    inv = gs.inventory
+    if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+        return []
+    if (_has(inv, RAW_GOLD) and _smelting_reach(gs)
+            and _furnace_fuel(inv) is not None and _furnace_room(gs)):
+        return ["smelt_gold"]
+    if _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
+        return ["mine_gold_reserve"]
+    return []
+
+
 def _nether_prep_steps(gs: GameState) -> list[str]:
     """The Nether prep to offer in the daytime lull once the gate frame stands, in order, or [].
 
@@ -1336,13 +1416,16 @@ def _nether_prep_steps(gs: GameState) -> list[str]:
     spider, no chicken, no gold ore loaded) drops that step out and never blocks the run -- the
     same shape as `hunt_food` needing a `_food_target`. Scoped to `_nether_idle`, so it never
     competes with the chain.
+
+    The gold reserve rides on top of `_all_nether_prep_steps` rather than inside it: the reserve is
+    offered in the lull, but it is not part of the crossing gate (see `_gold_reserve_short`).
     """
-    steps = _all_nether_prep_steps(gs)
+    steps = _all_nether_prep_steps(gs) + _gold_reserve_steps(gs)
     # The gold dig is a daylight job: it tunnels down from the base, so it is not offered at
     # night (the run sleeps then). It stays in `_all_nether_prep_steps` so the completion gate
     # still counts it as pending -- otherwise nightfall would end the run before the dig.
     if gs.phase == "night":
-        steps = [s for s in steps if s != "mine_gold"]
+        steps = [s for s in steps if s not in ("mine_gold", "mine_gold_reserve")]
     return steps
 
 

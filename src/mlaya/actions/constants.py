@@ -55,6 +55,7 @@ CRITERIA: dict[str, str] = {
     "craft_arrows": "craft arrows from flint, sticks and feathers so the carried bow has ammunition",
     "hunt_feather": "kill a nearby chicken to collect feathers for the Nether arrows",
     "mine_gold": "mine gold ore for the helmet that keeps piglins neutral in the Nether",
+    "mine_gold_reserve": "mine extra gold ore to trade with piglins in the Nether for ender pearls",
     "smelt_gold": "smelt raw gold into gold ingots in the furnace for the gold helmet",
     "craft_gold_helmet": "craft the gold helmet that keeps piglins from attacking; carry it until the Nether trip",
     "replace_tool": "craft a fresh pickaxe to replace the one that is nearly worn out",
@@ -89,6 +90,7 @@ CRITERIA: dict[str, str] = {
     "enter_portal": "step into the lit gate and cross into the Nether for the blaze rods",
     "swap_to_gold_helmet": "wear the gold helmet instead of the diamond one, so piglins stay neutral in the Nether",
     "hunt_blaze": "kill a blaze and take its blaze rod, nine of which make eighteen blaze powder",
+    "barter_pearls": "trade gold ingots with an adult piglin for ender pearls, the other half of an eye of ender",
     "leave_nether": "step back into the Nether exit portal and cross home with the rods",
     "swap_to_diamond_helmet": "wear the diamond helmet again now that the bot is back in the Overworld",
     "craft_blaze_powder": "craft the carried blaze rods into blaze powder, one rod to two powder",
@@ -426,6 +428,25 @@ GOLD_HELMET_INGOTS = 5
 GOLD_ORE = "gold_ore"
 RAW_GOLD = "raw_gold"
 GOLD_INGOT = "gold_ingot"
+# --- Piglin barter for ender pearls (docs/stronghold.md) ---
+# The pearl half of an eye of ender comes from trading gold ingots with adult piglins in the
+# Nether rather than hunting endermen in the Overworld. Barter is random: a piglin throws back
+# one item from its loot pool per ingot offered, so the reserve is a budget, not a guarantee, and
+# each call caps the offers it is allowed to make. The gold is smelted at the base furnace before
+# the crossing (there is no coal to smelt in the Nether) and carried down as ingots.
+GOLD_BARTER_RESERVE = 16
+BARTER_GOLD_BUDGET = 8
+BARTER_PEARL_BATCH = 8
+# How many barter calls one run may make before the route is written off. A piglin rolls once per
+# ingot and the pearl entry of that roll is about 2% for 2-4 pearls, so a 16-ingot reserve buys
+# roughly one pearl; without a cap the lull would keep digging gold for a barter that keeps
+# missing, and the run would end on its iteration budget with the pearls still owed. Once the cap
+# is reached the enderman hunt is the pearl source again.
+BARTER_MAX_ATTEMPTS = 2
+# A piglin must be this close before the bot trades with it: the `barter` call navigates to the
+# piglin itself, and a long walk to a distant one is the same off-base drift the Overworld pearl
+# hunt stalled on (run110). Beyond this range the bot marches the frontier instead.
+BARTER_PIGLIN_RANGE = 32
 NETHER_COBBLE = 64
 # How far the Nether stack may run below `NETHER_COBBLE` before `mine_stone` refills it. The surplus
 # drop leaves exactly `NETHER_COBBLE` (`HOARD_KEEP`), and the next scaffold block took it to 63:

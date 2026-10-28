@@ -38,9 +38,37 @@ eye; each socket has a 10% chance of generating pre-filled, but 16 is the safe u
 | Blaze powder | 16 | one blaze rod → two powder | **yes** — the Nether expedition already banks 18 powder (`BLAZE_POWDER`), 2 to spare. The powder is *withdrawn from the gate chest* for crafting; a second Nether trip is only needed if the stock was lost. |
 | Ender pearls | 16 | endermen (`collect_mob_drop enderman → ender_pearl`); enderman is already in `HOSTILE_HUNTS`. Overworld at night, or the Nether. | **no** — the one genuinely new chain. |
 
-The server's `barter` tool can also buy pearls from piglins, but its own doc says hunting endermen
-is usually faster; the overworld enderman hunt mirrors the existing `hunt_blaze` pattern and is the
-first cut. Pearls are the only reason a stronghold run needs new gathering at all.
+### Pearls from piglin barter (added 2026-10-28)
+
+The server exposes `barter(piglin_id, item_name, count, gold_budget)`: the bot walks to a loaded
+**adult** piglin and offers gold ingots one at a time until the requested net gain is in the pack or
+the budget is spent. That is the route the user asked for, and it is now the pearl source the
+expedition aims at: the reserve is dug in the same lull as the helmet, smelted at the base furnace
+(there is no coal to smelt with down there), carried through the gate as ingots, and traded after
+the rod haul - `leave_nether` only takes the tick once the pearls are in the pack or the gold is
+spent.
+
+The arithmetic the reserve is sized against is unforgiving. A piglin rolls once per ingot, the pearl
+entry of that roll is about 2% for a stack of 2-4, so a barter nets roughly **0.06 pearls per ingot**
+and sixteen pearls costs on the order of **250 ingots**. `GOLD_BARTER_RESERVE` (16) is therefore a
+first experiment, not a supply: it buys about one pearl. The enderman hunt stays as the fallback for
+whatever the gold cannot pay for.
+
+Two things the implementation had to learn: `barter` demands an exact loaded adult `entityId`, which
+`nearby.mobs` rows carry under `nearest` (perception now keeps those ids in `GameState.piglins`,
+adults only - the server refuses a baby), and a piglin has to be within `BARTER_PIGLIN_RANGE` (32 m)
+for the trade to be worth a walk, because `barter` navigates to the piglin itself. Beyond that range
+the bot marches the frontier instead of chasing one mob - the same off-base drift that stalled the
+Overworld pearl hunt (run110).
+
+The reserve is deliberately *not* part of the crossing gate: `_gold_reserve_steps` rides on top of
+`_all_nether_prep_steps` rather than inside it, so a bot short of barter gold still walks through the
+gate. The helmet is the piglin pass; the reserve is only the pearl budget.
+
+And the route is capped: `BARTER_MAX_ATTEMPTS` (2) barter calls per run, counted by
+`graph._note_barter` and read by `_gold_reserve_short` and `_barter_pearls_wanted`. Without the cap
+the lull would keep digging gold for a trade that keeps missing until the run ran out of
+iterations; once the cap is reached the enderman hunt is the pearl source again.
 
 ### Why no second Nether trip by default
 

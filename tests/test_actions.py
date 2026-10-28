@@ -9,12 +9,15 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlaya.actions import (_all_nether_prep_steps, _diamond_reason, _frame_needs_obsidian,
-                         _hoard_surplus, _idle_off_base,
+from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _diamond_reason,
+                         _expedition_prepared, _frame_needs_obsidian, _gold_reserve_short,
+                         _hoard_surplus, _idle_off_base, _nether_prep_steps,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
+                         BARTER_GOLD_BUDGET, BARTER_MAX_ATTEMPTS, BARTER_PEARL_BATCH,
+                         BARTER_PIGLIN_RANGE, GOLD_BARTER_RESERVE,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, resolve, stronghold_complete,
@@ -4405,6 +4408,164 @@ class NetherExpeditionTest(unittest.TestCase):
         for label in ("enter_portal", "hunt_blaze", "leave_nether", "craft_blaze_powder",
                       "stow_blaze_powder"):
             self.assertNotIn(label, out)
+
+
+class PiglinBarterTest(unittest.TestCase):
+    """Pearls from piglin barter: the gold reserve banked in the lull, traded down in the Nether.
+
+    `barter` needs an exact loaded adult piglin id, gold ingots in the pack and a piglin close
+    enough to walk to. The reserve is dug in the same lull as the helmet but is deliberately not
+    part of the crossing gate: the helmet is the piglin pass, the reserve only the pearl budget,
+    and a gate that waits for a stack of barter gold waits for a dig the trip does not need to
+    survive (the same shape as the bow, which `_nether_bank_carried` keeps out of the gate).
+    """
+
+    NETHER = "minecraft:the_nether"
+
+    def _lull(self, **inv) -> GameState:
+        """The bot at its base in the prep lull, a gold deposit loaded, the helmet banked."""
+        base = {"flint_and_steel": 1, "white_bed": 1, "cooked_beef": 24, "furnace": 1,
+                "cobblestone": 64, "acacia_planks": 4, "coal": 4, "golden_helmet": 1,
+                "diamond_pickaxe": 2}
+        base.update(inv)
+        g = at_home(lit_portal(geared(**base)))
+        g.food = 20.0
+        g.resources = {**(g.resources or {}),
+                       "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
+        return g
+
+    def _down(self, **inv) -> GameState:
+        """The bot in the Nether, gold helmet worn, one adult piglin loaded twelve blocks off."""
+        g = gs(pos=(12.5, 65.0, -3.5), dimension=self.NETHER, inventory=dict(inv),
+               tools={"pickaxe": "diamond", "sword": "diamond"},
+               armor={"helmet": {"item": "golden_helmet"},
+                      "chestplate": {"item": "diamond_chestplate"},
+                      "leggings": {"item": "diamond_leggings"},
+                      "boots": {"item": "diamond_boots"}},
+               offhand="shield", health=20.0, food=18.0)
+        g.base = (-197, -47, -98)
+        g.nether_entered = True
+        g.nether_arrival = (12, 65, -4)
+        g.piglins = [(412, 12.0)]
+        return g
+
+    # --- the reserve: dug in the lull, never gating the gate ---
+    def test_the_reserve_is_dug_once_the_helmet_is_banked(self) -> None:
+        g = self._lull()
+        self.assertIn("mine_gold_reserve", candidates(g))
+        a = resolve("mine_gold_reserve", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "gold_ore")
+        self.assertEqual(a.args["count"], GOLD_BARTER_RESERVE)
+
+    def test_the_reserve_waits_for_the_helmet(self) -> None:
+        # Without a worn gold piece the bot that walks up to trade gets torn apart, and the
+        # helmet line already digs the gold it needs.
+        g = self._lull(golden_helmet=0)
+        self.assertNotIn("mine_gold_reserve", candidates(g))
+        self.assertIn("mine_gold", candidates(g))
+        self.assertIsNone(resolve("mine_gold_reserve", g))
+
+    def test_the_reserve_is_not_dug_for_pearls_already_held(self) -> None:
+        g = self._lull(ender_pearl=16)
+        self.assertFalse(_gold_reserve_short(g))
+        self.assertNotIn("mine_gold_reserve", candidates(g))
+        self.assertIsNone(resolve("mine_gold_reserve", g))
+
+    def test_the_reserve_needs_a_loaded_deposit(self) -> None:
+        g = self._lull()
+        g.resources = {k: v for k, v in g.resources.items() if k != "gold_ore"}
+        self.assertIsNone(resolve("mine_gold_reserve", g))
+
+    def test_the_reserve_does_not_hold_the_gate_shut(self) -> None:
+        # The crossing gate reads `_all_nether_prep_steps`; the reserve rides on top of it in
+        # `_nether_prep_steps`, so a bot short of barter gold still walks through the gate.
+        g = self._lull()
+        self.assertEqual(_all_nether_prep_steps(g), [])
+        self.assertEqual(_nether_prep_steps(g), ["mine_gold_reserve"])
+        self.assertTrue(_expedition_prepared(g))
+        self.assertIn("enter_portal", candidates(g))
+
+    def test_smelt_gold_covers_the_reserve_too(self) -> None:
+        # The helmet is already crafted, so the five ingots went into it; the raw gold in the
+        # pack still becomes barter money.
+        g = self._lull(raw_gold=10, coal=4)
+        self.assertIn("smelt_gold", candidates(g))
+        a = resolve("smelt_gold", g)
+        self.assertEqual(a.args["item_name"], "raw_gold")
+        self.assertGreater(a.args["count"], 0)
+
+    def test_smelt_gold_stops_once_the_reserve_is_banked(self) -> None:
+        g = self._lull(raw_gold=GOLD_BARTER_RESERVE, coal=4)
+        self.assertFalse(_gold_reserve_short(g))
+        self.assertIsNone(resolve("smelt_gold", g))
+
+    # --- the barter: gold, a piglin in reach, pearls still owed ---
+    def test_barter_trades_gold_with_the_nearest_adult_piglin(self) -> None:
+        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        self.assertTrue(_barter_pearls_wanted(g))
+        a = resolve("barter_pearls", g)
+        self.assertEqual(a.tool, "barter")
+        self.assertEqual(a.args, {"piglin_id": 412, "item_name": "ender_pearl",
+                                 "count": BARTER_PEARL_BATCH,
+                                 "gold_budget": BARTER_GOLD_BUDGET})
+
+    def test_barter_needs_gold_in_the_pack(self) -> None:
+        g = self._down(blaze_rod=9)
+        self.assertFalse(_barter_pearls_wanted(g))
+        self.assertIsNone(resolve("barter_pearls", g))
+
+    def test_barter_needs_a_piglin_within_reach(self) -> None:
+        # `barter` navigates to the piglin; a walk to a distant one is the same off-base drift
+        # that stalled the Overworld pearl hunt (run110), so the bot marches instead.
+        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        g.piglins = [(412, BARTER_PIGLIN_RANGE + 8.0)]
+        self.assertFalse(_barter_pearls_wanted(g))
+        self.assertIsNone(resolve("barter_pearls", g))
+
+    def test_barter_needs_pearls_still_owed(self) -> None:
+        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE, ender_pearl=16)
+        self.assertFalse(_barter_pearls_wanted(g))
+        self.assertIsNone(resolve("barter_pearls", g))
+
+    def test_the_rod_haul_waits_for_the_pearls(self) -> None:
+        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        out = candidates(g)
+        self.assertIn("barter_pearls", out)
+        self.assertNotIn("leave_nether", out)
+
+    def test_a_piglin_out_of_range_sends_the_bot_marching(self) -> None:
+        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        g.piglins = [(412, BARTER_PIGLIN_RANGE + 20.0)]
+        out = candidates(g)
+        self.assertIn("explore", out)
+        self.assertNotIn("barter_pearls", out)
+
+    def test_the_bot_comes_home_when_the_gold_is_spent(self) -> None:
+        # Pearls owed but no ingots left to offer: the trip is done, and the Overworld hunt is
+        # the fallback the stronghold phase still has.
+        g = self._down(blaze_rod=9, ender_pearl=4)
+        out = candidates(g)
+        self.assertIn("leave_nether", out)
+        self.assertNotIn("barter_pearls", out)
+
+    def test_the_reserve_is_not_dug_once_the_attempts_are_spent(self) -> None:
+        # A 16-ingot reserve buys about one pearl; without the cap the lull would dig gold for a
+        # barter that keeps missing until the run ran out of iterations.
+        g = self._lull()
+        g.barter_attempts = BARTER_MAX_ATTEMPTS
+        self.assertFalse(_gold_reserve_short(g))
+        self.assertNotIn("mine_gold_reserve", candidates(g))
+        self.assertIsNone(resolve("mine_gold_reserve", g))
+
+    def test_the_barter_closes_after_its_tries(self) -> None:
+        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        g.barter_attempts = BARTER_MAX_ATTEMPTS
+        self.assertFalse(_barter_pearls_wanted(g))
+        self.assertIsNone(resolve("barter_pearls", g))
+        out = candidates(g)
+        self.assertIn("leave_nether", out)
+        self.assertNotIn("explore", out)
 
 
 class StrongholdPhaseTest(unittest.TestCase):

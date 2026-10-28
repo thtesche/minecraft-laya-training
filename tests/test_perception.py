@@ -1150,6 +1150,54 @@ class HostileParseTest(unittest.TestCase):
         self.assertIn("creeper x1", gs.narrative())
 
 
+class PiglinBarterParseTest(unittest.TestCase):
+    """`nearby.mobs` rows are grouped by name:age, so the barter partner is the nearest *adult*
+    piglin with its loaded `entityId` - the exact id `barter` demands. A baby piglin id is refused
+    by the server, so babies are not listed at all."""
+
+    def test_adult_piglins_are_listed_with_their_ids(self) -> None:
+        st = _status({"nearby": {"mobs": [
+            {"name": "piglin", "kind": "hostile", "age": "adult", "count": 3,
+             "nearest": {"entityId": 412, "distance": 11.5,
+                        "position": {"x": 3, "y": 64, "z": -2}}},
+            {"name": "piglin", "kind": "hostile", "age": "baby", "count": 1,
+             "nearest": {"entityId": 413, "distance": 4.0,
+                        "position": {"x": 1, "y": 64, "z": -2}}},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(gs.piglins, [(412, 11.5)])
+        self.assertEqual(gs.piglin_nearest(), (412, 11.5))
+
+    def test_a_baby_piglin_is_not_a_barter_partner(self) -> None:
+        st = _status({"nearby": {"mobs": [
+            {"name": "piglin", "kind": "hostile", "age": "baby", "count": 2,
+             "nearest": {"entityId": 9, "distance": 3.0}},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(gs.piglins, [])
+        self.assertIsNone(gs.piglin_nearest())
+
+    def test_the_nearest_adult_is_the_partner(self) -> None:
+        st = _status({"nearby": {"mobs": [
+            {"name": "piglin", "kind": "hostile", "age": "adult", "count": 2,
+             "nearest": {"entityId": 5, "distance": 27.0}},
+            {"name": "piglin", "kind": "hostile", "age": "adult", "count": 1,
+             "nearest": {"entityId": 6, "distance": 9.0}},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(gs.piglin_nearest(), (6, 9.0))
+
+    def test_the_piglin_list_survives_a_log_round_trip(self) -> None:
+        # The id is a loop-owned fact like `chest_pos`: without it in `as_state` a recorded tick
+        # cannot be asked why the barter was offered or skipped.
+        st = _status({"nearby": {"mobs": [
+            {"name": "piglin", "kind": "hostile", "age": "adult", "count": 1,
+             "nearest": {"entityId": 77, "distance": 6.0}},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(GameState.from_state(gs.as_state()).piglin_nearest(), (77, 6.0))
+
+
 class ParseSurfaceHeightTest(unittest.TestCase):
     """`parse_surface_height` reads the surface feet cell from a `navigate` height-required stop.
 

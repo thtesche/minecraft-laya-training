@@ -122,6 +122,10 @@ Nether terrain is already provided for in the server reflex.
 - The helmet is kept **in the pack** ready; it is only worn on the passage (phase 3), because
   it occupies the same slot as the diamond helmet — decided: **the gold helmet replaces the diamond helmet**
   (`_swap_to_gold_helmet` on entry, see below).
+- **Barter reserve** (`mine_gold_reserve` → `smelt_gold`): once the helmet is banked, the lull digs
+  `GOLD_BARTER_RESERVE` (16) more ingots to trade with piglins for ender pearls (docs/stronghold.md).
+  It is offered in the same window but is *not* part of the crossing gate — `_gold_reserve_steps`
+  rides on top of `_all_nether_prep_steps`, so a bot short of barter gold still walks through the gate.
 
 **Phase 3 — done (the first Nether visit: nine blaze rods, eighteen powder):**
 

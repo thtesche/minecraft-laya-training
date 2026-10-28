@@ -141,6 +141,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -436,6 +437,7 @@ class PourSkipTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -534,6 +536,7 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -684,6 +687,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -798,6 +802,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -1379,6 +1384,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -1583,6 +1589,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -1684,6 +1691,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -1975,6 +1983,7 @@ class DropHoleTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -2090,6 +2099,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -2191,6 +2201,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -2396,6 +2407,7 @@ class ChestLidTest(unittest.TestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -2564,6 +2576,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -2743,6 +2756,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -2942,6 +2956,7 @@ class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
         agent._stock_read = None
         agent._stock_warned = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._powder_cells = []
         agent.log = []
         agent.mcp = mcp
@@ -3201,6 +3216,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -3570,6 +3586,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -3824,6 +3841,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._gate_read = False
         agent._nether_ticks = 0
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
@@ -3929,6 +3947,18 @@ class NetherCrossingTest(unittest.TestCase):
         agent._note_stow(deposit, True, {"inventory_delta": {"blaze_powder": -18}})
         self.assertTrue(agent._powder_stowed)
         self.assertTrue(agent._inject(gs()).powder_stowed)
+
+    def test_a_barter_counts_toward_the_cap(self) -> None:
+        # The gold reserve is dug only while the barter cap is not reached: a piglin rolls once
+        # per ingot and pearls are the rare entry of that roll, so an uncapped route turns the
+        # lull into a gold farm. A call the server refused is not an attempt.
+        agent = self._agent()
+        trade = Action("barter_pearls", "barter",
+                       {"piglin_id": 412, "item_name": "ender_pearl", "count": 8,
+                        "gold_budget": 8}, "")
+        agent._note_barter(trade, True)
+        agent._note_barter(trade, False)
+        self.assertEqual(agent._inject(gs()).barter_attempts, 1)
 
     def test_a_refused_deposit_leaves_the_goal_open(self) -> None:
         # A full chest or a blocked lid must not count as done, or the run stops with the haul
@@ -4151,6 +4181,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._nether_gate = None
         agent._gate_read = False
         agent._powder_stowed = False
+        agent._barter_attempts = 0
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._powder_exhausted = False

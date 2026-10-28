@@ -600,6 +600,15 @@ class GameState:
     minutes_to_change: float | None = None
     # (name, kind, count, nearest distance) for every nearby mob species
     mobs: list[tuple[str, str, int, float | None]] = field(default_factory=list)
+    # Adult piglins loaded nearby as (entityId, nearest distance), nearest first - the partners
+    # `barter_pearls` trades gold ingots with for ender pearls. Only adults are listed: the server
+    # refuses a baby piglin id, and the group rows are keyed by name:age so the nearest adult is
+    # the one the barter call is given.
+    piglins: list[tuple[int, float | None]] = field(default_factory=list)
+    # Barter calls this run has already made (`graph._note_barter`). The gold reserve is only dug
+    # while the cap (`BARTER_MAX_ATTEMPTS`) is not reached, so a run that keeps missing pearls does
+    # not turn the lull into a permanent gold farm.
+    barter_attempts: int = 0
     # latest unread-notification previews (from the server's `notifications` block)
     notifications: list[str] = field(default_factory=list)
     # active tool per class -> {tier, item, left, max}; `left`/`max` are durability
@@ -840,6 +849,15 @@ class GameState:
         ds = [d for n, _, _, d in self.mobs if n == name and d is not None]
         return min(ds) if ds else None
 
+    def piglin_nearest(self) -> tuple[int, float] | None:
+        """The nearest adult piglin as (entityId, distance), or None if none is loaded.
+
+        The barter partner: `barter` needs an exact loaded adult piglin id, and the loop only
+        trades with one close enough to reach without a long walk (see `BARTER_PIGLIN_RANGE`).
+        """
+        near = [(eid, d) for eid, d in self.piglins if d is not None]
+        return min(near, key=lambda p: p[1]) if near else None
+
     def as_state(self) -> dict:
         """Structured view for logging and System-2 prompts (never sent raw to Laya).
 
@@ -908,6 +926,8 @@ class GameState:
             "nether_ticks": self.nether_ticks,
             "nether_travel": self.nether_travel,
             "mobs": self.mobs,
+            "piglins": self.piglins,
+            "barter_attempts": self.barter_attempts,
             # The stronghold latches, logged for the same reason the Nether facts are.
             "powder_stowed": self.powder_stowed,
             "powder_exhausted": self.powder_exhausted,
@@ -937,7 +957,7 @@ class GameState:
                       "dimension", "slots_used", "tools", "tool_meta", "armor", "offhand",
                       "hostiles", "players", "death_pos", "drops", "base", "chest_pos",
                       "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
-                      "sleeping", "resource_found", "mobs", "banked",
+                      "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
                       "nether_entered", "nether_arrival", "nether_gate", "nether_ticks",
                       "nether_travel", "powder_stowed", "powder_exhausted",
                       "stronghold_estimated", "end_portal_active", "powder_cells",
@@ -1270,6 +1290,10 @@ def parse_status(data: dict) -> GameState:
         dist = _num(nearest.get("distance")) if isinstance(nearest, dict) else None
         gs.mobs.append((str(m["name"]), str(m.get("kind") or "?"),
                         int(m.get("count") or 1), dist))
+        if m["name"] == "piglin" and str(m.get("age")) == "adult":
+            eid = nearest.get("entityId") if isinstance(nearest, dict) else None
+            if isinstance(eid, int):
+                gs.piglins.append((eid, dist))
 
     death = sit.get("lastDeath") or {}
     if isinstance(death, dict) and death.get("cause"):

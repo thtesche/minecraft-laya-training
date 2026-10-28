@@ -493,6 +493,10 @@ class Agent:
         self._end_portal_active = False
         self._stronghold_estimated = False
         self._powder_exhausted = False
+        # Barter calls the run has made (`_note_barter`). The gold reserve is dug only while the
+        # cap is not reached, so a route that keeps missing pearls does not turn the lull into a
+        # permanent gold farm.
+        self._barter_attempts = 0
         # The cells a powder stow actually deposited into (`_note_stow`): the network's roomy
         # chest, not necessarily `chest_pos`. `take_blaze_powder` withdraws from these, and the
         # exhaustion latch only fires once every remembered cell has come up empty.
@@ -515,6 +519,7 @@ class Agent:
         gs.chests_full = frozenset(self._chests_full)
         gs.overflow_skip = frozenset(self._overflow_no_support)
         gs.nether_travel = self._nether_travel
+        gs.barter_attempts = self._barter_attempts
         gs.furnace_pos = self.furnace_pos
         gs.smoker_pos = self.smoker_pos
         gs.base_adopted = self._base_adopted
@@ -1634,6 +1639,18 @@ class Agent:
             if not self._powder_cells:
                 self._powder_exhausted = True
 
+    def _note_barter(self, action, ok: bool) -> None:
+        """Count a piglin barter the run actually made.
+
+        The cap (`BARTER_MAX_ATTEMPTS`) is what keeps the gold reserve from becoming a permanent
+        gold farm: a piglin rolls once per ingot and pearls are the rare entry of that roll, so
+        every further reserve digs gold for a trade that keeps missing. Only a call the server
+        accepted counts - a refusal (no loaded piglin, a baby) is not an attempt, and the stuck
+        guard already cools that one down.
+        """
+        if action.label == "barter_pearls" and ok:
+            self._barter_attempts += 1
+
     def _note_locate(self, action, ok: bool) -> None:
         """Remember that the eye-of-ender estimate is saved, so the next locate travels.
 
@@ -2213,6 +2230,7 @@ class Agent:
         self._note_stow(action, _ok, delta)
         self._note_take_powder(action, _ok, _text, delta)
         self._note_locate(action, _ok)
+        self._note_barter(action, _ok)
         self._note_portal(action, _ok)
         self._note_landmark(action, delta, after)
         progressed = vmod.progressed(action.label, delta, _ok)

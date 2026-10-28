@@ -62,6 +62,9 @@ INVENTORY_LABELS = {
     # answered False - live, `smelt_gold` finished (coal -1, gold_ingot +3) and read as no
     # progress, and `mine_gold` gained 5 raw_gold that way too.
     "mine_gold", "smelt_gold", "craft_bow", "craft_arrows", "craft_gold_helmet",
+    # The barter route to pearls: the reserve dig nets raw_gold, and a barter that lands pearls
+    # nets them (a barter that only spent gold nets nothing, which is the honest reading).
+    "mine_gold_reserve", "barter_pearls",
 }
 
 

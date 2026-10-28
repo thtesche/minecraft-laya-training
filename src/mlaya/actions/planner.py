@@ -460,9 +460,20 @@ def candidates(gs: GameState) -> list[str]:
             junk_full = (gs.slots_used >= INVENTORY_NEAR_FULL and _droppable(gs, inv))
             rods = _blaze_rods(inv)
             if rods >= _rods_target(gs):
-                # The haul is complete; every extra blaze down there is another fireball between
-                # the bot and its own portal.
-                out.append("leave_nether")
+                # The rod haul is complete. Before walking back through the gate, trade the gold
+                # reserve with a piglin for the pearls the eyes need: the bot is already down here,
+                # the helmet is on, and piglins are everywhere in the Nether - the pearl hunt that
+                # failed in the Overworld (run110) never has to happen. Only once the pearls are in
+                # the pack does `leave_nether` take the tick.
+                if _barter_pearls_wanted(gs):
+                    out.append("barter_pearls")
+                elif (gs.barter_attempts < BARTER_MAX_ATTEMPTS and _pearls_owed(gs) > 0
+                        and gs.inventory.get(GOLD_INGOT, 0) > 0):
+                    # Pearls still owed, gold carried, the trade still open, but no piglin within
+                    # reach: march the frontier to load one rather than leave empty-handed.
+                    out.append("explore")
+                else:
+                    out.append("leave_nether")
             elif _safe_blaze_hunt(gs):
                 out.append("hunt_blaze")
             elif (_nether_must_return(gs) and not junk_full) or _nether_hopeless(gs):
@@ -1056,18 +1067,29 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "collect_block",
                       {"block_name": GOLD_ORE, "count": _gold_goal(inv)},
                       "mine gold ore for the helmet that keeps piglins neutral")
+    if label == "mine_gold_reserve":
+        if (not _gold_reserve_short(gs)
+                or not (_has(gs.inventory, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM))
+                or not _can_mine(gs, GOLD_ORE) or not _gold_ore_available(gs)):
+            return None
+        want = GOLD_BARTER_RESERVE - inv.get(GOLD_INGOT, 0) - inv.get(RAW_GOLD, 0)
+        if want <= 0:
+            return None
+        return Action(label, "collect_block",
+                      {"block_name": GOLD_ORE, "count": want},
+                      f"mine gold ore for the {want} ingots the piglin pearl barter needs")
     if label == "smelt_gold":
         fuel = _furnace_fuel(inv)
-        if (not _smelting_reach(gs) or inv.get(RAW_GOLD, 0) < 1
-                or fuel is None or not _furnace_room(gs)
-                or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+        if (not _smelting_reach(gs) or inv.get(RAW_GOLD, 0) < 1 or fuel is None
+                or not _furnace_room(gs)
+                or inv.get(GOLD_INGOT, 0) + inv.get(RAW_GOLD, 0) >= _gold_ingots_wanted(gs)):
             return None
         fuel_name, capacity = fuel
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
         if fuel_name not in ("coal", "charcoal") and not _nether_idle(gs):
             return None
         count = min(inv.get(RAW_GOLD, 0), 3, capacity,
-                    max(0, GOLD_HELMET_INGOTS - inv.get(GOLD_INGOT, 0)))
+                    max(0, _gold_ingots_wanted(gs) - inv.get(GOLD_INGOT, 0)))
         if count < 1:
             return None
         return Action(label, "smelt_item", _smelt_args(gs, RAW_GOLD, count, fuel_name),
@@ -1108,6 +1130,21 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"mob_name": BLAZE_MOB, "drop_name": BLAZE_ROD_ITEM,
                        "count": min(3, want), "allow_without_shield": True},
                       f"kill a blaze for its blaze rod ({want} still needed)")
+    if label == "barter_pearls":
+        if not _barter_pearls_wanted(gs):
+            return None
+        near = gs.piglin_nearest()
+        if near is None:
+            return None
+        piglin_id, _ = near
+        want = min(_pearls_owed(gs), BARTER_PEARL_BATCH)
+        budget = min(gs.inventory.get(GOLD_INGOT, 0), BARTER_GOLD_BUDGET)
+        if want <= 0 or budget <= 0:
+            return None
+        return Action(label, "barter",
+                      {"piglin_id": piglin_id, "item_name": ENDER_PEARL_ITEM,
+                       "count": want, "gold_budget": budget},
+                      f"trade gold with a piglin for {want} ender pearls ({_pearls_owed(gs)} still owed)")
     if label == "leave_nether":
         if not _in_nether(gs):
             return None
