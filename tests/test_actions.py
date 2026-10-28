@@ -4494,15 +4494,36 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertEqual(a.args["drop_name"], "ender_pearl")
         self.assertEqual(a.args["count"], 3)  # one batch at a time, sixteen still owed
 
-    def test_a_wounded_or_crowded_hunt_is_refused(self) -> None:
-        # An enderman teleports behind the bot and hits for half a heart a swing; the eyes are
-        # not worth the diamond kit, so the same safe-hunt guard as the blaze applies.
+    def test_a_wounded_hunt_is_refused_but_a_crowded_one_is_not(self) -> None:
+        # An enderman teleports behind the bot and hits for half a heart a swing, so a wounded
+        # fight still waits. The crowding guard the blaze hunt keeps is dropped here: endermen
+        # spawn at night with the usual pack, so the diamond kit takes the pearl fight even with
+        # a zombie alongside rather than stalling at the base to the run limit.
         g = self._home(mobs=[("enderman", "hostile", 12, 18.0)])
         g.health = 10.0
         self.assertNotIn("hunt_enderman", candidates(g))
         g.health = 20.0
         g.mobs = [("enderman", "hostile", 12, 18.0), ("zombie", "hostile", 8, 10.0)]
-        self.assertNotIn("hunt_enderman", candidates(g))
+        self.assertIn("hunt_enderman", candidates(g))
+
+    def test_no_enderman_in_reach_roams_to_find_one(self) -> None:
+        # Pearls still owed and no enderman loaded within reach: the phase roams new ground
+        # instead of idling at the base (run109 sat on `wait` to the run limit here).
+        g = self._home(mobs=[])
+        cand = candidates(g)
+        self.assertIn("search_enderman", cand)
+        self.assertNotIn("hunt_enderman", cand)
+        a = resolve("search_enderman", g)
+        self.assertEqual(a.tool, "explore_frontier")
+        # An enderman in reach hands the tick to the hunt, not another roam.
+        g.mobs = [("enderman", "hostile", 12, 18.0)]
+        cand = candidates(g)
+        self.assertIn("hunt_enderman", cand)
+        self.assertNotIn("search_enderman", cand)
+        # A wounded bot neither hunts nor roams - it heals at the base first.
+        g.mobs = []
+        g.health = 10.0
+        self.assertNotIn("search_enderman", candidates(g))
 
     def test_sixteen_eyes_send_the_bot_to_the_stronghold(self) -> None:
         g = self._home(ender_eye=16)

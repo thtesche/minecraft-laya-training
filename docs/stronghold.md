@@ -53,12 +53,17 @@ already grew (`_nether_haul_home`, `e812d83`) is the hook for reopening the expe
 ## Safety gates (carried over, plus new ones)
 
 - **Endermen are dangerous** — they teleport and hit hard, and the hunt happens at night (when the
-  run otherwise sleeps). So `hunt_enderman` follows the `_safe_blaze_hunt`/`_safe_spider_hunt`
-  shape: a healthy bot (`>= BLAZE_HUNT_HEALTH`-style floor), not already in a fight, the enderman
-  within a bounded range. **Never provoke an enderman the bot cannot win**; the eyes are not worth
-  the diamond kit.
-- **Sleep still owns the night** where no enderman is in safe reach: the pearl hunt does not replace
-  the clock, it rides the same night the way `hunt_blaze` rides the Nether lull.
+  run otherwise sleeps). So `hunt_enderman` keeps the health floor (`ENDERMAN_HUNT_HEALTH`) and the
+  bounded range of the `_safe_blaze_hunt` shape — but **not** its "no other hostile crowding the
+  fight" gate. Endermen spawn at night alongside the usual mob pack, so that gate almost never
+  cleared in the dark and the hunt stalled at the base to the run limit (run109 it312-599); the
+  diamond kit and shield are expected to carry a crowded pearl fight.
+- **No enderman in reach → `search_enderman`, not sleep.** `hunt_enderman` is reactive (it needs an
+  enderman already loaded within range, the way `hunt_blaze` needs a loaded fortress). The dedicated
+  `search_enderman` roam (`explore_frontier` along the remembered frontier, same as the Overworld
+  `explore` fallback) sends a healthy bot out to load fresh ground until one comes into range, then
+  the hunt takes the tick. Without it a bot that banked its powder sat on `wait` to the run limit
+  (run109). A wounded bot (`< ENDERMAN_HUNT_HEALTH`) does neither and heals at the base first.
 - **The respawn bed at the stronghold** — for the *later* End phase, `enter_end_portal` needs a bed
   within 128 blocks. When that phase lands, the chain lays and sleeps a bed at the stronghold before
   entering. This phase stops before that, so the bed is noted here only as the seam to the next one.
@@ -69,7 +74,9 @@ Offered only once the Overworld goal and the Nether haul stand (`tech_tree_compl
 `nether_expedition_complete`), so the stronghold work never competes with the tech tree:
 
 1. **`hunt_enderman`** (`collect_mob_drop enderman → ender_pearl`) until `_pearls >= _eyes_goal`.
-   Overworld, safe-hunt gated. Falls back to `explore` at night when no enderman is in reach.
+   Overworld, safe-hunt gated (health floor + range, crowding tolerated). When no enderman is in
+   reach it hands off to **`search_enderman`** (`explore_frontier`), which roams new ground until
+   one loads; the two never offer together (`_search_enderman_wanted` excludes the in-reach case).
 2. **`take_blaze_powder`** — withdraw the banked powder from the gate chest into the pack when the
    carried powder is short of the eyes the phase owes (the mirror of `stow_blaze_powder`).
 3. **`craft_ender_eye`** (`craft_item ender_eye`, pearl + powder, needs a crafting table) until

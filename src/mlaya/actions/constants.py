@@ -95,6 +95,7 @@ CRITERIA: dict[str, str] = {
     "stow_blaze_powder": "deposit the blaze powder into the chest at the Overworld portal",
     # The stronghold phase (the step after the Nether haul); see docs/stronghold.md.
     "hunt_enderman": "kill an enderman and take its ender pearl, one of the two halves of an eye of ender",
+    "search_enderman": "roam out to new ground to find an enderman, when pearls are still needed and none is in reach to hunt",
     "take_blaze_powder": "take the banked blaze powder back out of the chest at the portal, so eyes of ender can be crafted from it",
     "craft_ender_eye": "craft an eye of ender from one ender pearl and one blaze powder; twelve of them open the end portal",
     "locate_stronghold": "throw an eye of ender to find the stronghold, then travel to it and stand at the end portal frame",

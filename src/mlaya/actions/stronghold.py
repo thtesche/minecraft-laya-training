@@ -29,7 +29,7 @@ END_PORTAL_SOCKETS = 12
 
 # The labels this module owns; `planner.resolve` hands each of them to `resolve_stronghold`.
 STRONGHOLD_LABELS = frozenset({
-    "hunt_enderman", "take_blaze_powder", "craft_ender_eye",
+    "hunt_enderman", "search_enderman", "take_blaze_powder", "craft_ender_eye",
     "locate_stronghold", "activate_end_portal",
 })
 
@@ -52,16 +52,34 @@ def _eyes_owed(gs: GameState) -> int:
 def _safe_enderman_hunt(gs: GameState) -> bool:
     """Whether an enderman is a fight worth starting right now.
 
-    The mirror of `_safe_blaze_hunt`: one enderman in reach, the bot healthy, and no other
-    hostile crowding the fight. An enderman teleports behind the bot and hits for half a heart
-    of a diamond chestplate a swing, so a crowded or wounded fight loses the kit for a pearl.
+    One enderman in reach and the bot healthy. The "no other hostile crowding the fight" gate
+    the blaze hunt keeps is dropped here on purpose: endermen spawn at night alongside the usual
+    mob pack, so that gate almost never clears in the dark and the pearl hunt would stall at the
+    base to the run limit (run109 it312-599). The diamond kit and shield are expected to carry
+    the fight even with zombies or skeletons around - a crowded hunt is the price of the pearls.
     """
     ender = gs.mob_nearest(ENDERMAN_MOB)
     if ender is None or ender > ENDERMAN_HUNT_RANGE or (gs.health or 0) < ENDERMAN_HUNT_HEALTH:
         return False
-    others = [d for n, k, _, d in gs.mobs
-              if k == "hostile" and n != ENDERMAN_MOB and d is not None and d <= 16]
-    return not others
+    return True
+
+
+def _search_enderman_wanted(gs: GameState) -> bool:
+    """Whether to roam looking for an enderman: pearls still short, none in reach, bot healthy.
+
+    `hunt_enderman` is reactive, the way the blaze hunt waits on a loaded fortress - it only
+    fires once an enderman is already within `ENDERMAN_HUNT_RANGE`. Nothing sent the bot out to
+    meet one, so a bot that banked its powder sat at the base on `wait` to the run limit, no
+    enderman ever wandering the twenty-four metres into range (run109 it312-599: the stronghold
+    phase was open, `stronghold_candidates` empty, only `wait` on offer). This is the overworld
+    mirror of the Nether fortress march: roam new ground until an enderman loads, then
+    `_safe_enderman_hunt` turns the tick over to `hunt_enderman`. Held to a healthy bot so a
+    wounded one heals at the base rather than wandering off after a teleporting mob.
+    """
+    return (_overworld(gs)
+            and _ender_pearls(gs.inventory) < _eyes_owed(gs)
+            and not _safe_enderman_hunt(gs)
+            and (gs.health or 0) >= ENDERMAN_HUNT_HEALTH)
 
 
 def _at_stronghold(gs: GameState) -> bool:
@@ -158,6 +176,11 @@ def stronghold_candidates(gs: GameState) -> list[str]:
     # eyes must not over-hunt a dozen teleporting endermen it does not need.
     if _ender_pearls(inv) < _eyes_owed(gs) and _safe_enderman_hunt(gs):
         out.append("hunt_enderman")
+    # No enderman in reach but pearls still owed: roam to find one rather than idle at the base.
+    # `_search_enderman_wanted` already excludes the in-reach case, so this and `hunt_enderman`
+    # never offer together.
+    if _search_enderman_wanted(gs):
+        out.append("search_enderman")
     if _take_powder_wanted(gs):
         out.append("take_blaze_powder")
     if _can_craft_ender_eye(gs):
@@ -180,6 +203,17 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
                       {"mob_name": ENDERMAN_MOB, "drop_name": ENDER_PEARL_ITEM,
                        "count": min(3, want), "allow_without_shield": True},
                       f"kill an enderman for its ender pearl ({want} still needed)")
+    if label == "search_enderman":
+        if not _search_enderman_wanted(gs):
+            return None
+        want = _eyes_owed(gs) - _ender_pearls(inv)
+        # No fortress-style landmark to steer by - endermen are just mobs that load in the dark -
+        # so march the remembered frontier into new terrain, the same `explore_frontier` roam the
+        # Overworld explore falls back to. Each march loads fresh ground; once an enderman comes
+        # within reach `hunt_enderman` takes over on the next tick.
+        return Action(label, "explore_frontier",
+                      {"heading": frontier_heading(gs), "chunks": EXPLORE_FRONTIER_CHUNKS},
+                      f"roam new ground to find an enderman ({want} pearls still needed)")
     if label == "take_blaze_powder":
         if not _take_powder_wanted(gs):
             return None
