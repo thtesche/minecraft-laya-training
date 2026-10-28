@@ -955,7 +955,7 @@ class GameState:
         gs = cls()
         for field in ("health", "food", "phase", "raining", "on_ground", "in_water",
                       "dimension", "slots_used", "tools", "tool_meta", "armor", "offhand",
-                      "hostiles", "players", "death_pos", "drops", "base", "chest_pos",
+                      "hostiles", "players", "unread", "death_pos", "drops", "base", "chest_pos",
                       "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
                       "nether_entered", "nether_arrival", "nether_gate", "nether_ticks",

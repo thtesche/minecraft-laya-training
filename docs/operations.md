@@ -80,7 +80,11 @@ progress on. Everything runs on the archived log; the live loop (`graph.py`) is 
 2. Fold it into a dataset: add `--teacher runs/history/teacher-runNN.jsonl` to the `dataset`
    build (pair it with `--rerender`, as the side-file keys on the re-rendered narrative). A
    no-progress tick whose judge clearly sided against Laya's pick becomes a positive row for the
-   judge's label; on any de-dup collision with a verifier row the verifier wins.
+   judge's label; on any de-dup collision with a verifier row the verifier wins. The join hash is
+   a function of the renderer, so a side-file recorded before a wording change no longer hashes to
+   the same tick — the builder then falls back to the tick's identity (`iteration`, Laya's label,
+   the eligible labels) rather than silently adding zero rows. Regenerating the side-file is still
+   the right thing after a renderer change; the fallback just keeps an expensive batch usable.
 3. Validate at step 4 above against **real run outcomes** (goal/deaths/ticks-to-milestone), never
    against judge-agreement — optimising Laya to please the big model instead of to survive is the
    failure mode this ordering exists to avoid. Go live only once it at least matches.

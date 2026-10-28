@@ -93,36 +93,54 @@ def _narrative_hash(narrative: str) -> str:
     return hashlib.sha256(narrative.encode("utf-8")).hexdigest()[:16]
 
 
-def _load_teacher(teacher: Path | Iterable[Path] | None) -> dict[tuple[Any, str], dict]:
-    """Index the teacher side-file(s) by `(iteration, narrative_hash)`, the key a tick is joined on.
+def _tick_key(judgment: dict) -> tuple[Any, Any, tuple[str, ...]]:
+    """A renderer-independent identity for the tick a judgment belongs to.
+
+    The narrative hash is the precise key, but it is a function of *today's* renderer: change one
+    clause in `narrative()` and every side-file hash goes stale, and the join then silently adds
+    zero rows. `(iteration, Laya's label, the eligible labels)` is logged in both files and cannot
+    drift with the wording, so it is the fallback that keeps a reviewed tick joinable.
+    """
+    return (judgment.get("iteration"), judgment.get("laya_label"),
+            tuple(sorted(judgment.get("candidates") or [])))
+
+
+def _load_teacher(teacher: Path | Iterable[Path] | None) -> tuple[dict, dict]:
+    """Index the teacher side-file(s) by narrative hash and, as a fallback, by tick identity.
 
     Two coordinates, not one, because an iteration number repeats across run logs: the narrative
     hash pins a judgment to the exact tick it reviewed even when several logs are built as one set.
     """
     if teacher is None:
-        return {}
+        return {}, {}
     paths = [teacher] if isinstance(teacher, (str, Path)) else list(teacher)
-    out: dict[tuple[Any, str], dict] = {}
+    by_hash: dict[tuple[Any, str], dict] = {}
+    by_tick: dict[tuple[Any, Any, tuple[str, ...]], dict] = {}
     for path in paths:
         for j in _read_records(Path(path)):
             h = j.get("narrative_hash")
             if isinstance(h, str):
-                out[(j.get("iteration"), h)] = j
-    return out
+                by_hash[(j.get("iteration"), h)] = j
+            by_tick[_tick_key(j)] = j
+    return by_hash, by_tick
 
 
-def _teacher_label(teacher_map: dict[tuple[Any, str], dict], rec: dict, narrative: str,
+def _teacher_label(teacher_map: tuple[dict, dict], rec: dict, narrative: str,
                    candidates: tuple[str, ...], laya_label: Any) -> str | None:
     """The label the judge carried for this tick, if it clearly sided against Laya's choice.
 
     The join hash is always taken over the *canonical* re-rendered narrative (what the teacher
     wrote), so a judgment is found whether or not the dataset itself was built with `rerender`.
-    Only a judge label that is a real candidate here and differs from Laya's own pick counts.
+    When that hash misses - the side-file was generated before a renderer change - the tick is
+    still matched by its identity, so an expensive batch of judgments is not thrown away. Only a
+    judge label that is a real candidate here and differs from Laya's own pick counts.
     """
-    if not teacher_map:
+    by_hash, by_tick = teacher_map
+    if not by_hash and not by_tick:
         return None
     key = (rec.get("iteration"), _narrative_hash(render_narrative(rec) or narrative))
-    j = teacher_map.get(key)
+    j = by_hash.get(key) or by_tick.get((rec.get("iteration"), laya_label,
+                                        tuple(sorted(candidates))))
     if not j:
         return None
     jl = j.get("judge_label")

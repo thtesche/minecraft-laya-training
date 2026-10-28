@@ -230,6 +230,17 @@ class RenderNarrativeTest(unittest.TestCase):
     def test_a_tick_without_state_keeps_its_logged_narrative(self):
         self.assertEqual(ds.render_narrative({"narrative": "logged only"}), "logged only")
 
+    def test_rerendering_keeps_the_clauses_the_live_tick_had(self):
+        # Training must read what inference reads: a re-rendered tick keeps the notification
+        # backlog, not just the position and the base.
+        rec = {"narrative": "whatever was logged",
+               "state": {"health": 20.0, "food": 20.0, "position": [10.0, 60.0, 10.0],
+                         "on_ground": True, "hostiles": [], "unread": 3,
+                         "notifications": ["lava: dry footing"]}}
+        out = ds.render_narrative(rec)
+        self.assertIn("Unread notifications (3): lava: dry footing", out)
+        self.assertIn("At the surface", out)
+
     def test_rerender_changes_the_row_state(self):
         with tempfile.TemporaryDirectory() as d:
             rec = _rec("old absolute x=5", ["mine_stone", "get_wood"], "mine_stone")
@@ -271,6 +282,39 @@ class TeacherSourceTest(unittest.TestCase):
         self.assertEqual(plain, [])  # no progress, nothing from the verifier
         self.assertEqual(len(taught), 1)
         self.assertEqual(taught[0]["expected"][INTENT_QID], "mine_stone")
+
+    def test_a_side_file_from_an_older_renderer_still_joins(self):
+        # The narrative hash is a function of the renderer, so a batch of judgments recorded
+        # before a wording change would join to nothing and the LLM cost would be wasted. The
+        # tick's own identity (iteration, Laya's label, the eligible labels) still matches.
+        with tempfile.TemporaryDirectory() as d:
+            rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                             progressed=False, narrative="safe no-progress",
+                             state={"health": 20.0, "food": 20.0, "position": [5.0, 70.0, 5.0],
+                                   "on_ground": True, "hostiles": []})
+            log = _write(Path(d), [rec])
+            stale = {"iteration": 3, "narrative_hash": "0" * 16,
+                     "candidates": ["mine_stone", "get_wood"], "laya_label": "get_wood",
+                     "judge_label": "mine_stone"}
+            tf = Path(d) / "teacher.jsonl"
+            tf.write_text(json.dumps(stale) + "\n", encoding="utf-8")
+            taught = ds.build_rows(log, rerender=True, teacher=tf)
+        self.assertEqual(len(taught), 1)
+        self.assertEqual(taught[0]["expected"][INTENT_QID], "mine_stone")
+
+    def test_a_tick_the_teacher_never_reviewed_is_not_filled(self):
+        # The fallback must not let a judgment from a different run's same iteration leak in.
+        with tempfile.TemporaryDirectory() as d:
+            rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                             progressed=False, narrative="safe no-progress")
+            log = _write(Path(d), [rec])
+            other = {"iteration": 3, "narrative_hash": "1" * 16,
+                     "candidates": ["mine_stone", "explore"], "laya_label": "explore",
+                     "judge_label": "mine_stone"}
+            tf = Path(d) / "teacher.jsonl"
+            tf.write_text(json.dumps(other) + "\n", encoding="utf-8")
+            rows = ds.build_rows(log, teacher=tf)
+        self.assertEqual(rows, [])
 
     def test_the_verifier_wins_a_progressed_tick(self):
         # Laya's action progressed: the grounded row stands, the judge's dissent is dropped.

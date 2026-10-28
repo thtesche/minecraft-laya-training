@@ -385,6 +385,18 @@ class StorageNetworkParseTest(unittest.TestCase):
         rebuilt = GameState.from_state(jsonlib.loads(jsonlib.dumps(g.as_state())))
         self.assertEqual(rebuilt.powder_cells, ((-196, -46, -98), (-190, -46, -100)))
 
+    def test_the_unread_backlog_survives_the_log_round_trip(self) -> None:
+        # The rerender of an archived tick (`dataset.render_narrative`) has to say the same thing
+        # the live tick said, or training drifts from inference. The unread count is a narrative
+        # clause, so it must come back from the log, not silently vanish.
+        import json as jsonlib
+        g = GameState(health=20.0, food=20.0)
+        g.unread = 445
+        g.notifications = ["hostile: target died; interrupted navigate"]
+        rebuilt = GameState.from_state(jsonlib.loads(jsonlib.dumps(g.as_state())))
+        self.assertEqual(rebuilt.unread, 445)
+        self.assertIn("Unread notifications (445): hostile: target died", rebuilt.narrative())
+
     def test_an_old_log_yields_an_empty_network_not_a_crash(self) -> None:
         # run79's own entries predate the fields: defaults, not guesses.
         g = GameState.from_state({"chest_pos": [0, 71, 1]})
