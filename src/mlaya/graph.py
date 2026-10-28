@@ -786,15 +786,47 @@ class Agent:
         network |= {tuple(cell) for cell in self._extra_chests}
         edible: dict[str, int] = {}
         stores: list[tuple] = []
+        powder_cells: list[tuple] = []
         for cell, counts in rows:
             if cell not in network:
                 continue
+            if int(counts.get(BLAZE_POWDER_ITEM, 0)) > 0:
+                powder_cells.append(cell)
             for name, count in counts.items():
                 if name in perception.EDIBLE_NAMES and int(count) > 0:
                     edible[name] = edible.get(name, 0) + int(count)
                     stores.append((cell, name, int(count)))
         self.banked = edible
         self._banked_stores = tuple(stores)
+        self._adopt_powder_stow(powder_cells)
+
+    def _adopt_powder_stow(self, powder_cells: list[tuple]) -> None:
+        """Re-derive the powder-stowed milestone from the chest a previous run filled.
+
+        `_powder_stowed` (= `nether_expedition_complete`) is the loop latch set when a stow
+        deposit succeeds (`_note_stow`); a cold start forgets it, and `nether_expedition_open`
+        then reads True again and marches the bot back through the gate for nine rods it already
+        banked - the most dangerous stretch of the run, re-run for powder sitting in its own chest.
+        The powder is a real deposit, though, and the server's container database answers it across
+        the restart (the read `_note_stocked_chest` just made, filtered to the cells this base
+        owns). So blaze powder standing in a network chest latches the milestone from the world,
+        the same fact the deposit would have set: the first Nether haul is behind the bot.
+
+        One-way and only ever set True: a chest drained of its powder (withdrawn and spent) leaves
+        the latch untouched, and `_note_take_powder`/`_nether_topup_wanted` own that reopening. The
+        cells are remembered too (`_powder_cells`), so a withdraw after a restart looks in the same
+        chest the stow used rather than reading an empty main chest and re-hauling a top-up it does
+        not owe.
+        """
+        if not powder_cells:
+            return
+        for cell in powder_cells:
+            if cell not in self._powder_cells:
+                self._powder_cells.append(cell)
+        if not self._powder_stowed:
+            self._powder_stowed = True
+            self.log.append({"stage": "policy", "reason": "powder_stow_readopted",
+                             "cells": powder_cells})
 
     def _settle_home_anchor(self, gs) -> None:
         """Retire the provisional base once the bot stands on it, or when the window runs out.
@@ -1022,6 +1054,11 @@ class Agent:
                         and abs(hit.z - bz) <= ADOPT_CHEST_RADIUS
                         and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS):
                     self.chest_pos = hit.pos
+                    # A chest adopted at the base after the stock read already ran (the bot
+                    # spawned on its base) joins the network too late for this tick's read. Clear
+                    # the throttle so the next `_note_stocked_chest` re-reads the now-owned cell
+                    # and `_adopt_powder_stow` can latch from a chest the bot never walked up to.
+                    self._stock_read = None
                     break
         elif self.chest_pos is not None and self.base is not None:
             # The restart's network: the chest scan sees every chest near the base, not the main
@@ -1035,6 +1072,7 @@ class Agent:
                         and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS
                         and hit.pos != self.chest_pos and hit.pos not in self._extra_chests):
                     self._extra_chests.append(hit.pos)
+                    self._stock_read = None
         if self.smoker_pos is None and self.base is not None:
             bx, by, bz = self.base
             for hit in gs.resources.get("smoker", []):

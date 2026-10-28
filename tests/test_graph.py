@@ -2898,6 +2898,90 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(mcp.calls), 2)
 
 
+class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
+    """The powder-stowed milestone must re-derive from the chest after a cold start.
+
+    `_powder_stowed` (= `nether_expedition_complete`) is a loop latch set when a stow deposit
+    succeeds; a restart forgets it and `nether_expedition_open` then marches the bot back through
+    the gate for nine rods already banked in its own chest. The same database read that finds the
+    banked food also sees the banked powder, so a chest holding blaze powder latches the milestone
+    from the world instead of from a deposit this process never saw.
+    """
+
+    POWDER = {"response": {"data": {"result": {"query": {"rows": [
+        [229, 62, 224, '[{"slot":0,"item":"blaze_powder","count":18},'
+                       '{"slot":1,"item":"cooked_mutton","count":8}]']]}}}}}
+    NO_POWDER = {"response": {"data": {"result": {"query": {"rows": [
+        [229, 62, 224, '[{"slot":0,"item":"cooked_mutton","count":8}]']]}}}}}
+    OTHER_BASE = {"response": {"data": {"result": {"query": {"rows": [
+        [12, 70, 34, '[{"slot":0,"item":"blaze_powder","count":18}]']]}}}}}
+
+    class _Read:
+        def __init__(self, data):
+            self.data, self.text = data, ""
+
+    class _Mcp:
+        def __init__(self, data):
+            self.data = data
+            self.calls: list[tuple[str, dict]] = []
+
+        async def read(self, tool, args, why):
+            self.calls.append((tool, args))
+            return PowderStowReadoptionTest._Read(self.data)
+
+    def _agent(self, mcp) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._nether_landmarks = []
+        agent.base = (-197, -47, -98)
+        agent.chest_pos = (229, 62, 224)
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
+        agent.banked = {}
+        agent._stock_read = None
+        agent._stock_warned = False
+        agent._powder_stowed = False
+        agent._powder_cells = []
+        agent.log = []
+        agent.mcp = mcp
+        return agent
+
+    def _state(self):
+        return gs(pos=(0.5, 64.0, 0.5), dimension="minecraft:overworld")
+
+    async def test_powder_in_the_chest_latches_the_milestone(self) -> None:
+        agent = self._agent(self._Mcp(self.POWDER))
+        await agent._note_stocked_chest(self._state())
+        self.assertTrue(agent._powder_stowed)
+        # The cell is remembered so a withdraw after the restart looks in the right chest.
+        self.assertIn((229, 62, 224), agent._powder_cells)
+        self.assertEqual([r["reason"] for r in agent.log], ["powder_stow_readopted"])
+
+    async def test_an_empty_chest_leaves_the_expedition_open(self) -> None:
+        # No powder banked: the latch stays off so a genuine top-up can reopen the gate.
+        agent = self._agent(self._Mcp(self.NO_POWDER))
+        await agent._note_stocked_chest(self._state())
+        self.assertFalse(agent._powder_stowed)
+        self.assertEqual(agent._powder_cells, [])
+        self.assertEqual(agent.log, [])
+
+    async def test_powder_in_a_chest_this_base_does_not_own_is_ignored(self) -> None:
+        # The database lists every container the bot ever opened, in any base or world. Only the
+        # cells this base owns count, or a stale chest elsewhere would fake the milestone.
+        agent = self._agent(self._Mcp(self.OTHER_BASE))
+        await agent._note_stocked_chest(self._state())
+        self.assertFalse(agent._powder_stowed)
+
+    async def test_an_already_stowed_latch_is_left_alone(self) -> None:
+        # Set this session by the deposit: re-deriving it is harmless and logs nothing new.
+        agent = self._agent(self._Mcp(self.POWDER))
+        agent._powder_stowed = True
+        await agent._note_stocked_chest(self._state())
+        self.assertTrue(agent._powder_stowed)
+        self.assertEqual(agent.log, [])
+
+
 class ContainerMissingTest(unittest.TestCase):
     """A cell the server calls "not a container" has to leave what the run remembers.
 
