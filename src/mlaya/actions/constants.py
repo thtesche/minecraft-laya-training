@@ -495,6 +495,23 @@ HOARD_CAP = 64
 HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
                  "witch", "blaze", "piglin", "zombified_piglin"}
 
+# The blocks the server will place while fighting - the `navigation.scaffold_blocks` the survival
+# policy admits (`survival.BASE_CHANGES`). An enderman hunt roofs itself over as the mob teleports,
+# and `collect_mob_drop` refuses with `[COMBAT_BUILD_MATERIALS_MISSING]` when fewer than six of
+# these are carried at the build cell. Kept in step with `survival.py` by hand - predicates must
+# not import the policy module.
+COMBAT_SCAFFOLD_BLOCKS = frozenset({
+    "dirt", "cobblestone", "cobbled_deepslate", "netherrack", "basalt", "end_stone",
+})
+# How many scaffold blocks the bot must carry before an enderman hunt is offered. The server's
+# defensive roof needs six at the selected cell; the fight rebuilds the roof each teleport, so a
+# hunt started on bare six runs dry on the first one. Sixteen is a working reserve well under the
+# `NETHER_COBBLE` (64) stack the wave carries, so a normally stocked trip clears it and only a
+# depleted bot sits the hunt out (live, run112d it240-243: five netherrack left, the roof wanted
+# six, and `hunt_enderman` refused four ticks running until the stuck guard dropped it). Short of
+# the reserve with an enderman in reach, the pearl wave comes home to restock and relaunch.
+ENDERMAN_HUNT_BLOCKS = 16
+
 # M2d reactions. An active tool at or below this fraction of its maximum is replaced
 # before it breaks; a death this recent, this close, is worth walking back to.
 LOW_DURABILITY = 0.15

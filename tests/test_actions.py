@@ -12,7 +12,8 @@ import unittest
 from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _diamond_reason,
                          _expedition_prepared, _frame_needs_obsidian, _gold_reserve_short,
                          _hoard_surplus, _idle_off_base, _nether_prep_steps,
-                         _pearl_wave_trip, _search_enderman_wanted,
+                         _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt,
+                         _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
@@ -4771,6 +4772,37 @@ class StrongholdPhaseTest(unittest.TestCase):
         a = resolve("hunt_enderman", g)
         self.assertEqual(a.args["mob_name"], "enderman")
         self.assertEqual(a.args["drop_name"], "ender_pearl")
+
+    def test_a_pearl_wave_short_on_blocks_comes_home_to_restock(self) -> None:
+        # The fight roofs the bot over as the enderman teleports, and `collect_mob_drop` refuses
+        # with `[COMBAT_BUILD_MATERIALS_MISSING]` when the scaffold runs short (run112d it240-243:
+        # five netherrack left, roof wanted six, four refused ticks). Below the block floor the
+        # hunt sits out, and with the enderman still loaded the wave neither hunts nor roams past
+        # it - it leaves to restock and relaunch.
+        g = self._home(mobs=[("enderman", "hostile", 12, 18.0)], cobblestone=5, netherrack=5)
+        g.powder_stowed = True
+        g.dimension = self.NETHER
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        self.assertTrue(_enderman_in_reach(g))
+        self.assertFalse(_safe_enderman_hunt(g))
+        out = candidates(g)
+        self.assertNotIn("hunt_enderman", out)
+        self.assertNotIn("search_enderman", out)
+        self.assertIn("leave_nether", out)
+
+    def test_netherrack_counts_toward_the_hunt_block_floor(self) -> None:
+        # Netherrack scaffolds the roof as readily as cobblestone, so the Nether stock and the
+        # cobble stack are summed: topped to the floor out of netherrack alone, the hunt is on.
+        g = self._home(mobs=[("enderman", "hostile", 12, 18.0)], cobblestone=0,
+                       netherrack=ENDERMAN_HUNT_BLOCKS - 1)
+        g.powder_stowed = True
+        g.dimension = self.NETHER
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        self.assertEqual(_combat_blocks_carried(g.inventory), ENDERMAN_HUNT_BLOCKS - 1)
+        self.assertNotIn("hunt_enderman", candidates(g))
+        g.inventory["netherrack"] = ENDERMAN_HUNT_BLOCKS
+        self.assertTrue(_safe_enderman_hunt(g))
+        self.assertIn("hunt_enderman", candidates(g))
 
     def test_the_wave_roams_until_the_pearl_budget_is_spent(self) -> None:
         # No enderman loaded: the wave roams new ground, bounded in metres like the fortress

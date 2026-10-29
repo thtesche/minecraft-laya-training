@@ -49,19 +49,36 @@ def _eyes_owed(gs: GameState) -> int:
     return max(0, ENDER_EYES - _ender_eyes(gs.inventory))
 
 
+def _enderman_in_reach(gs: GameState) -> bool:
+    """Whether an enderman stands within the hunt range, blocks and health aside.
+
+    The reach is what the roam steers by: an enderman this close is one to deal with here rather
+    than march past, whether or not the fight can be *started* this tick. `_search_enderman_wanted`
+    reads this (not `_safe_enderman_hunt`) so that a bot short on building blocks does not roam off
+    and leave a loaded enderman behind - it comes home to restock instead.
+    """
+    ender = gs.mob_nearest(ENDERMAN_MOB)
+    return ender is not None and ender <= ENDERMAN_HUNT_RANGE
+
+
 def _safe_enderman_hunt(gs: GameState) -> bool:
     """Whether an enderman is a fight worth starting right now.
 
-    One enderman in reach and the bot healthy. The "no other hostile crowding the fight" gate
-    the blaze hunt keeps is dropped here on purpose: endermen spawn at night alongside the usual
-    mob pack, so that gate almost never clears in the dark and the pearl hunt would stall at the
-    base to the run limit (run109 it312-599). The diamond kit and shield are expected to carry
-    the fight even with zombies or skeletons around - a crowded hunt is the price of the pearls.
+    One enderman in reach, the bot healthy, and the building blocks the fight needs in the pack.
+    The "no other hostile crowding the fight" gate the blaze hunt keeps is dropped here on purpose:
+    endermen spawn at night alongside the usual mob pack, so that gate almost never clears in the
+    dark and the pearl hunt would stall at the base to the run limit (run109 it312-599). The
+    diamond kit and shield are expected to carry the fight even with zombies or skeletons around -
+    a crowded hunt is the price of the pearls.
+
+    The block floor is the one piece that is not optional: `collect_mob_drop` roofs the bot over as
+    the enderman teleports and refuses with `[COMBAT_BUILD_MATERIALS_MISSING]` when the scaffold
+    runs short (run112d it240-243: five netherrack left, roof wanted six, four refused ticks). Short
+    of `ENDERMAN_HUNT_BLOCKS` the hunt sits out, and the pearl wave comes home to restock.
     """
-    ender = gs.mob_nearest(ENDERMAN_MOB)
-    if ender is None or ender > ENDERMAN_HUNT_RANGE or (gs.health or 0) < ENDERMAN_HUNT_HEALTH:
+    if not _enderman_in_reach(gs) or (gs.health or 0) < ENDERMAN_HUNT_HEALTH:
         return False
-    return True
+    return _combat_blocks_carried(gs.inventory) >= ENDERMAN_HUNT_BLOCKS
 
 
 def _search_enderman_wanted(gs: GameState) -> bool:
@@ -75,6 +92,11 @@ def _search_enderman_wanted(gs: GameState) -> bool:
     until an enderman loads, then `_safe_enderman_hunt` turns the tick over to `hunt_enderman`.
     Held to a healthy bot so a wounded one heals rather than wandering off after a teleporting mob.
 
+    The in-reach exclusion reads `_enderman_in_reach`, not `_safe_enderman_hunt`: an enderman is
+    already loaded, so roaming past it to cover more ground is wrong even when the fight cannot
+    start for want of building blocks. The planner then falls through to `leave_nether`, and the
+    bot comes home to restock rather than abandoning a mob it walked all this way to find.
+
     The roam happens in two places, and the dimension picks which. In the *Nether*, during a pearl
     wave, it is the warped-forest search the waves depend on - endermen live there, not at the
     fortress the rod trip targeted - bounded by `NETHER_PEARL_SEARCH_M` of ground covered so an
@@ -86,7 +108,7 @@ def _search_enderman_wanted(gs: GameState) -> bool:
     moved into the Nether at all).
     """
     inv = gs.inventory
-    if (_ender_pearls(inv) >= _eyes_owed(gs) or _safe_enderman_hunt(gs)
+    if (_ender_pearls(inv) >= _eyes_owed(gs) or _enderman_in_reach(gs)
             or (gs.health or 0) < ENDERMAN_HUNT_HEALTH):
         return False
     if _in_nether(gs):

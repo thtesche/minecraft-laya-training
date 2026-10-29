@@ -1790,6 +1790,16 @@ def _sheddable(gs: GameState, inv: dict[str, int]) -> bool:
                 or _surplus_besides_keep(gs, inv))
 
 
+def _combat_blocks_carried(inv: dict[str, int]) -> int:
+    """How many blocks the bot can scaffold a fight with (`COMBAT_SCAFFOLD_BLOCKS`).
+
+    The server builds a defensive roof out of these while fighting, and refuses the engagement with
+    `[COMBAT_BUILD_MATERIALS_MISSING]` when too few are carried. Netherrack counts as readily as
+    cobblestone, so the Nether stock and the Overworld stack are summed together.
+    """
+    return sum(int(inv.get(name, 0)) for name in COMBAT_SCAFFOLD_BLOCKS)
+
+
 def _chest_ready(gs: GameState) -> bool:
     """A chest has been placed at the base (its coordinates are remembered)."""
     return gs.chest_pos is not None
