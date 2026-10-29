@@ -215,12 +215,16 @@ def _recovery_steps(gs: GameState) -> list[str]:
     away from where the bot was hurt - home to the base, or up out of the cave when there is none
     - and with neither, `explore` toward new ground and new animals. No work rides along: a
     `smelt_iron` at 8.5 health beside a spawner is how the next bite finds the bot.
+
+    A naked bot at night may chop trees or hunt if the target is in reach - no navigation, just
+    in-place work until sunrise. If neither target is loaded, the tick goes to the survival policy.
     """
     if _hunt_ok(gs) and _food_target(gs) is not None:
         return ["hunt_food"]
-    # A naked bot at night does not walk anywhere to recover: no step, so the tick goes to the
-    # survival policy, which stands its ground and evades until the mobs burn at sunrise.
     if _defenceless_at_night(gs):
+        # Only in-place work: trees to chop. If none are in reach, wait for sunrise.
+        if gs.resources.get("logs"):
+            return ["get_wood"]
         return []
     # In the Nether the way out of danger is the way home: cross back through the exit portal
     # rather than explore deeper. A death down there drops the whole diamond kit and every rod,

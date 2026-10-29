@@ -6494,6 +6494,25 @@ class DefencelessAtNightTest(unittest.TestCase):
         g.phase = "day"
         self.assertIsNone(resolve("wait", g))
 
+    def test_a_naked_bot_at_night_chops_if_trees_are_in_reach(self) -> None:
+        # Wounded and naked, but trees loaded: the bot may chop at night instead of deferring.
+        # run112 it0–36: 44 ticks of defer while health 9,2 with no edible and no trees, then
+        # the sun rose and healing started. With trees loaded the bot could have worked.
+        g = gs(pos=(182.5, 72.0, 179.5), phase="night", health=9.8, food=10,
+               dimension="overworld", base=(231, 71, 157))
+        self.assertEqual(candidates(g), [])
+        g.resources["logs"] = [BlockHit("logs", "logs", 183, 72, 179, 1.2)]
+        self.assertIn("get_wood", candidates(g))
+        a = resolve("get_wood", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "logs")
+
+    def test_a_naked_bot_with_no_trees_defers(self) -> None:
+        # Wounded, naked, no edible, and no logs loaded: the bot defers and waits for sunrise.
+        g = gs(pos=(182.5, 72.0, 179.5), phase="night", health=9.8, food=10,
+               dimension="overworld", base=(231, 71, 157))
+        self.assertEqual(candidates(g), [])
+
 
 class DigOutTest(unittest.TestCase):
     """A bot the pathfinder cannot move gets a tunnel, not another walk.
