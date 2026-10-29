@@ -979,7 +979,9 @@ powder back to the chest at the gate** — `nether_expedition_complete` is still
   The **code** is in; the retrain + live validation are a run-the-user-owns step (below).
   - *Relative narrative (done).* `perception.narrative()` now renders the bot, the base and the
     death site **relative**: the bot's `x/z` are dropped and `y` becomes a **depth band** against
-    the one global frame (`_depth_band`: bedrock ≈ −64, sea level ≈ 63, diamonds < 16 →
+    the frame of the dimension it is in (`_depth_band`: Overworld bedrock ≈ −64, sea level ≈ 63,
+    diamonds < 16; the Nether is a shell from bedrock floor 0 to ceiling ≈ 127, so its open floor
+    in the 40s reads as surface, not "underground") →
     "at the surface"/"underground"/"deep underground"); the base is a distance + a coarse vertical
     word (`_rough_vertical`: level/above/below/far); the death site a distance. Absolute x/z are
     per-world random and carry no transferable signal — the head would only *learn to ignore* them,

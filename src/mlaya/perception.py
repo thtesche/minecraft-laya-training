@@ -1035,9 +1035,10 @@ class GameState:
                 where = "in water"
             # Raw x/z are per-world random and not transferable, so the head would have to learn
             # to ignore them - the same reason "players nearby" was cut. Only the depth band
-            # survives, read against the global frame every world shares (bedrock ~-64, sea level
-            # ~63, diamonds below 16); `as_state` still logs the absolute position.
-            parts.append(f"{_depth_band(y)} ({where})")
+            # survives, read against the frame of the dimension the bot is in (the Overworld's
+            # bedrock ~-64 / sea level ~63 / diamond line, the Nether's own shell floor); `as_state`
+            # still logs the absolute position.
+            parts.append(f"{_depth_band(y, self.dimension)} ({where})")
         if self.base:
             bx, by, bz = self.base
             at_base = (self.pos and abs(self.pos[0] - (bx + 0.5)) <= 4
@@ -1754,24 +1755,37 @@ def _in_nether_dimension(dimension: Any) -> bool:
     return "nether" in str(dimension or "").lower()
 
 
-# The depth band the narrative reads out of a raw `y`, against the one frame every world shares:
-# bedrock sits near -64, sea level near 63, and diamonds are below 16. The surface floor is set
+# The depth band the narrative reads out of a raw `y`, against the Overworld's frame: bedrock sits
+# near -64, sea level near 63, and diamonds are below 16. The surface floor is set
 # a little under sea level so a bot a few blocks into a hillside still reads as "at the surface";
 # the deep floor is the diamond line, the one depth change a step actually keys on. The three
 # bands are coarse on purpose - the head needs where it is, not the exact altitude.
 SURFACE_Y = 55
 DEEP_Y = 16
+# The Nether is not on that frame. It is a closed shell - bedrock floor at 0, bedrock ceiling at
+# ~127 - with no sea level and no diamond line, and its terrain floor sits around y=45 in every
+# world the bot has walked (of 7,666 Nether ticks in runs 99-112, 5,701 stand in the 40s and 50s).
+# Read against the Overworld bands, the open Nether floor is "underground": run112d said
+# "Underground (in the air)" at y=47.92 while the bot stood on the Nether floor. Same three words,
+# keyed to the shell's own floor and roof.
+NETHER_SURFACE_Y = 32.0
+NETHER_DEEP_Y = 8.0
+
 # Coarse vertical relation to a target (e.g. the home base): `level` within this many blocks, and
 # `far above`/`far below` once the climb is more than a short shaft. Direction, not degrees.
 VERTICAL_LEVEL = 4
 VERTICAL_FAR = 20
 
 
-def _depth_band(y: float) -> str:
-    """Where a `y` sits in the shared global frame, in words a step can act on."""
-    if y >= SURFACE_Y:
+def _depth_band(y: float, dimension: Any = None) -> str:
+    """Where a `y` sits in the frame of the world it is in, in words a step can act on."""
+    if _in_nether_dimension(dimension):
+        surface, deep = NETHER_SURFACE_Y, NETHER_DEEP_Y
+    else:
+        surface, deep = SURFACE_Y, DEEP_Y
+    if y >= surface:
         return "at the surface"
-    if y >= DEEP_Y:
+    if y >= deep:
         return "underground"
     return "deep underground"
 

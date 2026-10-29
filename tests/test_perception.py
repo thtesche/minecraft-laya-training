@@ -602,6 +602,16 @@ class RelativeNarrativeTest(unittest.TestCase):
         deep.in_water = True
         self.assertIn("Deep underground (in water)", deep.narrative())
 
+    def test_the_nether_floor_is_not_read_as_underground(self) -> None:
+        # run112d, iteration 205: the bot on the open Nether floor at y=47.92 was described to the
+        # head as "Underground (in the air)" - the Overworld bands applied to a world with no sea.
+        nether = GameState(health=20.0, food=20.0)
+        nether.pos = (239.41, 47.92, -79.5)
+        nether.dimension = "the_nether"
+        nether.on_ground = False
+        self.assertIn("At the surface (in the air)", nether.narrative())
+        self.assertNotIn("Underground", nether.narrative())
+
     def test_the_base_is_a_distance_and_a_coarse_direction(self) -> None:
         gs = GameState(health=20.0, food=20.0)
         gs.pos = (0.0, 70.0, 0.0)
@@ -650,6 +660,19 @@ class RelativeRenderHelpersTest(unittest.TestCase):
         self.assertEqual(_depth_band(DEEP_Y), "underground")
         self.assertEqual(_depth_band(DEEP_Y - 1), "deep underground")
 
+    def test_the_nether_reads_on_its_own_shell(self) -> None:
+        from mlaya.perception import _depth_band
+        # The Nether is a closed shell: bedrock floor at 0, bedrock ceiling at ~127, no sea level.
+        # The open floor the bot walks on sits in the 40s and 50s, which the Overworld bands read
+        # as "underground" - run112d said "Underground (in the air)" at y=47.92 on the Nether floor.
+        self.assertEqual(_depth_band(47.92, "the_nether"), "at the surface")
+        self.assertEqual(_depth_band(102.0, "the_nether"), "at the surface")
+        self.assertEqual(_depth_band(20.0, "the_nether"), "underground")
+        self.assertEqual(_depth_band(4.0, "the_nether"), "deep underground")
+        # The same y in the Overworld still reads against sea level.
+        self.assertEqual(_depth_band(47.92, "overworld"), "underground")
+        self.assertEqual(_depth_band(47.92), "underground")
+
     def test_vertical_relation_is_coarse(self) -> None:
         from mlaya.perception import _rough_vertical
         self.assertEqual(_rough_vertical(0.0), "level")
@@ -663,8 +686,9 @@ class RelativeNarrativeTest(unittest.TestCase):
     """Position, base and death speak in relations, not absolute cells.
 
     Raw x/z are per-world random and not transferable, so the head would only learn to ignore
-    them - the same reason "players nearby" was cut. The depth band is read against the one frame
-    every world shares (bedrock ~-64, sea level ~63, diamonds below 16), and the base and the
+    them - the same reason "players nearby" was cut. The depth band is read against the frame of
+    the dimension the bot is in (the Overworld's bedrock ~-64, sea level ~63, diamonds below 16;
+    the Nether's own shell floor), and the base and the
     death site are a distance to walk plus a coarse vertical relation. `as_state` still logs the
     absolute cells; only what Laya reads goes relative.
     """
