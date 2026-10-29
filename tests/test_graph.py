@@ -23,8 +23,8 @@ from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, BODY_HELD_STOP, BOXED_REPEATS, DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
                          RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
-                         PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS, WANDER_RATIO,
-                         WANDER_REPEATS, WANDER_WALK,
+                         ORBIT_WINDOW, PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS,
+                         WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
 from mlaya.perception import BlockHit, GameState
 
@@ -1268,6 +1268,111 @@ class WanderGuardTest(unittest.TestCase):
         agent = self._agent()
         for _ in range(4):
             agent._track_wander("mine_iron", self._Res(458.9, None, data=False))
+        self.assertEqual(agent._stuck_off, {})
+
+
+class OrbitGuardTest(unittest.TestCase):
+    """A step that moves every tick but keeps bouncing over the same cells is withheld.
+
+    The cross-tick twin of the wander guard. A single `explore` tick walks only a few blocks
+    straight, so its own travel-to-net ratio is fine and `_track_wander` never fires; the step
+    succeeds and the position moves, so `_track_stuck` and `_track_idle` are blind too. Live,
+    run112d it517-599: 83 straight `explore` ticks ping-ponging between (-450.5, 1757.6) and
+    (-449.7, 1761.6), seven cells inside five blocks, every tick `progressed`, and the run ran out
+    its budget there.
+    """
+
+    # The live ping-pong, (x, y, z): two cells about four blocks apart, visited alternately.
+    CELL_A = (-450.5, 63.0, 1757.62)
+    CELL_B = (-449.7, 63.0, 1761.64)
+
+    def _agent(self):
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._pearl_wave_trips = 0
+        agent._nether_landmarks = []
+        agent._orbit_path = {}
+        agent._stuck_off = {}
+        agent.log = []
+        return agent
+
+    @staticmethod
+    def _nothing() -> dict:
+        return {"inventory_delta": {}, "armor_delta": [], "offhand_delta": [],
+                "food_delta": 0, "pos_delta": 4.0, "phase_changed": False,
+                "dimension_changed": False}
+
+    def _pingpong(self, agent, label, n):
+        for i in range(n):
+            agent._track_orbit(label, self._nothing(),
+                               self.CELL_A if i % 2 == 0 else self.CELL_B)
+
+    def test_a_full_window_of_pingpong_drops_the_label(self) -> None:
+        agent = self._agent()
+        self._pingpong(agent, "explore", ORBIT_WINDOW)
+        self.assertEqual(agent._stuck_off.get("explore"), STUCK_COOLDOWN)
+        self.assertEqual([r["reason"] for r in agent.log], ["orbit_offer_dropped"])
+
+    def test_the_window_has_to_fill_before_it_fires(self) -> None:
+        agent = self._agent()
+        self._pingpong(agent, "explore", ORBIT_WINDOW - 1)
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_a_straight_march_is_left_alone(self) -> None:
+        # Each tick steps a few blocks the same way, so the window walks far and ends far: the
+        # frontier roam the pearl search depends on must pass.
+        agent = self._agent()
+        for i in range(ORBIT_WINDOW * 2):
+            agent._track_orbit("explore", self._nothing(), (float(i * 4), 63.0, 0.0))
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_a_window_that_never_walks_far_is_not_orbiting(self) -> None:
+        # Tiny steps around one spot sum to under the walk floor; that is the idle guard's job,
+        # not this one, so nothing here fires.
+        agent = self._agent()
+        for i in range(ORBIT_WINDOW * 2):
+            agent._track_orbit("explore", self._nothing(),
+                               (0.1 if i % 2 == 0 else 0.0, 63.0, 0.0))
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_a_tick_that_gains_inventory_starts_the_window_over(self) -> None:
+        # A bot working a vein bounces over a few cells too; a gained item is real progress,
+        # however it moved, so the window resets and the gather is never read as orbiting.
+        agent = self._agent()
+        for i in range(ORBIT_WINDOW - 1):
+            agent._track_orbit("mine_diamond", self._nothing(),
+                               self.CELL_A if i % 2 == 0 else self.CELL_B)
+        delta = self._nothing()
+        delta["inventory_delta"] = {"diamond": 1}
+        agent._track_orbit("mine_diamond", delta, self.CELL_B)
+        self.assertEqual(agent._orbit_path, {})
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_a_dimension_crossing_starts_the_window_over(self) -> None:
+        agent = self._agent()
+        for i in range(ORBIT_WINDOW - 1):
+            agent._track_orbit("leave_nether", self._nothing(),
+                               self.CELL_A if i % 2 == 0 else self.CELL_B)
+        delta = self._nothing()
+        delta["dimension_changed"] = True
+        agent._track_orbit("leave_nether", delta, self.CELL_B)
+        self.assertEqual(agent._orbit_path, {})
+
+    def test_the_steps_that_pass_time_are_exempt(self) -> None:
+        for label in PASS_TIME_LABELS:
+            agent = self._agent()
+            self._pingpong(agent, label, ORBIT_WINDOW * 2)
+            self.assertEqual(agent._stuck_off, {}, label)
+
+    def test_a_withheld_label_is_not_counted_again(self) -> None:
+        agent = self._agent()
+        agent._stuck_off["explore"] = STUCK_COOLDOWN
+        self._pingpong(agent, "explore", ORBIT_WINDOW * 2)
+        self.assertEqual(agent._orbit_path, {})
+
+    def test_no_position_is_no_evidence(self) -> None:
+        agent = self._agent()
+        for _ in range(ORBIT_WINDOW * 2):
+            agent._track_orbit("explore", self._nothing(), None)
         self.assertEqual(agent._stuck_off, {})
 
 

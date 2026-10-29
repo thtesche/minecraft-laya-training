@@ -129,6 +129,22 @@ WANDER_WALK = 80.0
 WANDER_RATIO = 6.0
 WANDER_REPEATS = 2
 
+# The orbiting guard, the cross-tick twin of `_track_wander`: a label that moves every tick yet
+# never gets anywhere, bouncing over a handful of cells. `_track_wander` reads one action's own
+# travel-to-net ratio, so a single short `explore` that walks four blocks straight looks fine to
+# it; the going-nowhere only shows across ticks. The other two guards are blind as well - the step
+# succeeds (no refusal for `_track_stuck`) and the position changes every tick (not idle for
+# `_track_idle`). Live, run112d it517-599: 83 straight `explore` ticks ping-ponging between
+# (-450.5, 1757.6) and (-449.7, 1761.6) - seven cells inside five blocks, every tick `progressed` -
+# and the run spent its last iterations there. This sums the path walked across a window of ticks
+# against the net ground made good; a window that walked far and ended near where it began is the
+# same hopeless ratio measured over ticks instead of within one call. A tick that gains inventory
+# or crosses a dimension starts the window over, so a bot working a vein or a grove in place - which
+# moves without travelling far either - is never read as orbiting.
+ORBIT_WINDOW = 12
+ORBIT_WALK = 36.0
+ORBIT_RATIO = 5.0
+
 # How long the run may spend walking back to the chest it last kept before it stops pretending
 # that cell is its base. A long walk is the normal case (the live one was 300 m), so this is
 # generous, but it is not unbounded: an anchor the bot cannot reach would stand between it and
@@ -377,6 +393,10 @@ class Agent:
         # The walking guard's own count per label (`_track_wander`), separate from `_stuck_reps`:
         # a wandering action is not a refusal and must not reset or advance the refusal run.
         self._wander_reps: dict[str, int] = {}
+        # The orbiting guard's own trail per label (`_track_orbit`): the recent feet-cells a label
+        # ended on, capped at `ORBIT_WINDOW`. Separate again - a bounce over the same cells is
+        # neither a refusal nor a wander nor an idle tick, so it must not disturb the other counts.
+        self._orbit_path: dict[str, list[tuple[float, float, float]]] = {}
         # The remembered chest a lost base is walked back to, and the decisions left to get there
         # (see `_walk_home_to_memory`/`_settle_home_anchor` and `HOME_ANCHOR_TICKS`).
         self._home_anchor: tuple[int, int, int] | None = None
@@ -1546,6 +1566,51 @@ class Agent:
                          "label": label, "ticks": IDLE_REPEATS,
                          "window": STUCK_COOLDOWN})
 
+    def _track_orbit(self, label: str, delta: dict,
+                     pos: tuple[float, float, float] | None) -> None:
+        """Withhold a label that moves every tick but never gets anywhere (`ORBIT_*`).
+
+        The cross-tick twin of `_track_wander`: that guard reads one action's own travel-to-net
+        ratio, so a short straight `explore` walk looks fine; this one keeps the feet-cells a label
+        ended on and measures the same ratio over a window of ticks. A window that walked far
+        (`ORBIT_WALK`) yet ended near where it began (`ORBIT_RATIO`) is a bounce going nowhere, and
+        the label is withheld on the same countdown as the other three guards so it returns on its
+        own once the exploring between has changed the world.
+
+        A tick that gains inventory, armour or off-hand, or crosses a dimension, is real progress
+        however it moved, so it starts the window over - a bot working a vein or a grove bounces
+        over a few cells too, and only the fruitless bounce is caught. The steps that exist to pass
+        time are exempt, like the idle guard, and a label already withheld is not counted against.
+        """
+        if label in PASS_TIME_LABELS:
+            self._orbit_path.pop(label, None)
+            return
+        if label in self._stuck_off:
+            # Withheld right now: the offer left it out, so this tick is not evidence against it.
+            return
+        if pos is None:
+            return
+        if (any(delta.get("inventory_delta") or {})
+                or delta.get("armor_delta") or delta.get("offhand_delta")
+                or delta.get("dimension_changed")):
+            self._orbit_path.pop(label, None)
+            return
+        trail = self._orbit_path.setdefault(label, [])
+        trail.append((float(pos[0]), float(pos[1]), float(pos[2])))
+        if len(trail) > ORBIT_WINDOW:
+            del trail[0]
+        if len(trail) < ORBIT_WINDOW:
+            return
+        path = sum(math.dist(trail[i], trail[i + 1]) for i in range(len(trail) - 1))
+        net = math.dist(trail[0], trail[-1])
+        if path < ORBIT_WALK or net >= path / ORBIT_RATIO:
+            return
+        self._orbit_path.pop(label, None)
+        self._stuck_off[label] = STUCK_COOLDOWN
+        self.log.append({"stage": "policy", "reason": "orbit_offer_dropped",
+                         "label": label, "walked": round(path, 1),
+                         "net": round(net, 1), "ticks": STUCK_COOLDOWN})
+
     def _note_surface(self, action, ok: bool, text: str | None,
                       pos: tuple[float, float, float] | None) -> None:
         """Learn the surface cell from a `surface_up` probe or climb.
@@ -2253,6 +2318,7 @@ class Agent:
         # action is not a refusal, so the two runs of counts do not disturb each other.
         self._track_wander(action.label, res)
         self._track_idle(action.label, delta)
+        self._track_orbit(action.label, delta, after.pos)
         self._refresh_after(after)
         record = {
             "stage": "action",
