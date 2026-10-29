@@ -216,15 +216,25 @@ def _recovery_steps(gs: GameState) -> list[str]:
     - and with neither, `explore` toward new ground and new animals. No work rides along: a
     `smelt_iron` at 8.5 health beside a spawner is how the next bite finds the bot.
 
-    A naked bot at night may chop trees or hunt if the target is in reach - no navigation, just
-    in-place work until sunrise. If neither target is loaded, the tick goes to the survival policy.
+    A naked bot at night may chop trees, hunt if the target is in reach, or craft tools - no
+    navigation, just in-place work until sunrise. If no such work is available, wait for sunrise.
     """
     if _hunt_ok(gs) and _food_target(gs) is not None:
         return ["hunt_food"]
     if _defenceless_at_night(gs):
-        # Only in-place work: trees to chop. If none are in reach, wait for sunrise.
+        inv = gs.inventory
+        # In-place work only: gather, hunt, craft. No navigation away from this spot.
         if gs.resources.get("logs"):
             return ["get_wood"]
+        # Can we craft tools with what we have?
+        planks = _planks(inv)
+        logs = _logs(inv)
+        tier = _pick_tier(inv, gs.tools)
+        table = inv.get("crafting_table", 0)
+        if (logs >= 1 or planks >= 5) and tier == 0:
+            return ["craft_pickaxe"]
+        if planks >= 4 and not table:
+            return ["craft_table"]
         return []
     # In the Nether the way out of danger is the way home: cross back through the exit portal
     # rather than explore deeper. A death down there drops the whole diamond kit and every rod,

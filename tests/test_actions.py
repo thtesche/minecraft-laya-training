@@ -6513,6 +6513,24 @@ class DefencelessAtNightTest(unittest.TestCase):
                dimension="overworld", base=(231, 71, 157))
         self.assertEqual(candidates(g), [])
 
+    def test_a_naked_bot_at_night_crafts_a_pickaxe_if_materials_exist(self) -> None:
+        # Wounded, naked, but planks in the pack: craft a pickaxe instead of waiting.
+        g = gs(pos=(182.5, 72.0, 179.5), phase="night", health=9.8, food=10,
+               dimension="overworld", base=(231, 71, 157), inventory={"birch_planks": 5})
+        self.assertIn("craft_pickaxe", candidates(g))
+        a = resolve("craft_pickaxe", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"][0]["item_name"], "wooden_pickaxe")
+
+    def test_a_naked_bot_at_night_crafts_a_table_if_planks_exist(self) -> None:
+        # Wounded, naked, planks in pack, no crafting table: craft one instead of waiting.
+        g = gs(pos=(182.5, 72.0, 179.5), phase="night", health=9.8, food=10,
+               dimension="overworld", base=(231, 71, 157), inventory={"birch_planks": 4})
+        self.assertIn("craft_table", candidates(g))
+        a = resolve("craft_table", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"][0]["item_name"], "crafting_table")
+
 
 class DigOutTest(unittest.TestCase):
     """A bot the pathfinder cannot move gets a tunnel, not another walk.
