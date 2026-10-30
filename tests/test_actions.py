@@ -5558,6 +5558,18 @@ class RodDemandSizedToTheFrameTest(unittest.TestCase):
         self.assertEqual(_eyes_owed(g), 0)
         self.assertEqual(_rods_target(g), 0)
 
+    def test_a_frame_that_arrived_half_filled_owes_only_the_difference(self) -> None:
+        # The sockets the world generated filled are sockets the chain never has to craft. Since
+        # `_note_portal` reads `portal.eyesAfter`, `frame_eyes` is the frame's own count rather
+        # than what this bot happened to put in, and the haul is sized on seven, not twelve.
+        g = self._home()
+        g.stronghold_estimated = True
+        g.frame_eyes = 5
+        self.assertEqual(_eyes_owed(g), 7)
+        self.assertEqual(_rods_target(g), 4)
+        g.frame_eyes = 0
+        self.assertEqual(_eyes_owed(g), 12)
+
     def test_the_pearl_hunt_stops_at_the_eyes_owed(self) -> None:
         g = self._home()
         g.stronghold_estimated = True
