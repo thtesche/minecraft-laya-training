@@ -117,7 +117,7 @@ async def apply_policy(executor, reason: str, preset: str = "base") -> dict:
 
     `expected_revision` is optimistic concurrency: we read it, then set. The server
     restores defaults on every death and dimension change, so this must be re-applied
-    after each one (see `graph.Agent._reapply_after_death`).
+    after each one (see `graph.Agent._rearm_policy`).
     """
     changes = PRESETS.get(preset)
     if changes is None:

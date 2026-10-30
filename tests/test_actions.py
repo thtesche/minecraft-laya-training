@@ -11,10 +11,12 @@ import math
 import re
 import unittest
 
-from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _diamond_reason,
-                         _expedition_prepared, _frame_needs_obsidian, _gold_reserve_short,
+from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _crowding_hostiles,
+                         _diamond_reason, _expedition_prepared, _frame_needs_obsidian,
+                         _gold_reserve_short,
                          _hoard_surplus, _idle_off_base, _nether_prep_steps,
-                         _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt,
+                         _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt, _safe_blaze_hunt, _safe_zombie_hunt,
+                          _safe_spider_hunt, _safe_string_hunt,
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
@@ -4129,7 +4131,19 @@ class NetherExpeditionTest(unittest.TestCase):
 
     def test_a_blaze_crowded_by_other_hostiles_is_left_alone(self) -> None:
         g = self._down()
-        g.mobs = [("blaze", "hostile", 1, 6.0), ("piglin", "hostile", 2, 9.0)]
+        g.mobs = [("blaze", "hostile", 1, 6.0), ("wither_skeleton", "hostile", 2, 9.0)]
+        self.assertNotIn("hunt_blaze", candidates(g))
+
+    def test_piglins_are_not_company_for_a_blaze_hunt(self) -> None:
+        # run119 it221-229: blaze 3.9 m, 53 zombified piglins at 9.1 m, health 20. The crowd that
+        # kept the hunt shut for nine ticks is a fortress floor's normal population: piglins and
+        # zombified piglins attack only when provoked, so they are no reason to leave a blaze
+        # alone. A real hostile in reach still closes it.
+        g = self._down()
+        g.mobs = [("blaze", "hostile", 1, 3.9), ("zombified_piglin", "hostile", 53, 9.1),
+                  ("piglin", "hostile", 1, 12.0), ("wither_skeleton", "hostile", 1, 21.8)]
+        self.assertIn("hunt_blaze", candidates(g))
+        g.mobs.append(("wither_skeleton", "hostile", 2, 9.0))
         self.assertNotIn("hunt_blaze", candidates(g))
 
     def test_the_trip_ends_with_the_haul(self) -> None:
@@ -5239,6 +5253,52 @@ class GoHomeIsAnOverworldOnlyStepTest(unittest.TestCase):
                     g.pos = (226.5 + 30.0, 64.0, 222.0)
                 self.assertEqual("go_home" in candidates(g),
                                  resolve("go_home", g) is not None)
+
+
+class NeutralCrowdingTest(unittest.TestCase):
+    """The hunt guards count only hostiles that could actually join the fight.
+
+    Live, run119 it221-229: a blaze 3.9 m away, 53 zombified piglins at 9.1 m, health 20. Every
+    guard read that crowd as a second fight and refused the hunt for nine ticks, while the blaze
+    shot at a bot that never asked for a fight. Piglins and zombified piglins turn on a player
+    only when provoked - a hit, or a ghast fireball that bounces back - and a fortress floor is
+    never empty of them, so counting them as company closes every hunt in the place where hunting
+    is the whole point of the trip.
+    """
+
+    def test_piglins_do_not_close_the_blaze_hunt(self) -> None:
+        g = gs(health=20.0, mobs=[("blaze", "hostile", 1, 3.9),
+                                  ("zombified_piglin", "hostile", 53, 9.1),
+                                  ("piglin", "hostile", 1, 12.0)])
+        self.assertTrue(_safe_blaze_hunt(g))
+        self.assertEqual(_crowding_hostiles(g, "blaze", 16), [])
+
+    def test_a_hostile_that_does_turn_on_still_closes_it(self) -> None:
+        g = gs(health=20.0, mobs=[("blaze", "hostile", 1, 3.9),
+                                  ("wither_skeleton", "hostile", 2, 9.1)])
+        self.assertFalse(_safe_blaze_hunt(g))
+
+    def test_the_string_hunts_ignore_piglins(self) -> None:
+        g = gs(health=20.0, mobs=[("spider", "hostile", 1, 6.0),
+                                  ("zombified_piglin", "hostile", 40, 8.0)])
+        self.assertTrue(_safe_spider_hunt(g))
+        self.assertTrue(_safe_string_hunt(g))
+        # A real pack still refuses the strict guard; the bow's wider rule allows a little company.
+        g.mobs.append(("zombie", "hostile", 3, 9.0))
+        self.assertFalse(_safe_spider_hunt(g))
+        self.assertTrue(_safe_string_hunt(g))
+
+    def test_the_zombie_food_hunt_ignores_piglins(self) -> None:
+        g = gs(health=20.0, mobs=[("zombie", "hostile", 1, 5.0),
+                                  ("zombified_piglin", "hostile", 12, 7.0)])
+        self.assertTrue(_safe_zombie_hunt(g))
+        g.mobs.append(("skeleton", "hostile", 3, 8.0))
+        self.assertFalse(_safe_zombie_hunt(g))
+
+    def test_a_hurt_bot_is_still_refused(self) -> None:
+        # The exclusion is about who is crowding, not about lowering the health floor.
+        g = gs(health=10.0, mobs=[("blaze", "hostile", 1, 3.9)])
+        self.assertFalse(_safe_blaze_hunt(g))
 
 
 class TheOfferAndTheResolveMustAgreeTest(unittest.TestCase):

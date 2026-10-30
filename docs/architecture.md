@@ -417,7 +417,7 @@ a **food acquisition** that fits "actually survive".
     dig down, and by hand the bot loses the race against the despawn (live, run12:
     hand-dug from the surface to a death ~60 blocks deeper, lost, afterwards endless loop
     on `get_wood`). Until the pickaxe is crafted, the normal chain (wood → pickaxe) runs first.
-    After every death the graph resets the policy (`_reapply_after_death`).
+    After every death and every dimension change the graph re-arms the policy (`_rearm_policy`).
     **Write-off (run14, live):** The server answers `[NO_MATCHING_ITEMS]` when it reaches the
     death site and its 16 m scan finds nothing more (the drops are despawned/burned)
     — a **definitive** answer, not a transient one. `_can_recover` still offered the path the whole
@@ -447,7 +447,7 @@ a **food acquisition** that fits "actually survive".
     (−52.5, 68, 8.5) ≈ 45 m away, 8 s ago → `candidates == ["recover_drops"]` → Laya chooses it →
     `_guard` binds `pick_up_items {recover_death_items: true}` → `succeeded`; the inventory
     (dirt/cobble/logs/planks/sticks + string) came back. The `hunt` policy is thereby after the death
-    automatically reset to `base` (`_reapply_after_death`).
+    automatically reset to `base` (`_rearm_policy`).
   - **Observed event wording:** `hostile: target died`, `hostile: contact ended`,
     `MineAI died at <pos> …`, `<tool> broke.` — `_count_drops` keys off `"target died"`.
   - 22 unit tests (`tests/test_actions.py`) additionally pin all bindings/guards as well as the
@@ -850,7 +850,7 @@ helmet and a spare diamond pickaxe, and crossed with food. At it154 piglin brute
 woke at world spawn, not the base, with nothing. Nine Overworld deaths followed, all at night,
 no tool and no armour, most on walks the loop chose. Four fixes:
 
-- **The policy after every death.** `_reapply_after_death` re-armed only once a death was over
+- **The policy after every death.** `_rearm_policy` re-armed only once a death was over
   120 s old, so deaths 25–34 s apart left the server's default policy in force (the reflex
   `fight`ing zombies naked); three of ten deaths were answered. A death is now told by its
   server timestamp (`GameState.last_death_at`), and the defer path checks it too.
@@ -956,7 +956,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–118 (2026-10-28 … 30)
+## Live findings run108–119 (2026-10-28 … 30)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1024,6 +1024,24 @@ sixth. `e940e4c` gives the shed the tick (the shape the gold-helmet swap and the
 use) and makes `junk_full` hold only while `drop_junk` is actually on offer, so a shed the ground
 has refused twice sends the bot home with the rods it has instead of 15 ticks of marching with
 nowhere for the next one.
+
+**A fortress crowd is not a fight.** run119 it221-229: the bot stood at (-134, 70, 78) while a
+blaze 3.9 m away shot at it for nine ticks. `_safe_blaze_hunt` asks for one target in reach, a
+healthy bot and no other hostile within 16 m — and 53 zombified piglins stood 9.1 m off, so
+`hunt_blaze` was never offered and the body stayed with `hostile_reflex` (`[BODY_HELD]`, phase
+`approach`, 163 phaseTicks, 0 attacks). Piglins and zombified piglins turn on a player only when
+provoked - a hit, or a ghast fireball that bounces back - and a fortress floor is never empty of
+them, so counting them as company closes every hunt in the dimension the hunt is the point of.
+`NEUTRAL_HOSTILES` and the shared `_crowding_hostiles` now leave them out of the blaze, spider,
+string and zombie guards; a wither skeleton at 9 m still closes one.
+
+**A crossing resets the policy, not only a death.** run119 it217: `enter_portal` put the bot in the
+Nether, and the server's own `lastChange` read "Death or dimension change; defaults restored" -
+`engage_min_health` 12, `hostile_avoidance_multiplier` 1, raw food `emergency_only`. Only deaths
+were re-armed, so the eight ticks that followed at a blaze spawner ran on the cautious default with
+the hunt closed. `_rearm_policy` (formerly `_reapply_after_death`) now tracks the dimension and
+re-applies the base stage on every change, the first tick of a run excepted - whatever dimension
+the bot starts in, the policy the run applied at its start already stands there.
 
 Net: the crossing, the fortress march and the rod haul all run live, and the water, footing and
 foreground guards closed the runtime-crash and ping-pong classes; **no run has carried blaze

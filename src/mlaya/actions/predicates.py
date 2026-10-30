@@ -293,20 +293,33 @@ def _has_bed(inv: dict[str, int]) -> bool:
     return any(n.endswith("_bed") for n in inv)
 
 
+def _crowding_hostiles(gs: GameState, except_name: str | None = None,
+                       radius: float = 16.0) -> list[tuple[str, float]]:
+    """Hostiles within `radius` that could actually join a fight, the target excluded.
+
+    `NEUTRAL_HOSTILES` are not counted: a piglin or zombified piglin only turns on a player who
+    provokes it, and in a fortress it is the crowd that keeps every hunt guard shut. The server
+    still owns the body while a provoked one is in reach - this helper only decides whether the
+    *model* should start a second fight.
+    """
+    return [(n, d) for n, k, _, d in gs.mobs
+            if k == "hostile" and n != except_name and n not in NEUTRAL_HOSTILES
+            and d is not None and d <= radius]
+
+
 def _safe_spider_hunt(gs: GameState) -> bool:
     """Only farm spider string when the fight is a lone, close, healthy one.
 
     Hunting hostiles is the single most expensive mistake this bot has made (a
     spider run walked it into a zombie/skeleton pack and cost an iron pickaxe), so
     string farming requires: one spider within 10m, no other hostile within 16m,
-    and health at least 16.
+    and health at least 16. Provoked-only mobs (`NEUTRAL_HOSTILES`) do not count as
+    company.
     """
     spider = gs.mob_nearest("spider")
     if spider is None or spider > 10 or (gs.health or 0) < 16:
         return False
-    others = [d for n, k, _, d in gs.mobs
-              if k == "hostile" and n != "spider" and d is not None and d <= 16]
-    return not others
+    return not _crowding_hostiles(gs, "spider", 16)
 
 
 def _safe_string_hunt(gs: GameState) -> bool:
@@ -322,9 +335,7 @@ def _safe_string_hunt(gs: GameState) -> bool:
     spider = gs.mob_nearest("spider")
     if spider is None or spider > STRING_HUNT_RANGE or (gs.health or 0) < 16:
         return False
-    others = [d for n, k, _, d in gs.mobs
-              if k == "hostile" and n != "spider" and d is not None and d <= STRING_HUNT_RANGE]
-    return len(others) <= 2
+    return len(_crowding_hostiles(gs, "spider", STRING_HUNT_RANGE)) <= 2
 
 
 def _safe_zombie_hunt(gs: GameState) -> bool:
@@ -337,8 +348,7 @@ def _safe_zombie_hunt(gs: GameState) -> bool:
     nearest = gs.mob_nearest("zombie")
     if nearest is None or nearest > ZOMBIE_HUNT_RANGE or (gs.health or 0) < 18:
         return False
-    hostiles = [(n, d) for n, k, _, d in gs.mobs
-                if k == "hostile" and d is not None and d <= 16]
+    hostiles = _crowding_hostiles(gs, None, 16)
     return len(hostiles) <= 2 and all(n == "zombie" for n, _ in hostiles)
 
 
@@ -1111,13 +1121,14 @@ def _safe_blaze_hunt(gs: GameState) -> bool:
     A blaze answers melee by igniting itself and answering with fireballs, and a fortress has
     more of them than one bot can survive at once, so the same guard `_safe_spider_hunt` uses
     applies: one target in reach, the bot healthy, and no other hostile crowding the fight.
+    Piglins and zombified piglins are not company: they attack only when provoked, and a
+    fortress floor is never empty of them (run119 it221-224: 53 zombified piglins at 9.1 m kept
+    the hunt shut while a blaze 3.9 m away shot the bot standing still).
     """
     blaze = gs.mob_nearest(BLAZE_MOB)
     if blaze is None or blaze > BLAZE_HUNT_RANGE or (gs.health or 0) < BLAZE_HUNT_HEALTH:
         return False
-    others = [d for n, k, _, d in gs.mobs
-              if k == "hostile" and n != BLAZE_MOB and d is not None and d <= 16]
-    return not others
+    return not _crowding_hostiles(gs, BLAZE_MOB, 16)
 
 
 def _nether_must_return(gs: GameState) -> bool:

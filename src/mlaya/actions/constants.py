@@ -496,6 +496,13 @@ HOARD_CAP = 64
 HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
                  "witch", "blaze", "piglin", "zombified_piglin"}
 
+# Mobs the server files under `kind: hostile` that do not start a fight on their own. Piglins and
+# zombified piglins turn on a player only when provoked - by a hit, or by a ghast fireball that
+# bounces back - and a fortress is full of them, so counting them as company closes every hunt
+# guard. Live, run119 it221-224: a blaze 3.9 m away was never hunted because 53 zombified piglins
+# stood 9.1 m off, and the bot took fireballs standing still with `hunt_blaze` never offered.
+NEUTRAL_HOSTILES = frozenset({"piglin", "zombified_piglin"})
+
 # The blocks the server will place while fighting - the `navigation.scaffold_blocks` the survival
 # policy admits (`survival.BASE_CHANGES`). An enderman hunt roofs itself over as the mob teleports,
 # and `collect_mob_drop` refuses with `[COMBAT_BUILD_MATERIALS_MISSING]` when fewer than six of

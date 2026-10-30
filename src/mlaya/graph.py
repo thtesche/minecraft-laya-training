@@ -189,7 +189,7 @@ DROP_UNDONE_REACH = 6.0
 # and 18% of the run went into waiting on a body nobody was going to release.
 BODY_HELD_STOP = 2
 
-# A death first seen older than this was not this run's to answer (`Agent._reapply_after_death`).
+# A death first seen older than this was not this run's to answer (`Agent._rearm_policy`).
 DEATH_REAPPLY_AGE_S = 90.0
 
 
@@ -325,9 +325,11 @@ class Agent:
         self.brain = Brain(settings.laya)
         self.log = MemoryLog(settings.log_path())
         self.history: list[dict] = []
-        # The server restores default policy on death; re-apply once per death. The death the
-        # policy was last re-applied for (or found already old), by its server timestamp.
+        # The server restores default policy on death and on a dimension change; re-apply once for
+        # each. The death the policy was last re-applied for (or found already old), by its server
+        # timestamp, and the dimension it was last armed against.
         self._death_seen: str | None = None
+        self._policy_dim: str | None = None
         # Label whose last attempt failed because the surroundings blocked it; the next
         # tick changes the surroundings before retrying it (`blocked_by_surroundings`).
         self._blocked_label: str | None = None
@@ -1289,7 +1291,7 @@ class Agent:
             await asyncio.sleep(self.settings.mcp.poll_ms / 1000)
             gs = await self._observe()
             # A death in a defer tick (the reflex's fight lost) needs the policy back too.
-            await self._reapply_after_death(gs)
+            await self._rearm_policy(gs)
             self._note_defer(state["before"], gs)
             gs.defer_quiet = self._defer_quiet
         return {"before": gs, "iteration": iteration, **stop}
@@ -2437,7 +2439,7 @@ class Agent:
         # through the height the server names when it refuses to guess (an ambiguous column);
         # both are read here, after the observation, and gate `establish_base` next tick.
         self._note_surface(action, _ok, _text, after.pos)
-        await self._reapply_after_death(after)
+        await self._rearm_policy(after)
         delta = vmod.diff(before, after)
         self._note_held(res, before, after)
         self._note_hurt(before, after)
@@ -2489,8 +2491,8 @@ class Agent:
         return {"before": after, "iteration": iteration,
                 **self._stop_state(after, iteration)}
 
-    async def _reapply_after_death(self, gs) -> None:
-        """The server restores default policy on death; re-apply once per death.
+    async def _rearm_policy(self, gs) -> None:
+        """The server restores default policy on death and on a dimension change; re-arm for both.
 
         A death is told apart by its server timestamp, not by its age. run90 died ten times,
         six of them within six minutes at night, and the old age window (re-arm only once a death
@@ -2498,16 +2500,34 @@ class Agent:
         it still disarmed, and the bot fought zombies naked on the server's default. A death
         first seen when it is already old (the run's start, after a restart) is noted, not
         answered: the policy the run applied at its start already stands over it.
+
+        The same reset happens when the body changes dimension, and no death has to occur for it.
+        Live, run119: the portal crossing at it217 read `Death or dimension change; defaults
+        restored` - `engage_min_health` back to 12, `hostile_avoidance_multiplier` back to 1, raw
+        food back to `emergency_only` - and nothing re-armed it, so the ticks that followed at a
+        blaze spawner were reflex evasions with `hunt_blaze` never offered. The first tick of a run
+        is not a crossing: whatever dimension the bot starts in, the policy the run applied at its
+        start already stands there.
         """
         key = getattr(gs, "last_death_at", None)
         age = getattr(gs, "last_death_age_s", None)
-        if key is None or age is None or key == self._death_seen:
+        if key is not None and age is not None and key != self._death_seen:
+            self._death_seen = key
+            if age <= DEATH_REAPPLY_AGE_S:
+                summary = await survival.apply_policy(self.mcp, "re-apply after death")
+                self.log.append({"stage": "policy", "reason": "death", "summary": summary})
+
+        dim = str(gs.dimension or "").lower()
+        if not dim:
             return
-        self._death_seen = key
-        if age > DEATH_REAPPLY_AGE_S:
+        if self._policy_dim is None:
+            self._policy_dim = dim
             return
-        summary = await survival.apply_policy(self.mcp, "re-apply after death")
-        self.log.append({"stage": "policy", "reason": "death", "summary": summary})
+        if dim != self._policy_dim:
+            self._policy_dim = dim
+            summary = await survival.apply_policy(self.mcp, f"re-apply after crossing to {dim}")
+            self.log.append({"stage": "policy", "reason": "dimension_policy_reapplied",
+                            "dimension": dim, "summary": summary})
 
     def _after_guard(self, state: AgentState) -> str:
         return "execute" if state.get("action") is not None else "defer"

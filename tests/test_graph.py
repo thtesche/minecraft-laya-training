@@ -4960,10 +4960,13 @@ class FleeStageTest(unittest.IsolatedAsyncioTestCase):
 
 
 class DeathPolicyTest(unittest.IsolatedAsyncioTestCase):
-    """The survival policy goes back on after every death, however close the next one follows.
+    """The survival policy goes back on after every death and every dimension change.
 
     run90 died nine times in the Overworld, two of them 34 s apart and two 25 s apart, and the
-    old age window re-applied the policy for three of the ten deaths.
+    old age window re-applied the policy for three of the ten deaths. run119 never died on the
+    way into the Nether and still lost the policy there: the crossing at it217 read `Death or
+    dimension change; defaults restored`, and nothing re-armed it, so eight ticks of a blaze
+    hunt ran on the server's cautious default.
     """
 
     def _agent(self) -> tuple[Agent, list]:
@@ -4971,6 +4974,7 @@ class DeathPolicyTest(unittest.IsolatedAsyncioTestCase):
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._death_seen = None
+        agent._policy_dim = None
         agent.log = []
         agent.mcp = None
         applied: list[str] = []
@@ -4987,21 +4991,44 @@ class DeathPolicyTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_two_deaths_in_quick_succession_both_reapply(self) -> None:
         agent, applied = self._agent()
-        await agent._reapply_after_death(gs(last_death_at="2026-10-23T19:12:30Z",
-                                            last_death_age_s=4.0))
-        await agent._reapply_after_death(gs(last_death_at="2026-10-23T19:12:30Z",
-                                            last_death_age_s=20.0))
-        await agent._reapply_after_death(gs(last_death_at="2026-10-23T19:13:04Z",
-                                            last_death_age_s=3.0))
+        await agent._rearm_policy(gs(last_death_at="2026-10-23T19:12:30Z",
+                                     last_death_age_s=4.0))
+        await agent._rearm_policy(gs(last_death_at="2026-10-23T19:12:30Z",
+                                     last_death_age_s=20.0))
+        await agent._rearm_policy(gs(last_death_at="2026-10-23T19:13:04Z",
+                                     last_death_age_s=3.0))
         self.assertEqual(len(applied), 2)
         self.assertEqual([e["reason"] for e in agent.log], ["death", "death"])
 
     async def test_an_old_death_found_at_the_start_is_left_alone(self) -> None:
         agent, applied = self._agent()
-        await agent._reapply_after_death(gs(last_death_at="2026-10-22T08:00:00Z",
-                                            last_death_age_s=50462.0))
-        await agent._reapply_after_death(gs())
+        await agent._rearm_policy(gs(last_death_at="2026-10-22T08:00:00Z",
+                                     last_death_age_s=50462.0))
+        await agent._rearm_policy(gs())
         self.assertEqual(applied, [])
+
+    async def test_crossing_into_the_nether_rearms_the_policy(self) -> None:
+        agent, applied = self._agent()
+        # The first tick is not a crossing: the policy the run applied at its start stands.
+        await agent._rearm_policy(gs(dimension="minecraft:overworld"))
+        await agent._rearm_policy(gs(dimension="minecraft:overworld"))
+        self.assertEqual(applied, [])
+        await agent._rearm_policy(gs(dimension="minecraft:the_nether"))
+        self.assertEqual(len(applied), 1)
+        self.assertEqual(agent.log[-1]["reason"], "dimension_policy_reapplied")
+        self.assertEqual(agent.log[-1]["dimension"], "minecraft:the_nether")
+        # Coming back out resets it the same way, and the walk home needs the base stage.
+        await agent._rearm_policy(gs(dimension="minecraft:overworld"))
+        self.assertEqual(len(applied), 2)
+
+    async def test_a_death_and_a_crossing_on_one_tick_are_answered_separately(self) -> None:
+        agent, applied = self._agent()
+        await agent._rearm_policy(gs(dimension="minecraft:overworld"))
+        await agent._rearm_policy(gs(dimension="minecraft:the_nether",
+                                     last_death_at="2026-10-30T10:41:00Z", last_death_age_s=3.0))
+        self.assertEqual(len(applied), 2)
+        self.assertEqual([e["reason"] for e in agent.log],
+                         ["death", "dimension_policy_reapplied"])
 
 
 class ShutInTest(unittest.TestCase):
