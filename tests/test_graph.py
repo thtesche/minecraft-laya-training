@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import math
 import unittest
 
-from mlaya import perception
+from mlaya import perception, progress
 from mlaya.actions import (Action, candidates, nether_expedition_complete, resolve,
                           tech_tree_complete)
 from mlaya.brain import Decision
@@ -3718,6 +3718,276 @@ class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(agent._powder_stowed)
         self.assertEqual(agent.log, [])
 
+    async def test_a_run_that_starts_in_the_nether_still_sees_its_gate_chest(self) -> None:
+        # `_walk_home_to_memory` steps out when the bot is down in the Nether, so the run has no
+        # adopted base and `network` is empty: the powder a previous run banked at the gate is
+        # invisible, and `nether_expedition_open` reopens the haul for rods already in the chest.
+        # The gate the ledger lit is the anchor the milestone can be measured against.
+        mcp = self._Mcp({"response": {"data": {"result": {"query": {"rows": [
+            [-10, 70, -49, '[{"slot":0,"item":"blaze_powder","count":18}]']]}}}}})
+        agent = self._agent(mcp)
+        agent.base = None
+        agent.chest_pos = None
+        agent._durable = progress.DurableFacts(gate_cell=(-10, 70, -52))
+        await agent._note_stocked_chest(gs(pos=(-469.5, 57.0, 421.5), dimension="the_nether"))
+        self.assertTrue(agent._powder_stowed)
+        self.assertIn((-10, 70, -49), agent._powder_cells)
+        self.assertEqual(agent._powder_bank, 18)
+
+    async def test_the_wider_milestone_read_does_not_widen_the_network(self) -> None:
+        # The same chest is not a deposit target: `banked` and `banked_stores` stay filtered to
+        # the cells this run owns, so a milestone is not a licence to raid a stranger's lid.
+        mcp = self._Mcp({"response": {"data": {"result": {"query": {"rows": [
+            [-10, 70, -49, '[{"slot":0,"item":"blaze_powder","count":18},'
+                           '{"slot":1,"item":"cooked_mutton","count":8}]']]}}}}})
+        agent = self._agent(mcp)
+        agent.base = None
+        agent.chest_pos = None
+        agent._durable = progress.DurableFacts(gate_cell=(-10, 70, -52))
+        await agent._note_stocked_chest(gs(pos=(-469.5, 57.0, 421.5), dimension="the_nether"))
+        self.assertEqual(agent.banked, {})
+        self.assertEqual(agent._banked_stores, ())
+
+    async def test_powder_far_from_any_anchor_is_not_the_run_haul(self) -> None:
+        mcp = self._Mcp({"response": {"data": {"result": {"query": {"rows": [
+            [400, 70, 400, '[{"slot":0,"item":"blaze_powder","count":18}]']]}}}}})
+        agent = self._agent(mcp)
+        agent.base = None
+        agent.chest_pos = None
+        agent._durable = progress.DurableFacts(gate_cell=(-10, 70, -52))
+        await agent._note_stocked_chest(gs(pos=(-469.5, 57.0, 421.5), dimension="the_nether"))
+        self.assertFalse(agent._powder_stowed)
+        self.assertEqual(agent._powder_cells, [])
+
+
+class WorldBootstrapTest(unittest.IsolatedAsyncioTestCase):
+    """A cold start on a half-played world must not read as a fresh one.
+
+    Every latch is `False` at process start, and the two reads that could correct it - the block
+    scan and the inventory - only answer inside loaded chunks. The server's own tables are the
+    only thing that outlives the restart, and `_bootstrap_world` is where they reach the latches.
+    """
+
+    GATE_ARGS = '{"x": -9, "y": 70, "z": -52}'
+    LIT = ('{"portal":{"kind":"nether","portalBefore":0,"portalAfter":6,"activated":true},'
+           '"status":"succeeded"}')
+    END = ('{"portal":{"kind":"end","eyesBefore":5,"eyesAfter":12,'
+           '"portalBefore":0,"portalAfter":9,"activated":true},"status":"succeeded"}')
+
+    class _Read:
+        def __init__(self, data):
+            self.data, self.text = data, ""
+
+    class _Mcp:
+        def __init__(self, by_sql):
+            self.by_sql = by_sql
+            self.sql: list[str] = []
+
+        async def read(self, tool, args, why):
+            sql = args["sql"]
+            self.sql.append(sql)
+            if sql not in self.by_sql:
+                raise RuntimeError(f"no such table: {sql}")
+            return WorldBootstrapTest._Read(
+                {"response": {"data": {"result": {"query": {"rows": self.by_sql[sql]}}}}})
+
+    def _agent(self, mcp) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.log = []
+        agent.mcp = mcp
+        agent.base = None
+        agent.chest_pos = None
+        agent.bed_pos = None
+        agent._portal_lit = False
+        agent._frame_complete = False
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._nether_entered = False
+        agent._frame_eyes = 0
+        agent._pearl_wave_trips = 0
+        agent._barter_attempts = 0
+        agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._durable = progress.DurableFacts()
+        agent._bootstrapped = False
+        return agent
+
+    async def test_the_ledger_latches_what_the_scan_cannot_see(self) -> None:
+        mcp = self._Mcp({
+            perception.GATE_CHUNK_SQL: [["overworld", -1, -1]],
+            perception.PORTAL_LEDGER_SQL: [[self.GATE_ARGS, self.END], [self.GATE_ARGS, self.LIT]],
+            perception.BED_LEDGER_SQL: [],
+            perception.DIMENSION_LEDGER_SQL: [["the_nether"]],
+            perception.BEARING_SQL: [["stronghold", "observed", 120.0]],
+            perception.CHECKPOINT_READ_SQL: [],
+        })
+        agent = self._agent(mcp)
+        await agent._bootstrap_world(GameState(dimension="minecraft:overworld"))
+        self.assertTrue(agent._portal_lit)
+        self.assertTrue(agent._frame_complete)
+        self.assertTrue(agent._end_portal_active)
+        self.assertEqual(agent._frame_eyes, 12)
+        self.assertTrue(agent._stronghold_estimated)
+        self.assertTrue(agent._nether_entered)
+        self.assertEqual([r["reason"] for r in agent.log], ["world_state_restored"])
+        # The facts the latches now hold are the facts the milestone resolver reads.
+        p = progress.progress_of(GameState(dimension="minecraft:overworld"), agent._durable)
+        self.assertTrue(p.gate_lit)
+        self.assertEqual(p.source["gate_lit"], "ledger")
+
+    async def test_the_ledger_is_read_once_per_run(self) -> None:
+        mcp = self._Mcp({sql: [] for sql in (perception.GATE_CHUNK_SQL,
+                                            perception.PORTAL_LEDGER_SQL,
+                                            perception.BED_LEDGER_SQL,
+                                            perception.DIMENSION_LEDGER_SQL,
+                                            perception.BEARING_SQL,
+                                            perception.CHECKPOINT_READ_SQL)})
+        agent = self._agent(mcp)
+        for _ in range(3):
+            await agent._bootstrap_world(GameState())
+        self.assertEqual(len(mcp.sql), 6)
+
+    async def test_a_world_with_nothing_in_it_boots_without_a_latch(self) -> None:
+        agent = self._agent(self._Mcp({}))
+        await agent._bootstrap_world(GameState())
+        self.assertFalse(agent._portal_lit)
+        self.assertFalse(agent._end_portal_active)
+        self.assertEqual(agent._durable, progress.DurableFacts())
+
+    async def test_the_checkpoint_note_restores_the_counters(self) -> None:
+        note = (perception.CHECKPOINT_PREFIX +
+                ' {"pearl_wave_trips": 2, "barter_attempts": 4, "powder_cells": [[-196,-46,-98]],'
+                ' "powder_bank": 12}')
+        mcp = self._Mcp({perception.CHECKPOINT_READ_SQL: [[note]]})
+        agent = self._agent(mcp)
+        await agent._bootstrap_world(GameState())
+        self.assertEqual(agent._pearl_wave_trips, 2)
+        self.assertEqual(agent._barter_attempts, 4)
+        self.assertEqual(agent._powder_cells, [(-196, -46, -98)])
+        self.assertEqual(agent._powder_bank, 12)
+
+
+class CheckpointTest(unittest.IsolatedAsyncioTestCase):
+    """The loop writes its own counters, and only where a phase boundary is crossed.
+
+    Pearl waves spent, barter rolls made, the cells the powder was stowed into: the server's
+    tables record actions, not decisions, so these die with the process unless the loop writes
+    them down. `note_save` is a foreground action, so the note has to cost nothing on an ordinary
+    tick — written when the milestone set changes, once at the end of the run, never per tick.
+    """
+
+    class _Mcp:
+        def __init__(self, boom: bool = False):
+            self.calls: list[dict] = []
+            self.boom = boom
+
+        async def call(self, tool, args, rationale):
+            if self.boom:
+                raise RuntimeError("note_save refused")
+            self.calls.append({"tool": tool, "args": args})
+            return SimpleNamespace(ok=True, text="", status="succeeded", action_id=None)
+
+    def _agent(self, mcp) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.log = []
+        agent.mcp = mcp
+        agent._powder_bank = 0
+        agent._powder_cells = []
+        agent._frame_eyes = 0
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._pearl_wave_trips = 0
+        agent._barter_attempts = 0
+        agent._durable = progress.DurableFacts()
+        agent._checkpoint_written = None
+        agent._checkpoint_warned = False
+        return agent
+
+    def _state(self, agent: Agent, **kw) -> GameState:
+        gs = GameState(dimension="minecraft:overworld", **kw)
+        gs.progress = progress.progress_of(gs, agent._durable)
+        return gs
+
+    async def test_a_phase_change_writes_one_note_and_a_steady_tick_writes_none(self) -> None:
+        mcp = self._Mcp()
+        agent = self._agent(mcp)
+        gs = self._state(agent)
+        await agent._maybe_checkpoint(gs, 1)
+        await agent._maybe_checkpoint(gs, 2)
+        await agent._maybe_checkpoint(gs, 3)
+        self.assertEqual(len(mcp.calls), 1)
+        # The gate lighting is a boundary: the note is written again, and only once.
+        gs.portal_lit = True
+        gs.progress = progress.progress_of(gs, agent._durable)
+        await agent._maybe_checkpoint(gs, 4)
+        self.assertEqual(len(mcp.calls), 2)
+        note = mcp.calls[-1]["args"]["note"]
+        self.assertTrue(note.startswith(perception.CHECKPOINT_PREFIX))
+        payload = json.loads(note[len(perception.CHECKPOINT_PREFIX):].strip())
+        self.assertTrue(payload["gate_lit"])
+        self.assertEqual(mcp.calls[0]["args"]["context"], "phase transition at iteration 1")
+
+    async def test_a_quarter_of_the_frame_is_a_boundary(self) -> None:
+        mcp = self._Mcp()
+        agent = self._agent(mcp)
+        agent._stronghold_estimated = True
+        gs = self._state(agent)
+        await agent._maybe_checkpoint(gs, 1)
+        agent._frame_eyes = 3          # still the first quarter
+        gs.frame_eyes = agent._frame_eyes
+        gs.progress = progress.progress_of(gs, agent._durable)
+        await agent._maybe_checkpoint(gs, 2)
+        self.assertEqual(len(mcp.calls), 1)
+        agent._frame_eyes = 6          # the second quarter: the eye chain moved
+        gs.frame_eyes = agent._frame_eyes
+        gs.progress = progress.progress_of(gs, agent._durable)
+        await agent._maybe_checkpoint(gs, 3)
+        self.assertEqual(len(mcp.calls), 2)
+
+    async def test_the_note_carries_the_counters_a_restart_cannot_rederive(self) -> None:
+        mcp = self._Mcp()
+        agent = self._agent(mcp)
+        agent._pearl_wave_trips = 3
+        agent._barter_attempts = 5
+        agent._powder_bank = 18
+        agent._powder_cells = [(-10, 70, -49)]
+        agent._frame_eyes = 4
+        gs = self._state(agent)
+        await agent._write_checkpoint(gs, "run end at iteration 40")
+        payload = json.loads(mcp.calls[0]["args"]["note"][len(perception.CHECKPOINT_PREFIX):])
+        self.assertEqual(payload["pearl_wave_trips"], 3)
+        self.assertEqual(payload["barter_attempts"], 5)
+        self.assertEqual(payload["powder_bank"], 18)
+        self.assertEqual(payload["powder_cells"], [[-10, 70, -49]])
+        self.assertEqual(payload["frame_eyes"], 4)
+        self.assertTrue(payload["phase"])
+
+    async def test_a_refused_note_is_logged_once_and_does_not_stop_the_run(self) -> None:
+        mcp = self._Mcp(boom=True)
+        agent = self._agent(mcp)
+        gs = self._state(agent)
+        for _ in range(3):
+            await agent._maybe_checkpoint(gs, 1)
+        self.assertEqual([r["reason"] for r in agent.log], ["checkpoint_unwritten"])
+
+    async def test_a_stub_agent_without_a_written_key_still_writes(self) -> None:
+        # `Agent.__new__` agents have no `__init__`, so the record of what was written is absent
+        # rather than `None`; that is the same as "nothing written yet".
+        agent = Agent.__new__(Agent)
+        agent.log = []
+        agent.mcp = self._Mcp()
+        agent._powder_bank = 0
+        agent._powder_cells = []
+        agent._frame_eyes = 0
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._pearl_wave_trips = 0
+        agent._barter_attempts = 0
+        gs = GameState(dimension="minecraft:overworld")
+        gs.progress = progress.progress_of(gs, agent._durable)
+        await agent._maybe_checkpoint(gs, 1)
+        self.assertEqual(len(agent.mcp.calls), 1)
+
 
 class ContainerMissingTest(unittest.TestCase):
     """A cell the server calls "not a container" has to leave what the run remembers.
@@ -4888,6 +5158,49 @@ class NetherCrossingTest(unittest.TestCase):
         self.assertEqual(agent._frame_eyes, 12)
         self.assertTrue(agent._end_portal_active)
         self.assertEqual(agent._inject(gs()).frame_eyes, 12)
+
+    def test_the_frame_is_counted_from_the_server_not_the_pack(self) -> None:
+        # `activate_portal` reports `portal.eyesAfter` - the eyes standing in the frame, including
+        # the ones the world generated filled. A frame that arrived with five seated eyes owes
+        # seven, and the rod haul and the pearl waves are sized on that number. The inventory
+        # delta alone counted only what this bot put in, so it read a half-filled frame as empty.
+        agent = self._agent()
+        fill = Action("activate_end_portal", "activate_portal", {"x": 100, "y": 60, "z": 200}, "")
+        res = SimpleNamespace(data={"response": {"data": {"result": {
+            "portal": {"kind": "end", "eyesBefore": 5, "eyesAfter": 9,
+                       "portalBefore": 0, "portalAfter": 9, "activated": True},
+            "status": "succeeded"}}}}, text="Activated the end portal.\nFilled sockets: 5 → 9 of 12.")
+        agent._note_portal(fill, True, {"inventory_delta": {"ender_eye": -4}}, res)
+        self.assertEqual(agent._frame_eyes, 9)
+        self.assertTrue(agent._end_portal_active)
+
+    def test_the_text_line_is_enough_when_the_payload_is_not(self) -> None:
+        agent = self._agent()
+        fill = Action("activate_end_portal", "activate_portal", {"x": 100, "y": 60, "z": 200}, "")
+        res = SimpleNamespace(data=None, text="Did not activate the portal.\nFilled sockets: 2 → 6 of 12.")
+        agent._note_portal(fill, False, {}, res)
+        self.assertEqual(agent._frame_eyes, 6)
+
+    def test_a_refusal_names_the_frame_the_bot_could_not_fill(self) -> None:
+        # `[PORTAL_MISSING_EYES]` reports the frame as it stands: seven empty sockets means five
+        # eyes are already seated, and the chain owes five, not twelve.
+        agent = self._agent()
+        fill = Action("activate_end_portal", "activate_portal", {"x": 100, "y": 60, "z": 200}, "")
+        res = SimpleNamespace(data=None,
+                              text="Did not activate the portal.\n"
+                                   "[PORTAL_MISSING_EYES] 7 empty sockets; 3 ender_eye carried.")
+        agent._note_portal(fill, False, {}, res)
+        self.assertEqual(agent._frame_eyes, 5)
+        self.assertFalse(agent._end_portal_active)
+
+    def test_an_earlier_count_is_not_walked_back_by_a_later_partial_fill(self) -> None:
+        agent = self._agent()
+        agent._frame_eyes = 9
+        fill = Action("activate_end_portal", "activate_portal", {"x": 100, "y": 60, "z": 200}, "")
+        res = SimpleNamespace(data={"portal": {"kind": "end", "eyesBefore": 9, "eyesAfter": 9}},
+                              text="Did not activate the portal.\n[PORTAL_MISSING_EYES] 3 empty sockets; 0 ender_eye carried.")
+        agent._note_portal(fill, False, {}, res)
+        self.assertEqual(agent._frame_eyes, 9)
 
     def test_lighting_the_gate_is_remembered_after_the_bot_walks_off_it(self) -> None:
         # `_portal_lit` is a scan read: the gate only shows up while its chunk is loaded. A run
