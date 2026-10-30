@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import re
 from typing import Any, TypedDict
@@ -1551,6 +1552,10 @@ class Agent:
             await self._rearm_policy(gs)
             self._note_defer(state["before"], gs)
             gs.defer_quiet = self._defer_quiet
+        else:
+            # The run is over: the last counters are worth the note even here. A defer tick is
+            # the survival policy holding the body, so this is the only checkpoint a defer writes.
+            await self._write_checkpoint(gs, f"run end at iteration {iteration}")
         return {"before": gs, "iteration": iteration, **stop}
 
     def _note_defer(self, before, after) -> None:
@@ -2893,8 +2898,14 @@ class Agent:
         self.log.append(record)
         self.history.append(record)
         iteration = state.get("iteration", 0) + 1
-        return {"before": after, "iteration": iteration,
-                **self._stop_state(after, iteration)}
+        stop = self._stop_state(after, iteration)
+        # The phase boundary is written after the tick's facts are folded in, and never while the
+        # body is still held by a reflex: a held tick ran nothing, and a note is a foreground call.
+        if stop["done"]:
+            await self._write_checkpoint(after, f"run end at iteration {iteration}")
+        elif getattr(res, "status", None) != "held":
+            await self._maybe_checkpoint(after, iteration)
+        return {"before": after, "iteration": iteration, **stop}
 
     async def _rearm_policy(self, gs) -> None:
         """The server restores default policy on death and on a dimension change; re-arm for both.
