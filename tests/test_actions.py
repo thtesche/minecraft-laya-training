@@ -830,6 +830,30 @@ class OverworldGateTest(unittest.TestCase):
         g.dimension = "the_nether"
         self.assertIsNone(resolve("fill_bucket", g))
 
+    def test_the_gate_chain_is_off_the_offer_below(self) -> None:
+        # run124 it40-41: `['fill_bucket', 'get_flint', 'search_enderman']` at (-6.5, 73, 265)
+        # in the Nether. `_portal_lit` is a scan read, not a latch, so down there the base gate
+        # reads unlit and the obsidian chain reopens for a frame that already stands - a bucket
+        # with no water to fill and gravel that does not exist in that dimension.
+        g = geared(bucket=1)
+        g.base = (-197, -47, -98)
+        g.pos = (-6.5, 73.0, 265.3)
+        g.dimension = "the_nether"
+        g.resources = {"gravel": [BlockHit("gravel", "gravel", -7, 73, 266, 2.0)]}
+        cand = candidates(g)
+        for label in ("fill_bucket", "craft_bucket", "get_flint", "mine_obsidian",
+                      "approach_lava", "craft_flint_and_steel"):
+            self.assertNotIn(label, cand)
+
+    def test_the_same_pack_still_offers_the_chain_in_the_overworld(self) -> None:
+        # The gate is scoped, not switched off: in the Overworld with the frame still short, the
+        # bucket and the flint dig are exactly what the chain wants.
+        g = geared(bucket=1)
+        g.resources = {"gravel": [BlockHit("gravel", "gravel", -196, -47, -97, 3.0)]}
+        cand = candidates(g)
+        self.assertIn("fill_bucket", cand)
+        self.assertIn("get_flint", cand)
+
 
 class MakeRoomTest(unittest.TestCase):
     """The in-place unblock for a workstation that cannot be placed (a tight shaft)."""

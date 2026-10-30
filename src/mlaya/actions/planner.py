@@ -354,7 +354,12 @@ def candidates(gs: GameState) -> list[str]:
     # even with the igniter already in hand.
     # `build_portal` and `place_bed` run only at the base (`_at_base`), so the gate stands at
     # one fixed spot the respawn point can be pinned to.
-    if _gear_ready(gs) and not _portal_lit(gs):
+    # The chain is Overworld work: the frame, the water and the gravel all belong to the base.
+    # `_portal_lit` is a scan read, not a latch (its own docstring says so), so a bot standing in
+    # the Nether reads "no lit gate" and the bucket and flint steps come back onto the offer -
+    # live, run124 it40-41: `['fill_bucket', 'get_flint', 'search_enderman']` at (-6.5, 73, 265)
+    # in the Nether, where there is no water to scoop and no gravel to dig.
+    if _overworld(gs) and _gear_ready(gs) and not _portal_lit(gs):
         has_bucket = _has(inv, BUCKET_ITEM)
         has_water = _has(inv, WATER_BUCKET)
         has_flint = _has(inv, FLINT_ITEM)
