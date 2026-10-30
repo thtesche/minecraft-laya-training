@@ -13,6 +13,7 @@ from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready, _in_nether,
+                      _overworld,
                       _has, _pick_tier, DIAMOND_PICK_TIER,
                       FLATTEN_BLOCKS, FLATTEN_RADIUS, FLATTEN_UP,
                       _frame_complete_at_base, _frame_short_at_base,
@@ -1079,8 +1080,11 @@ class Agent:
         here cost run125 its base: the whole diamond set worn, no shield, no flint and steel, six
         lit portal blocks twelve metres away, and 600 ticks with no anchor to go home to.
         """
-        if self.base is not None or gs.pos is None:
+        if self.base is not None or gs.pos is None or not _overworld(gs):
             return
+        # The corner inversion is an Overworld frame plane: a run that starts in the Nether, at the
+        # gate a previous trip left open, must not read that gate as its base, or `go_home` walks to
+        # a coordinate in a dimension where the bed and the chest are not.
         # What this run could have *built a gate with*, not the whole Nether kit. `_gear_ready` is
         # the departure chain's test and it demands the shield in the off-hand; run125 wore the
         # full diamond set but carried no shield and no flint and steel, so the gate stayed shut,

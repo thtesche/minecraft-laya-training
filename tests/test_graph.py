@@ -4275,6 +4275,18 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.base, (-156, 62, 257))
         self.assertTrue(agent._base_adopted)
 
+    async def test_a_bot_at_the_nether_gate_does_not_adopt_it_as_home(self) -> None:
+        # A run starts where the previous one left the bot: in the Nether, at the open gate. The
+        # corner inversion names an Overworld frame plane, so the down-side portal is not a base -
+        # `go_home` would walk to a cell with no bed and no chest.
+        agent = self._agent(self._FIND)
+        await agent._adopt_portal_base(gs(pos=(-154.5, 63.0, 257.5),
+                                         dimension="minecraft:the_nether",
+                                         tools={"pickaxe": "diamond", "sword": "diamond"},
+                                         inventory={"diamond_pickaxe": 2}))
+        self.assertIsNone(agent.base)
+        self.assertFalse(agent._base_adopted)
+
     async def test_the_chest_beside_the_adopted_gate_comes_back_too(self) -> None:
         # The whole point of re-anchoring: the goal stows the blaze powder in the chest at the
         # portal, so a base adopted from the gate has to bring the chest and the furnace with it -
