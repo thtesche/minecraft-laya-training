@@ -956,7 +956,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–126 (2026-10-28 … 30)
+## Live findings run108–127 (2026-10-28 … 30)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1157,6 +1157,15 @@ inside melee range as provisions, but rotten flesh is `EDIBLE` and never `PROVIS
 only feeds the reserve when the pack is at the eating floor. With the pack full and a zombie 20 m
 off, the gate held the expedition on a hunt that was never on the offer. The zombie branch now
 carries `_eating_now(gs)`, the same condition `_food_target`'s emergency branch uses.
+
+**The wander guard must not close the way out of the Nether.** run127 it13-22: the rod haul was
+complete (8 rods, target 7) and the only step left was `leave_nether`. Two exit walks of 35 blocks
+each, both toward the gate, were interrupted by a blaze in contact (`[HOSTILE_CONTACT]`, 3.8 m and
+3.6 m), and the pair read out as `walked 346.4, net 35.0` - the ratio the wander guard is built for.
+`leave_nether` came off the offer for fifteen ticks, the Nether block fell through to `explore`,
+the bot walked deeper into the fortress and died at it22 with eight rods, the powder, the pearl and
+the diamond kit. The exit is retried, not pruned: `_track_wander` now skips `leave_nether` while the
+bot is still in the Nether, and `_track_stuck` still owns a crossing that stops moving at all.
 
 Net: the crossing, the fortress march and the rod haul all run live, and the powder reaches the
 chest at the gate (run124 it6, run125 it1-3, `powder_stowed` latched); what no run has done yet is

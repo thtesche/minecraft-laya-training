@@ -1416,6 +1416,27 @@ class WanderGuardTest(unittest.TestCase):
             agent._track_wander("craft_item", self._Res(WANDER_WALK - 1, 0.0))
         self.assertEqual(agent._stuck_off, {})
 
+    def test_the_nether_exit_is_not_wander_guarded(self) -> None:
+        # run127 it13-22: two exit walks of 35 blocks each, both toward the gate, read out as
+        # 346.4 walked / 35.0 net - the ratio this guard is built for, because the combat reflex
+        # keeps derailing the path. Fifteen ticks without `leave_nether` left `explore` as the
+        # only Nether offer, the bot walked deeper into the fortress and died with eight rods.
+        agent = self._agent()
+        nether = gs(pos=(-110.2, 48.0, 79.3), dimension="minecraft:the_nether")
+        for _ in range(WANDER_REPEATS + 2):
+            agent._track_wander("leave_nether", self._Res(346.4, 35.0), nether)
+        self.assertEqual(agent._stuck_off, {})
+        self.assertEqual(agent._wander_reps, {})
+
+    def test_the_exit_is_guarded_once_the_crossing_is_made(self) -> None:
+        # The exemption is about where the bot is, not about the label. Home in the Overworld, a
+        # `leave_nether` that walks 459 blocks and arrives 17 back is a wander like any other.
+        agent = self._agent()
+        home = gs(pos=(-197.0, 47.0, -98.0), dimension="minecraft:overworld")
+        for _ in range(WANDER_REPEATS):
+            agent._track_wander("leave_nether", self._Res(458.9, 16.6), home)
+        self.assertEqual(agent._stuck_off.get("leave_nether"), STUCK_COOLDOWN)
+
     def test_one_walk_that_arrives_starts_the_run_over(self) -> None:
         agent = self._agent()
         agent._track_wander("mine_iron", self._Res(458.9, 16.6))

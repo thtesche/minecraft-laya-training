@@ -12,7 +12,7 @@ from . import perception
 from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
-                      tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
+                      tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready, _in_nether,
                       _has, _pick_tier, DIAMOND_PICK_TIER,
                       FLATTEN_BLOCKS, FLATTEN_RADIUS, FLATTEN_UP,
                       _frame_complete_at_base, _frame_short_at_base,
@@ -1669,7 +1669,7 @@ class Agent:
             self.log.append({"stage": "policy", "reason": "stuck_offer_dropped",
                              "label": label, "code": code, "ticks": STUCK_COOLDOWN})
 
-    def _track_wander(self, label: str, res) -> None:
+    def _track_wander(self, label: str, res, gs=None) -> None:
         """Withhold a label that keeps walking without arriving, per `WANDER_*`.
 
         The server reports each action's own progress: `distanceTravelledBlocks` is how far the bot
@@ -1694,6 +1694,17 @@ class Agent:
             return
         if label in self._stuck_off:
             # Withheld right now: it was not offered, so its tick says nothing about the label.
+            return
+        # The Nether exit is not a wander. `leave_nether` is the only way out with the haul
+        # aboard, and a walk the combat reflex keeps interrupting reports exactly the ratio the
+        # guard is built to catch: a lot walked, little net. run127 it13-22: two exit walks of 35
+        # blocks each, both toward the gate, read as 346.4 walked / 35.0 net and took
+        # `leave_nether` off the offer for fifteen ticks. With the way home gone the Nether block
+        # fell through to `explore`, the bot walked deeper into the fortress and died at it22 with
+        # eight rods in the pack. Every attempt moves toward the portal, so the exit is retried
+        # rather than pruned; `_track_stuck` still owns a walk that stops moving at all.
+        if label == "leave_nether" and gs is not None and _in_nether(gs):
+            self._wander_reps.pop(label, None)
             return
         if travelled < WANDER_WALK or net >= travelled / WANDER_RATIO:
             self._wander_reps.pop(label, None)
@@ -2627,7 +2638,7 @@ class Agent:
         self._track_stuck(action.label, _ok, _text, progressed)
         # After the stuck guard: it owns the countdown and the offer window, and a wandering
         # action is not a refusal, so the two runs of counts do not disturb each other.
-        self._track_wander(action.label, res)
+        self._track_wander(action.label, res, after)
         self._track_idle(action.label, delta)
         self._track_orbit(action.label, delta, after.pos)
         self._refresh_after(after)
