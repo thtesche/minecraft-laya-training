@@ -174,28 +174,28 @@ def progress_of(gs, durable: DurableFacts | None = None) -> Progress:
     d = durable or DurableFacts()
     out = Progress()
 
-    def set(name: str, value: bool, source: str) -> None:
+    def mark(name: str, value: bool, source: str) -> None:
         setattr(out, name, value)
         out.source[name] = source
 
     # --- The gate ---
     if d.gate_lit:
-        set("gate_lit", True, "ledger")
+        mark("gate_lit", True, "ledger")
     elif _portal_lit_scan(gs):
-        set("gate_lit", True, "scan")
+        mark("gate_lit", True, "scan")
     else:
-        set("gate_lit", bool(gs.portal_lit), "latch" if gs.portal_lit else "default")
+        mark("gate_lit", bool(gs.portal_lit), "latch" if gs.portal_lit else "default")
 
     # --- The frame. The scan may refute the latch here and nowhere else: a plane that names its
     #     own obsidian is the frame itself, a blank plane names nothing (see `_inject`). ---
     if _frame_short_at_base(gs):
-        set("frame_complete", False, "scan")
+        mark("frame_complete", False, "scan")
     elif d.frame_complete:
-        set("frame_complete", True, "ledger")
+        mark("frame_complete", True, "ledger")
     elif _frame_complete_at_base(gs):
-        set("frame_complete", True, "scan")
+        mark("frame_complete", True, "scan")
     else:
-        set("frame_complete", bool(gs.frame_complete), "latch" if gs.frame_complete else "default")
+        mark("frame_complete", bool(gs.frame_complete), "latch" if gs.frame_complete else "default")
 
     # --- The bed at the base. The ledger knows a bed cell, not which base it belongs to, so the
     #     anchor is the base this run adopted or, while there is none, the gate the ledger lit. ---
@@ -204,31 +204,31 @@ def progress_of(gs, durable: DurableFacts | None = None) -> Progress:
         abs(x - (anchor[0] + 0.5)) <= GATE_CHEST_RADIUS and abs(z - (anchor[2] + 0.5)) <= GATE_CHEST_RADIUS
         for x, _, z in d.bed_cells)
     if bed_durable:
-        set("bed_at_base", True, "ledger")
+        mark("bed_at_base", True, "ledger")
     elif _bed_at_base(gs):
-        set("bed_at_base", True, "scan")
+        mark("bed_at_base", True, "scan")
     else:
-        set("bed_at_base", gs.bed_pos is not None, "latch" if gs.bed_pos is not None else "default")
+        mark("bed_at_base", gs.bed_pos is not None, "latch" if gs.bed_pos is not None else "default")
 
     # --- The kit and the prep: only the pack can answer these, and it answers every tick. ---
-    set("kit_worn", _gear_ready(gs), "scan")
-    set("prep_done", not _all_nether_prep_steps(gs) and _nether_bank_carried(gs)
+    mark("kit_worn", _gear_ready(gs), "scan")
+    mark("prep_done", not _all_nether_prep_steps(gs) and _nether_bank_carried(gs)
                      and _food_reserve_met(gs), "scan")
 
     # --- The powder bank. The durable read of it is the container ledger `_note_stocked_chest`
     #     runs, which lands in the latch; a pack of powder in the Overworld is the live read. ---
     if gs.powder_stowed:
-        set("powder_banked", True, "latch")
+        mark("powder_banked", True, "latch")
     elif _overworld(gs) and int(gs.inventory.get(BLAZE_POWDER_ITEM, 0)) > 0:
-        set("powder_banked", True, "scan")
+        mark("powder_banked", True, "scan")
     else:
-        set("powder_banked", False, "default")
+        mark("powder_banked", False, "default")
 
     # --- The end portal ---
     if d.end_portal_active or gs.end_portal_active:
-        set("end_portal_active", True, "ledger" if d.end_portal_active else "latch")
+        mark("end_portal_active", True, "ledger" if d.end_portal_active else "latch")
     else:
-        set("end_portal_active", False, "default")
+        mark("end_portal_active", False, "default")
 
     if d.frame_eyes:
         out.frame_eyes = max(d.frame_eyes, int(gs.frame_eyes))
@@ -238,22 +238,22 @@ def progress_of(gs, durable: DurableFacts | None = None) -> Progress:
         out.source["frame_eyes"] = "latch" if out.frame_eyes else "default"
 
     if d.stronghold_estimated or gs.stronghold_estimated:
-        set("stronghold_estimated", True, "ledger" if d.stronghold_estimated else "latch")
+        mark("stronghold_estimated", True, "ledger" if d.stronghold_estimated else "latch")
     else:
-        set("stronghold_estimated", False, "default")
+        mark("stronghold_estimated", False, "default")
 
     dim = str(gs.dimension or "").lower()
     if "end" in dim:
-        set("in_end", True, "scan")
+        mark("in_end", True, "scan")
     elif d.in_end:
-        set("in_end", True, "ledger")
+        mark("in_end", True, "ledger")
     else:
-        set("in_end", False, "default")
+        mark("in_end", False, "default")
 
     if gs.nether_entered or d.nether_entered:
-        set("nether_entered", True, "latch" if gs.nether_entered else "ledger")
+        mark("nether_entered", True, "latch" if gs.nether_entered else "ledger")
     else:
-        set("nether_entered", False, "default")
+        mark("nether_entered", False, "default")
 
     empty = 0 if out.end_portal_active else max(0, END_PORTAL_SOCKETS - out.frame_eyes)
     buffer = 0 if out.stronghold_estimated else EYE_THROW_BUFFER
