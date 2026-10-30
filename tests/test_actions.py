@@ -3161,6 +3161,53 @@ class BaseFurnaceTest(unittest.TestCase):
         self.assertIsNone(resolve("smelt_gold", g))
 
 
+class CraftFurnaceReachTest(unittest.TestCase):
+    """`craft_furnace` is gated on a furnace being *reachable*, not merely remembered.
+
+    Live run116: the bot died at stone tier, respawned, and `explore`-drifted ~650 m from its old
+    base. The server still remembered the base furnace (`furnace_pos`), so the old flag
+    `_has(inv,'furnace') or _furnace_ready(gs)` read True and suppressed `craft_furnace` -- yet
+    `smelt_iron` needs `_at_base`, which a drifted bot (`base None`) never meets. No furnace, no
+    smelt, every tech step blocked, endless `explore`. The flag now mirrors `_smelting_reach`, so
+    the craft is offered exactly when there is no furnace to smelt at.
+    """
+
+    def _drifted(self) -> GameState:
+        # The it114-149 state, to the field: stone tier, cobble to spare, a crafting table, raw
+        # iron and coal, but drifted far from base (`base None`) with only the old base furnace
+        # remembered.
+        g = gs(tools={"pickaxe": "stone"}, dimension="overworld",
+               inventory={"cobblestone": 45, "crafting_table": 1, "raw_iron": 3,
+                          "coal": 3, "stone_pickaxe": 2, "wooden_pickaxe": 2})
+        g.pos = (32.5, 62.0, -706.5)
+        g.base = None
+        g.furnace_pos = (-6, 68, -56)   # remembered old base, ~650 m off
+        g.chest_pos = (-8, 68, -54)
+        return g
+
+    def test_a_drifted_bot_crafts_a_furnace_it_cannot_reach_the_remembered_one(self) -> None:
+        g = self._drifted()
+        cands = candidates(g)
+        self.assertIn("craft_furnace", cands)
+        # And it cannot smelt at the unreachable base, so the two stay consistent.
+        self.assertNotIn("smelt_iron", cands)
+
+    def test_the_base_furnace_is_reused_not_recrafted(self) -> None:
+        # Standing at the base with a furnace remembered there: no new craft, smelt at the base one.
+        g = at_home(gs(tools={"pickaxe": "stone"}, dimension="overworld",
+                       inventory={"cobblestone": 45, "crafting_table": 1, "raw_iron": 3,
+                                  "coal": 3, "stone_pickaxe": 2}))
+        g.furnace_pos = (g.base[0] - 1, g.base[1] + 1, g.base[2] - 1)
+        cands = candidates(g)
+        self.assertNotIn("craft_furnace", cands)
+        self.assertIn("smelt_iron", cands)
+
+    def test_a_carried_furnace_also_suppresses_the_craft(self) -> None:
+        g = self._drifted()
+        g.inventory["furnace"] = 1
+        self.assertNotIn("craft_furnace", candidates(g))
+
+
 class EscapeWaterTest(unittest.TestCase):
     """The no-footing rescue: while the bot floats in water nothing else works.
 

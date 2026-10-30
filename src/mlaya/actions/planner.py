@@ -16,7 +16,15 @@ def candidates(gs: GameState) -> list[str]:
     planks = _planks(inv)
     cobble = inv.get("cobblestone", 0)
     table = _has(inv, "crafting_table")
-    furnace = _has(inv, "furnace") or _furnace_ready(gs)
+    # Whether a furnace is reachable *now*, not merely remembered. This gates `craft_furnace`
+    # (offered only when none is reachable) and must be the same test `smelt_iron` uses to accept
+    # one (`_smelting_reach`), so the two can never disagree -- craft a furnace exactly when there
+    # is none to smelt at. `_furnace_ready` alone (a bare `furnace_pos is not None`) was the run116
+    # deadlock: a bot that died and drifted ~650 m from base still carried the server's memory of
+    # the old base furnace, so `furnace` read True, `craft_furnace` was suppressed, yet `smelt_iron`
+    # needs `_at_base` (base None out there) -- no furnace, no smelt, every tech step blocked, endless
+    # `explore`. Gating on reach lets the drifted bot craft a temporary-workstation furnace instead.
+    furnace = _smelting_reach(gs)
     coal = inv.get("coal", 0)
     charcoal = inv.get("charcoal", 0)
     raw_iron = inv.get("raw_iron", 0)
