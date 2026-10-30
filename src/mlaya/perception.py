@@ -99,6 +99,14 @@ RESOURCE_LIMIT = 4
 # four hits every candidate sat within 4 m and `explore` navigated onto the block the bot was
 # standing on, which stood it still for the rest of the run.
 GROUND_LIMIT = 16
+# The rescue's ground scan reads deeper than `GROUND_LIMIT`. In open ocean the nearest footholds
+# are the seabed right under the bot (water overhead, no foothold) and the odd flooded cave with
+# air above; the actual shore, the one cell a swimmer can finish at, sits past them and fell out
+# of the nearest-16 cut, so it never reached the state and `nearest_ground` dove to the cave
+# instead (live, run116: adrift at (-1,62,251), every `escape_water` aimed 30 m down at a cave
+# floor, ~50 ticks of dive-and-surface until the bot drifted close enough for the shore to enter
+# the scan on its own). Read far enough that a shore within `RESCUE_RADIUS` survives the cut.
+RESCUE_GROUND_LIMIT = 64
 CHAIN_LIMIT = 16
 # Carried inventory slots the server fills (main 27 + hotbar 9). A gathering action is refused
 # with `[INVENTORY_FULL]` once all 36 are taken, so the loop treats "nearly full" as a reason to
@@ -1697,7 +1705,7 @@ async def build(executor) -> GameState:
     gs.rescue_ground = {}
     for names, limit, why in ((RESOURCE_NAMES, RESOURCE_LIMIT,
                                "scan nearby resources for the next step"),
-                              (RESCUE_GROUND_NAMES, GROUND_LIMIT,
+                              (RESCUE_GROUND_NAMES, RESCUE_GROUND_LIMIT,
                                "scan standable ground for navigate targets"),
                               (CHAIN_NAMES, CHAIN_LIMIT,
                                "scan the lava to pour on and a chest at the base")):
@@ -1712,11 +1720,14 @@ async def build(executor) -> GameState:
             if names == RESCUE_GROUND_NAMES:
                 # The water rescue is the one read that wants the ground past 64 m (live,
                 # run19b: the shore sat at 65.1 m and the 64 m scan left only a cave floor
-                # to aim at) and the rock a cave pour leaves underfoot (live, run20). Same
-                # payload, wider bound, kept in its own pool -- `resources` keeps the
-                # soil-only view `explore` and `base_target` were built on.
+                # to aim at) and the rock a cave pour leaves underfoot (live, run20), and it
+                # reads `RESCUE_GROUND_LIMIT` cells deep so a shore crowded out of the nearest
+                # few by the seabed still lands in the pool (live, run116). Same payload, wider
+                # bound and depth, kept in its own pool -- `resources` keeps the soil-only view
+                # `explore` and `base_target` were built on, capped back at `GROUND_LIMIT`.
                 gs.rescue_ground = parse_resources(payload, limit, RESCUE_RADIUS)
-                parsed = {q: hits for q, hits in parsed.items() if q in GROUND_NAMES}
+                parsed = {q: hits[:GROUND_LIMIT] for q, hits in parsed.items()
+                          if q in GROUND_NAMES}
             gs.resources.update(parsed)
             gs.resource_found.update(parse_resource_counts(payload))
         except Exception:

@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import unittest
 
-from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_NAMES, RESCUE_GROUND_NAMES,
+from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_LIMIT, GROUND_NAMES,
+                              RESCUE_GROUND_LIMIT, RESCUE_GROUND_NAMES,
                               RESCUE_RADIUS, RESOURCE_LIMIT, BlockHit,
                               frame_obsidian_cells, frame_volume, parse_block_above, parse_box,
                               parse_cells, parse_furnace_contents, parse_ground_height,
@@ -154,6 +155,57 @@ class NetherSearchReadsTest(unittest.IsolatedAsyncioTestCase):
         gs = await build(mcp)
         self.assertNotIn("query_bot_data", mcp.calls)
         self.assertIsNone(gs.frontier_heading)
+
+
+class RescueGroundScanDepthTest(unittest.IsolatedAsyncioTestCase):
+    """The rescue's ground scan reads deeper than the explore scan, so a far shore survives.
+
+    Live run116: adrift in open ocean, the nearest standable cells were the seabed right under the
+    bot (water overhead, no foothold) and the odd flooded cave; the actual shore sat past them and
+    fell out of the nearest-`GROUND_LIMIT` cut, so it never reached the state and the rescue dove
+    at the cave for ~50 ticks. The scan now reads `RESCUE_GROUND_LIMIT` cells deep for the rescue
+    pool while the soil pool `explore`/`base_target` read stays capped at `GROUND_LIMIT`.
+    """
+
+    class _Mcp:
+        def __init__(self, ground_listed):
+            self.ground_listed = ground_listed
+            self.limits: dict[str, int] = {}
+
+        async def read(self, tool, args, why):
+            class _R:
+                def __init__(self, data):
+                    self.data, self.text = data, None
+            if tool == "view_status":
+                return _R(_status({"position": {"x": 0.5, "y": 62.0, "z": 0.5},
+                                   "health": 20, "food": 18, "inventory": [], "mobs": []}))
+            if tool == "view_blocks":
+                names = args["find"]["block_names"]
+                if list(names) == list(RESCUE_GROUND_NAMES):
+                    self.limits["rescue"] = args["find"]["limit"]
+                    return _R({"response": {"data": {"result": {"blocks": {"find": [
+                        {"name": "grass_block", "found": len(self.ground_listed),
+                         "listed": self.ground_listed}]}}}}})
+                self.limits.setdefault("other", args["find"]["limit"])
+            return _R({})
+
+    async def test_a_shore_past_the_nearest_cut_still_reaches_the_rescue_pool(self) -> None:
+        # GROUND_LIMIT seabed cells nearer than the shore (water overhead, no foothold), then the
+        # one dry shore at the waterline farther out. The nearest-GROUND_LIMIT cut would drop it.
+        seabed = [{"x": 1, "y": 53, "z": d, "name": "grass_block", "distance": 9.0 + d,
+                   "above": "water", "below": "stone"} for d in range(GROUND_LIMIT)]
+        shore = {"x": 40, "y": 62, "z": 10, "name": "grass_block", "distance": 41.0,
+                 "above": "air", "below": "dirt"}
+        mcp = self._Mcp(seabed + [shore])
+        gs = await build(mcp)
+        # The rescue read asked for the deeper limit, not GROUND_LIMIT.
+        self.assertEqual(mcp.limits["rescue"], RESCUE_GROUND_LIMIT)
+        self.assertGreater(RESCUE_GROUND_LIMIT, GROUND_LIMIT)
+        # The shore survived into the rescue pool.
+        self.assertIn((40, 62, 10), [h.pos for h in gs.rescue_ground["grass_block"]])
+        # The soil pool explore/base read stays capped at GROUND_LIMIT, so the shore is not in it.
+        self.assertEqual(len(gs.resources["grass_block"]), GROUND_LIMIT)
+        self.assertNotIn((40, 62, 10), [h.pos for h in gs.resources["grass_block"]])
 
 
 class LoggedStateRoundTripTest(unittest.TestCase):

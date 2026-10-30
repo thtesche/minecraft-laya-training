@@ -194,7 +194,7 @@ class BaseTargetTest(unittest.TestCase):
 
 
 class NearestGroundTest(unittest.TestCase):
-    """The water rescue's target: the closest dry standable cell at any level."""
+    """The water rescue's target: the closest dry standable cell at or above the waterline."""
 
     def test_picks_the_nearest_cell_below_the_waterline(self) -> None:
         # `base_target` would drop the shore for sitting below the floating bot; the rescue must
@@ -247,13 +247,16 @@ class NearestGroundTest(unittest.TestCase):
         }
         self.assertEqual(nearest_ground(gs).pos, (20, 63, 0))
 
-    def test_a_deep_floor_is_still_taken_without_a_shore(self) -> None:
-        # The preference must not drop the target a world actually offers: with no waterline
-        # cell the nearest any-level cell stands, exactly as before the band.
+    def test_a_deep_floor_alone_is_no_target_at_all(self) -> None:
+        # No dive below the band. Live run116: adrift in open ocean at (-1,62,251) with the shore
+        # past the scan, the one standable hit was a cave floor ~30 blocks down; aiming at it was a
+        # path-stall the breath reflex kept undoing, ~50 ticks bobbing in place. With no surface
+        # foothold the rescue offers nothing here, and `escape_water` swims toward the home base
+        # instead of straight down.
         gs = GameState()
         gs.pos = (0.0, 63.0, 0.0)
         gs.resources = {"gravel": [hit("gravel", "gravel", 0, 40, 5, 23.0)]}
-        self.assertEqual(nearest_ground(gs).pos, (0, 40, 5))
+        self.assertIsNone(nearest_ground(gs))
 
     def test_no_waterline_cell_climbs_instead_of_diving(self) -> None:
         # Live run115, to the block: treading water at (-0.5,62.4,281.5), the rescue scan listed a

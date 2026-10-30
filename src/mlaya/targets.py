@@ -164,7 +164,8 @@ def nearest_ground(gs: GameState) -> Target | None:
 
     `base_target` looks only at or above the bot, so an underground base is not anchored to the
     cave floor underfoot; a bot treading water needs the opposite -- the dry cell it can actually
-    reach may sit a block below the waterline -- so this may take a hit below the bot too.
+    reach may sit a block below the waterline (within `RESCUE_Y_BAND`) -- so this takes a hit a
+    little below the bot too.
 
     Three live lessons narrow "closest". A cell at the bot's **own waterline** is the one escape a
     swimmer completes, and it may be roofed: live run20, the cobblestone ledge the pour left beside
@@ -172,12 +173,14 @@ def nearest_ground(gs: GameState) -> Target | None:
     and every path stalled 20 s (see `perception.RESCUE_GROUND_NAMES`). A cell far above or below
     is no swim at all -- live run19b, the outright nearest cell was a cave floor 32 m **down**
     (`[NAVIGATION_STOPPED] ... closest node was -182,59,-85`). So a waterline cell wins outright,
-    roofed (`BlockHit.rescue_standable`) or not; only open-sky cells fall back at any level, so a
-    world with only a low dry ledge behaves as before. The pool is `gs.rescue_ground`, read to
-    `RESCUE_RADIUS` (live run19b: the shore that would have worked sat 65.1 m -- a whisker past
-    the 64 m read). Two further narrowings come from run115: a cell the pathfinder already timed
-    out at (`gs.rescue_skip`, recorded by `Agent._note_rescue`) is passed over, and with nothing at
-    the waterline the nearest dry cell **above** the body is taken before one below it.
+    roofed (`BlockHit.rescue_standable`) or not; failing that the nearest dry cell **above** the
+    body is the climb, and there is no dive below the band at all -- a flooded cave floor far under
+    a swimmer is the run116 stall (~30 blocks straight down in open water, path-stall, bob back up,
+    repeat), so with no surface foothold this returns None and `escape_water` swims toward the home
+    base instead. The pool is `gs.rescue_ground`, read to `RESCUE_RADIUS` and `RESCUE_GROUND_LIMIT`
+    cells deep (live run19b: the shore that would have worked sat 65.1 m, past the 64 m read; live
+    run116: the shore sat past the nearest-16 cut behind the seabed). A cell the pathfinder already
+    timed out at (`gs.rescue_skip`, recorded by `Agent._note_rescue`, run115) is passed over.
     """
     pool = gs.rescue_ground or gs.resources
     hits = [h for query in RESCUE_GROUND_NAMES
@@ -189,12 +192,19 @@ def nearest_ground(gs: GameState) -> Target | None:
     # A roofed cell counts only at the waterline; at any other level it is the run19b dive.
     candidates = [h for h in hits if abs(h.y - y0) <= RESCUE_Y_BAND]
     if not candidates:
-        # Nothing at the waterline, so the choice is between climbing and diving. A body treading
-        # water climbs: live run115, 281 rescue walks from (-0.5,62,281) aimed 29 blocks down at a
-        # cave floor, every one `[NAVIGATION_STOPPED] ... closest node was -1,59,281` -- three
-        # blocks under the feet, twenty-nine above the target. Take the nearest dry cell above the
-        # waterline first; a cell below is only ever the last resort.
-        candidates = [h for h in hits if h.y >= y0] or [h for h in hits if h.standable]
+        # Nothing at the waterline, so the body climbs: live run115, the 281 rescue aimed 29
+        # blocks down at a cave floor, every walk `[NAVIGATION_STOPPED] ... closest node was
+        # -1,59,281` -- three blocks under the feet, twenty-nine above the target. Take the
+        # nearest dry cell above the waterline.
+        #
+        # There is no dive below it. A standable cell more than `RESCUE_Y_BAND` under a swimmer
+        # is a flooded cave floor, and aiming at one in open water is the run116 stall: adrift at
+        # (-1,62,251) with the shore past the scan, every `escape_water` pointed ~30 blocks straight
+        # down, the pathfinder stalled on water it cannot path through, the breath reflex bobbed the
+        # body back up, and the dive began again -- ~50 ticks until the bot happened to drift within
+        # reach of land. With no surface foothold in the pool, `escape_water` swims toward the home
+        # base (a real heading, roughly toward the shore) instead; a deep dive only repeats the bob.
+        candidates = [h for h in hits if h.y >= y0]
     if not candidates:
         return None
     hit = min(candidates, key=lambda h: (h.distance, h.y))
