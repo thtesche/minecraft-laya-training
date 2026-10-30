@@ -956,7 +956,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–127 (2026-10-28 … 30)
+## Live findings run108–128 (2026-10-28 … 30)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1167,12 +1167,13 @@ the bot walked deeper into the fortress and died at it22 with eight rods, the po
 the diamond kit. The exit is retried, not pruned: `_track_wander` now skips `leave_nether` while the
 bot is still in the Nether, and `_track_stuck` still owns a crossing that stops moving at all.
 
-**One helmet slot, one offer.** run127 it137-174: at the base with the gate lit and the trip stocked,
-`swap_to_gold_helmet` and `swap_to_diamond_helmet` were both on the list every tick, and each swap
-made the other one wanted again - 61 gold-on and 40 diamond-on decisions in thirty-eight ticks, with
-the bot never stepping through. The gold piece is the piglin pass owed to a crossing; the diamond
-helmet is the better headgear for everything else. `swap_to_diamond_helmet` is now withheld while
-`_nether_departure_ready(gs)` is true, in the offer and in the resolve.
+**One helmet slot, one offer.** run127 it137-174, and run128 it16-22 on the same gate: at the base
+with the gate lit and the trip stocked, `swap_to_gold_helmet` and `swap_to_diamond_helmet` were both
+on the list every tick, and each swap made the other one wanted again - 61 gold-on and 40 diamond-on
+decisions in thirty-eight ticks in run127, with the bot never stepping through. The gold piece is the
+piglin pass owed to a crossing; the diamond helmet is the better headgear for everything else.
+`swap_to_diamond_helmet` is now withheld while `_nether_departure_ready(gs)` is true, in the offer
+and in the resolve.
 
 Net: the crossing, the fortress march and the rod haul all run live, and the powder reaches the
 chest at the gate (run124 it6, run125 it1-3, `powder_stowed` latched); what no run has done yet is
