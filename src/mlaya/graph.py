@@ -2121,24 +2121,44 @@ class Agent:
         if action.label == "locate_stronghold" and ok and (action.args or {}).get("phase") == "estimate":
             self._stronghold_estimated = True
 
-    def _note_portal(self, action, ok: bool, delta: dict) -> None:
+    def _note_portal(self, action, ok: bool, delta: dict, res=None) -> None:
         """Remember that the end portal stands active (the stronghold goal), and how far the
         frame is filled.
 
         `activate_portal` confirms every interior portal block before it answers ok, so its own
         success is the latch, the same shape as `_note_stow`; a refused fill leaves the goal open.
 
-        The eyes the call spent are booked into `frame_eyes`: the frame's sockets are the only
-        number the eye chain can size the rod haul on, and the world's own pre-filled sockets are
-        never reported (`view_blocks` names the block, not its `eye` state). A partial fill - the
-        bot carried fewer eyes than the frame needed - is still progress, and the sockets it took
-        are sockets the phase no longer owes.
+        The sockets are read from the server, not from the pack. `activate_portal` reports
+        `portal.eyesAfter` -- the eyes standing in the frame, including the ones the world
+        generated filled -- and it reports it on a refusal too: `[PORTAL_MISSING_EYES] {missing}
+        empty sockets` names the frame as it is. The inventory delta was the only source before,
+        so a frame that arrived with five eyes already seated was counted as empty, and the rod
+        haul and the pearl waves were sized for twelve eyes the phase never owed. The delta stays
+        as the fallback for an answer that carries neither the structured portal nor the text line.
         """
         if action.label != "activate_end_portal":
             return
-        spent = -(delta.get("inventory_delta", {}) or {}).get(ENDER_EYE_ITEM, 0)
-        if spent > 0:
-            self._frame_eyes = min(END_PORTAL_SOCKETS, self._frame_eyes + spent)
+        text = getattr(res, "text", "") or ""
+        eyes = None
+        portal = perception.parse_portal_result(getattr(res, "data", None))
+        if isinstance(portal, dict):
+            value = portal.get("eyesAfter")
+            if isinstance(value, int) and not isinstance(value, bool):
+                eyes = value
+        if eyes is None:
+            match = re.search(r"Filled sockets: (\d+)\s*→\s*(\d+) of 12", text)
+            if match:
+                eyes = int(match.group(2))
+        if eyes is None:
+            match = re.search(r"\[PORTAL_MISSING_EYES\] (\d+) empty sockets", text)
+            if match:
+                eyes = END_PORTAL_SOCKETS - int(match.group(1))
+        if eyes is not None:
+            self._frame_eyes = max(self._frame_eyes, min(END_PORTAL_SOCKETS, eyes))
+        else:
+            spent = -(delta.get("inventory_delta", {}) or {}).get(ENDER_EYE_ITEM, 0)
+            if spent > 0:
+                self._frame_eyes = min(END_PORTAL_SOCKETS, self._frame_eyes + spent)
         if ok:
             self._end_portal_active = True
 
@@ -2814,7 +2834,7 @@ class Agent:
         self._note_take_powder(action, _ok, _text, delta)
         self._note_locate(action, _ok)
         self._note_barter(action, _ok)
-        self._note_portal(action, _ok, delta)
+        self._note_portal(action, _ok, delta, res)
         self._note_landmark(action, delta, after)
         progressed = vmod.progressed(action.label, delta, _ok)
         self._track_stuck(action.label, _ok, _text, progressed)
