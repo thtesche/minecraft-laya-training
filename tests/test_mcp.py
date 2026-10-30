@@ -172,6 +172,89 @@ def _pending(action_id: str) -> _Res:
     }}})
 
 
+def _oscillating(action_id: str, elapsed: int, travelled: float, from_start: float) -> _Res:
+    """A `wait_for_action` answer whose progress runs long, far and back to the start."""
+    return _Res(structured={"response": {"format": "json", "data": {
+        "state": "pending",
+        "wakeReason": "timeout",
+        "actionId": action_id,
+        "progress": {"actionId": action_id, "action": "collect_block",
+                     "progress": {"elapsedMs": elapsed,
+                                  "distanceTravelledBlocks": travelled,
+                                  "distanceFromStartBlocks": from_start}},
+    }}})
+
+
+class StuckForegroundTest(unittest.IsolatedAsyncioTestCase):
+    """An action that runs for minutes while getting nowhere is cancelled, not waited out.
+
+    Live, run113 it84: `collect_block` asked for 8 obsidian, formed one at the pour, then walked
+    back to a natural deposit 124 blocks away - 14 minutes, 2491 blocks travelled, 2 blocks from
+    where it started, checkpoint stuck at 1/8. While the foreground owns the body the loop cannot
+    act at all, so the executor has to release it with the server's own cancel.
+    """
+
+    def _exec(self, script: list) -> tuple[MCPExecutor, list]:
+        ex = MCPExecutor(MCPConfig())
+        calls: list[str] = []
+
+        async def fake(name: str, args: dict):
+            calls.append(name)
+            return script.pop(0)
+
+        ex._raw_call = fake  # type: ignore[assignment]
+        return ex, calls
+
+    async def test_an_oscillating_action_is_cancelled_and_retrieved(self) -> None:
+        script = [
+            _oscillating(MINE, 300_000, 1427.0, 2.3),   # submission: pending, already stuck
+            _oscillating(MINE, 320_000, 1500.0, 2.4),   # first poll trips the guard
+            _Res(structured={"response": {"format": "json", "data": {
+                "state": "cancellation_requested", "actionId": MINE,
+                "cancellation": {"kind": "cancellation_requested", "action": "collect_block",
+                                 "startedAt": "2026-10-29T17:31:00Z"}}}}),
+            _settled(MINE, status="cancelled"),
+        ]
+        ex, calls = self._exec(script)
+        res = await ex.call("collect_block", {"block_name": "obsidian"}, "test")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.status, "cancelled")
+        self.assertIn("[STUCK_FOREGROUND]", res.text)
+        # The settlement is retrieved in the same breath, so the next tick is not gated.
+        self.assertEqual(calls, ["collect_block", "wait_for_action",
+                                 "cancel_foreground_action", "wait_for_action"])
+
+    async def test_a_long_walk_that_gets_everywhere_is_not_cancelled(self) -> None:
+        # Elapsed alone is not the tell: a navigate that ends far from its start is travelling,
+        # not oscillating.
+        cfg = MCPConfig(action_wait_ms=50, poll_ms=10)
+        ex = MCPExecutor(cfg)
+        calls: list[str] = []
+
+        async def fake(name: str, args: dict):
+            calls.append(name)
+            return _oscillating(MINE, 300_000, 500.0, 480.0)
+
+        ex._raw_call = fake  # type: ignore[assignment]
+        res = await ex.call("navigate", {"x": 500, "y": 60, "z": 0}, "test")
+        self.assertEqual(res.status, "held")
+        self.assertNotIn("cancel_foreground_action", calls)
+
+    async def test_a_cancel_refused_by_the_server_is_reported_not_retried(self) -> None:
+        script = [
+            _oscillating(MINE, 300_000, 1427.0, 2.3),
+            _oscillating(MINE, 320_000, 1500.0, 2.4),
+            _Res(structured={"response": {"format": "json", "data": {
+                "state": "refused", "code": "NOT_CANCELLABLE",
+                "error": "this action cannot be cancelled"}}}, is_error=True),
+        ]
+        ex, calls = self._exec(script)
+        res = await ex.call("collect_block", {}, "test")
+        self.assertFalse(res.ok)
+        self.assertEqual(calls, ["collect_block", "wait_for_action", "cancel_foreground_action"])
+        self.assertNotIn("wait_for_action", calls[3:])
+
+
 class SettledStateTest(unittest.IsolatedAsyncioTestCase):
     """The envelope's `state` says whether an action settled, not a nested `status`.
 

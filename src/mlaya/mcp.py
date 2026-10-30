@@ -22,6 +22,15 @@ SETTLED = {
 # an action still running; a refusal, a settlement and a failed store are all final for this call.
 RUNNING_STATES = {"accepted", "pending"}
 
+# Stuck-foreground guard: an action that keeps running while getting nowhere. Live, run113 it84:
+# `collect_block` asked for 8 obsidian, formed one at the pour, then walked back to a natural
+# deposit 124 blocks away - 14 minutes, 2491 blocks travelled, still 2 blocks from where it
+# started, checkpoint stuck at 1/8. Elapsed alone is not the tell - a long navigate legitimately
+# runs for minutes - the tell is travel that ends where it began.
+STUCK_ELAPSED_MS = 240_000
+STUCK_TRAVELLED_BLOCKS = 400.0
+STUCK_FROM_START_BLOCKS = 10.0
+
 
 def clip(text: str, limit: int = 200) -> str:
     """One-line string, hard-capped so the server's maxLength(200) is honoured."""
@@ -294,7 +303,8 @@ class MCPExecutor:
         return res
 
     async def _wait_settled(self, action_id: str, deadline: float | None = None) -> ToolResult:
-        """Poll an action until it settles, `max_polls` runs out, or `deadline` passes."""
+        """Poll an action until it settles, `max_polls` runs out, `deadline` passes, or it is
+        cancelled as stuck."""
         res = ToolResult(False, "", None, action_id, False)
         loop = asyncio.get_running_loop()
         for _ in range(self.cfg.max_polls):
@@ -308,4 +318,55 @@ class MCPExecutor:
             }))
             if res.settled:
                 return res
+            facts = self._stuck_facts(res)
+            if facts:
+                return await self._cancel_stuck(action_id, facts)
         return res
+
+    @staticmethod
+    def _stuck_facts(res: ToolResult) -> str | None:
+        """The progress facts of an action that runs long, travels far and ends where it began."""
+        data = res.data if isinstance(res.data, dict) else {}
+        progress = _find(data, "progress")
+        if not isinstance(progress, dict):
+            return None
+        inner = progress.get("progress") if isinstance(progress.get("progress"), dict) else progress
+        elapsed = inner.get("elapsedMs")
+        travelled = inner.get("distanceTravelledBlocks")
+        from_start = inner.get("distanceFromStartBlocks")
+        if (isinstance(elapsed, (int, float)) and elapsed >= STUCK_ELAPSED_MS
+                and isinstance(travelled, (int, float)) and travelled >= STUCK_TRAVELLED_BLOCKS
+                and isinstance(from_start, (int, float)) and from_start <= STUCK_FROM_START_BLOCKS):
+            return (f"{elapsed / 1000:.0f} s elapsed, {travelled:.0f} blocks travelled, "
+                    f"{from_start:.1f} blocks from start")
+        return None
+
+    async def _cancel_stuck(self, action_id: str, facts: str) -> ToolResult:
+        """Release the body from an oscillating action and retrieve its settlement.
+
+        While the foreground owns the body the loop cannot act at all, so the only way out of a
+        stuck action is the server's own cancel. Retrieving the result in the same breath keeps
+        the next tick from being gated by RESULT_NOT_RETRIEVED.
+        """
+        cancel = _extract(await self._raw_call("cancel_foreground_action", {
+            "action_id": action_id,
+            "reason": f"stuck without progress: {facts}",
+            "rationale": "cancel the oscillating foreground action so the loop can re-decide",
+            "response_format": "json",
+        }))
+        if _envelope_state(cancel.data) == "refused":
+            return cancel
+        for _ in range(5):
+            settled = _extract(await self._raw_call("wait_for_action", {
+                "action_id": action_id,
+                "timeout_ms": self.cfg.poll_ms,
+                "rationale": "retrieve the cancelled action's result",
+                "response_format": "json",
+            }))
+            if settled.settled:
+                return ToolResult(False, f"[STUCK_FOREGROUND] cancelled {action_id}: {facts}",
+                                  settled.data, action_id, True, status="cancelled",
+                                  raw=settled.raw)
+        return ToolResult(False,
+                          f"[STUCK_FOREGROUND] cancellation requested for {action_id}: {facts}",
+                          cancel.data, action_id, False, status="cancelling")
