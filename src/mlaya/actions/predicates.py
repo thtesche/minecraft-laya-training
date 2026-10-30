@@ -870,7 +870,15 @@ def _bed_at_base(gs: GameState) -> bool:
     the server to that bed and pin the respawn point off the gate again (live, run19b it25). A
     bed inside the base box but too close to the gate is not it either (`_bed_bad_spot`): it
     would respawn the bot into the portal, so the run takes it up and lays it clear.
+
+    The remembered cell counts when the scan cannot see it: `view_blocks find` reads loaded
+    chunks only, so a bot that wandered off base reads no bed at all and would lay a second one
+    (live, run121 it80, 280 m from the anchor). `_adopt_bed` forgets the cell the moment the bot
+    is back at the base and the scan finds no bed there, so a taken-up or broken bed cannot keep
+    this true.
     """
+    if gs.bed_pos is not None and _in_base_box(gs, gs.bed_pos):
+        return True
     return _bed_placed(gs) and not _bed_off_base(gs) and not _bed_bad_spot(gs)
 
 
@@ -1744,6 +1752,22 @@ def _go_home_wanted(gs: GameState) -> bool:
             or (gs.phase == "night" and _bed_at_base(gs)) or _cannot_heal(gs))
 
 
+def _base_leveling_wanted(gs: GameState) -> bool:
+    """`flatten_home_base`: home, in daylight, at a lit gate, with raised blocks to dig.
+
+    The reflex stacks defence scaffold during fights and a buried-and-raised base leaves stray
+    terrain above ground level; neither is ever cleared, so the home ground turns lumpy and
+    sometimes hides a tunnel mouth. The loop's footprint scan (`gs.raised_cells`,
+    `Agent._scan_base_terrain`) lists exactly the removable cells, so the step is offered while
+    there is something to level and drops out the moment the ground is flat. Gated on the lit gate
+    so the base geometry is final (the frame build and its clearance steps own the tick before that),
+    and on daylight only for now, to watch how it grips before it runs at night as well (user call,
+    2026-10-30).
+    """
+    return (gs.base is not None and _at_base(gs) and _overworld(gs)
+            and _portal_lit(gs) and gs.phase == "day" and bool(gs.raised_cells))
+
+
 def _idle_off_base(gs: GameState) -> bool:
     """A geared Overworld bot standing off its base - the state the empty-candidate fallback walks
     home from, rather than letting `explore` march it to the horizon.
@@ -2250,13 +2274,16 @@ def _lava_walk_target(gs: GameState) -> tuple[int, int, int] | None:
 
 
 def _bed_available(gs: GameState) -> bool:
-    """A bed is at hand for `sleep`: carried, or already standing beside the base.
+    """A bed is at hand for `sleep`: carried, standing where the scan can see it, or remembered
+    at the base.
 
     Counting a *placed* bed matters once the bed item has left the pack (a manual base build, or
     a restart): a carried-bed-only test would send the loop off to hunt wool for a second bed
-    while one already stands at the base.
+    while one already stands at the base. The remembered cell is the same fact one tick later,
+    when the bot has walked out of the base's chunks -- live, run121 it80, which crafted a second
+    bed 280 m from a gate bed the run already owned.
     """
-    return _has_bed(gs.inventory) or _bed_placed(gs)
+    return _has_bed(gs.inventory) or _bed_placed(gs) or _bed_at_base(gs)
 
 
 def _sleep_ready(gs: GameState) -> bool:
@@ -2319,6 +2346,88 @@ def _unsafe_beds(gs: GameState) -> list:
     return [hit for hit in gs.resources.get("white_bed") or [] if _underground(gs, hit.y)]
 
 
+def _bed_cells(gs: GameState) -> list[tuple[int, int, int]]:
+    """The cells of the gate bed this run knows about.
+
+    The scan's hits inside the base box, plus the remembered `bed_pos` when the base chunks are
+    unloaded. A bed is two cells and only one is named, which is enough: the click box wraps the
+    whole footprint, so a body beside either half reaches it.
+    """
+    cells = [h.pos for h in gs.resources.get("white_bed") or [] if _in_base_box(gs, h.pos)]
+    if gs.bed_pos is not None and gs.bed_pos not in cells:
+        cells.append(gs.bed_pos)
+    return cells
+
+
+def _click_gap(feet: tuple[float, float, float],
+               bed: list[tuple[int, int, int]]) -> float:
+    """Squared distance from a feet position to the nearest bed's top centre.
+
+    Minecraft takes the bed click from within two blocks of that centre, so this is the number
+    `_bed_reachable` tests against `BED_SLEEP_CLICK` and `_bed_reach_stance` sorts by. A cell is
+    passed as its centre, the way the body occupies it.
+    """
+    x, y, z = feet
+    return min((x - (bx + 0.5)) ** 2 + (y - (by + 1)) ** 2 + (z - (bz + 0.5)) ** 2
+               for bx, by, bz in bed)
+
+
+def _centre(cell: tuple[int, int, int]) -> tuple[float, float, float]:
+    """The centre of a block cell -- where the feet sit when the body stands in it."""
+    return (cell[0] + 0.5, cell[1], cell[2] + 0.5)
+
+
+def _bed_reachable(gs: GameState) -> bool:
+    """Whether the body stands close enough for `sleep` to click the gate bed.
+
+    `_bed_at_base` says a bed stands at the base; it says nothing about where the body is, and the
+    server's search radius of 32 blocks is not what fails. Live, run121 it100-103: the bot stood at
+    (-9.3,70,-52.5) with the bed at (-10,70,-51) - 1.7 blocks off in plan, but a whole block above
+    the bed's own level, 5.04 squared, over vanilla's limit - and four identical
+    `[BED_SLEEP_REJECTED] bot is not sleeping` ticks followed, each one a tick the run spent at its
+    own gate without sleeping.
+    """
+    bed = _bed_cells(gs)
+    if gs.pos is None or not bed:
+        return False
+    return _click_gap(gs.pos, bed) <= BED_SLEEP_CLICK ** 2
+
+
+def _bed_reach_stance(gs: GameState) -> tuple[int, int, int] | None:
+    """The feet cell the bot must stand on for `sleep` to reach the gate bed, or None.
+
+    The same shape as `_bed_stance`: a cell the ground scan proves standable, nearest to the body,
+    that lands inside the click box. `navigate` to a column with no floor is refused outright
+    (`[NAVIGATION_TARGET_UNSUPPORTED] ... the ground in that column is y=69`), so guessing a cell
+    is worse than standing on one the scan read. Where no ground was read at all, the eight cells
+    around the bed at its own level are the only information there is, and the nearest of them is
+    tried. The bed's own cells are never a stance -- the block occupies them -- and neither is a
+    cell of the lit gate, which would teleport the body before it could sleep.
+    """
+    bed = _bed_cells(gs)
+    if gs.pos is None or not bed:
+        return None
+    portal = gs.resources.get(PORTAL_BLOCK) or []
+    bed_cells = set(bed)
+
+    def usable(cell: tuple[int, int, int]) -> bool:
+        return cell not in bed_cells and _gate_gap(cell, portal) >= 1
+
+    def near(cell: tuple[int, int, int]) -> tuple[float, float]:
+        return (_click_gap(_centre(cell), bed),
+                abs(cell[0] - gs.pos[0]) + abs(cell[2] - gs.pos[2]))
+
+    inside = [c for c in _known_footings(gs)
+              if usable(c) and _click_gap(_centre(c), bed) <= BED_SLEEP_CLICK ** 2]
+    if inside:
+        return min(inside, key=near)
+    ring = [(bx + dx, by, bz + dz)
+            for bx, by, bz in bed
+            for dx in (-1, 0, 1) for dz in (-1, 0, 1) if dx or dz]
+    ring = [c for c in ring if usable(c)]
+    return min(ring, key=near) if ring else None
+
+
 def _bed_in_sleep_reach(gs: GameState) -> bool:
     """A bed the `sleep` server can find from here: carried, or standing within its search.
 
@@ -2345,6 +2454,20 @@ def _at_base(gs: GameState) -> bool:
     x, y, z = gs.pos
     return (abs(x - (bx + 0.5)) <= BASE_RADIUS
             and abs(z - (bz + 0.5)) <= BASE_RADIUS
+            and abs(y - (by + 1)) <= BASE_RADIUS + 1)
+
+
+def _in_base_box(gs: GameState, cell: tuple[int, int, int]) -> bool:
+    """Whether a block cell lies inside the base box `_at_base` lets the body stand in.
+
+    `_at_base` tests the feet position, which sits at a cell's centre; a remembered block cell is
+    compared against the anchor the same way `_bed_stance` compares its candidate cells.
+    """
+    if gs.base is None:
+        return False
+    bx, by, bz = gs.base
+    x, y, z = cell
+    return (abs(x - bx) <= BASE_RADIUS and abs(z - bz) <= BASE_RADIUS
             and abs(y - (by + 1)) <= BASE_RADIUS + 1)
 
 

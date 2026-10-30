@@ -55,6 +55,7 @@ class CollectSmeltedProgressTest(unittest.TestCase):
         # threshold. `_track_stuck` is what reads this verdict, so the guard is what this pins.
         from mlaya.graph import Agent, STUCK_REPEATS
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
         agent._nether_landmarks = []
         agent._stuck_reps = {}
         agent._stuck_code = {}
@@ -274,6 +275,50 @@ class PearlHuntProgressTest(unittest.TestCase):
         d = diff(gs(inventory={"ender_pearl": 1, "blaze_powder": 1}),
                  gs(inventory={"ender_eye": 1}))
         self.assertTrue(progressed("craft_ender_eye", d))
+
+
+class SleepWalkProgressTest(unittest.TestCase):
+    """The step onto the gate bed belongs to the sleep.
+
+    `sleep` resolves to a `navigate` when the body is not within click range of the bed
+    (`_bed_reachable`), and that walk is a metre at most. Read as no progress, three of them in
+    a row would trip the stuck guard and withhold the label for 15 ticks while the night ran out
+    (live, run121 it100-103: four `[BED_SLEEP_REJECTED] bot is not sleeping` at (-9.3,70,-52.5)
+    against a bed at (-10,70,-51)).
+    """
+
+    def test_the_step_onto_the_bed_is_progress(self) -> None:
+        d = diff(gs(pos=(-9.3, 70.0, -52.5), phase="night"),
+                 gs(pos=(-9.5, 70.0, -51.5), phase="night"))
+        self.assertTrue(progressed("sleep", d, ok=True))
+
+    def test_a_sleep_that_moves_nothing_and_ends_nothing_is_not_progress(self) -> None:
+        d = diff(gs(pos=(-9.5, 70.0, -51.5), phase="night"),
+                 gs(pos=(-9.5, 70.0, -51.5), phase="night"))
+        self.assertFalse(progressed("sleep", d, ok=False))
+
+
+class FlattenHomeBaseProgressTest(unittest.TestCase):
+    """Leveling the home base proves itself either way the server can answer.
+
+    `flatten_home_base` digs stray blocks to air (`build_structure`). A dug block that drops to be
+    collected shows up as a carried block going up; when the server collects nothing, a successful
+    call with an empty delta is still a cleared cell. A refusal leaves the delta empty too, so it
+    counts only when the call actually succeeded -- the same shape as `collect_smelted`, so the
+    stuck guard can retire a cell it keeps failing to break.
+    """
+
+    def test_a_dug_block_landing_in_the_pack_is_progress(self) -> None:
+        d = diff(gs(inventory={}), gs(inventory={"cobblestone": 3}))
+        self.assertTrue(progressed("flatten_home_base", d))
+
+    def test_a_cleared_cell_that_dropped_nothing_is_progress(self) -> None:
+        self.assertTrue(progressed("flatten_home_base", diff(gs(), gs()), ok=True))
+
+    def test_a_refusal_is_not_progress_however_empty_the_delta(self) -> None:
+        d = diff(gs(), gs())
+        self.assertEqual(d["inventory_delta"], {})
+        self.assertFalse(progressed("flatten_home_base", d, ok=False))
 
 
 if __name__ == "__main__":

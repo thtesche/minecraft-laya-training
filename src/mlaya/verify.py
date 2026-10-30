@@ -113,7 +113,11 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label in ("collect_drops", "recover_drops"):
         return inv_up
     if label == "sleep":
-        return d.get("phase") != "night" or bool(d.get("sleeping"))
+        # The night ending or the body asleep is the step's own proof. Since run121 the step can
+        # also resolve to a walk onto the footing beside the gate bed (`_bed_reachable`), and
+        # closing that last gap is the step working, not the step failing.
+        return (d.get("phase") != "night" or bool(d.get("sleeping"))
+                or (d["pos_delta"] or 0) > 0.5)
     # Overworld -> Nether gate. Each step's own item is the proof; the world-block steps use the
     # booleans above (lighting) or the obsidian leaving the pack (the frame).
     if label == "craft_bucket":
@@ -191,6 +195,12 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         return any(v < 0 for v in d["inventory_delta"].values()) or (ok and (d["pos_delta"] or 0) > 2)
     if label == "drop_junk":
         return any(v < 0 for v in d["inventory_delta"].values())
+    if label == "flatten_home_base":
+        # The dug blocks either land in the pack (a carried block going up) or the server drops
+        # nothing to collect; a successful call with an empty delta is still a cleared cell, while
+        # a refusal leaves the delta empty too, so it counts only when the call succeeded (the
+        # `collect_smelted` shape), and the stuck guard can retire a cell it keeps failing to break.
+        return inv_up or (ok and not d["inventory_delta"])
     if label == "take_stored_food":
         # The provisions reaching the pack is the step; walking to the chest of the network that
         # actually holds them is progress too, and until this a successful `withdraw` never was

@@ -10,17 +10,21 @@ import inspect
 import math
 import re
 import unittest
+from types import SimpleNamespace
 
-from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _bed_stance,
-                          _crowding_hostiles, _diamond_reason, _expedition_prepared,
+from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _bed_at_base,
+                          _bed_cells, _bed_reachable, _bed_reach_stance, _bed_stance,
+                          _click_gap, _crowding_hostiles, _diamond_reason, _expedition_prepared,
                           _frame_needs_obsidian, _gold_reserve_short, _known_footings,
+                          _centre,
                           _hoard_surplus, _idle_off_base, _nether_prep_steps,
                          _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt, _safe_blaze_hunt, _safe_zombie_hunt,
                           _safe_spider_hunt, _safe_string_hunt,
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
-                         BASE_RADIUS, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
+                         _base_leveling_wanted, FLATTEN_BATCH, FLATTEN_RADIUS, FLATTEN_UP,
+                         BASE_RADIUS, BED_SLEEP_CLICK, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
                          BARTER_GOLD_BUDGET, BARTER_MAX_ATTEMPTS, BARTER_PEARL_BATCH,
                          BARTER_PIGLIN_RANGE, GOLD_BARTER_RESERVE,
@@ -2444,6 +2448,156 @@ class NetherGateTest(unittest.TestCase):
         g.pos = (227.5, 64.0, 221.5)
         self.assertEqual(_bed_stance(g), (225, 64, 222))
 
+    def _run121_base(self, pos: tuple = (-9.3, 70.0, -52.5)) -> GameState:
+        """The base run121 actually had, read live: the gate lit at (-8..-7, 70-71, -52), the
+        gate bed standing at (-10,70,-51)/(-10,70,-50), the cobblestone floor the run laid at
+        y=69, and the bot two cells off the bed.
+        """
+        g = self._geared()
+        g.base = (-10, 69, -52)
+        g.pos = pos
+        g.phase = "night"
+        g.resources = {
+            "nether_portal": [BlockHit("nether_portal", "nether_portal", x, y, -52, 2.0)
+                              for x in (-8, -7) for y in (70, 71)],
+            "white_bed": [BlockHit("white_bed", "white_bed", -10, 70, -51, 1.4, above="cobblestone"),
+                          BlockHit("white_bed", "white_bed", -10, 70, -50, 1.6, above="air")],
+        }
+        g.rescue_ground = {"cobblestone": [
+            BlockHit("cobblestone", "cobblestone", x, 69, z, 1.0, above="air")
+            for x in (-11, -10, -9) for z in (-52, -51, -50)
+            if (x, z) not in ((-10, -51), (-10, -50))]}
+        return g
+
+    def test_sleep_walks_onto_a_bed_it_cannot_reach(self) -> None:
+        # run121 it100-103: four identical `[BED_SLEEP_REJECTED] bot is not sleeping` at
+        # (-9.3,70,-52.5) against a bed at (-10,70,-51). The server's bed search is 32 blocks, so
+        # `_sleep_ready` was satisfied; Minecraft takes the bed click only from within two blocks
+        # of the bed's top centre, and the body was 5.04 squared away. `sleep` now walks onto a
+        # footing beside the bed before it clicks.
+        g = self._run121_base()
+        self.assertIn("sleep", candidates(g))
+        self.assertFalse(_bed_reachable(g))
+        a = resolve("sleep", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual(a.args["range"], 0)
+
+    def test_the_sleep_walk_ends_beside_the_bed(self) -> None:
+        # The tick after the walk: the feet are on a cell inside the click box, so the sleep runs.
+        g = self._run121_base()
+        stance = _bed_reach_stance(g)
+        self.assertIsNotNone(stance)
+        g.pos = (stance[0] + 0.5, stance[1], stance[2] + 0.5)
+        self.assertTrue(_bed_reachable(g))
+        self.assertEqual(resolve("sleep", g).tool, "sleep")
+
+    def test_the_sleep_stance_is_ground_the_scan_proved(self) -> None:
+        # `navigate` refuses a column with no floor outright, so the stance is a cell the ground
+        # read says is standable, not the nearest cell next to the bed whatever is under it.
+        g = self._run121_base()
+        stance = _bed_reach_stance(g)
+        self.assertIn(stance, _known_footings(g))
+        self.assertNotIn(stance, _bed_cells(g))
+
+    def test_the_sleep_stance_skips_a_column_the_run_dug_out(self) -> None:
+        # The cell nearest the bed has no floor at the bed's level - the run dug that column out -
+        # and `navigate` to a column with nothing under it is refused outright. The stance takes
+        # the next cell the ground read proved, still inside the click box.
+        g = self._run121_base()
+        g.rescue_ground = {"cobblestone": [
+            BlockHit("cobblestone", "cobblestone", x, 69, z, 1.0, above="air")
+            for x in (-11, -10, -9) for z in (-52, -51, -50)
+            if (x, z) not in ((-10, -51), (-10, -50), (-10, -52))]}
+        stance = _bed_reach_stance(g)
+        self.assertNotEqual(stance, (-10, 70, -52))
+        self.assertIn(stance, _known_footings(g))
+        self.assertTrue(_click_gap(_centre(stance), _bed_cells(g)) <= BED_SLEEP_CLICK ** 2)
+
+    def test_the_sleep_stance_falls_back_when_no_ground_was_read(self) -> None:
+        # No footing read at all: the ring of cells around the bed is the only information there
+        # is, and the nearest of them is tried rather than giving up on the night.
+        g = self._run121_base()
+        g.rescue_ground = {}
+        stance = _bed_reach_stance(g)
+        self.assertIsNotNone(stance)
+        self.assertNotIn(stance, _bed_cells(g))
+
+    def test_a_bed_out_of_scan_range_is_not_crafted_again(self) -> None:
+        # run121 it80: the bot stood at (228,72,-336), 280 m from the base, and the base chunks
+        # were unloaded, so the scan saw no bed and `craft_bed` made a second one. The remembered
+        # gate bed answers "is a bed owed" when the world cannot be seen.
+        g = self._geared(white_wool=4, oak_log=2)
+        g.base = (-10, 69, -52)
+        g.pos = (228.5, 72.0, -336.4)
+        g.bed_pos = (-10, 70, -51)
+        g.resources = {}
+        self.assertTrue(_bed_at_base(g))
+        self.assertNotIn("craft_bed", candidates(g))
+
+    def test_a_bed_taken_up_is_forgotten(self) -> None:
+        # `take_bed` removes the block, so a remembered cell would keep `_bed_at_base` true over
+        # empty ground and close the completion gate on a respawn point that no longer exists.
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent.bed_pos = (-10, 70, -51)
+        agent._note_bed(SimpleNamespace(label="take_bed", tool="collect_block", args={}),
+                        True, None)
+        self.assertIsNone(agent.bed_pos)
+
+    def test_the_sleep_response_names_the_bed_it_clicked(self) -> None:
+        # The bed block is the respawn point, and the `sleep` answer is the only place the server
+        # ever names it -- a failed sleep included, since it reports the cell it tried to use.
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent.bed_pos = None
+        res = SimpleNamespace(data={"response": {"data": {"output": {"result": {
+            "sleep": {"asleep": False, "respawnSet": False,
+                      "bedPosition": {"x": -10, "y": 70, "z": -51}}}}}}})
+        agent._note_bed(SimpleNamespace(label="place_bed", tool="sleep", args={}), False, res)
+        self.assertEqual(agent.bed_pos, (-10, 70, -51))
+
+    def test_a_bed_at_the_base_is_adopted_from_the_world(self) -> None:
+        # A restart loses `bed_pos` with the base, but the bed is a real block: the tick the bot
+        # walks back into its chunks, the scan names it and the respawn point is known again.
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent.base = (-10, 69, -52)
+        agent.bed_pos = None
+        agent._adopt_bed(self._run121_base())
+        self.assertEqual(agent.bed_pos, (-10, 70, -51))
+
+    def test_a_bed_the_base_scan_disagrees_with_is_forgotten(self) -> None:
+        # The bot is standing at the base, the scan ran, and no bed is there: the remembered cell
+        # is stale and has to go, or `sleep` keeps refusing and the run never ends.
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent.base = (-10, 69, -52)
+        agent.bed_pos = (-10, 70, -51)
+        g = self._run121_base()
+        g.resources = {"nether_portal": g.resources["nether_portal"],
+                       "stone": [BlockHit("stone", "stone", -12, 66, -51, 4.0)]}
+        agent._adopt_bed(g)
+        self.assertIsNone(agent.bed_pos)
+
+    def test_a_bed_out_of_the_base_box_is_not_forgotten(self) -> None:
+        # A bot 280 m off base cannot see its own bed either; forgetting there would throw away
+        # the only record of the respawn point the run has.
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent.base = (-10, 69, -52)
+        agent.bed_pos = (-10, 70, -51)
+        g = self._geared()
+        g.base = (-10, 69, -52)
+        g.pos = (228.5, 72.0, -336.4)
+        g.resources = {"stone": [BlockHit("stone", "stone", 226, 63, -336, 2.0)]}
+        agent._adopt_bed(g)
+        self.assertEqual(agent.bed_pos, (-10, 70, -51))
+
     def test_place_bed_lays_the_carried_bed_at_a_base_without_one(self) -> None:
         # A bed standing *away* from the base is no gate bed: the carried bed goes down at the
         # base even while the leftover stands (the leftover is `take_bed`'s job, and the bot
@@ -4480,6 +4634,7 @@ class NetherExpeditionTest(unittest.TestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
@@ -6564,6 +6719,7 @@ class StepAwayDropsWholeCellTest(unittest.TestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
@@ -6583,6 +6739,7 @@ class DeferQuietTest(unittest.TestCase):
     def _agent(self):
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._defer_quiet = 0
@@ -6619,6 +6776,7 @@ class RefreshAfterTest(unittest.TestCase):
     def _agent(self):
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.surface = None
@@ -6684,6 +6842,7 @@ class WaitHoldTest(unittest.IsolatedAsyncioTestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
@@ -6713,6 +6872,7 @@ class StepAwayGroundReadTest(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.mcp = object()
@@ -6875,6 +7035,92 @@ class DigOutTest(unittest.TestCase):
             first = resolve("dig_out", g).args["blocks"][0]
             sides.add((first["x"], first["z"]))
         self.assertEqual(sides, {(1, 0), (0, 1), (-1, 0), (0, -1)})
+
+
+class FlattenHomeBaseTest(unittest.TestCase):
+    """`flatten_home_base`: the daytime maintenance step that digs away the stray terrain and the
+    reflex-placed defence scaffold piled above ground level around a lit home gate.
+
+    The removable cells come ready from the loop's footprint scan (`gs.raised_cells`,
+    `Agent._scan_base_terrain`, pinned in `test_graph.py`), so the action layer only has to offer
+    the step while there is something to level and bind one `build_structure` of air cells, capped
+    at `FLATTEN_BATCH` because the server runs a route search per cell.
+    """
+
+    BASE = (-50, 70, 20)
+
+    def _lumpy(self, raised=None) -> GameState:
+        """A geared bot home by day at a lit gate, with blocks piled above ground level."""
+        bx, by, bz = self.BASE
+        g = at_home(geared(), self.BASE)
+        g.phase = "day"
+        g.resources = {"nether_portal": [
+            BlockHit("nether_portal", "nether_portal", bx + 2, by, bz, 2.0)]}
+        g.raised_cells = raised if raised is not None else [
+            (bx + 1, by + 1, bz), (bx + 2, by + 2, bz + 1), (bx - 3, by + 1, bz - 2)]
+        return g
+
+    def test_offered_at_a_lumpy_base_by_day(self) -> None:
+        g = self._lumpy()
+        self.assertTrue(_base_leveling_wanted(g))
+        self.assertIn("flatten_home_base", candidates(g))
+
+    def test_a_clean_base_drops_the_step(self) -> None:
+        # The scan comes up empty the moment the ground is flat, and the step falls out of the offer.
+        g = self._lumpy(raised=[])
+        self.assertFalse(_base_leveling_wanted(g))
+        self.assertNotIn("flatten_home_base", candidates(g))
+
+    def test_night_holds_it_back(self) -> None:
+        # Daytime only for now, to watch how it grips before it runs at night as well.
+        g = self._lumpy()
+        g.phase = "night"
+        self.assertFalse(_base_leveling_wanted(g))
+        self.assertNotIn("flatten_home_base", candidates(g))
+
+    def test_off_base_is_not_offered(self) -> None:
+        # Away from home the footprint is not the bot's to level.
+        g = self._lumpy()
+        g.pos = (g.base[0] + 40.0, g.base[1] + 1.0, g.base[2] + 40.0)
+        self.assertFalse(_base_leveling_wanted(g))
+        self.assertNotIn("flatten_home_base", candidates(g))
+
+    def test_an_unlit_gate_is_not_offered(self) -> None:
+        # Gated on the lit gate so the base geometry is final: the frame build and its clearance
+        # steps own the tick before that, and leveling must not race them.
+        g = self._lumpy()
+        g.resources = {}
+        self.assertFalse(_base_leveling_wanted(g))
+        self.assertNotIn("flatten_home_base", candidates(g))
+
+    def test_the_nether_has_no_base_to_level(self) -> None:
+        g = self._lumpy()
+        g.dimension = "the_nether"
+        self.assertFalse(_base_leveling_wanted(g))
+
+    def test_the_resolve_digs_the_raised_cells_to_air(self) -> None:
+        g = self._lumpy()
+        a = resolve("flatten_home_base", g)
+        self.assertEqual(a.tool, "build_structure")
+        self.assertTrue(all(c["block_name"] == "air" for c in a.args["blocks"]))
+        self.assertEqual([(c["x"], c["y"], c["z"]) for c in a.args["blocks"]], g.raised_cells)
+
+    def test_the_batch_is_capped(self) -> None:
+        # One route search per cell, so a long list is dug a batch at a time; the scan re-reads each
+        # tick and the rest falls to the next one (`clear_portal`'s reason).
+        bx, by, bz = self.BASE
+        raised = [(bx, by + 1, bz + i) for i in range(FLATTEN_BATCH + 5)]
+        g = self._lumpy(raised=raised)
+        a = resolve("flatten_home_base", g)
+        self.assertEqual(len(a.args["blocks"]), FLATTEN_BATCH)
+        self.assertEqual([(c["x"], c["y"], c["z"]) for c in a.args["blocks"]],
+                         raised[:FLATTEN_BATCH])
+
+    def test_the_offer_and_the_resolve_agree(self) -> None:
+        # When the step is not wanted, `resolve` answers None too, so it is never offered and then
+        # refused on the same tick (`_base_leveling_wanted` is the single gate for both).
+        g = self._lumpy(raised=[])
+        self.assertIsNone(resolve("flatten_home_base", g))
 
 
 class LabelRegistryTest(unittest.TestCase):

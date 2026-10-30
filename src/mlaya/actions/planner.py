@@ -648,6 +648,14 @@ def candidates(gs: GameState) -> list[str]:
     if _overworld(gs):
         out.extend(_nether_prep_steps(gs))
 
+    # Home-base leveling. Once the gate is lit, a daytime maintenance step digs away the stray
+    # terrain and reflex-placed defence scaffold that pile up above ground level around the base, so
+    # the home ground stays flat (`_base_leveling_wanted`, `gs.raised_cells`). Offered below the prep
+    # and the gate chain but above `wait` (the empty-list fallback), so an idle bot at a lumpy base
+    # levels it instead of waiting, and it drops out the moment the scan comes up empty.
+    if _base_leveling_wanted(gs):
+        out.append("flatten_home_base")
+
     # The same label can arrive twice (the light `mine_stone` above and the deep lull stack in
     # `_nether_prep_steps`); keep the first occurrence so the priority order is stable.
     out = list(dict.fromkeys(out))
@@ -1093,6 +1101,21 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                           "walk off the base, away from the unlit gate frame, to sleep there")
         if not _sleep_ready(gs):
             return None
+        if _bed_at_base(gs) and not _bed_reachable(gs):
+            # The bed is there; the body is not next to it. `sleep` clicks the bed block, and
+            # vanilla only takes that click from within two blocks of the bed's top centre, so a
+            # bot standing two cells off answers `[BED_SLEEP_REJECTED] bot is not sleeping` while
+            # the server names the bed it tried to use (live, run121 it100-103: four identical
+            # refusals at (-9.3,70,-52.5) against a bed at (-10,70,-51)). `range: 0` for the same
+            # reason as `place_bed`'s stance walk: the arrival has to be *in* that cell.
+            stance = _bed_reach_stance(gs)
+            if stance is None:
+                return None
+            sx, sy, sz = stance
+            return Action(label, "navigate",
+                          {"x": sx, "y": sy, "z": sz, "range": 0,
+                           "dig": True, "scaffold": True},
+                          "step onto the footing beside the gate bed, close enough to click it")
         return Action(label, "sleep", {},
                       "sleep through the night and set the respawn point")
     if label == "craft_bed":
@@ -1592,6 +1615,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "use_container",
                       {"operation": "deposit", "x": cx, "y": cy, "z": cz, "items": items[:12]},
                       "deposit the surplus blocks into the chest at the base")
+    if label == "flatten_home_base":
+        if not _base_leveling_wanted(gs):
+            return None
+        cells = [{"x": x, "y": y, "z": z, "block_name": "air"}
+                 for x, y, z in gs.raised_cells[:FLATTEN_BATCH]]
+        if not cells:
+            return None
+        # One route search per cell, so the batch is capped (`clear_portal`'s reason); the scan
+        # re-reads each tick and the rest falls to the next one.
+        return Action(label, "build_structure", {"blocks": cells},
+                      "level the home base: dig the stray blocks piled above ground level around the gate")
     if label == "step_away_drops":
         if not gs.drop_open_pending or gs.drop_pos is None or gs.pos is None:
             return None

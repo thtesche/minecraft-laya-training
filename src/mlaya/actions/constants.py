@@ -73,6 +73,7 @@ CRITERIA: dict[str, str] = {
     "place_chest": "place the crafted chest at the home base",
     "place_furnace": "place the furnace the bot carries at the home base, so cooking and smelting reuse it instead of setting up a temporary one every time",
     "stow_surplus": "deposit the surplus blocks of a full pack into the chest at the base",
+    "flatten_home_base": "level the home base: dig away the stray terrain and the reflex-placed defence blocks that pile up above ground level around the lit gate, so the home ground stays flat",
     # Overworld -> Nether gate (the portal frame and the bed beside it).
     "craft_bucket": "craft a bucket from three iron ingots; a water bucket is how obsidian is made",
     "fill_bucket": "fill the carried bucket with water at a source, ready to pour onto lava",
@@ -339,6 +340,13 @@ BED_PORTAL_CLEARANCE = 2
 # How far the `sleep` server looks for a standing bed: "[BED_NOT_FOUND] No unoccupied bed found
 # within 32 blocks". A bed the scan sees beyond it cannot be slept in from where the bot stands.
 SLEEP_BED_REACH = 32.0
+# How close the body has to be for that search to end in a sleep. Minecraft accepts the bed click
+# only within two blocks of the bed's top centre (`distanceToSquared(x+0.5, y+1, z+0.5) > 4`
+# refuses it), and mineflayer's `sleep` reaches the same check before activating the block. Live,
+# run121 it100-103: the bot stood at (-9.3,70,-52.5) with the bed at (-10,70,-51) - 1.7 blocks off
+# in plan, but a full block above the bed's own level, 5.04 squared - and four identical
+# `[BED_SLEEP_REJECTED] bot is not sleeping` ticks followed.
+BED_SLEEP_CLICK = 2.0
 # A night sleep away from the base needs open ground and no monster at hand. Minecraft refuses a
 # sleep with hostiles near the bed but sets the respawn point first, so a refused sleep still
 # pins the respawn wherever the bed was laid: run87 slept at y=-10 in a zombie cave (it193-197,
@@ -519,6 +527,35 @@ COMBAT_SCAFFOLD_BLOCKS = frozenset({
 # six, and `hunt_enderman` refused four ticks running until the stuck guard dropped it). Short of
 # the reserve with an enderman in reach, the pearl wave comes home to restock and relaunch.
 ENDERMAN_HUNT_BLOCKS = 16
+
+# --- Home-base leveling (`flatten_home_base`) ---
+# The survival reflex stacks scaffold blocks during a fight, and a buried-and-raised base leaves
+# stray terrain, and neither is ever cleared, so the home ground turns lumpy and sometimes hides a
+# tunnel mouth. Once the gate is lit and the base is settled, a daytime maintenance step digs these
+# back to air. The region is the base footprint, read in one `view_blocks box` whose half-width the
+# server caps at 4 (a 9x9 column field centred on the anchor, which is why `FLATTEN_RADIUS` is 4 and
+# must match `perception.scan_base_box`); `FLATTEN_UP` is how many rows above the ground floor `by`
+# are cleared, enough for a scaffold tower the reflex roofs itself over with.
+FLATTEN_RADIUS = 4
+FLATTEN_UP = 4
+# At most this many cells dug per call: `build_structure` runs one route search per cell and a long
+# list has watchdog-killed the server, so the scan re-reads and the rest falls to the next tick (the
+# `clear_portal` four-cell cap, a touch higher since these sit right at the bot's feet).
+FLATTEN_BATCH = 8
+# The blocks `flatten_home_base` will dig: ordinary terrain and the scaffold the combat reflex
+# places (`COMBAT_SCAFFOLD_BLOCKS`). A whitelist, not a blacklist, so the base's own furniture is
+# safe by construction -- a chest, furnace, smoker, crafting table, bed, the obsidian frame and a
+# lit portal block are none of these and are never dug. Cobblestone *is* listed on purpose: the
+# portal's four cobblestone corners are only needed while the frame is built and the gate works
+# without them, so a corner left standing above ground level is cleared like any other bump
+# (user call, 2026-10-30). Only cells above the floor `by` are ever dug, so the ground the bed and
+# furniture stand on is never undercut, and the two lower corners (at `by`) stay bedded in the soil.
+FLATTEN_BLOCKS = COMBAT_SCAFFOLD_BLOCKS | frozenset({
+    "dirt", "coarse_dirt", "rooted_dirt", "grass_block", "podzol", "mud", "clay",
+    "stone", "cobblestone", "cobbled_deepslate", "deepslate", "tuff", "calcite",
+    "andesite", "diorite", "granite", "dripstone_block", "gravel", "sand", "red_sand",
+    "sandstone", "snow_block", "moss_block",
+})
 
 # M2d reactions. An active tool at or below this fraction of its maximum is replaced
 # before it breaks; a death this recent, this close, is worth walking back to.

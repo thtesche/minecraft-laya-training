@@ -1058,6 +1058,28 @@ grid walks onto the anchor's level whatever the ground there is, and live the co
 `[NAVIGATION_TARGET_UNSUPPORTED] ... the ground in that column is at y=69`. With no ground read at
 all the grid is still the only information there is, so it stays the fallback.
 
+**A bed the scan cannot see is still the respawn point.** run121 it80: 280 m off base the base
+chunks unload, `view_blocks find white_bed` returns nothing, and `craft_bed` was offered as if no
+bed existed - a second bed, one more slot in a pack that was already at 27. `bed_pos` now rides in
+the GameState like `chest_pos`: the `sleep` response names the cell it clicked (`bedPosition`, the
+only place the server ever reports a respawn point - `view_status` has no spawn field and the bot's
+SQLite has no respawn table), `_adopt_bed` re-adopts it from a scan at the base after a restart, and
+it is forgotten when the bot is *at* the base, the scan ran, and no bed stands there.
+`take_bed` clears it in the same breath.
+
+**Sleeping needs the body beside the bed.** run121 it100-103: four identical
+`[BED_SLEEP_REJECTED] bot is not sleeping` at (-9.3, 70, -52.5) with the bed at (-10, 70, -51) and
+`respawnSet: false`. The server's bed search is 32 blocks, so `_sleep_ready` was satisfied; what
+fails is vanilla's click box - the player must be within two blocks of the bed's top centre, and
+1.7 blocks off in plan plus one block of height is 5.04 squared. `sleep` now resolves to a
+`navigate` with `range: 0` onto a footing inside that box (`_bed_reachable`, `_bed_reach_stance`),
+the same shape as `place_bed`'s stance walk, and the walk counts as progress for the stuck guard.
+The box is not the whole story: the later refusals in the same run stood at (-9.5, 71, -51.5), 1.06
+squared from that centre, and still did not sleep. mineflayer activates the bed block it finds, and
+vanilla only resolves a bed click on the *head* half, or on the foot when the player faces the head -
+so the heading the walk leaves the body on is the next thing to pin down, which is what
+`scripts/bed_probe.py` measures stance by stance.
+
 Net: the crossing, the fortress march and the rod haul all run live, and the water, footing and
 foreground guards closed the runtime-crash and ping-pong classes; **no run has carried blaze
 powder back to the chest at the gate**. run118 died after 57 consecutive ticks (it92-151) whose
@@ -1219,6 +1241,31 @@ there.
   is fully prepared (`_expedition_ready`, see the auto-stop above); natural obsidian
   next to the base no longer counts.
   Tested in `tests/test_actions.py::NetherGateTest` and `tests/test_verify.py`.
+- **Home-base leveling (implemented, 2026-10-30):** the survival reflex stacks defence scaffold
+  during fights and a buried-and-raised base leaves stray terrain; neither was ever cleared, so the
+  home ground turned lumpy and sometimes hid a tunnel mouth. `flatten_home_base` is a daytime
+  maintenance step that digs those bumps back to air (`build_structure` with `block_name: "air"`).
+  The removable cells come from the loop's own footprint read (`Agent._scan_base_terrain` →
+  `gs.raised_cells`): one `view_blocks box` over the 9×9 column field centred on the anchor (the
+  server caps `half_width` at 4, so `FLATTEN_RADIUS` = 4 is matched in `perception.scan_base_box`),
+  keeping every cell **above** the floor `by` up to `by + FLATTEN_UP` (= 4) that holds a block in
+  the `FLATTEN_BLOCKS` **whitelist** (terrain + `COMBAT_SCAFFOLD_BLOCKS`). A whitelist, not a
+  blacklist, so the base's own furniture is safe by construction — a chest, furnace, smoker,
+  crafting table, bed, the obsidian frame and a lit `nether_portal` block are none of these and are
+  never dug; the floor `by` itself is never touched, so nothing the base stands on is undercut.
+  Cobblestone **is** on the whitelist on purpose: the portal's four cobblestone corners are only
+  needed while the frame is built and the gate works without them, so a corner left standing above
+  ground level is cleared like any other bump (the two lower corners sit at `by` and stay bedded).
+  The dig batch is capped at `FLATTEN_BATCH` (= 8, one route search per cell — `clear_portal`'s
+  reason); the scan re-reads each tick and the rest falls to the next. Gated through
+  `_base_leveling_wanted`: at the base, Overworld, gate lit (so the base geometry is final), the
+  list non-empty, and **daytime only for now** — to watch how it grips before it runs at night as
+  well. Offered below the Nether prep and the gate chain but above `wait`, so an idle bot at a lumpy
+  base levels it and the step drops out the moment the scan comes up empty. `verify.progressed`
+  counts a dug block that lands in the pack or a cleared cell that dropped nothing (the
+  `collect_smelted` shape: a refusal's empty delta is not progress). Tested in
+  `tests/test_actions.py::FlattenHomeBaseTest`, `tests/test_graph.py::BaseTerrainScanTest`,
+  `tests/test_verify.py::FlattenHomeBaseProgressTest`.
 - **Water escape reflex (implemented):** `candidates` checks `gs.in_water and not gs.on_ground` as
   the very first thing (even before the M2d reactions) and then returns **only** `["escape_water"]` — here
   Laya does not choose, the state is a rescue. The loop tracks `gs.water_ticks` for this (`Agent._inject`)

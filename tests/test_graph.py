@@ -89,6 +89,8 @@ class WaterTicksTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -221,6 +223,8 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.log = self._Log()
@@ -423,6 +427,8 @@ class PourSkipTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._pour_skip = set()
@@ -528,6 +534,8 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._pour_skip = set()
@@ -683,6 +691,8 @@ class StanceSkipTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._pour_skip = set()
@@ -810,6 +820,8 @@ class RescueSkipTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._pour_skip = set()
@@ -931,6 +943,8 @@ class StuckOfferTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._stuck_code = {}
@@ -1094,6 +1108,8 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, **over):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -1241,6 +1257,8 @@ class IdleOfferGuardTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._stuck_off = {}
@@ -1345,6 +1363,8 @@ class WanderGuardTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._wander_reps = {}
@@ -1458,6 +1478,8 @@ class OrbitGuardTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._orbit_path = {}
@@ -1576,6 +1598,8 @@ class FurnaceDrainReadTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._furnace_blocked = False
@@ -1655,6 +1679,8 @@ class FrameCompleteLatchTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._frame_complete = False
@@ -1830,6 +1856,8 @@ class FrameRefusalTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -1949,6 +1977,8 @@ class RecoverWriteOffTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._recover_written_off = set()
@@ -2103,6 +2133,8 @@ class BuildSiteSurfaceGateTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -2140,6 +2172,8 @@ class SurfaceNoteTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.surface = None
@@ -2191,6 +2225,8 @@ class BaseAnchorRepairTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = (419, 73, 594)
@@ -2261,6 +2297,8 @@ class DropHoleTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._drop_hole_blocked = False
@@ -2426,6 +2464,8 @@ class DropUndoneTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._drop_hole_blocked = True
         agent._drop_hole_cell = None
         agent._drop_open_pending = False
@@ -2532,6 +2572,8 @@ class ChestSupportTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -2641,6 +2683,8 @@ class FurnaceSupportTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._chest_blocked = False
@@ -2828,6 +2872,8 @@ class ChestLidTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._chest_above = None
@@ -2930,6 +2976,8 @@ class GoalStopTest(unittest.TestCase):
 
     def _agent(self, stop_when_complete: bool = True) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
@@ -3036,6 +3084,8 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
@@ -3215,6 +3265,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, cells) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = (-197, -47, -98)
@@ -3323,6 +3375,109 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent._inject(gs()).portal_blocked, [(-195, -46, -98)])
 
 
+class BaseTerrainScanTest(unittest.IsolatedAsyncioTestCase):
+    """The loop reads the home-base footprint while the gate is lit and the bot is home by day, so
+    `flatten_home_base` has exactly the cells piled above ground level to dig (`gs.raised_cells`).
+
+    What must be true: only cells above the floor `by` are listed (the ground the base stands on is
+    never undercut), only removable blocks (`FLATTEN_BLOCKS`) are listed (furniture, the obsidian
+    frame and the lit portal are safe by construction), and the list is highest-cell-first then
+    nearest-first, so each capped batch takes a scaffold column off the top down and clears the
+    cells at the bot's feet before the far corners.
+    """
+
+    BASE = (0, 70, 0)
+
+    class _Read:
+        def __init__(self, box):
+            self.data = {"response": {"data": {"result": {"blocks": {"box": box}}}}}
+            self.text = None
+
+    class _Mcp:
+        def __init__(self, box):
+            self.box = box
+            self.calls: list = []
+
+        async def read(self, tool, args, why):
+            self.calls.append((tool, args))
+            return BaseTerrainScanTest._Read(self.box)
+
+    @classmethod
+    def _box(cls, overrides: dict) -> dict:
+        """One `view_blocks box` payload over the footprint, air everywhere but the overrides.
+
+        Mirrors `perception.scan_base_box`: centre x at the anchor, half-width 4, the layers the
+        read covers (`by` up to `by+4`), each row's `blocks` running x west to east.
+        """
+        bx, by, bz = cls.BASE
+        layers = []
+        for y in range(by, by + 5):
+            rows = []
+            for z in range(bz - 4, bz + 5):
+                rows.append({"z": z, "blocks": [overrides.get((x, y, z), "air")
+                                                for x in range(bx - 4, bx + 5)]})
+            layers.append({"y": y, "rows": rows})
+        return {"center": {"x": bx}, "halfWidth": 4, "layers": layers}
+
+    def _agent(self, box) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent.base = self.BASE
+        agent._raised = []
+        agent.mcp = self._Mcp(box)
+        return agent
+
+    def _lit_home(self, **kw):
+        # `_inject` sets `gs.base` before the scan runs, and `_scan_base_terrain` gates on
+        # `_at_base(gs)`, so the state the scan sees carries the anchor.
+        bx, by, bz = self.BASE
+        return gs(base=self.BASE, pos=(bx + 0.5, by + 1.0, bz + 0.5), phase="day",
+                  resources={"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                         bx + 2, by, bz, 2.0)]}, **kw)
+
+    async def test_lists_the_raised_removable_cells_top_down_then_nearest(self) -> None:
+        bx, by, bz = self.BASE
+        box = self._box({
+            (1, by + 1, 0): "cobblestone",   # a corner bump above the floor -> dug
+            (1, by + 2, 0): "dirt",          # the column's higher cell, same footing
+            (-2, by + 3, -2): "stone",       # a far scaffold tower top
+            (0, by, 0): "grass_block",       # the floor itself -> never dug
+            (2, by + 1, 1): "chest",         # furniture -> not in the whitelist
+            (-2, by + 1, -2): "obsidian",    # the frame -> not in the whitelist
+        })
+        agent = self._agent(box)
+        await agent._scan_base_terrain(self._lit_home())
+        self.assertEqual(agent._raised,
+                         [(-2, by + 3, -2), (1, by + 2, 0), (1, by + 1, 0)])
+        self.assertEqual(agent.mcp.calls[0][0], "view_blocks")
+
+    async def test_a_flat_base_leaves_nothing_to_level(self) -> None:
+        agent = self._agent(self._box({(0, self.BASE[1], 0): "grass_block"}))
+        await agent._scan_base_terrain(self._lit_home())
+        self.assertEqual(agent._raised, [])
+
+    async def test_no_read_before_the_gate_is_lit(self) -> None:
+        agent = self._agent(self._box({(1, self.BASE[1] + 1, 0): "cobblestone"}))
+        g = self._lit_home()
+        g.resources = {}
+        await agent._scan_base_terrain(g)
+        self.assertEqual(agent.mcp.calls, [])
+        self.assertEqual(agent._raised, [])
+
+    async def test_night_and_off_base_read_nothing(self) -> None:
+        bx, by, bz = self.BASE
+        box = self._box({(1, by + 1, 0): "cobblestone"})
+        agent = self._agent(box)
+        night = self._lit_home()
+        night.phase = "night"
+        await agent._scan_base_terrain(night)
+        self.assertEqual(agent.mcp.calls, [])
+        agent = self._agent(box)
+        away = self._lit_home()
+        away.pos = (bx + 40.0, by + 1.0, bz + 40.0)
+        await agent._scan_base_terrain(away)
+        self.assertEqual(agent.mcp.calls, [])
+
+
 class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
     """The chest read must not be able to fail quietly into looking like an empty chest.
 
@@ -3355,6 +3510,8 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, mcp) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = (-197, -47, -98)
@@ -3438,6 +3595,8 @@ class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, mcp) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = (-197, -47, -98)
@@ -3510,6 +3669,8 @@ class ContainerMissingTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.chest_pos = ContainerMissingTest.MAIN
@@ -3660,6 +3821,8 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, data=None) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = self.BASE
@@ -3915,6 +4078,8 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, data) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -4155,6 +4320,8 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, grid) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -4271,6 +4438,8 @@ class SearchIsPaidForInMetresTest(unittest.IsolatedAsyncioTestCase):
         from mlaya.graph import Agent
         from mlaya.config import Settings
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
@@ -4298,6 +4467,8 @@ class NetherCrossingTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -4683,6 +4854,8 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, **over):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -4778,6 +4951,8 @@ class StoppedBuildFrameMarkingTest(unittest.TestCase):
     @staticmethod
     def _agent(**over) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.base = None
@@ -4846,6 +5021,8 @@ class BodyHeldStopTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
@@ -4922,6 +5099,8 @@ class FleeStageTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, order: list) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent.log = []
 
@@ -4971,6 +5150,8 @@ class DeathPolicyTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> tuple[Agent, list]:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._death_seen = None
@@ -5057,6 +5238,8 @@ class ShutInTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent.bed_pos = None
+        agent._raised = []
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._boxed = (None, 0)

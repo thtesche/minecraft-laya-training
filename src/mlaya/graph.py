@@ -13,7 +13,9 @@ from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
+                      FLATTEN_BLOCKS, FLATTEN_RADIUS, FLATTEN_UP,
                       _frame_complete_at_base, _frame_short_at_base,
+                      BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
                       FORTRESS_MIN_M, BLAZE_ROD_ITEM)
 from .brain import Brain, escalate_to_system2
@@ -371,6 +373,11 @@ class Agent:
         # scan after a restart, like the chest.
         self.furnace_pos: tuple[int, int, int] | None = None
         self.smoker_pos: tuple[int, int, int] | None = None
+        # The gate bed, remembered from the `sleep` that laid it or from a scan at the base. A bed
+        # is only visible while the base chunks are loaded, so without this a bot that wanders off
+        # reads the respawn bed as still owed and crafts a second one (live, run121 it80). Per-run
+        # like `chest_pos`: a restart re-adopts it from the world the moment the bot walks back.
+        self.bed_pos: tuple[int, int, int] | None = None
         # Whether `base` came from the world rather than from an `establish_base` this run: a lit
         # portal a previous run left standing (`_adopt_portal_base`). While the bot has not reached
         # it yet, `base_adopted` rides in the GameState and `go_home` walks it back, so a restart
@@ -510,6 +517,10 @@ class Agent:
         # the support layer cannot stall the gate (live: a bed in the opening left
         # `light_portal` answering `[PORTAL_NO_FRAME]` on every tick).
         self._portal_blocked: list[tuple[int, int, int]] = []
+        # Cells of the base footprint holding a block piled above ground level, read by
+        # `_scan_base_terrain` while the gate is lit and the bot is home by day. `flatten_home_base`
+        # digs them back to air; empty means the ground is flat and the step is not offered.
+        self._raised: list[tuple[int, int, int]] = []
         # A `build_portal` the server answered `ok` to while it spent nothing (`_note_build`):
         # the frame already stands complete. The step's "resume a partial frame" clause would
         # otherwise re-offer the build on a finished frame for as long as any obsidian is left
@@ -585,6 +596,7 @@ class Agent:
         gs.barter_attempts = self._barter_attempts
         gs.furnace_pos = self.furnace_pos
         gs.smoker_pos = self.smoker_pos
+        gs.bed_pos = self.bed_pos
         gs.base_adopted = self._base_adopted
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
@@ -614,6 +626,7 @@ class Agent:
         gs.blocked_cell = self._blocked_cell
         gs.chest_above = self._chest_above
         gs.portal_blocked = list(self._portal_blocked)
+        gs.raised_cells = list(self._raised)
         gs.refused_frame = tuple(sorted(self._refused_frame))
         gs.frame_names = dict(self._frame_names)
         # The frame-plane read only exists with the base chunks loaded, so a bot that finished the
@@ -744,6 +757,7 @@ class Agent:
         gs = self._inject(gs)
         await self._scan_build_site(gs)
         await self._scan_portal_opening(gs)
+        await self._scan_base_terrain(gs)
         if self._base_adopted and _at_base(gs):
             # The re-adopted base has been reached: from here behave as if the run raised it.
             self._base_adopted = False
@@ -1093,6 +1107,40 @@ class Agent:
         self._portal_blocked = [cell for cell in perception.portal_interior(self.base)
                                 if not _clear(names.get(cell))]
 
+    async def _scan_base_terrain(self, gs) -> None:
+        """List the blocks piled above ground level around the base, for `flatten_home_base`.
+
+        The survival reflex stacks scaffold during fights and a buried-and-raised base leaves stray
+        terrain; neither is ever cleared, so the home ground turns lumpy and sometimes hides a
+        tunnel mouth. Once the gate is lit and the bot is home by day, one `view_blocks box` read of
+        the footprint names every cell above the floor `by` that holds a removable block
+        (`FLATTEN_BLOCKS`). Furniture, the obsidian frame and the lit portal are not in the whitelist
+        and are never listed, and the floor itself (`by`) is never dug, so nothing the base stands on
+        is undercut. Gated tight so it reads nothing while the base is still being built or the bot is
+        away; the empty list then drops the step out of the offer.
+        """
+        if (self.base is None or gs.pos is None or gs.phase != "day"
+                or not _at_base(gs)
+                or gs.resource_nearest(perception.PORTAL_BLOCK) is None):
+            self._raised = []
+            return
+        bx, by, bz = self.base
+        try:
+            grid = perception.parse_box(await perception.scan_base_box(self.mcp, self.base))
+        except Exception:
+            self._raised = []
+            return
+        raised = [cell for cell, name in grid.items()
+                  if by < cell[1] <= by + FLATTEN_UP
+                  and max(abs(cell[0] - bx), abs(cell[2] - bz)) <= FLATTEN_RADIUS
+                  and name in FLATTEN_BLOCKS]
+        # Lowest-tower-first and nearest-first: a scaffold column comes off cleanly from the top of
+        # the batch down, and the cells right at the bot's feet go before the far corners, so each
+        # capped batch is the most useful one.
+        fx, _fy, fz = gs.pos
+        raised.sort(key=lambda c: (-c[1], (c[0] - fx) ** 2 + (c[2] - fz) ** 2))
+        self._raised = raised
+
     def _adopt_homebase(self, gs) -> None:
         """Re-adopt a home base and chest a previous run left standing in the world.
 
@@ -1168,6 +1216,35 @@ class Agent:
                         and abs(hit.y - (by + 1)) <= ADOPT_CHEST_RADIUS):
                     self.furnace_pos = hit.pos
                     break
+        self._adopt_bed(gs)
+
+    def _adopt_bed(self, gs) -> None:
+        """Adopt the gate bed the world already has, and forget one that is no longer there.
+
+        `bed_pos` is per-run like `base`, so a restart loses it; the bed is a real block, and the
+        first tick that walks back into the base's chunks names it again -- which is what lets
+        `sleep` and the completion gate work without laying a second bed. The other direction
+        matters as much: a remembered cell whose bed was taken up or broken would keep
+        `_bed_at_base` true over empty ground and close `tech_tree_complete` on a respawn point
+        that does not exist. Forgetting is only safe when the scan actually ran *at* the base: an
+        empty resource list is no information, and a bot 280 m off base cannot see its own bed
+        either (live, run121 it80: `craft_bed` fired at (228,72,-336) for a bed three cells from
+        the anchor). A bed inside the box but within `BED_PORTAL_CLEARANCE` of the lit gate is not
+        the gate bed, so it is not remembered as one.
+        """
+        if self.base is None:
+            return
+        bx, by, bz = self.base
+        portal = gs.resources.get("nether_portal") or []
+        hits = [h for h in gs.resources.get("white_bed", [])
+                if abs(h.x - bx) <= ADOPT_CHEST_RADIUS and abs(h.z - bz) <= ADOPT_CHEST_RADIUS
+                and abs(h.y - (by + 1)) <= ADOPT_CHEST_RADIUS
+                and _gate_gap(h.pos, portal) >= BED_PORTAL_CLEARANCE]
+        if hits:
+            self.bed_pos = min(hits, key=lambda h: h.distance).pos
+            return
+        if self.bed_pos is not None and gs.resources and _at_base(gs):
+            self.bed_pos = None
 
     async def _perceive(self, state: AgentState) -> dict:
         gs = await self._observe()
@@ -2369,6 +2446,25 @@ class Agent:
         elif "CONTAINER_BATCH_INCOMPLETE" in text:
             self._stow_blocked = True
 
+    def _note_bed(self, action, ok: bool, res=None) -> None:
+        """Remember the bed cell the `sleep` server used, and forget one taken out of the world.
+
+        The bed block *is* the respawn point, and it is the only place the server ever names it:
+        `view_status` carries no spawn field and the bot's SQLite has no respawn table, so the
+        `sleep` response's `bedPosition` is the whole read. It comes back on a failed sleep too --
+        the cell the server tried to click -- which is exactly what the reach step needs next tick.
+        A `take_bed` that succeeded removed the bed, so a cell remembered against it would keep
+        `_bed_at_base` true over an empty space.
+        """
+        if action.label == "take_bed" and ok:
+            self.bed_pos = None
+            return
+        if action.label != "place_bed" or action.tool != "sleep":
+            return
+        bed = _find(getattr(res, "data", None), "bedPosition")
+        if isinstance(bed, dict) and all(isinstance(bed.get(k), int) for k in ("x", "y", "z")):
+            self.bed_pos = (bed["x"], bed["y"], bed["z"])
+
     def _note_placed(self, action) -> None:
         """Remember the cell of a placement that just succeeded.
 
@@ -2423,6 +2519,7 @@ class Agent:
         self._note_furnace(action, _ok, _text, res)
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
+        self._note_bed(action, _ok, res)
         self._note_recover(before, action, _ok, _text)
         # Opened before the action runs: the rescue has to be down on the *next* tick, while the
         # crossing settles and the teleport fires.

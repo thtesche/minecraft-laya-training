@@ -642,6 +642,11 @@ class GameState:
     # The food station at the base. A smoker processes food only - it cannot smelt the iron
     # the tech tree needs - so it stands *beside* the furnace rather than replacing it.
     smoker_pos: tuple[int, int, int] | None = None
+    # The gate bed this run laid or adopted, remembered like `chest_pos`. `view_blocks find` only
+    # reads loaded chunks, so a bot 280 m off base sees no bed at all and reads the respawn bed as
+    # still owed (live, run121 it80: `craft_bed` fired at (228,72,-336) while the gate bed stood
+    # three cells from the anchor). Per-run like the base itself.
+    bed_pos: tuple[int, int, int] | None = None
     # Ground covered since the crossing, in metres. The search budget is spent in this unit rather
     # than in decisions, because a decision is not search: run70 spent nineteen of twenty-four
     # ticks pinned by the combat reflex, standing still, and the hunt ended with 108 m covered.
@@ -761,6 +766,12 @@ class GameState:
     # answers `[PORTAL_NO_FRAME]` on every tick (live, Nether run: a bed the generic sleep laid
     # "beside the bot" landed in the opening). `clear_portal` digs these cells before the build.
     portal_blocked: list[tuple[int, int, int]] = field(default_factory=list)
+    # Cells of the home-base footprint that hold a block piled above ground level, which
+    # `flatten_home_base` digs back to air (`actions.FLATTEN_BLOCKS`). Read from one `view_blocks
+    # box` while the gate is lit and the bot is home by day (`Agent._scan_base_terrain`), lowest
+    # tower cells and nearest cells first. Empty means the ground is already flat, and the leveling
+    # step drops out of the offer.
+    raised_cells: list[tuple[int, int, int]] = field(default_factory=list)
     # The loop learned from the server that the frame build has nothing left to place: a
     # `build_portal` answered `ok` while spending no obsidian or cobblestone (`Agent._note_build`).
     # That success resets `_track_stuck`, so the "resume a partial frame" clause would offer the
@@ -917,6 +928,7 @@ class GameState:
             "base_adopted": self.base_adopted,
             "furnace_pos": self.furnace_pos,
             "smoker_pos": self.smoker_pos,
+            "bed_pos": self.bed_pos,
             "furnace_occupied": self.furnace_occupied,
             "furnace_contents": dict(self.furnace_contents),
             "furnace_blocked": self.furnace_blocked,
@@ -976,7 +988,8 @@ class GameState:
         for field in ("health", "food", "phase", "raining", "on_ground", "in_water",
                       "dimension", "slots_used", "tools", "tool_meta", "armor", "offhand",
                       "hostiles", "players", "unread", "death_pos", "drops", "base", "chest_pos",
-                      "base_adopted", "furnace_pos", "smoker_pos", "furnace_occupied", "furnace_blocked",
+                      "base_adopted", "furnace_pos", "smoker_pos", "bed_pos",
+                      "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
                       "nether_entered", "nether_arrival", "nether_gate", "nether_ticks",
                       "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
@@ -1535,6 +1548,24 @@ async def scan_frame_volume(executor, base: tuple[int, int, int]) -> dict:
         "view_blocks",
         {"cells": cells},
         "read the portal frame plane for stray and refused cells before the frame is built",
+    )
+    return coerce(res.data, res.text)
+
+
+async def scan_base_box(executor, base: tuple[int, int, int]) -> dict:
+    """One `view_blocks box` read of the home-base footprint, for `flatten_home_base`.
+
+    Centred on the anchor and lifted so the box spans the ground floor `by` up to `by+4`; the
+    server caps `half_width` at 4, so the field is the 9x9 columns the base furniture and the gate
+    all sit within (`actions.FLATTEN_RADIUS` is kept equal to it). Returns the coerced result for
+    `parse_box`; the removable cells are filtered out of it by the loop (`Agent._scan_base_terrain`),
+    which owns the block whitelist -- `perception` must not import the action layer.
+    """
+    bx, by, bz = base
+    res = await executor.read(
+        "view_blocks",
+        {"box": {"x": bx, "y": by + 2, "z": bz, "half_width": 4, "half_height": 2}},
+        "read the home-base footprint for stray blocks piled above ground level, to level it",
     )
     return coerce(res.data, res.text)
 
