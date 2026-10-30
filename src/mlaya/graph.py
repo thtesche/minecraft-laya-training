@@ -664,16 +664,14 @@ class Agent:
             restored.append("nether_entered")
         # The counters only this run knows: how many pearl waves it already spent, how many
         # barter rolls the gold reserve has burned. The checkpoint note is the only source.
+        if facts.pearl_wave_trips > self._pearl_wave_trips:
+            self._pearl_wave_trips = facts.pearl_wave_trips
+            restored.append("pearl_wave_trips")
+        if facts.barter_attempts > self._barter_attempts:
+            self._barter_attempts = facts.barter_attempts
+            restored.append("barter_attempts")
         note = facts.checkpoint
         if note:
-            trips = note.get("pearl_wave_trips")
-            if isinstance(trips, int) and trips > self._pearl_wave_trips:
-                self._pearl_wave_trips = trips
-                restored.append("pearl_wave_trips")
-            barter = note.get("barter_attempts")
-            if isinstance(barter, int) and barter > self._barter_attempts:
-                self._barter_attempts = barter
-                restored.append("barter_attempts")
             cells = note.get("powder_cells")
             if isinstance(cells, list):
                 for cell in cells:
