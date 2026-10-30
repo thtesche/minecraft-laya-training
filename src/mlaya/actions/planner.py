@@ -580,8 +580,17 @@ def candidates(gs: GameState) -> list[str]:
             # (run123, ten `wait` ticks at the base). Carried rods or powder are a haul whatever
             # run carried them across.
             if not _in_nether(gs) and (gs.nether_entered or _blaze_rods(inv) or _blaze_powder(inv)):
-                if _worn(gs, GOLD_HELMET_ITEM) and (_has(inv, "diamond_helmet")
-                                                    or _worn(gs, "diamond_helmet")):
+                # The gold piece is the piglin pass for a crossing that is about to happen; the
+                # diamond helmet is the better headgear for everything else the base does. Both
+                # preconditions were satisfiable on the same tick, and that is a loop: run127
+                # it137-174, at the base with the gate lit and the trip stocked, the model took
+                # `swap_to_gold_helmet` 61 times and `swap_to_diamond_helmet` 40 times in
+                # thirty-eight ticks - each swap made the other one wanted again - and never
+                # stepped through. A pending departure owns the helmet slot; the diamond swap
+                # waits until no crossing is on the list.
+                if (_worn(gs, GOLD_HELMET_ITEM) and (_has(inv, "diamond_helmet")
+                                                     or _worn(gs, "diamond_helmet"))
+                        and not _nether_departure_ready(gs)):
                     out.append("swap_to_diamond_helmet")
                 if _blaze_rods(inv) > 0 and _has(inv, "crafting_table") \
                         and _blaze_powder(inv) < _powder_target(gs):
@@ -1311,7 +1320,9 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                        "range": 2, "dig": True, "scaffold": True},
                       "walk up to the Nether exit portal's doorstep, where the trip started")
     if label == "swap_to_diamond_helmet":
-        if _in_nether(gs) or not _worn(gs, GOLD_HELMET_ITEM):
+        # The offer and the resolve agree: while a crossing is pending the gold piece stays on,
+        # so an escalated diamond swap cannot put the bot back in front of the piglins.
+        if _in_nether(gs) or not _worn(gs, GOLD_HELMET_ITEM) or _nether_departure_ready(gs):
             return None
         if not (_has(inv, "diamond_helmet") or _worn(gs, "diamond_helmet")):
             return None

@@ -4387,6 +4387,39 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertNotIn("swap_to_gold_helmet", cand)
         self.assertEqual(resolve("enter_portal", g).tool, "enter_nether_portal")
 
+    def test_the_two_helmet_swaps_are_never_both_on_offer(self) -> None:
+        # run127 it137-174: at the base with the gate lit and the trip stocked, the gold swap made
+        # the diamond swap wanted and the diamond swap made the gold swap wanted again - 61 gold-on
+        # and 40 diamond-on ticks in thirty-eight ticks, and the bot never stepped through. While a
+        # crossing is pending, the gold piece stays on the head.
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        g.inventory["golden_helmet"] = 0
+        g.inventory["diamond_helmet"] = 1
+        g.nether_entered = True
+        cand = candidates(g)
+        self.assertNotIn("swap_to_diamond_helmet", cand)
+        self.assertIn("enter_portal", cand)
+        self.assertIsNone(resolve("swap_to_diamond_helmet", g))
+
+    def test_the_diamond_helmet_goes_back_on_when_no_crossing_is_pending(self) -> None:
+        # The same bot, the same pack, and no crossing on the list: the frame stands dark, so the
+        # gold piece is not owed to a trip and the diamond helmet is the better headgear for the
+        # work at the base.
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        g.inventory["golden_helmet"] = 0
+        g.inventory["diamond_helmet"] = 1
+        g.nether_entered = True
+        g.portal_lit = False
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
+                      "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -100, 2.5)]}
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertIn("swap_to_diamond_helmet", candidates(g))
+        a = resolve("swap_to_diamond_helmet", g)
+        self.assertEqual(a.tool, "equip")
+        self.assertEqual(a.args["items"], [{"item_name": "diamond_helmet", "destination": "head"}])
+
     # --- down there ---
     def test_the_gold_helmet_goes_on_first(self) -> None:
         g = self._down(golden_helmet=1)
