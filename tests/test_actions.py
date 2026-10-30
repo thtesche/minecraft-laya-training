@@ -6644,12 +6644,16 @@ class DigOutTest(unittest.TestCase):
         self.assertEqual(cells, {(182 + k, 70 + h, 181) for k in (1, 2, 3) for h in (0, 1)})
         self.assertTrue(all(c["block_name"] == "air" for c in a.args["blocks"]))
 
-    def test_a_floating_body_does_not_dig(self) -> None:
-        # `build_structure` air cells around a body with no footing hung the runtime event loop in
-        # the water pocket at (-0.5,62,281) (live run115 it527, run116 it0). The rescue that gets
-        # the feet back owns that tick, not a tunnel.
-        g = gs(pos=(-0.5, 62.4, 281.5), boxed_in=True, in_water=True, on_ground=False)
-        self.assertIsNone(resolve("dig_out", g))
+    def test_a_body_that_is_not_standing_does_not_dig(self) -> None:
+        # `build_structure` air cells around a body that is not standing hung the runtime event
+        # loop in the water pocket at (-0.5,62,281) (live run115 it527, run116 it0). The step that
+        # gets the feet back owns that tick, not a tunnel.
+        for water in (True, False):
+            g = gs(pos=(-0.5, 62.4, 281.5), boxed_in=True, in_water=water, on_ground=False)
+            self.assertIsNone(resolve("dig_out", g))
+        # Standing and shut in, the tunnel still runs.
+        self.assertIsNotNone(resolve("dig_out", gs(pos=(182.5, 70.0, 181.5), boxed_in=True,
+                                                  on_ground=True)))
 
     def test_each_further_try_turns_to_another_side(self) -> None:
         sides = set()

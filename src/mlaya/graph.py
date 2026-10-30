@@ -257,14 +257,14 @@ def unblock_action(gs, attempt: int = 0):
     and keeps the bot next to what it was working on. Only if that pocket did not help
     does the second attempt fall back to walking to open ground (`explore`, M4 target pool).
 
-    A body with no footing gets the water rescue instead of a dug pocket. `build_structure`
-    air cells around a floating body hung the runtime event loop twice, `build_structure` the
-    only operation still active at the `[RUNTIME_UNRESPONSIVE]` incident both times (live,
-    run115 it527 and run116 it0, each after `[WORKSTATION_PLACEMENT_FAILED] crafting_table:
-    no_cell` at (-0.5, 62, 281)). Nothing that walks or digs can run from a floating stance,
-    so the rescue that gets the feet back is the only unblock that can.
+    A body with no footing gets the step that restores footing instead of a dug pocket.
+    `build_structure` air cells around a body that is not standing hung the runtime event loop
+    in both `[RUNTIME_UNRESPONSIVE]` incidents -- run115 it527 and run116 it0, each after
+    `[WORKSTATION_PLACEMENT_FAILED] crafting_table: no_cell` at (-0.5, 62, 281), `build_structure`
+    the only operation still active in each incident's activity record. Nothing that digs needs
+    a pickaxe, it needs feet, so the rescue that gets the feet back is the only unblock that can.
     """
-    if gs.in_water and not gs.on_ground:
+    if gs.on_ground is False and gs.pos is not None:
         return resolve("escape_water", gs)
     if attempt < 1:
         action = resolve("make_room", gs)
