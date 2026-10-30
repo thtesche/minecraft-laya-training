@@ -91,6 +91,9 @@ precedence) and is gitignored. Prerequisite: the mine-ai MCP server running at
 Configuration: [`config/settings.toml`](config/settings.toml) — among others
 `[loop] wait_hold_s` (seconds a successful `wait` holds, default 30). Every decision is logged
 to `runs/decisions.jsonl`; move it to `runs/history/decisions-runNN.jsonl` before the next run.
+To read that log while a run is live: `tail -f runs/decisions.jsonl | scripts/dec.py`
+(one key per line at level 1, everything deeper compact — see
+[`docs/operations.md`](docs/operations.md#reading-the-log-while-it-is-written)).
 
 ### M3: logs → dataset → fine-tuning
 

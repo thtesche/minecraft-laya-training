@@ -36,6 +36,23 @@ head is trained. Run-by-run findings live in [`architecture.md`](architecture.md
    `policy` stages) with the state, the candidates, the chosen label, the result text and the
    delta.
 
+### Reading the log while it is written
+
+A record is one long line, and `state` alone (with `resources` and `mobs`) runs to a few
+thousand characters, so `jq .` buries the decision under it. `scripts/dec.py` prints a record
+with one key per line at level 1 and everything deeper on a single line:
+
+```bash
+tail -f runs/decisions.jsonl | scripts/dec.py                                   # live, level 1
+tail -n 5 runs/decisions.jsonl | scripts/dec.py --keys ts,stage,iteration,tool,label,ok,status,answers,delta
+scripts/dec.py --depth 2 --file runs/history/decisions-runNN.jsonl              # one level more unfolded
+scripts/dec.py --no-color < runs/decisions.jsonl | less                         # into less or a file
+```
+
+`--depth` is the number of levels that get their own lines (default 1), `--keys` keeps only the
+named top-level keys, and a half-written record from a run still in progress is skipped with a
+note on stderr rather than ending the reader.
+
 ## A fix
 
 - **Every fix comes with tests**, written from the live state that showed the defect (the cell,
