@@ -956,7 +956,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–124 (2026-10-28 … 30)
+## Live findings run108–125 (2026-10-28 … 30)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1119,11 +1119,19 @@ hostile_reflex". The helmet swap returns its list early, before the `gs.stuck_la
 end of `candidates`, so a withheld label stayed the sole offer forever. The same early return that
 owns the shed tick (`drop_junk`) is guarded now.
 
-Net: the crossing, the fortress march and the rod haul all run live, and the water, footing and
-foreground guards closed the runtime-crash and ping-pong classes; **no run has carried blaze
-powder back to the chest at the gate**. run118 died after 57 consecutive ticks (it92-151) whose
-only offer was `['drop_junk', 'explore']` — the offer set, not one fight, is what kept it down
-there.
+**Powder the eyes can spend is not a haul to bank.** run125 it16-529: one pearl and two blaze
+powder in the pack, sixteen eyes owed. `stow_blaze_powder` (the haul block) and `take_blaze_powder`
+(the stronghold block) were both live on the same tick, and the model crossed the lid in one
+direction and back in the other for five hundred ticks - thirty of each. Every transfer is its own
+label's progress in `verify`, so the stuck guard never counted a single one. The deposit is offered
+only when the carried powder is surplus to the eyes owed now: a pearl in hand, a table in the pack
+and no more powder than the frame costs means the pack holds the next eye, not a haul.
+
+Net: the crossing, the fortress march and the rod haul all run live, and the powder reaches the
+chest at the gate (run124 it6, run125 it1-3, `powder_stowed` latched); what no run has done yet is
+turn that powder into an eye of ender. The water, footing and foreground guards closed the
+runtime-crash and the walk-back-and-forth classes; **run125's remaining stall was a chest lid, not
+a fight**.
 
 ## Next milestones
 

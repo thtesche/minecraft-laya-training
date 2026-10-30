@@ -16,7 +16,7 @@ from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _bed_a
                           _bed_cells, _bed_reachable, _bed_reach_stance, _bed_stance,
                           _click_gap, _crowding_hostiles, _diamond_reason, _expedition_prepared,
                           _eyes_owed, _frame_empty, _nether_haul_home, _nether_topup_wanted,
-                          _nether_pearl_wave_wanted, _pearls_owed, _powder_target, _rods_target,
+                          _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_target, _rods_target,
                           _frame_needs_obsidian, _gold_reserve_short, _known_footings,
                           _centre,
                           _hoard_surplus, _idle_off_base, _nether_prep_steps,
@@ -5506,6 +5506,62 @@ class RodDemandSizedToTheFrameTest(unittest.TestCase):
         # Four sockets the frame already holds: twelve eyes are enough to travel.
         g.inventory["ender_eye"] = 12
         self.assertIn("locate_stronghold", candidates(g))
+
+
+class PowderInPackIsEyeFuelTest(unittest.TestCase):
+    """The deposit and the withdraw offered on the same tick: a lid crossed both ways.
+
+    Live, run125 it16-47: one pearl and two powder in the pack, sixteen eyes owed. The haul block
+    offered `stow_blaze_powder` and the stronghold block offered `take_blaze_powder`, and the model
+    alternated between them for thirty-two ticks. Each transfer is its own label's progress in
+    `verify`, so the stuck guard never fired and the run spent its whole budget on one chest lid.
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-196, -46, -98)
+    GATE = (-195, -46, -98)
+
+    def _home(self, **inv) -> GameState:
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, golden_helmet=1,
+                     cooked_mutton=64, white_bed=1, diamond_pickaxe=2)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.chest_pos = self.CHEST
+        g.dimension = "minecraft:overworld"
+        g.powder_stowed = True
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  *self.GATE, 2.0)]}
+        return g
+
+    def test_powder_the_eyes_can_spend_is_not_deposited(self) -> None:
+        g = self._home(ender_pearl=1, blaze_powder=2)
+        self.assertTrue(_powder_is_eye_fuel(g))
+        self.assertNotIn("stow_blaze_powder", candidates(g))
+        self.assertIsNone(resolve("stow_blaze_powder", g))
+        self.assertIn("craft_ender_eye", candidates(g))
+
+    def test_powder_beyond_the_eyes_owed_is_still_depositable(self) -> None:
+        # More powder than the frame can ever spend: the excess is a haul, not the next eye.
+        g = self._home(ender_pearl=1, blaze_powder=20)
+        self.assertFalse(_powder_is_eye_fuel(g))
+        a = resolve("stow_blaze_powder", g)
+        self.assertIsNotNone(a)
+        self.assertEqual(a.args["items"], [{"item_name": "blaze_powder", "count": 20}])
+
+    def test_a_pack_without_a_pearl_banks_the_haul(self) -> None:
+        g = self._home(blaze_powder=18)
+        self.assertFalse(_powder_is_eye_fuel(g))
+        self.assertIn("stow_blaze_powder", candidates(g))
+
+    def test_the_craft_empties_the_pearl_and_frees_the_deposit(self) -> None:
+        # The tick after the eye is crafted: no pearl left to pair with, so the leftover powder is
+        # banked again, and the next withdraw is a real top-up rather than the same two powder.
+        g = self._home(ender_pearl=1, blaze_powder=2)
+        self.assertEqual(resolve("craft_ender_eye", g).args["items"][0]["count"], 1)
+        g.inventory["ender_pearl"] = 0
+        g.inventory["ender_eye"] = 1
+        self.assertFalse(_powder_is_eye_fuel(g))
+        self.assertIn("stow_blaze_powder", candidates(g))
 
 
 class DiamondsForTheSparePickaxeTest(unittest.TestCase):

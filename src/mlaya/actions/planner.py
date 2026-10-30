@@ -586,7 +586,11 @@ def candidates(gs: GameState) -> list[str]:
                 if _blaze_rods(inv) > 0 and _has(inv, "crafting_table") \
                         and _blaze_powder(inv) < _powder_target(gs):
                     out.append("craft_blaze_powder")
-                if _blaze_powder(inv) > 0 and _chest_ready(gs) and _storage_target(gs) is not None:
+                # Powder the eye chain can spend from the pack is not a haul to bank: offered
+                # beside `take_blaze_powder` it became a lid the model kept crossing in both
+                # directions (run125 it16-47, thirty-two ticks of the same two powder).
+                if _blaze_powder(inv) > 0 and _chest_ready(gs) and _storage_target(gs) is not None \
+                        and not _powder_is_eye_fuel(gs):
                     out.append("stow_blaze_powder")
 
     # --- The stronghold (the phase after the Nether haul) ---
@@ -1332,6 +1336,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       f"craft the carried blaze rods into {want} blaze powder, one rod to two")
     if label == "stow_blaze_powder":
         if _in_nether(gs) or _blaze_powder(inv) <= 0 or not _chest_ready(gs):
+            return None
+        # The pack's powder is the next eye, not a haul: banking it here is the tick the model
+        # would have spent crafting, and the pair of offers either way is the ping-pong.
+        if _powder_is_eye_fuel(gs):
             return None
         # The blaze powder belongs in a chest of the network that can still take it: the main
         # one may well be the one a stow filled up, and powder deposited into a full chest is

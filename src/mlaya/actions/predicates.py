@@ -1205,6 +1205,21 @@ def _powder_on_hand(gs: GameState) -> int:
     return _blaze_powder(gs.inventory) + _powder_bank(gs)
 
 
+def _powder_is_eye_fuel(gs: GameState) -> bool:
+    """Powder the eye chain can spend from the pack this tick, so banking it is a round trip.
+
+    A pearl in hand, a table to craft on, eyes still owed, and no more powder carried than the
+    eyes cost: the pack's powder is the next eye, not a haul to put in the chest.
+    `stow_blaze_powder` and `take_blaze_powder` are both live then, and the model alternates
+    between them - run125 it16-47, thirty-two ticks of two powder crossing the chest lid in each
+    direction, every transfer counted by `verify` as that label's own progress, so the stuck
+    guard never fired and the run burned its whole budget on the lid.
+    """
+    inv = gs.inventory
+    return (_eyes_owed(gs) > 0 and int(inv.get(ENDER_PEARL_ITEM, 0)) > 0
+            and _has(inv, "crafting_table") and _blaze_powder(inv) <= _eyes_owed(gs))
+
+
 def _rods_target(gs: GameState) -> int:
     """How many blaze rods the pack has to end up holding for the eyes still owed.
 
