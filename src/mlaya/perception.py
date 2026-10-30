@@ -778,6 +778,11 @@ class GameState:
     # step forever; while this stands `candidates` drops it so the lull work owns the tick (live,
     # run25: 163 identical `build_portal` ticks on an already finished frame, the bot frozen).
     frame_complete: bool = False
+    # The base gate has been *seen* burning this run: the scan named a `nether_portal` block, or a
+    # crossing proved it. `_portal_lit` is otherwise a scan read, so a gate whose chunk has unloaded
+    # - or a bot standing on the other side of it, in the Nether - reads unlit, and the base chain
+    # reopens for a gate that already stands (run124 it40-41). Same latch shape as `frame_complete`.
+    portal_lit: bool = False
     # Frame cells a `build_structure` refused to touch (`[BUILD_INCOMPLETE] ... (x, y, z: ...)`,
     # read by `parse_refused_cells`). The server digs a wrong frame cell in place, but the movement
     # policy refuses a break it was not asked for, and a *container* (a furnace, a chest) always
@@ -962,6 +967,7 @@ class GameState:
             # `resolve` asks for when no portal block is in the scan, so a rebuilt tick could
             # never answer it and looked like a broken gate rather than a missing field.
             "nether_entered": self.nether_entered,
+            "portal_lit": self.portal_lit,
             "nether_arrival": self.nether_arrival,
             "nether_gate": self.nether_gate,
             "nether_ticks": self.nether_ticks,
@@ -1003,7 +1009,7 @@ class GameState:
                       "base_adopted", "furnace_pos", "smoker_pos", "bed_pos",
                       "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
-                      "nether_entered", "nether_arrival", "nether_gate", "nether_ticks",
+                      "nether_entered", "portal_lit", "nether_arrival", "nether_gate", "nether_ticks",
                       "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
                       "stronghold_estimated", "end_portal_active", "powder_cells",
                       "powder_bank", "frame_eyes",

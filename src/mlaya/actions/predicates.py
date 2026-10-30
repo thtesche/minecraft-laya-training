@@ -603,6 +603,12 @@ def _gear_ready(gs: GameState) -> bool:
     return _offhand(gs, SHIELD_ITEM)
 
 
+def _portal_lit_scan(gs: GameState) -> bool:
+    """The raw read: a lit portal block in a chunk the world currently has loaded."""
+    return (gs.resource_distance(PORTAL_BLOCK) is not None
+            or gs.resource_found.get(PORTAL_BLOCK, 0) > 0)
+
+
 def _portal_lit(gs: GameState) -> bool:
     """A lit nether portal is standing - the frame is on and the gate is open.
 
@@ -614,13 +620,14 @@ def _portal_lit(gs: GameState) -> bool:
     false - so a bot 190 m out believed it had an unlit gate and would have set about lighting one
     that was already burning. That is run22's shape again, in a different costume.
 
-    What it is not: a latch. A gate whose chunk has unloaded still reads false, and the honest fix
-    for that is a remembered flag of the kind `_frame_complete` and `powder_stowed` already are.
-    Scoped deliberately, because this is the difference between a claim the loop can make and one
-    it should remember.
+    So the scan is only half of it: `gs.portal_lit` is the remembered half, latched the way
+    `frame_complete` and `powder_stowed` are. A gate whose chunk has unloaded reads unlit, and on a
+    world a previous run already lit that is not a detail - run124 started on such a world, crossed
+    at it16, and by it40 sat 271 m into the Nether where the base gate read unlit again, putting the
+    bucket and flint steps back on the offer. A crossing is proof the gate burns, and the scan names
+    it whenever the bot stands close enough to use it.
     """
-    return (gs.resource_distance(PORTAL_BLOCK) is not None
-            or gs.resource_found.get(PORTAL_BLOCK, 0) > 0)
+    return bool(gs.portal_lit) or _portal_lit_scan(gs)
 
 
 def _portal_built(gs: GameState) -> bool:

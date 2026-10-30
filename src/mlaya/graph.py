@@ -17,7 +17,8 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       _frame_complete_at_base, _frame_short_at_base,
                       BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
-                      FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS)
+                      FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS,
+                      _portal_lit_scan)
 from .brain import Brain, escalate_to_system2
 from .mcp import _find
 from .memory import MemoryLog
@@ -527,6 +528,11 @@ class Agent:
         # in the pack, and a policy that keeps choosing it freezes the run at the base (live,
         # run25: 163 identical `build_portal` ticks on a finished frame, the bot at its base).
         self._frame_complete = False
+        # Whether the base gate burns, remembered rather than re-scanned: the scan only names a
+        # portal in a loaded chunk, so a bot 270 m into the Nether reads its own lit gate as unlit
+        # and the base chain reopens (run124 it40-41). Latched by the scan, by `light_portal`, and
+        # by any crossing - a body carried through a portal proves it burns.
+        self._portal_lit = False
         # Frame cells a `build_structure` refused to dig (`_note_frame_cells`): a container the
         # movement policy will not break unasked. `clear_frame` digs each with the explicit
         # `collect_block` the policy allows, and the build resumes once the cell is clear.
@@ -653,6 +659,12 @@ class Agent:
         elif not self._frame_complete and _frame_complete_at_base(gs):
             self._frame_complete = True
         gs.frame_complete = self._frame_complete
+        # The gate burns or it does not, and the scan only answers that while its chunk is loaded.
+        # Latched here the way `frame_complete` is, so a bot standing away from the base - or on the
+        # far side of the gate, in the Nether - does not read a lit portal as an unlit one.
+        if _portal_lit_scan(gs):
+            self._portal_lit = True
+        gs.portal_lit = self._portal_lit
         gs.enter_intent = self._enter_intent_ticks > 0
         gs.nether_entered = self._nether_entered
         gs.nether_arrival = self._nether_arrival
@@ -981,6 +993,10 @@ class Agent:
         if self._enter_intent_ticks > 0:
             self._enter_intent_ticks -= 1
         if "nether" in dim:
+            # Standing in the Nether is itself proof the gate burns: nothing carries a body through
+            # an unlit portal. The scan read of the base gate is gone down here (its chunk is not
+            # loaded), so without this the run forgets its own lit gate the moment it crosses.
+            self._portal_lit = True
             self._nether_ticks += 1
             if not self._nether_entered:
                 self._nether_entered = True
@@ -1428,6 +1444,7 @@ class Agent:
         """
         gs.surface = self.surface
         gs.frame_complete = self._frame_complete
+        gs.portal_lit = self._portal_lit
         gs.powder_stowed = self._powder_stowed
         gs.end_portal_active = self._end_portal_active
         gs.stronghold_estimated = self._stronghold_estimated
@@ -1937,6 +1954,18 @@ class Agent:
             return
         if not any(delta.get("inventory_delta", {}).values()):
             self._frame_complete = True
+
+    def _note_gate_lit(self, action, ok: bool, delta: dict) -> None:
+        """Remember that the base gate burns, from the action that lit it.
+
+        `_portal_lit` is a scan read, and a portal only shows up in a loaded chunk: a bot that
+        lights the gate and walks 270 m away, or crosses into the Nether, reads its own gate as
+        unlit and the obsidian/bucket/flint chain comes back onto the offer (run124 it40-41). The
+        ignite's own success is the latch, the same shape as `_note_stow`; the delta carries the
+        server's `portal_lit` read from the tick's after-observation.
+        """
+        if action.label == "light_portal" and (ok or delta.get("portal_lit")):
+            self._portal_lit = True
 
     def _note_frame_cells(self, action, ok: bool, text: str | None) -> None:
         """Remember the frame cells the build refused, so `clear_frame` digs them explicitly.
@@ -2576,6 +2605,7 @@ class Agent:
         self._note_hurt(before, after)
         self._note_drop_undone(action, _ok, delta, after.pos)
         self._note_build(action, _ok, delta)
+        self._note_gate_lit(action, _ok, delta)
         self._note_stow(action, _ok, delta)
         self._note_take_powder(action, _ok, _text, delta)
         self._note_locate(action, _ok)

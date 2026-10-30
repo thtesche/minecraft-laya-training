@@ -156,6 +156,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._water_ticks = 0
         agent._defer_quiet = 0
         return agent
@@ -483,6 +484,7 @@ class PourSkipTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -592,6 +594,7 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -753,6 +756,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
@@ -883,6 +887,7 @@ class RescueSkipTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
@@ -1009,6 +1014,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
@@ -1715,6 +1721,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -1935,6 +1942,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._water_ticks = 0
         agent._defer_quiet = 0
         return agent
@@ -2047,6 +2055,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent.base = None
         agent.chest_pos = None
         agent._extra_chests = []
@@ -2357,6 +2366,7 @@ class DropHoleTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -2630,6 +2640,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -2742,6 +2753,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -2958,6 +2970,7 @@ class ChestLidTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -3140,6 +3153,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._home_anchor = None
         agent._home_ticks = 0
         agent._pour_skip = set()
@@ -3330,6 +3344,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
         agent._base_adopted = False
@@ -3643,6 +3658,7 @@ class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent.log = []
         agent.mcp = mcp
         return agent
@@ -3919,6 +3935,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -4299,6 +4316,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         self.assertTrue(agent._inject(gs()).base_adopted)
 
 
@@ -4570,6 +4588,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent.settings = Settings()
@@ -4822,6 +4841,35 @@ class NetherCrossingTest(unittest.TestCase):
         self.assertTrue(agent._end_portal_active)
         self.assertEqual(agent._inject(gs()).frame_eyes, 12)
 
+    def test_lighting_the_gate_is_remembered_after_the_bot_walks_off_it(self) -> None:
+        # `_portal_lit` is a scan read: the gate only shows up while its chunk is loaded. A run
+        # that lights it and then roams must not read it back as unlit and reopen the obsidian
+        # chain for a gate that already stands.
+        agent = self._agent()
+        light = Action("light_portal", "activate_portal", {"x": -10, "y": 70, "z": -49}, "")
+        agent._note_gate_lit(light, True, {})
+        self.assertTrue(agent._portal_lit)
+        self.assertTrue(agent._inject(gs()).portal_lit)
+
+    def test_a_crossing_proves_the_gate_burns(self) -> None:
+        # run124 it40-41: 271 m into the Nether, on a world a previous run had already lit, the
+        # base gate read unlit and `['fill_bucket', 'get_flint']` came back onto the offer. A body
+        # carried through a portal is proof enough that it burns.
+        agent = self._agent()
+        agent._note_dimension(gs(pos=(12.5, 65.0, -3.5), dimension="minecraft:the_nether"))
+        self.assertTrue(agent._portal_lit)
+        self.assertTrue(agent._inject(gs()).portal_lit)
+
+    def test_a_scan_that_names_the_portal_latches_it(self) -> None:
+        # The latch also seeds from the scan itself, so a gate inherited from an earlier run is
+        # remembered the tick the bot stands close enough to see it.
+        agent = self._agent()
+        g = gs(pos=(-10.4, 70.0, -51.5),
+              resources={"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                   -10, 70, -49, 3.0)]})
+        agent._inject(g)
+        self.assertTrue(agent._portal_lit)
+
     def test_the_stowed_expedition_alone_keeps_the_run_going(self) -> None:
         # `powder_stowed` is a latch that only ever sets, while `tech_tree_complete` reads the
         # live world - a creepers' bed or a dropped tool turns it false again. So the run carries
@@ -4988,6 +5036,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._home_anchor = None

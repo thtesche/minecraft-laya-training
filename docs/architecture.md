@@ -956,7 +956,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–123 (2026-10-28 … 30)
+## Live findings run108–124 (2026-10-28 … 30)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1091,6 +1091,14 @@ chain still needs and can actually bank* (the eyes owed > 0, and a crafting tabl
 powder plus a chest for the deposit), and the powder target is the eyes the frame owes rather than
 `BLAZE_POWDER`, so one rod in the pack grinds into two powder and gets stowed instead of waiting for
 eight more.
+
+**A gate the scan cannot see is not an unlit gate.** run124 it16 vs it40-41: the bot crossed its
+own base portal at it16, and by it40 sat 271 m into the Nether where `_portal_lit` read false again
+- `_portal_lit` is a scan read, and a portal only appears in a loaded chunk. The base chain then
+reopened for a gate that already stands and put `fill_bucket` and `get_flint` back on the offer in
+a dimension where there is no water to scoop and no gravel to dig. Two fixes: the gate chain is
+scoped to the Overworld, and `gs.portal_lit` is now a latch, seeded by the scan, by `light_portal`
+and by any crossing - the same shape `frame_complete` and `powder_stowed` already have.
 
 Net: the crossing, the fortress march and the rod haul all run live, and the water, footing and
 foreground guards closed the runtime-crash and ping-pong classes; **no run has carried blaze

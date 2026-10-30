@@ -854,6 +854,20 @@ class OverworldGateTest(unittest.TestCase):
         self.assertIn("fill_bucket", cand)
         self.assertIn("get_flint", cand)
 
+    def test_a_gate_remembered_as_lit_keeps_the_chain_off(self) -> None:
+        # run58 and run124 are the same shape from two sides: the gate burns, its chunk unloads,
+        # and the scan stops naming it - 190 m out, or 271 m on the far side of it. `portal_lit`
+        # is the remembered half of the read, so the obsidian chain stays shut on a gate that
+        # already stands.
+        g = geared(bucket=1)
+        g.pos = (357.0, 70.0, 362.0)
+        g.portal_lit = True
+        g.resources = {"gravel": [BlockHit("gravel", "gravel", 356, 70, 361, 3.0)]}
+        cand = candidates(g)
+        self.assertNotIn("fill_bucket", cand)
+        self.assertNotIn("get_flint", cand)
+        self.assertNotIn("mine_obsidian", cand)
+
 
 class MakeRoomTest(unittest.TestCase):
     """The in-place unblock for a workstation that cannot be placed (a tight shaft)."""
@@ -6941,6 +6955,7 @@ class RefreshAfterTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._portal_lit = False
         agent._stuck_off = {}
         agent._defer_quiet = 0
         agent._boxed = (None, 0)
