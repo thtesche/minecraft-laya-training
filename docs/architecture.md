@@ -956,6 +956,81 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
+## Live findings run108–118 (2026-10-28 … 30)
+
+Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
+(`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
+
+**A body with no footing cannot dig.** Both `[RUNTIME_UNRESPONSIVE]` incidents of the window hung
+on the same call: `build_structure` digging air cells around a floating body at (-0.5, 62, 281) —
+run115 it527 after `[WORKSTATION_PLACEMENT_FAILED] crafting_table: no_cell`, run116 it0 on the
+first tick of the run, the dig the only operation still active in each incident's activity record.
+`unblock_action` now hands a body with no footing to the swim and `dig_out` refuses to tunnel from
+one (`5861fef`); run116 restarted and crashed on the same call with `inWater` false, so the guard
+widened from "in water" to any body the server reports as not standing (`dce8da7`). The condition
+is footing, not water.
+
+**The water rescue climbs, it does not dive.** run115 it166-527 answered 281 identical
+`escape_water` refusals, each aimed 29 blocks down at a cave floor and each stopping three blocks
+under the body (`[NAVIGATION_STOPPED] … closest node was -1,59,281`). `nearest_ground` now passes
+over cells the pathfinder already timed out at (`rescue_skip`, `32c9970`) and takes a dry cell
+**above** the swimmer before one below it; run116's open-ocean case (`62c726c`) reads
+`RESCUE_GROUND_LIMIT` (64) cells so a shore past the nearest-16 cut survives the scan, and the
+last-resort "any standable cell at any level" fallback — which only ever produced the deep dive —
+is gone. The progress rule measures the swim across the water (`swim_delta`, x/z only): the
+vertical bob of a body in one column is what made 281 identical refusals read as progress and kept
+the stuck guard from ever withholding the label.
+
+**A foreground action that travels far and ends where it began is cancelled.** run113 it84:
+`mine_obsidian` asked the server for 8 obsidian by count, the pour formed one block at the bot's
+feet, and the action re-targeted a natural deposit 124 blocks away — 14 minutes, 2491 blocks
+travelled, still 2 blocks from where it started, checkpoint stuck at 1/8, and the loop powerless
+while the foreground owns the body. `_wait_settled` now reads the progress facts (≥ 240 s elapsed,
+≥ 400 blocks travelled, ≤ 10 blocks from the start) and cancels through the server, retrieving the
+settlement in the same breath (`add2381`). Elapsed time alone is not the tell — a long navigate
+legitimately runs for minutes — the tell is travel that ends where it began. Phase 1 of
+`mine_obsidian` names the exact cell the pour formed (`020fc34`), the same bug from the other side:
+a bare `count` lets the server re-target the nearest natural obsidian once the formed block is gone.
+
+**An `explore` that ping-pongs in place is now visible.** run112d it517-599 burned its last 83
+iterations between two cells about four blocks apart. Every guard was blind to it: the step
+succeeds (no code for `_track_stuck`), the position changes every tick (not idle for
+`_track_idle`), and one short `explore` walks straight, so its own travel-to-net ratio looks fine
+to `_track_wander`. The going-nowhere only shows across ticks, so `_track_orbit` (`0224073`) keeps
+the feet-cells a label ends on over `ORBIT_WINDOW` ticks and reads the wander ratio there; a tick
+that gains inventory, armour or off-hand, or crosses a dimension, resets the window.
+
+**The furnace flag is a reach, not a memory.** run116: a bot that died at stone tier and drifted
+~650 m from its old base still carried the server's memory of the base furnace (`furnace_pos`), so
+`craft_furnace` was suppressed while `smelt_iron`, which needs `_at_base` and has no base out
+there, could not run — no furnace, nothing to smelt at, every tech step blocked, endless `explore`
+(it114+). The flag now mirrors `_smelting_reach` (`83e96b8`): craft a furnace exactly when there is
+none to smelt at.
+
+**The pack, not the plan, is the Nether bottleneck.** run117's two most-taken labels of 723 ticks
+were `drop_junk` (131) and `step_away_drops` (126): one `[DROP_HOLE_UNAVAILABLE]` at it88 in a
+gravel pocket at (-86, 1, -339) latched the disposal pit for the whole run, so 125 of the run's
+drops landed on open ground and 115 of them were walked back over within three ticks — 257 of the
+run's ticks (131 attempts, 126 walk-offs) went to dropping and walking off it. `84d0170` makes
+both facts local: the pit
+refusal is the ground's answer at one cell and releases 12 m on (`DROP_HOLE_MEMORY`), and an open
+drop that comes back is counted as no drop at all (`DROP_UNDONE_GIVE_UP` = 2 in a row withholds
+`drop_junk` for the stuck window). run118 showed the other half: through it92-151 `candidates` was
+`['drop_junk', 'explore']` 27 times and Laya took `explore` every time, while the fortress march
+hoovered netherrack 3 → 188 and the pack sat at 35-36/36. `junk_full` kept suppressing
+`leave_nether` on the assumption that the pack empties itself; at it151 the bot died at
+(-277, 85, -143) — 300 m from the gate, 0.5 health, five rods in a pack with no room for the
+sixth. `e940e4c` gives the shed the tick (the shape the gold-helmet swap and the pearl wave already
+use) and makes `junk_full` hold only while `drop_junk` is actually on offer, so a shed the ground
+has refused twice sends the bot home with the rods it has instead of 15 ticks of marching with
+nowhere for the next one.
+
+Net: the crossing, the fortress march and the rod haul all run live, and the water, footing and
+foreground guards closed the runtime-crash and ping-pong classes; **no run has carried blaze
+powder back to the chest at the gate**. run118 died after 57 consecutive ticks (it92-151) whose
+only offer was `['drop_junk', 'explore']` — the offer set, not one fight, is what kept it down
+there.
+
 ## Next milestones
 
 - **Open after run86:** (1) the October fixes above are unit-tested but not yet seen live;
@@ -1294,7 +1369,15 @@ powder back to the chest at the gate** — `nether_expedition_complete` is still
   stopgap without a chest. `drop_junk` sheds the low-value `JUNK_ITEMS` list plus, since `df3ca56`,
   any single item carried above `HOARD_CAP` (64): a pack packed with one cheap block (live, run21:
   ~306 cobblestone, no chest) can still make room, while `HOARD_KEEP` keeps a floor under the
-  banked cobblestone reserve (`NETHER_COBBLE`). An `[INVENTORY_FULL]` refusal triggers its own relief level
+  banked cobblestone reserve (`NETHER_COBBLE`). A shed either goes into a disposal pit the server
+  digs and plugs behind the bot, or, where the ground refuses one (`[DROP_HOLE_UNAVAILABLE]`), onto
+  open ground at the bot's feet — and that drop is not finished until `step_away_drops` walks three
+  blocks off it. Both are per-cell facts (`84d0170`): the pit refusal is remembered at the cell that
+  answered and released 12 m on, and an open drop walked back over is counted as no drop at all,
+  with the label withheld for the stuck window after two in a row. In the Nether rod wave the shed
+  owns the tick outright when the pack is full (`e940e4c`) — offered beside `explore` it was taken 0
+  of 27 times in run118 while the march filled the pack to 36/36 — and `junk_full` only suppresses
+  `leave_nether` while `drop_junk` is actually on offer. An `[INVENTORY_FULL]` refusal triggers its own relief level
   (`blocked_by_inventory` → `inventory_relief`: chest, otherwise throw; a full chest switches
   `allow_stow` off). Base/chest are **per run** and are injected by the loop into every `GameState`.
   If the chest cannot stand at the spot — the server answers `[PLACE_NO_SUPPORT]` when no
