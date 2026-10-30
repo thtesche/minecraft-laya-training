@@ -363,6 +363,205 @@ async def remembered_gate(executor) -> tuple[int, int, int] | None:
     return parse_remembered_gate(coerce(res.data, res.text))
 
 
+# --- The durable ledger: what this world already contains ---
+# `action_executions` and `events` are the server's own record of everything this bot has done in
+# this world. They outlive a death, a dimension change and a restart, and unlike `view_blocks`
+# they are not bounded by loaded chunks: a run that starts 300 m from its own base cannot see the
+# gate it lit in a previous run, but the ledger can. `query_bot_data` caps a read at 100 rows and
+# 64 KiB, so every query here is narrow and ordered, and the milestone it answers is decided in
+# `progress.py`, not here.
+#
+# A lit portal block is only ever *recorded* in a chunk the server actually scanned, which is why
+# the chunk table answers "does this world have a burning gate" even when the chunk is unloaded
+# now: the material row was written the tick the portal was observed.
+GATE_CHUNK_SQL = (
+    "SELECT fc.dimension, fc.chunk_x, fc.chunk_z FROM frontier_chunk_materials m "
+    "JOIN frontier_chunks fc ON fc.chunk_key = m.chunk_key "
+    "WHERE m.material = 'nether_portal' ORDER BY fc.first_observed_at DESC LIMIT 20")
+
+# `activate_portal` is the only action that reports the state of a frame it was asked to light:
+# `portalAfter` for the Nether gate, `eyesAfter` for the twelve sockets of the end frame. Both
+# are read from the world by the server, so they are the durable answer to "how far is the frame
+# filled" that no scan and no per-run counter can give.
+PORTAL_LEDGER_SQL = (
+    "SELECT json_extract(record_json, '$.arguments') AS args, "
+    "json_extract(record_json, '$.terminal.output.result') AS result "
+    "FROM action_executions "
+    "WHERE json_extract(record_json, '$.action') = 'activate_portal' "
+    "ORDER BY json_extract(record_json, '$.admittedAt') DESC LIMIT 20")
+
+# A bed the bot placed or slept in is a respawn point the world still holds. `sleep` reports the
+# bed it laid; `place_block` reports the cell it put a `white_bed` in.
+BED_LEDGER_SQL = (
+    "SELECT json_extract(record_json, '$.arguments') AS args, "
+    "json_extract(record_json, '$.terminal.output.result') AS result "
+    "FROM action_executions "
+    "WHERE json_extract(record_json, '$.action') IN ('place_block', 'sleep') "
+    "ORDER BY json_extract(record_json, '$.admittedAt') DESC LIMIT 40")
+
+# Every dimension the bot has ever been carried into. A run that starts in the Nether has no
+# crossing to observe, but the server wrote one down when it happened.
+DIMENSION_LEDGER_SQL = (
+    "SELECT json_extract(payload_json, '$.to') AS to_dim FROM events "
+    "WHERE event_type = 'player_dimension_change' "
+    "ORDER BY observed_at DESC LIMIT 40")
+
+# One saved eye-of-ender bearing is enough: `locate_stronghold` reuses the same durable
+# `search_id`, so a run that already has one does not owe the estimate throw again.
+BEARING_SQL = (
+    "SELECT search_id, state, bearing_degrees FROM stronghold_throws "
+    "WHERE search_id = 'stronghold' ORDER BY thrown_at DESC LIMIT 1")
+
+# The checkpoint the loop writes itself (`graph.Agent._write_checkpoint`): the counters no ledger
+# can prove, such as how many pearl waves this run has already spent.
+CHECKPOINT_PREFIX = "mlaya checkpoint:"
+CHECKPOINT_READ_SQL = (
+    "SELECT note FROM notes WHERE note LIKE 'mlaya checkpoint%' "
+    "ORDER BY note_id DESC LIMIT 5")
+
+
+def _query_rows(payload: Any) -> list[Any]:
+    """The rows of a `query_bot_data` answer, tolerant of the wrapper's shape."""
+    rows = get(payload, "response", "data", "result", "query", "rows")
+    return rows if isinstance(rows, list) else []
+
+
+def _json_cell(value: Any) -> Any:
+    """A SQLite column that holds JSON, read as the object it is."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return None
+    return value
+
+
+def parse_gate_chunks(payload: Any) -> list[tuple[str, int, int]]:
+    """The chunks the server has seen a lit portal block in, as `(dimension, chunk_x, chunk_z)`."""
+    out: list[tuple[str, int, int]] = []
+    for row in _query_rows(payload):
+        cells = row if isinstance(row, list) else [row]
+        if len(cells) < 3:
+            continue
+        dim = cells[0] if isinstance(cells[0], str) else ""
+        x, z = _num(cells[1]), _num(cells[2])
+        if x is None or z is None:
+            continue
+        out.append((dim, int(x), int(z)))
+    return out
+
+
+def parse_portal_ledger(payload: Any) -> list[dict]:
+    """Every `activate_portal` this bot has run, newest first, as `{args, result}` dicts."""
+    out: list[dict] = []
+    for row in _query_rows(payload):
+        cells = row if isinstance(row, list) else [row]
+        if len(cells) < 2:
+            continue
+        args = _json_cell(cells[0])
+        result = _json_cell(cells[1])
+        if not isinstance(result, dict):
+            continue
+        out.append({"args": args if isinstance(args, dict) else {}, "result": result})
+    return out
+
+
+def parse_bed_ledger(payload: Any) -> list[tuple[int, int, int]]:
+    """Cells a bed was laid in, newest first. A bed the placement refused is not in the world."""
+    out: list[tuple[int, int, int]] = []
+    for row in _query_rows(payload):
+        cells = row if isinstance(row, list) else [row]
+        if len(cells) < 2:
+            continue
+        result = _json_cell(cells[1])
+        if not isinstance(result, dict):
+            continue
+        bed = result.get("sleep", {}).get("bedPosition") if "sleep" in result else None
+        if bed is None:
+            placement = result.get("placement") or {}
+            if placement.get("requestedBlock") not in ("bed", "white_bed"):
+                continue
+            if not (placement.get("placed") or placement.get("confirmed")):
+                continue
+            bed = placement.get("target")
+        if not isinstance(bed, dict):
+            continue
+        x, y, z = (_num(bed.get("x")), _num(bed.get("y")), _num(bed.get("z")))
+        if x is None or y is None or z is None:
+            continue
+        out.append((math.floor(x), math.floor(y), math.floor(z)))
+    return out
+
+
+def parse_dimension_ledger(payload: Any) -> list[str]:
+    """The dimensions this bot has been carried into, newest first."""
+    out: list[str] = []
+    for row in _query_rows(payload):
+        cells = row if isinstance(row, list) else [row]
+        if cells and isinstance(cells[0], str):
+            out.append(cells[0])
+    return out
+
+
+def parse_bearing(payload: Any) -> bool:
+    """Whether a stronghold bearing is saved in the server's durable search.
+
+    A row is written the moment a throw starts and only reaches `tracking`/`observed` once the
+    eye's flight was recorded; `pending` is a throw that never landed, which is no bearing.
+    """
+    for row in _query_rows(payload):
+        cells = row if isinstance(row, list) else [row]
+        if len(cells) >= 2 and isinstance(cells[1], str) and cells[1] != "pending":
+            return True
+    return False
+
+
+def parse_portal_result(payload: Any) -> dict | None:
+    """The `portal` evidence a settled `activate_portal` carried, however the answer nested it.
+
+    `portal.eyesAfter` is the server counting the eyes standing in the twelve sockets of the end
+    frame -- the world's own number, read on the tick the call ran. It is also present on a
+    refusal: `[PORTAL_MISSING_EYES]` reports the frame as it is, so a bot that carried too few
+    eyes learns how many the frame already held. The wrapper has changed shape before, so the
+    search is the same tolerant walk `_find_container` uses rather than one fixed path.
+    """
+    stack = [payload]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            if isinstance(cur.get("portal"), dict):
+                return cur["portal"]
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return None
+
+
+def parse_checkpoint(payload: Any) -> dict:
+    """The newest checkpoint note this loop wrote for this world, as a dict.
+
+    Notes are the loop's own memory: the server's tables record actions, not decisions, so the
+    counters that only the run knows (pearl waves spent, barter rolls made, the cells the powder
+    was stowed into) live here. Newest first, and a note whose JSON has been cut off is no
+    checkpoint -- an empty dict means "nothing to restore", which is the ordinary case on a world
+    this loop has never run on.
+    """
+    for row in _query_rows(payload):
+        cells = row if isinstance(row, list) else [row]
+        if not cells or not isinstance(cells[0], str):
+            continue
+        note = cells[0]
+        if not note.startswith(CHECKPOINT_PREFIX):
+            continue
+        try:
+            data = json.loads(note[len(CHECKPOINT_PREFIX):].strip())
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
 def _find_container(payload: Any) -> Any:
     """The innermost dict that carries a `contents` list, however the answer nested it.
 
@@ -881,6 +1080,11 @@ class GameState:
     # While one is listed, `candidates` drops it so the last fallback (`explore`/`wait`) owns the
     # tick and the bot moves somewhere new instead of burning the run on the same call.
     stuck_labels: frozenset = frozenset()
+    # The run's milestones as one object, resolved by `progress.progress_of` from the durable
+    # ledger, the live scan and the per-run latches in that order, with a `source` map saying
+    # which of the three answered each field. Injected like `base`: perception cannot know it,
+    # and a tick whose stand is not logged cannot be read afterwards.
+    progress: Any = None
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
@@ -985,6 +1189,11 @@ class GameState:
             "powder_bank": self.powder_bank,
             "frame_eyes": self.frame_eyes,
             "nether_landmarks": [list(cell) for cell in self.nether_landmarks],
+            # The resolved milestones and the source of each. Logged for the same reason the
+            # furnace's facts were: a run that started on a half-played world and rebuilt its
+            # gate cannot be read afterwards unless the tick says what it believed about the
+            # gate, the bed and the frame, and which of the three sources told it so.
+            "progress": self.progress.as_dict() if self.progress is not None else None,
         }
 
     @classmethod
@@ -1052,10 +1261,19 @@ class GameState:
                 if isinstance(cell, (list, tuple)) and len(cell) == 3:
                     stores.append((tuple(int(v) for v in cell), str(name), int(count)))
         gs.banked_stores = tuple(stores)
+        prog = data.get("progress")
+        if isinstance(prog, dict):
+            from .progress import Progress  # lazy: `progress` imports this module
+            gs.progress = Progress(**{k: v for k, v in prog.items()
+                                      if k in Progress.__dataclass_fields__})
         return gs
 
     def narrative(self) -> str:
         parts: list[str] = []
+        # Where the run stands, before anything else: the model sees only the first window of a
+        # long state, so the milestones have to be the first thing in it.
+        if self.progress is not None:
+            parts.append(self.progress.sentence())
         if self.dimension:
             parts.append(f"in the {self.dimension}")
         if self.health is not None:
