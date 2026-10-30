@@ -1119,6 +1119,15 @@ hostile_reflex". The helmet swap returns its list early, before the `gs.stuck_la
 end of `candidates`, so a withheld label stayed the sole offer forever. The same early return that
 owns the shed tick (`drop_junk`) is guarded now.
 
+**A base is adopted from what the run could have built, not from the whole kit.** run125: the bot
+wore the full diamond set but carried no shield and no flint and steel, so `_gear_ready` read false
+and `_adopt_portal_base` never ran - `base` stayed unset for all 600 ticks while six lit portal
+blocks stood twelve metres away at `(-7..-8, 70-72, -52)`. Without an anchor there is no `go_home`,
+no `enter_portal`, no `flatten_home_base` and no chest relief: the run sat at its own gate. The bed
+at `(-10,70,-50)` could not anchor it either - `bed_frame_site` checks the frame plane the bed's
+ground would carry, and the standing frame is a different plane three blocks off. Adoption now asks
+the narrower question: flint and steel in the pack, or the diamond pickaxe obsidian is mined with.
+
 **Powder the eyes can spend is not a haul to bank.** run125 it16-529: one pearl and two blaze
 powder in the pack, sixteen eyes owed. `stow_blaze_powder` (the haul block) and `take_blaze_powder`
 (the stronghold block) were both live on the same tick, and the model crossed the lid in one
@@ -1130,8 +1139,8 @@ and no more powder than the frame costs means the pack holds the next eye, not a
 Net: the crossing, the fortress march and the rod haul all run live, and the powder reaches the
 chest at the gate (run124 it6, run125 it1-3, `powder_stowed` latched); what no run has done yet is
 turn that powder into an eye of ender. The water, footing and foreground guards closed the
-runtime-crash and the walk-back-and-forth classes; **run125's remaining stall was a chest lid, not
-a fight**.
+runtime-crash and the walk-back-and-forth classes. run125 never crossed at all - it had no base
+anchor to walk to - and its remaining stall was a chest lid rather than a fight.
 
 ## Next milestones
 

@@ -4239,6 +4239,21 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.base, (-156, 62, 257))
         self.assertTrue(agent._base_adopted)
 
+    async def test_a_diamond_pickaxe_admits_the_gate_without_the_shield(self) -> None:
+        # run125: the whole diamond set worn, no shield in the off-hand, no flint and steel in the
+        # pack. `_gear_ready` is the departure chain's test and it demands the shield; adoption only
+        # has to ask whether this run could have mined the obsidian at all. With the gate shut the
+        # base stayed unset for 600 ticks beside a portal the world reported six times.
+        agent = self._agent(self._FIND)
+        await agent._adopt_portal_base(gs(pos=(-178.5, 68.0, 329.5),
+                                         tools={"pickaxe": "diamond", "sword": "diamond"},
+                                         inventory={"diamond_pickaxe": 2},
+                                         armor={slot: {"item": f"diamond_{slot}"}
+                                                for slot in ("helmet", "chestplate", "leggings",
+                                                            "boots")}))
+        self.assertEqual(agent.base, (-156, 62, 257))
+        self.assertTrue(agent._base_adopted)
+
     async def test_the_chest_beside_the_adopted_gate_comes_back_too(self) -> None:
         # The whole point of re-anchoring: the goal stows the blaze powder in the chest at the
         # portal, so a base adopted from the gate has to bring the chest and the furnace with it -

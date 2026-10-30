@@ -13,6 +13,7 @@ from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready,
+                      _has, _pick_tier, DIAMOND_PICK_TIER,
                       FLATTEN_BLOCKS, FLATTEN_RADIUS, FLATTEN_UP,
                       _frame_complete_at_base, _frame_short_at_base,
                       BED_PORTAL_CLEARANCE, _gate_gap,
@@ -1072,12 +1073,22 @@ class Agent:
         never re-adopt the gate and chest it had already built, and `establish_base` raised a
         fresh base instead, frame and all, with the ten obsidian gone in the same death (live,
         run43: the lit gate and the chest stood at `(226,63,222)` and the run re-based on open
-        ground). A lit portal already proves what it takes to build one, so the gate here is the
-        means to light one: the flint and steel.
+        ground). What the gate has to ask is whether this run could have built a gate at all: a
+        flint and steel, or the diamond pickaxe obsidian is mined with. The full kit - shield in
+        the off-hand included - is the departure chain's question, not this one, and reading it
+        here cost run125 its base: the whole diamond set worn, no shield, no flint and steel, six
+        lit portal blocks twelve metres away, and 600 ticks with no anchor to go home to.
         """
         if self.base is not None or gs.pos is None:
             return
-        if not (_gear_ready(gs) or "flint_and_steel" in gs.inventory):
+        # What this run could have *built a gate with*, not the whole Nether kit. `_gear_ready` is
+        # the departure chain's test and it demands the shield in the off-hand; run125 wore the
+        # full diamond set but carried no shield and no flint and steel, so the gate stayed shut,
+        # `base` was never adopted, and the bot spent 600 ticks beside its own lit portal with
+        # `go_home`, `enter_portal` and the chest relief all off the offer. Obsidian comes out of
+        # the ground with a diamond pickaxe, so that is the capability adoption asks for.
+        if not (_has(gs.inventory, "flint_and_steel")
+                or _pick_tier(gs.inventory, gs.tools) >= DIAMOND_PICK_TIER):
             return
         px, _, pz = gs.pos
         at = self._portal_base_scanned
