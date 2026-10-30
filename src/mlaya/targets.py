@@ -175,17 +175,26 @@ def nearest_ground(gs: GameState) -> Target | None:
     roofed (`BlockHit.rescue_standable`) or not; only open-sky cells fall back at any level, so a
     world with only a low dry ledge behaves as before. The pool is `gs.rescue_ground`, read to
     `RESCUE_RADIUS` (live run19b: the shore that would have worked sat 65.1 m -- a whisker past
-    the 64 m read).
+    the 64 m read). Two further narrowings come from run115: a cell the pathfinder already timed
+    out at (`gs.rescue_skip`, recorded by `Agent._note_rescue`) is passed over, and with nothing at
+    the waterline the nearest dry cell **above** the body is taken before one below it.
     """
     pool = gs.rescue_ground or gs.resources
     hits = [h for query in RESCUE_GROUND_NAMES
-            for h in pool.get(query, []) if h.rescue_standable]
+            for h in pool.get(query, [])
+            if h.rescue_standable and (h.x, h.y + 1, h.z) not in gs.rescue_skip]
     if not hits:
         return None
     y0 = gs.pos[1] if gs.pos else 0.0
     # A roofed cell counts only at the waterline; at any other level it is the run19b dive.
-    candidates = [h for h in hits if abs(h.y - y0) <= RESCUE_Y_BAND] \
-        or [h for h in hits if h.standable]
+    candidates = [h for h in hits if abs(h.y - y0) <= RESCUE_Y_BAND]
+    if not candidates:
+        # Nothing at the waterline, so the choice is between climbing and diving. A body treading
+        # water climbs: live run115, 281 rescue walks from (-0.5,62,281) aimed 29 blocks down at a
+        # cave floor, every one `[NAVIGATION_STOPPED] ... closest node was -1,59,281` -- three
+        # blocks under the feet, twenty-nine above the target. Take the nearest dry cell above the
+        # waterline first; a cell below is only ever the last resort.
+        candidates = [h for h in hits if h.y >= y0] or [h for h in hits if h.standable]
     if not candidates:
         return None
     hit = min(candidates, key=lambda h: (h.distance, h.y))

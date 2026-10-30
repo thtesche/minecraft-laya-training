@@ -105,6 +105,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._base_adopted = False
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -215,6 +216,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._chest_above = None
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -404,6 +406,7 @@ class PourSkipTest(unittest.TestCase):
         agent._nether_landmarks = []
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -504,6 +507,7 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._nether_landmarks = []
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -654,6 +658,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._nether_landmarks = []
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -751,6 +756,129 @@ class StanceSkipTest(unittest.TestCase):
                          (-270, 65, -55))
 
 
+class RescueSkipTest(unittest.TestCase):
+    """A water-rescue foothold the pathfinder could not swim to is not aimed at again.
+
+    Live, run115: treading water at (-0.5,62,281) for 281 rescue walks, every one aimed at a cave
+    floor 29 blocks below and every one answered `[NAVIGATION_STOPPED] ... closest node was
+    -1,59,281` -- three blocks under the floating body, twenty-nine above the cell it was aiming
+    at. The route to that cell does not exist from the pocket, so the rescue takes the next
+    foothold instead of diving at the same one until the iteration limit.
+    """
+
+    STOPPED = ("[NAVIGATION_STOPPED] Pathfinder stopped: search timed out after 2000 ms compute "
+               "(limit 2000 ms); no path or usable partial route found; closest node was -1,59,281.")
+
+    class _Action:
+        def __init__(self, label: str, tool: str, args: dict | None = None) -> None:
+            self.label = label
+            self.tool = tool
+            self.args = args or {}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._pearl_wave_trips = 0
+        agent._nether_landmarks = []
+        agent._pour_skip = set()
+        agent._stance_skip = set()
+        agent._rescue_skip = set()
+        agent._stuck_code = {}
+        agent._stuck_reps = {}
+        agent._stuck_off = {}
+        agent._bed_base = None
+        agent._bed_base_scanned = None
+        agent._recover_written_off = set()
+        agent._recover_unreachable = (None, 0)
+        agent._boxed = (None, 0)
+        agent._dig_out_tries = 0
+        agent._water_ticks = 0
+        agent._defer_quiet = 0
+        agent._drop_hole_blocked = False
+        agent._drop_open_pending = False
+        agent._drop_pos = None
+        agent._held_ticks = 0
+        agent._drop_heading = None
+        agent._heading = None
+        agent._chest_blocked = False
+        agent._furnace_blocked = False
+        agent._furnace_contents = {}
+        agent._furnace_occupied = False
+        agent._blocked_cell = None
+        agent._chest_above = None
+        agent._portal_blocked = []
+        agent._frame_complete = False
+        agent._refused_frame = set()
+        agent._frame_names = {}
+        agent._enter_intent_ticks = 0
+        agent._nether_entered = False
+        agent._nether_travel = 0.0
+        agent._nether_last_pos = None
+        agent._nether_ticks = 0
+        agent._nether_arrival = None
+        agent._last_dimension = None
+        agent._nether_gate = None
+        agent._gate_read = False
+        agent._powder_stowed = False
+        agent._barter_attempts = 0
+        agent._end_portal_active = False
+        agent._stronghold_estimated = False
+        agent._powder_exhausted = False
+        agent._powder_cells = []
+        agent.furnace_pos = None
+        agent.smoker_pos = None
+        agent.chest_pos = None
+        agent._extra_chests = []
+        agent._chests_full = set()
+        agent._overflow_no_support = set()
+        agent._banked_stores = ()
+        agent.banked = {}
+        agent.base = None
+        agent.surface = None
+        agent.build_site = None
+        agent._base_adopted = False
+        agent._portal_base_scanned = None
+        agent.log = []
+        return agent
+
+    def test_remembers_the_foothold_the_swim_timed_out_on(self) -> None:
+        agent = self._agent()
+        agent._note_rescue(
+            self._Action("escape_water", "navigate", {"x": -1, "y": 34, "z": 281}),
+            False, self.STOPPED)
+        self.assertEqual(agent._rescue_skip, {(-1, 34, 281)})
+
+    def test_ignores_success_other_labels_tools_and_codes(self) -> None:
+        agent = self._agent()
+        cell = {"x": 1, "y": 2, "z": 3}
+        agent._note_rescue(self._Action("escape_water", "navigate", cell), True, self.STOPPED)
+        agent._note_rescue(self._Action("explore", "navigate", cell), False, self.STOPPED)
+        agent._note_rescue(self._Action("escape_water", "collect_block", cell), False, self.STOPPED)
+        agent._note_rescue(self._Action("escape_water", "navigate", cell), False,
+                           "[NAVIGATION_TARGET_UNSUPPORTED] no footing")
+        self.assertEqual(agent._rescue_skip, set())
+
+    def test_inject_hands_the_set_to_the_state(self) -> None:
+        agent = self._agent()
+        agent._rescue_skip = {(-1, 34, 281)}
+        self.assertEqual(agent._inject(gs()).rescue_skip, frozenset({(-1, 34, 281)}))
+
+    def test_the_next_swim_aims_at_the_other_foothold(self) -> None:
+        # End to end, to the run115 block: the stopped walk writes the cell off, `_inject` carries
+        # it, and the rescue now climbs to the dry ground above the pocket instead of diving.
+        agent = self._agent()
+        agent._note_rescue(
+            self._Action("escape_water", "navigate", {"x": -1, "y": 34, "z": 281}),
+            False, self.STOPPED)
+        state = gs(in_water=True, on_ground=False, pos=(-0.5, 62.4, 281.5))
+        state.rescue_ground = {
+            "stone": [BlockHit("stone", "stone", -1, 33, 281, 29.4, above="cave_air")],
+            "cobblestone": [BlockHit("cobblestone", "cobblestone", 4, 70, 281, 8.0, above="air")],
+        }
+        action = resolve("escape_water", agent._inject(state))
+        self.assertEqual(action.tool, "navigate")
+        self.assertEqual((action.args["x"], action.args["y"], action.args["z"]), (4, 71, 281))
+
+
 class StuckOfferTest(unittest.TestCase):
     """A label that keeps answering the identical refusal is withheld, so the fallback moves.
 
@@ -775,6 +903,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._bed_base_scanned = None
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._recover_written_off = set()
         agent._recover_unreachable = (None, 0)
         agent._boxed = (None, 0)
@@ -1521,6 +1650,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._portal_blocked = []
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_off = {}
         agent._recover_written_off = set()
         agent._recover_unreachable = (None, 0)
@@ -1673,6 +1803,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._bed_base_scanned = None
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_off = {}
         agent._recover_written_off = set()
         agent._recover_unreachable = (None, 0)
@@ -1777,6 +1908,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._dig_out_tries = 0
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -2157,6 +2289,7 @@ class DropHoleTest(unittest.TestCase):
         agent.banked = {}
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -2260,6 +2393,7 @@ class ChestSupportTest(unittest.TestCase):
         agent.banked = {}
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -2365,6 +2499,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent.smoker_pos = None
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -2544,6 +2679,7 @@ class ChestLidTest(unittest.TestCase):
         agent.surface = None
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -2712,6 +2848,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._home_ticks = 0
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -2933,6 +3070,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._portal_blocked = [(-195, -46, -98)]
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -3324,6 +3462,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent.build_site = None
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_off = set()
         agent._recover_written_off = set()
         agent._recover_unreachable = (None, 0)
@@ -3682,6 +3821,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._base_adopted = True
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -3940,6 +4080,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._base_adopted = False
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}
@@ -4320,6 +4461,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._base_adopted = False
         agent._pour_skip = set()
         agent._stance_skip = set()
+        agent._rescue_skip = set()
         agent._stuck_code = {}
         agent._stuck_reps = {}
         agent._stuck_off = {}

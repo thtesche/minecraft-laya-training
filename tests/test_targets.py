@@ -255,6 +255,30 @@ class NearestGroundTest(unittest.TestCase):
         gs.resources = {"gravel": [hit("gravel", "gravel", 0, 40, 5, 23.0)]}
         self.assertEqual(nearest_ground(gs).pos, (0, 40, 5))
 
+    def test_no_waterline_cell_climbs_instead_of_diving(self) -> None:
+        # Live run115, to the block: treading water at (-0.5,62.4,281.5), the rescue scan listed a
+        # cave floor 29 blocks below and dry ground 8 blocks up, and the rescue aimed down for 281
+        # decisions, every swim timing out ("closest node was -1,59,281"). A floating body climbs.
+        gs = GameState()
+        gs.pos = (-0.5, 62.4, 281.5)
+        gs.rescue_ground = {
+            "stone": [hit("stone", "stone", -1, 33, 281, 29.4, above="cave_air")],
+            "cobblestone": [hit("cobblestone", "cobblestone", 4, 70, 281, 8.0)],
+        }
+        self.assertEqual(nearest_ground(gs).pos, (4, 70, 281))
+
+    def test_a_foothold_the_pathfinder_timed_out_on_is_passed_over(self) -> None:
+        # `Agent._note_rescue` records the cell a stopped swim aimed at; the next tick takes the
+        # other foothold rather than timing out on the same one (live run115, 281 identical walks).
+        gs = GameState()
+        gs.pos = (-0.5, 62.4, 281.5)
+        gs.rescue_ground = {"stone": [
+            hit("stone", "stone", -1, 62, 281, 0.5),
+            hit("stone", "stone", 6, 62, 281, 6.5),
+        ]}
+        gs.rescue_skip = frozenset({(-1, 63, 281)})
+        self.assertEqual(nearest_ground(gs).pos, (6, 62, 281))
+
     def test_ignores_ground_under_a_cave_ceiling(self) -> None:
         gs = GameState()
         gs.pos = (0.0, 63.0, 0.0)

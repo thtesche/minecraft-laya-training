@@ -9,6 +9,18 @@ def diff(before: GameState, after: GameState) -> dict:
             return round(sum((a - b) ** 2 for a, b in zip(after.pos, before.pos)) ** 0.5, 2)
         return None
 
+    def swim_delta() -> float | None:
+        """Horizontal distance covered -- the x/z plane a swim or walk actually crosses.
+
+        `pos_delta` counts vertical drift too, and a body adrift in a flooded pocket travels three
+        blocks straight up and back down on the same column every tick (live run115: 281 rescue
+        walks at (-0.5,62,281), `pos_delta` 3.5 each, never on ground).
+        """
+        if before.pos and after.pos:
+            return round(((after.pos[0] - before.pos[0]) ** 2
+                          + (after.pos[2] - before.pos[2]) ** 2) ** 0.5, 2)
+        return None
+
     inv_delta: dict[str, int] = {}
     for k in set(before.inventory) | set(after.inventory):
         d = after.inventory.get(k, 0) - before.inventory.get(k, 0)
@@ -22,6 +34,7 @@ def diff(before: GameState, after: GameState) -> dict:
 
     return {
         "pos_delta": pos_delta(),
+        "swim_delta": swim_delta(),
         "health_delta": None if before.health is None or after.health is None
         else round(after.health - before.health, 1),
         "food_delta": None if before.food is None or after.food is None
@@ -109,6 +122,10 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         return d["inventory_delta"].get("water_bucket", 0) > 0
     if label == "mine_obsidian":
         return d["inventory_delta"].get("obsidian", 0) > 0
+    if label == "approach_lava":
+        # The walk is the whole job: closing the distance to the lava is what loads the source
+        # the pour step needs, so movement is the proof, not an item.
+        return (d["pos_delta"] or 0) > 2
     if label == "get_flint":
         return d["inventory_delta"].get("flint", 0) > 0
     if label == "craft_flint_and_steel":
@@ -156,9 +173,11 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label in ("surface_up", "establish_base", "go_home"):
         return (d["pos_delta"] or 0) > 2
     if label == "escape_water":
-        # The rescue worked if it actually moved the body out of the water; landing back on
-        # ground shows in `on_ground`, but the walk itself is the proof it made progress.
-        return (d["pos_delta"] or 0) > 2 or bool(d.get("on_ground"))
+        # The rescue worked if the body has footing again. A swim that covers ground counts too,
+        # but measured across the water rather than up it: a body bobbing in a flooded pocket moves
+        # three blocks straight up and back down on the same column every tick (live run115, 281
+        # walks at (-0.5,62,281)), and that vertical drift is not an escape.
+        return bool(d.get("on_ground")) or (d.get("swim_delta") or 0) > 2
     if label == "craft_chest":
         return d["inventory_delta"].get("chest", 0) > 0
     if label == "place_chest":

@@ -88,6 +88,17 @@ class NetherProgressTest(unittest.TestCase):
                                     diff(gs(inventory={"cobblestone": 5}),
                                          gs(inventory={"cobblestone": 3}))))
 
+    def test_approach_lava_is_the_walk_to_the_pond(self) -> None:
+        # The step carries no item and places no block: getting beside the lava is the whole job,
+        # because a source only enters the scan once the bot stands near it (live, run114: 66
+        # explore/go_home ticks with seven obsidian still owed).
+        self.assertTrue(progressed("approach_lava",
+                                   diff(gs(pos=(-7.4, 68.0, -55.6)),
+                                       gs(pos=(-11.0, 39.0, -5.0)))))
+        self.assertFalse(progressed("approach_lava",
+                                    diff(gs(pos=(-7.4, 68.0, -55.6)),
+                                        gs(pos=(-7.0, 68.0, -55.0)))))
+
     def test_get_flint_is_the_flint_gain(self) -> None:
         self.assertTrue(progressed("get_flint", diff(gs(inventory={}),
                                                      gs(inventory={"flint": 1, "gravel": 8}))))
@@ -165,6 +176,30 @@ class HomeBaseProgressTest(unittest.TestCase):
                                     diff(gs(inventory={}), gs(inventory={"cooked_beef": 12}))))
         self.assertFalse(progressed("stow_surplus", walked, False))
         self.assertFalse(progressed("take_stored_food", walked, False))
+
+
+class WaterRescueProgressTest(unittest.TestCase):
+    """The rescue counts the ground it crosses, not the vertical drift of a floating body.
+
+    Live, run115: 281 `escape_water` walks at (-0.5,62,281) each read as progress because the body
+    bobbed three blocks up and back down in the same column, so the stuck guard never withheld the
+    label and the run ended on the iteration limit still treading water.
+    """
+
+    def test_a_swim_across_the_water_is_progress(self) -> None:
+        d = diff(gs(pos=(-0.5, 62.4, 281.5), in_water=True, on_ground=False),
+                 gs(pos=(4.5, 62.4, 281.5), in_water=True, on_ground=False))
+        self.assertTrue(progressed("escape_water", d))
+
+    def test_bobbing_in_the_same_column_is_not(self) -> None:
+        d = diff(gs(pos=(-0.5, 62.4, 281.5), in_water=True, on_ground=False),
+                 gs(pos=(-0.5, 59.4, 281.5), in_water=True, on_ground=False))
+        self.assertFalse(progressed("escape_water", d))
+
+    def test_footing_is_progress_whatever_the_distance(self) -> None:
+        d = diff(gs(pos=(-0.5, 62.4, 281.5), in_water=True, on_ground=False),
+                 gs(pos=(-0.5, 62.4, 281.5), in_water=False, on_ground=True))
+        self.assertTrue(progressed("escape_water", d))
 
 
 class GoldAndNetherPrepProgressTest(unittest.TestCase):

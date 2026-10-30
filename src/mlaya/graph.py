@@ -380,6 +380,10 @@ class Agent:
         # of the same source, and once every stance of a source is refused the step moves to the
         # next source (`_lava_pour_target`), exactly as `pour_skip` does for a refused pour.
         self._stance_skip: set[tuple[int, int, int]] = set()
+        # Standing cells an `escape_water` navigate was stopped at (`[NAVIGATION_STOPPED]`): the
+        # pathfinder cannot reach that cell from the water pocket the body is floating in, so the
+        # rescue aims at the next foothold instead of diving at the same one every tick.
+        self._rescue_skip: set[tuple[int, int, int]] = set()
         # The stuck-offer guard, one run per label: the last refusal code and the count of
         # identical failures for that label, and the ticks left in the cooling-off window that
         # withholds it (see `STUCK_REPEATS`/`STUCK_COOLDOWN` and `_track_stuck`). Per label, not a
@@ -550,6 +554,7 @@ class Agent:
         gs.build_site = self.build_site
         gs.pour_skip = frozenset(self._pour_skip)
         gs.stance_skip = frozenset(self._stance_skip)
+        gs.rescue_skip = frozenset(self._rescue_skip)
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.recover_written_off = frozenset(self._recover_written_off)
         gs.boxed_in = self._boxed[1] >= BOXED_REPEATS
@@ -1425,7 +1430,8 @@ class Agent:
     def _note_stance(self, action, ok: bool, text: str | None) -> None:
         """Remember a pour stance the server refused, so it is never walked to again.
 
-        `[NAVIGATION_TARGET_UNSUPPORTED]` on the `mine_obsidian` walk says the server found no
+        `[NAVIGATION_TARGET_UNSUPPORTED]` on the `mine_obsidian` or `approach_lava` walk says the
+        server found no
         footing at that cell: the cell over the lava's neighbour is air, or the lake below is too
         deep to stand on (live, run16: one stance over a deep lava lake answered the identical
         refusal on 215 ticks and the run never made a single obsidian). It is a property of the
@@ -1434,7 +1440,7 @@ class Agent:
         refused `_lava_pour_target` passes over the source itself -- the move `pour_skip` makes
         for a refused pour.
         """
-        if ok or action.label != "mine_obsidian" or action.tool != "navigate":
+        if ok or action.label not in ("mine_obsidian", "approach_lava") or action.tool != "navigate":
             return
         if "NAVIGATION_TARGET_UNSUPPORTED" not in (text or ""):
             return
@@ -1442,6 +1448,26 @@ class Agent:
         pos = (args.get("x"), args.get("y"), args.get("z"))
         if all(isinstance(v, int) for v in pos):
             self._stance_skip.add(pos)
+
+    def _note_rescue(self, action, ok: bool, text: str | None) -> None:
+        """Remember a water-rescue foothold the pathfinder could not swim to.
+
+        `[NAVIGATION_STOPPED]` on an `escape_water` walk says the search ran out of compute before
+        it found a route to that cell: live run115, 281 rescue walks from (-0.5,62,281) aimed at a
+        cave floor 29 blocks below, each one ending "visited 30902 nodes ... closest node was
+        -1,59,281" -- three blocks under the floating body, twenty-nine above the floor it was
+        aiming at. Reachability is a property of the cell and the pocket around it, not of the
+        attempt, so the rescue reads the set back out of the GameState (`rescue_skip`) and swims to
+        the next foothold, exactly as `stance_skip` moves past a refused pour stance.
+        """
+        if ok or action.label != "escape_water" or action.tool != "navigate":
+            return
+        if "NAVIGATION_STOPPED" not in (text or ""):
+            return
+        args = action.args or {}
+        pos = (args.get("x"), args.get("y"), args.get("z"))
+        if all(isinstance(v, int) for v in pos):
+            self._rescue_skip.add(pos)
 
     def _track_stuck(self, label: str, ok: bool, text: str | None,
                      progressed: bool) -> None:
@@ -2276,6 +2302,7 @@ class Agent:
         self._note_block(action.label, _ok, _text)
         self._note_pour(action, _ok, _text)
         self._note_stance(action, _ok, _text)
+        self._note_rescue(action, _ok, _text)
         self._note_base(action, _ok, _text)
         self._note_drop(action, _ok, _text, before)
         self._note_chest(action, _ok, _text)

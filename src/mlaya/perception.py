@@ -652,6 +652,10 @@ class GameState:
     # obsidian step stands on another neighbour, and once every stance of a source is refused it
     # passes over the source itself -- the same move `pour_skip` makes for a refused pour.
     stance_skip: frozenset = frozenset()
+    # Standing cells an `escape_water` swim was stopped at (`[NAVIGATION_STOPPED]`): the pathfinder
+    # timed out before it could reach that cell from the pocket the body is floating in, so aiming
+    # at it again can only time out again. The rescue passes these over and picks another foothold.
+    rescue_skip: frozenset = frozenset()
     # A `drop_junk` the terrain refused to give a disposal pit for (`[DROP_HOLE_UNAVAILABLE]`):
     # from then on the drop goes onto the open ground instead of into a dug hole. Both free the
     # slots the relief is for, and the open drop cannot fail, so the loop cannot stall on it.
