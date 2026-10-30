@@ -1070,8 +1070,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             # bot has to *stand* where the bed may go before it may sleep: walking to the clear
             # stance is half the step, and the very next tick lays the bed there.
             sx, sy, sz = stance
+            # `range: 0` because the bed goes down *where the bot stands*: with the server's
+            # default arrival tolerance of one block, a bot already next to the stance is
+            # reported as arrived without ever crossing into it, and the next tick's `sleep`
+            # lays the bed beside the wrong cell (live, run120: 5 `place_bed` ticks at the same
+            # position, then the idle guard withheld the label and the run spent its remaining
+            # 40 ticks on `wait`).
             return Action(label, "navigate",
-                          {"x": sx, "y": sy, "z": sz, "dig": True, "scaffold": True},
+                          {"x": sx, "y": sy, "z": sz, "range": 0,
+                           "dig": True, "scaffold": True},
                           "walk onto the spot clear of the gate, where the respawn bed goes")
         return Action(label, "sleep", {},
                       "place the carried bed clear of the gate and set the respawn point")

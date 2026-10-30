@@ -11,10 +11,10 @@ import math
 import re
 import unittest
 
-from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _crowding_hostiles,
-                         _diamond_reason, _expedition_prepared, _frame_needs_obsidian,
-                         _gold_reserve_short,
-                         _hoard_surplus, _idle_off_base, _nether_prep_steps,
+from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _bed_stance,
+                          _crowding_hostiles, _diamond_reason, _expedition_prepared,
+                          _frame_needs_obsidian, _gold_reserve_short, _known_footings,
+                          _hoard_surplus, _idle_off_base, _nether_prep_steps,
                          _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt, _safe_blaze_hunt, _safe_zombie_hunt,
                           _safe_spider_hunt, _safe_string_hunt,
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
@@ -2369,6 +2369,80 @@ class NetherGateTest(unittest.TestCase):
         a = resolve("place_bed", g)
         self.assertEqual(a.tool, "navigate")
         self.assertNotEqual((a.args["x"], a.args["y"], a.args["z"]), (227, 64, 221))
+
+    def _run120_base(self) -> GameState:
+        """The base run120 actually had, read live: the gate lit at (-8..-7, 70-71, -52), the bot
+        on the base anchor cell itself, the bed in the pack, and the ground scan naming every
+        column beside it - including the dug-out one at z=-53, whose floor sits a block lower.
+        """
+        g = self._geared(white_bed=1, cobblestone=64)
+        g.base = (-10, 69, -52)
+        g.pos = (-9.5, 70.0, -51.5)
+        g.phase = "night"
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal", x, y, -52, 2.0)
+                                         for x in (-8, -7) for y in (70, 71)]}
+        g.rescue_ground = {
+            "grass_block": [BlockHit("grass_block", "grass_block", x, y, z, 1.0, above="air")
+                           for (x, y, z) in ((-11, 69, -52), (-12, 69, -52), (-10, 69, -51),
+                                            (-10, 69, -50), (-11, 69, -50), (-12, 69, -51),
+                                            (-13, 69, -52), (-11, 68, -53))],
+            "cobblestone": [BlockHit("cobblestone", "cobblestone", -9, 69, -53, 2.4, above="air"),
+                            BlockHit("cobblestone", "cobblestone", -11, 69, -54, 2.2, above="air")],
+        }
+        return g
+
+    def test_place_bed_stance_is_ground_the_bot_can_stand_on(self) -> None:
+        # run120 it11-15: the bot stood on the base anchor cell, the gate reached it, and the
+        # stance the offsets offered was one cell west - a column the run had dug out, whose
+        # floor sits at y=68. `navigate` to a cell with nothing under it is refused outright
+        # ("[NAVIGATION_TARGET_UNSUPPORTED] ... the ground in that column is at y=69"), so the
+        # bed never went down and the run could not finish. The stance is a cell the ground read
+        # says is standable, and the dug-out column is not one of them.
+        g = self._run120_base()
+        stance = _bed_stance(g)
+        self.assertEqual(stance, (-11, 70, -52))
+        self.assertIn(stance, _known_footings(g))
+
+    def test_place_bed_walk_demands_the_exact_stance_cell(self) -> None:
+        # The other half of run120: the stance was standable, but `navigate`'s default arrival
+        # tolerance of one block reported success from the cell next to it, so `_at_stance`
+        # stayed false and five identical `navigate` ticks laid nothing. The bed goes down where
+        # the bot stands, so the walk has to arrive *in* the stance cell.
+        g = self._run120_base()
+        a = resolve("place_bed", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-11, 70, -52))
+        self.assertEqual(a.args["range"], 0)
+
+    def test_place_bed_lays_the_bed_once_the_bot_is_in_the_stance(self) -> None:
+        # The tick after the walk: the feet are in the stance cell, so the bed goes down.
+        g = self._run120_base()
+        g.pos = (-10.47, 70.0, -51.5)
+        self.assertEqual(resolve("place_bed", g).tool, "sleep")
+
+    def test_place_bed_stance_skips_a_column_with_no_floor(self) -> None:
+        # Nothing at the anchor's level is standable in the nearest clear column, so the stance
+        # takes the next clear cell the ground read proves out, rather than a cell in mid-air.
+        g = self._at_home(self._geared(white_bed=1), base=(0, 69, 0))
+        g.pos = (0.5, 70.0, 0.5)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal", x, y, 0, 2.0)
+                                         for x in (2, 3) for y in (70, 71)]}
+        g.rescue_ground = {"grass_block": [
+            BlockHit("grass_block", "grass_block", -1, 69, 1, 1.5, above="air"),
+            BlockHit("grass_block", "grass_block", -2, 69, 0, 2.0, above="air"),
+        ]}
+        stance = _bed_stance(g)
+        self.assertEqual(stance, (-1, 70, 1))
+
+    def test_place_bed_stance_falls_back_when_no_ground_was_read(self) -> None:
+        # A state with no ground scan at all (a failed read, or a test fixture) still gets the
+        # clearance-only stance, so the bed chain is not held hostage to the footing read.
+        g = self._at_home(self._geared(white_bed=1), base=(226, 63, 222))
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  x, y, 222, 3.0)
+                                         for x in (228, 229) for y in (64, 65, 66)]}
+        g.pos = (227.5, 64.0, 221.5)
+        self.assertEqual(_bed_stance(g), (225, 64, 222))
 
     def test_place_bed_lays_the_carried_bed_at_a_base_without_one(self) -> None:
         # A bed standing *away* from the base is no gate bed: the carried bed goes down at the

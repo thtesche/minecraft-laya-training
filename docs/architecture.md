@@ -956,7 +956,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–119 (2026-10-28 … 30)
+## Live findings run108–120 (2026-10-28 … 30)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1042,6 +1042,21 @@ were re-armed, so the eight ticks that followed at a blaze spawner ran on the ca
 the hunt closed. `_rearm_policy` (formerly `_reapply_after_death`) now tracks the dimension and
 re-applies the base stage on every change, the first tick of a run excepted - whatever dimension
 the bot starts in, the policy the run applied at its start already stands there.
+
+**The bed stance must be a cell the walk can actually arrive in.** run120 it11-15 and it31-33:
+eight identical `place_bed` ticks, the bot at (-9.5, 70, -51.5) and the carried bed still in the
+pack. `_bed_stance` chose the nearest cell clear of the gate, `(-11, 70, -52)`, one block west -
+and `navigate`'s default arrival tolerance is one block, so the call succeeded from where the bot
+already stood, `_at_stance` stayed false, and `sleep` never ran. `_track_idle` withheld the label
+after `IDLE_REPEATS = 3` such ticks, and the run's remaining 27 ticks were `wait`: with no bed at
+the base, `tech_tree_complete` can never hold. Two changes, both read live against that base: the
+stance walk now asks for `range: 0`, and `_bed_stance` only offers cells the ground scan proves
+standable (a `view_blocks` hit with `air` above it, from the soil group and the wider rock cast in
+`gs.rescue_ground`, since a base floor is usually cobblestone the run laid itself) - the offset
+grid walks onto the anchor's level whatever the ground there is, and live the column at
+`(-11, 70, -53)` is dug out to y=68, which `navigate` refuses outright with
+`[NAVIGATION_TARGET_UNSUPPORTED] ... the ground in that column is at y=69`. With no ground read at
+all the grid is still the only information there is, so it stays the fallback.
 
 Net: the crossing, the fortress march and the rod haul all run live, and the water, footing and
 foreground guards closed the runtime-crash and ping-pong classes; **no run has carried blaze

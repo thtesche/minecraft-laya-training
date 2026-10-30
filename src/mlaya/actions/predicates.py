@@ -754,6 +754,24 @@ def _clear_of_gate(cell: tuple[int, int, int], portal: list) -> bool:
                for cx, cz in cells)
 
 
+def _known_footings(gs: GameState) -> set[tuple[int, int, int]]:
+    """Every feet cell the ground scan proves the bot can actually stand in.
+
+    A `view_blocks find` hit with `air` over it is a block with open space above it, so the cell
+    directly on top of it is footing `navigate` accepts. The base floor is usually cobblestone the
+    run laid itself, which the soil-only `resources` group never lists, so the wider rock cast in
+    `gs.rescue_ground` is read too. An empty set means no ground was read at all (a fixture, or a
+    failed scan), which callers treat as "no footing information", not "no footing anywhere".
+    """
+    cells = set()
+    for pool in (gs.resources, gs.rescue_ground):
+        for hits in pool.values():
+            for hit in hits:
+                if hit.standable:
+                    cells.add((hit.x, hit.y + 1, hit.z))
+    return cells
+
+
 def _bed_stance(gs: GameState) -> tuple[int, int, int] | None:
     """The feet cell the bot must stand on for `place_bed`, clear of the gate, or None.
 
@@ -766,9 +784,15 @@ def _bed_stance(gs: GameState) -> tuple[int, int, int] | None:
     is the same either way (`_clear_of_gate`), so a bed laid from the cell the bot already holds is
     exactly as clear of the gate as one laid after a walk.
 
-    Otherwise the offsets are tried nearest-first from the base anchor, which leaves a base whose
-    gate is already far enough untouched. None with no base, or when no cell within the base box
-    is clear - `place_bed` then stands down rather than lay the bed against the gate.
+    Otherwise the stance is a cell the ground scan says is *standable*, nearest-first from the base
+    anchor, which leaves a base whose gate is already far enough untouched. Clearance alone is not
+    enough: the offset grid walks onto the base anchor's level whatever the ground there is, and
+    live run120 the nearest clear cell, `(-11,70,-52)`, sat over a dug-out column whose floor was
+    at y=69 - the walk to it is refused `[NAVIGATION_TARGET_UNSUPPORTED] ... the ground in that
+    column is at y=69`, and a step that cannot arrive is a step that never lays the bed. Where no
+    ground was read at all, the grid is the only information there is, so it is used as before.
+    None with no base, or when no cell within the base box is both clear and standable -
+    `place_bed` then stands down rather than lay the bed against the gate.
     """
     if gs.base is None:
         return None
@@ -782,6 +806,16 @@ def _bed_stance(gs: GameState) -> tuple[int, int, int] | None:
                 and abs(cell[1] - (by + 1)) <= BASE_RADIUS + 1
                 and _clear_of_gate(cell, portal)):
             return cell
+    footings = _known_footings(gs)
+    if footings:
+        candidates = [c for c in footings
+                      if abs(c[0] - bx) <= BASE_RADIUS and abs(c[2] - bz) <= BASE_RADIUS
+                      and abs(c[1] - (by + 1)) <= BASE_RADIUS + 1
+                      and _clear_of_gate(c, portal)]
+        if candidates:
+            return min(candidates, key=lambda c: (max(abs(c[0] - bx), abs(c[2] - bz)),
+                                                  abs(c[1] - (by + 1)),
+                                                  abs(c[0] - bx) + abs(c[2] - bz), c[0], c[2]))
     for dx, dz in _BED_STANCE_OFFSETS:
         cell = (bx + dx, by + 1, bz + dz)
         if _clear_of_gate(cell, portal):
