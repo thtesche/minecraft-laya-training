@@ -473,7 +473,13 @@ def candidates(gs: GameState) -> list[str]:
             # while the pack is full of something that can be dropped, the bot sheds it and keeps
             # searching instead of turning back (live: the pack sat at 34/36 of netherrack and
             # `_nether_must_return` fired on the slots, `leave_nether` offered every tick).
-            junk_full = (gs.slots_used >= INVENTORY_NEAR_FULL and _droppable(gs, inv))
+            # The shed has to be *on offer* for that to hold. `_note_drop_undone` takes it off for
+            # `STUCK_COOLDOWN` ticks once the ground has refused it twice in a row, and a pack that
+            # cannot be emptied is a reason to come home with the rods already got, not to keep
+            # marching with nowhere for the next one (run118: 36/36 for thirteen ticks straight,
+            # five of nine rods).
+            junk_full = (gs.slots_used >= INVENTORY_NEAR_FULL and _droppable(gs, inv)
+                         and "drop_junk" not in gs.stuck_labels)
             if _pearl_wave_trip(gs):
                 # --- Pearl wave (Welle 2+) ---
                 # The rod haul is already home and stowed, so the blaze hunt and the fortress march
@@ -529,9 +535,13 @@ def candidates(gs: GameState) -> list[str]:
                     # 1 of 2499 Nether ticks). `explore`'s Nether branch walks to the spawner/bricks
                     # when they are in view and marches the frontier toward them when they are not.
                     if junk_full:
-                        # Shed the netherrack first, so the next tick's slots are free and the march
-                        # does not start from a full pack. Offered ahead of `explore` on purpose.
-                        out.append("drop_junk")
+                        # The shed owns the tick. Offered beside `explore` it was on the list 19
+                        # times in run118 and taken 0, while the march hoovered netherrack 3 -> 173
+                        # in fifteen ticks and the pack stayed at 36/36: a rod has nowhere to land
+                        # in a full pack, so emptying it is a precondition of the haul, not a
+                        # preference between two steps - the same reason the pearl wave above sheds
+                        # alone, and the same reason the gold helmet swap owns its tick.
+                        return (["eat_food"] if eating else []) + ["drop_junk"]
                     out.append("explore")
         else:
             # Overworld side: the gate is the way in, and it opens once the expedition is stocked.

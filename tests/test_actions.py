@@ -4336,9 +4336,41 @@ class NetherExpeditionTest(unittest.TestCase):
         # `leave_nether` offered every tick).
         g = self._down(netherrack=256, cooked_mutton=32)
         g.slots_used = 34
-        self.assertIn("drop_junk", candidates(g))
-        self.assertIn("explore", candidates(g))
+        self.assertEqual(candidates(g), ["drop_junk"])
         self.assertNotIn("leave_nether", candidates(g))
+
+    def test_the_shed_owns_the_tick_the_pack_is_full(self) -> None:
+        # Offered beside `explore`, `drop_junk` was on the list 19 times in run118 (it92-114) and
+        # taken 0, while the fortress march hoovered 3 -> 173 netherrack in fifteen ticks and the
+        # pack sat at 36/36: the haul neither progressed nor ended. A blaze rod has nowhere to
+        # land in a full pack, so the shed is a precondition of the march, not a second choice.
+        g = self._down(netherrack=173, gravel=73, basalt=53, nether_bricks=49, blackstone=11,
+                       blaze_rod=5, diamond_pickaxe=2, cooked_mutton=9)
+        g.slots_used = 36
+        self.assertEqual(candidates(g), ["drop_junk"])
+        a = resolve("drop_junk", g)
+        self.assertEqual(a.tool, "drop_item")
+        self.assertIn("netherrack", {i["item_name"] for i in a.args["items"]})
+
+    def test_a_pack_with_room_still_marches(self) -> None:
+        # The shed only owns the tick at `INVENTORY_NEAR_FULL`; with slots to spare the search is
+        # the step the trip is for, and dropping is not on offer.
+        g = self._down(netherrack=173, gravel=73, basalt=53, nether_bricks=49, blackstone=11,
+                       blaze_rod=5, diamond_pickaxe=2, cooked_mutton=9)
+        g.slots_used = 30
+        self.assertIn("explore", candidates(g))
+        self.assertNotIn("drop_junk", candidates(g))
+
+    def test_a_given_up_shed_ends_the_trip(self) -> None:
+        # `_note_drop_undone` takes `drop_junk` off the offer for `STUCK_COOLDOWN` ticks once the
+        # ground has refused a shed twice in a row. With the shed given up, a full pack is no
+        # longer something the trip can work around: the bot comes home with the rods it has.
+        g = self._down(netherrack=173, gravel=73, basalt=53, nether_bricks=49, blackstone=11,
+                       blaze_rod=5, diamond_pickaxe=2, cooked_mutton=9)
+        g.slots_used = 36
+        g.stuck_labels = frozenset({"drop_junk"})
+        self.assertIn("leave_nether", candidates(g))
+        self.assertNotIn("drop_junk", candidates(g))
 
     def test_a_pack_full_of_undroppable_loot_still_leaves(self) -> None:
         # The same full-pack test with something that cannot be dropped (blaze rods over the
