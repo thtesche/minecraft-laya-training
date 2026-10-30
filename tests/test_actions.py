@@ -6644,6 +6644,13 @@ class DigOutTest(unittest.TestCase):
         self.assertEqual(cells, {(182 + k, 70 + h, 181) for k in (1, 2, 3) for h in (0, 1)})
         self.assertTrue(all(c["block_name"] == "air" for c in a.args["blocks"]))
 
+    def test_a_floating_body_does_not_dig(self) -> None:
+        # `build_structure` air cells around a body with no footing hung the runtime event loop in
+        # the water pocket at (-0.5,62,281) (live run115 it527, run116 it0). The rescue that gets
+        # the feet back owns that tick, not a tunnel.
+        g = gs(pos=(-0.5, 62.4, 281.5), boxed_in=True, in_water=True, on_ground=False)
+        self.assertIsNone(resolve("dig_out", g))
+
     def test_each_further_try_turns_to_another_side(self) -> None:
         sides = set()
         for attempt in range(4):

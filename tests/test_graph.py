@@ -193,6 +193,18 @@ class UnblockActionTest(unittest.TestCase):
         self.assertIsNone(unblock_action(gs()))                       # no pos: no pocket
         self.assertIsNone(unblock_action(gs(pos=(0.0, 60.0, 0.0)), attempt=1))
 
+    def test_a_floating_body_swims_instead_of_digging(self) -> None:
+        # Live run115 it527 and run116 it0: `make_room`'s `build_structure` hung the runtime event
+        # loop in the water pocket at (-0.5,62,281) -- `build_structure` the only operation still
+        # active at both `[RUNTIME_UNRESPONSIVE]` incidents. A body with no footing gets the water
+        # rescue, not a dug pocket.
+        a = unblock_action(gs(pos=(-0.5, 62.4, 281.5), in_water=True, on_ground=False,
+                              resources={"stone": [BlockHit("stone", "stone", 4, 62, 281, 4.5,
+                                                            above="air", below="stone")]}))
+        self.assertEqual(a.label, "escape_water")
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (4, 63, 281))
+
 
 class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
     class _Log:

@@ -1415,6 +1415,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "dig_out":
         if gs.pos is None or not gs.boxed_in:
             return None
+        if gs.in_water and not gs.on_ground:
+            # The tunnel is the same `build_structure` call that hung the runtime event loop
+            # while the body floated in a water pocket (see `graph.unblock_action`): a dig
+            # needs feet, and the rescue that gets them back owns the tick instead.
+            return None
         mx, my, mz = (math.floor(v) for v in gs.pos)
         # Toward the base first, where one is anchored; each further try at the same spot turns
         # to the next side, so a wall that will not give is not dug at twice.
