@@ -77,6 +77,7 @@ CRITERIA: dict[str, str] = {
     "craft_bucket": "craft a bucket from three iron ingots; a water bucket is how obsidian is made",
     "fill_bucket": "fill the carried bucket with water at a source, ready to pour onto lava",
     "mine_obsidian": "carry a water bucket and mine obsidian: the dig pours the water onto lava and mines what forms",
+    "approach_lava": "walk to the lava the scan can see, so the source that forms obsidian comes into reach",
     "get_flint": "dig gravel for flint, the spark the flint and steel needs",
     "craft_flint_and_steel": "craft flint and steel from flint and an iron ingot to light the portal",
     "clear_portal": "dig stray blocks out of the portal opening so the frame can be built and lit",

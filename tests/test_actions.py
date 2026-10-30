@@ -6,7 +6,9 @@ their precondition guards and argument binding are pinned here.
 """
 from __future__ import annotations
 
+import inspect
 import math
+import re
 import unittest
 
 from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _diamond_reason,
@@ -1724,6 +1726,61 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("mine_obsidian", candidates(g))
         self.assertIsNone(resolve("mine_obsidian", g))
 
+    def test_approach_lava_walks_to_the_lava_when_no_source_is_loaded(self) -> None:
+        # Live, run114 it159-225: the base anchor sat 118 blocks from the pond that made the run's
+        # three obsidian, and the base scan listed only two *flows* (level 2 and 8) 60 m away - no
+        # level-0 source. `mine_obsidian` closed, every other step was already satisfied, and the
+        # offer fell to the `explore`/`go_home` fallback for 66 ticks with seven blocks still owed.
+        # A source only enters the scan once the bot is beside it, so the chain needs the walk.
+        g = self._geared(water_bucket=1, obsidian=3, flint=4, cobblestone=60,
+                        coal=1, raw_iron=1, iron_ingot=1)
+        g.base = (-8, 67, -55)
+        g.pos = (-7.4, 68.0, -55.6)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -11, 38, -4, 60.1, above="stone", below="lava", level=2),
+            BlockHit("lava", "lava", -11, 37, -4, 60.6, above="lava", below="lava", level=8),
+        ]}
+        offered = candidates(g)
+        self.assertIn("approach_lava", offered)
+        self.assertNotIn("mine_obsidian", offered)
+        a = resolve("approach_lava", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual(a.args["y"], 39)  # on top of a neighbour, never in the lava
+        self.assertIn((a.args["x"], a.args["z"]), [(-10, -4), (-12, -4), (-11, -3), (-11, -5)])
+        self.assertTrue(a.args["dig"] and a.args["scaffold"])
+
+    def test_approach_lava_yields_to_a_source_in_the_listing(self) -> None:
+        # With a pour-able source in the scan the walk is already what `mine_obsidian` does;
+        # offering both would hand Laya two names for one move.
+        g = self._geared(water_bucket=1)
+        g.pos = (0.0, 64.0, 0.0)
+        g.resources = self._lava()
+        offered = candidates(g)
+        self.assertIn("mine_obsidian", offered)
+        self.assertNotIn("approach_lava", offered)
+        self.assertIsNone(resolve("approach_lava", g))
+
+    def test_approach_lava_needs_the_water_and_the_short_pack(self) -> None:
+        g = self._geared(obsidian=3)
+        g.pos = (-7.4, 68.0, -55.6)
+        g.resources = {"lava": [BlockHit("lava", "lava", -11, 38, -4, 60.1,
+                                         above="stone", below="stone", level=2)]}
+        self.assertNotIn("approach_lava", candidates(g))
+        g.inventory["water_bucket"] = 1
+        g.inventory["obsidian"] = 10
+        self.assertNotIn("approach_lava", candidates(g))
+
+    def test_approach_lava_skips_a_stance_the_server_refused(self) -> None:
+        # Every stance of that lava body answered `[NAVIGATION_TARGET_UNSUPPORTED]` once; walking
+        # to it again is the run16 215-tick loop, so the step stays out entirely.
+        g = self._geared(water_bucket=1, obsidian=3)
+        g.pos = (-7.4, 68.0, -55.6)
+        g.resources = {"lava": [BlockHit("lava", "lava", -11, 38, -4, 60.1,
+                                         above="stone", below="stone", level=2)]}
+        g.stance_skip = {(-10, 39, -4), (-12, 39, -4), (-11, 39, -3), (-11, 39, -5)}
+        self.assertNotIn("approach_lava", candidates(g))
+        self.assertIsNone(resolve("approach_lava", g))
+
     def test_mine_obsidian_needs_an_open_pour_cell(self) -> None:
         # The surface pond's only usable cell is capped by stone, so no water can be placed
         # there: the step refuses instead of pouring into a wall.
@@ -1841,13 +1898,15 @@ class NetherGateTest(unittest.TestCase):
 
     def test_mine_obsidian_mines_what_the_pour_formed(self) -> None:
         # Obsidian the last pour formed lies at the bot's feet: mine it, even with no water left.
+        # The cell is named exactly - run113 it84 shows why: a bare count let the server re-target
+        # a natural deposit 124 blocks away and the bot tread the water pocket for 14 minutes.
         g = self._geared(obsidian=4)
         g.pos = (-270.0, 64.0, -56.0)
         g.resources = self._blocks("obsidian")
         self.assertIn("mine_obsidian", candidates(g))
         a = resolve("mine_obsidian", g)
         self.assertEqual(a.tool, "collect_block")
-        self.assertEqual(a.args, {"block_name": "obsidian", "count": 6})
+        self.assertEqual(a.args, {"block_name": "obsidian", "x": -270, "y": 64, "z": -56})
 
     def test_mine_obsidian_returns_with_flint_and_steel_while_the_frame_is_short(self) -> None:
         # Live, run17: an igniter carried into a world whose frame was never finished left
@@ -1860,7 +1919,7 @@ class NetherGateTest(unittest.TestCase):
         self.assertIn("mine_obsidian", candidates(g))
         a = resolve("mine_obsidian", g)
         self.assertEqual(a.tool, "collect_block")
-        self.assertEqual(a.args, {"block_name": "obsidian", "count": 6})
+        self.assertEqual(a.args, {"block_name": "obsidian", "x": -270, "y": 64, "z": -56})
 
     def test_mine_obsidian_still_needs_a_frame_or_a_way_to_make_one(self) -> None:
         # The igniter only reopens the chain; it does not conjure a target. With no lava to pour
@@ -6592,6 +6651,27 @@ class DigOutTest(unittest.TestCase):
             first = resolve("dig_out", g).args["blocks"][0]
             sides.add((first["x"], first["z"]))
         self.assertEqual(sides, {(1, 0), (0, 1), (-1, 0), (0, -1)})
+
+
+class LabelRegistryTest(unittest.TestCase):
+    """Every label the planner can offer must carry a brain criterion.
+
+    `brain.intent_question` builds the choice question as `{label: CRITERIA[label]}`, so a label
+    the planner appends without one crashes the very tick it first appears on. Live, run115 it6:
+    `KeyError: 'approach_lava'` in `decide` ended the run after five iterations.
+    """
+
+    def test_every_offered_label_has_a_criterion(self) -> None:
+        from mlaya.actions import planner, stronghold
+        from mlaya.actions.constants import CRITERIA
+
+        offered: set[str] = set()
+        for module in (planner, stronghold):
+            src = inspect.getsource(module)
+            offered |= set(re.findall(r'out\.append\("([a-z_]+)"\)', src))
+            offered |= set(re.findall(r'return \["([a-z_]+)"\]', src))
+            offered |= set(re.findall(r'\+ \["([a-z_]+)"\]', src))
+        self.assertFalse(sorted(offered - set(CRITERIA)))
 
 
 if __name__ == "__main__":

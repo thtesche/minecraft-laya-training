@@ -2182,6 +2182,28 @@ def _pour_stance(gs: GameState, target: BlockHit) -> tuple[int, int, int] | None
     return min(options, key=lambda p: _dist(gs.pos, p))
 
 
+def _lava_walk_target(gs: GameState) -> tuple[int, int, int] | None:
+    """The stance to walk to when the scan holds lava but no pour-able source.
+
+    A lava *source* only enters the scan once the bot is near it, and `mine_obsidian` is offered
+    only while one is. Live, run114: the base anchor sat 118 blocks from the pond that made the
+    run's three obsidian, and the base scan listed only two *flows* (level 2 and level 8) 60 m
+    away - no level-0 source, so `_lava_pour_target` answered None, `mine_obsidian` closed, and the
+    offer fell to the `explore`/`go_home` fallback for 66 ticks while the frame still owed seven
+    blocks. The walk is the chain's missing link: standing beside the lava loads the source, and
+    the pour step opens on the next tick.
+    """
+    for h in gs.resources.get("lava") or []:  # already nearest first
+        if _within_reach(gs, h, POUR_REACH):
+            continue  # already at the lava: `mine_obsidian` owns that tick
+        if h.pos in gs.pour_skip:
+            continue
+        stance = _pour_stance(gs, h)
+        if stance is not None:
+            return stance
+    return None
+
+
 def _bed_available(gs: GameState) -> bool:
     """A bed is at hand for `sleep`: carried, or already standing beside the base.
 

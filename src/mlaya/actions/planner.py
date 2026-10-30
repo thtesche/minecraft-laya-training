@@ -376,6 +376,14 @@ def candidates(gs: GameState) -> list[str]:
                 and ((has_water and _lava_pour_target(gs) is not None)
                      or _obsidian_within_reach(gs))):
             out.append("mine_obsidian")
+        elif (has_water and _frame_needs_obsidian(gs, inv) and _can_mine(gs, "obsidian")
+              and not _shed_owed(gs, inv) and _lava_walk_target(gs) is not None):
+            # The obsidian is made at a lava source, and a source is only in the scan when the bot
+            # stands near it. With none loaded, the chain has no step at all and the offer falls to
+            # the `explore`/`go_home` fallback (live, run114 it159-225: 66 ticks of 55-block
+            # ping-pong between base and frontier with seven obsidian still owed). Walking to the
+            # lava the scan *can* see is what reopens it.
+            out.append("approach_lava")
         if (not has_fs and has_flint and iron >= FLINT_STEEL_IRON and table
                 and obsidian >= PORTAL_OBSIDIAN):
             out.append("craft_flint_and_steel")
@@ -908,9 +916,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                 or inv.get("obsidian", 0) >= PORTAL_OBSIDIAN or _shed_owed(gs, inv)):
             return None
         # Phase 1: obsidian already lies within reach (what the last pour formed) - mine it.
+        # The cell is named exactly, one block per tick: a bare `count` lets the server
+        # re-target the nearest obsidian it can find once the formed block is gone. Live,
+        # run113 it84: the pour formed one block, the action asked for eight, and the bot
+        # spent 14 minutes treading the water pocket beside the lava on the way back to a
+        # natural deposit 124 blocks away - the exact flooded-shaft walk phase 2 rules out.
         if _obsidian_within_reach(gs):
-            count = max(1, PORTAL_OBSIDIAN - inv.get("obsidian", 0))
-            return Action(label, "collect_block", {"block_name": "obsidian", "count": count},
+            hit = gs.resource_nearest("obsidian")
+            return Action(label, "collect_block",
+                          {"block_name": "obsidian", "x": hit.x, "y": hit.y, "z": hit.z},
                           "mine the obsidian the poured water just formed at the bot's feet")
         # Phase 2: no obsidian in reach, so make some - pour the carried water into a lava
         # cell that lies beside a real lava source (see `_lava_pour_target`). Natural obsidian
@@ -934,6 +948,18 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": sx, "y": sy, "z": sz, "range": 1,
                        "dig": True, "scaffold": False},
                       "walk to the lava source, stand on the block beside it and pour")
+    if label == "approach_lava":
+        if (not _has(inv, WATER_BUCKET) or not _frame_needs_obsidian(gs, inv)
+                or _obsidian_within_reach(gs) or _lava_pour_target(gs) is not None):
+            return None
+        stance = _lava_walk_target(gs)
+        if stance is None:
+            return None
+        sx, sy, sz = stance
+        return Action(label, "navigate",
+                      {"x": sx, "y": sy, "z": sz, "range": 1, "dig": True, "scaffold": True},
+                      "walk to the lava the scan can see: the source that forms obsidian only "
+                      "shows up once the bot stands beside it")
     if label == "get_flint":
         if _has(inv, FLINT_ITEM):
             return None
