@@ -116,6 +116,10 @@ class WaterTicksTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -240,6 +244,10 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -430,6 +438,10 @@ class PourSkipTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -531,6 +543,10 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -684,6 +700,10 @@ class StanceSkipTest(unittest.TestCase):
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -807,6 +827,10 @@ class RescueSkipTest(unittest.TestCase):
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._drop_pos = None
         agent._held_ticks = 0
@@ -924,6 +948,10 @@ class StuckOfferTest(unittest.TestCase):
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -1674,6 +1702,10 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -1823,6 +1855,10 @@ class FrameRefusalTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -1928,6 +1964,10 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._bed_base = None
         agent._bed_base_scanned = None
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -2224,6 +2264,10 @@ class DropHoleTest(unittest.TestCase):
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -2268,6 +2312,10 @@ class DropHoleTest(unittest.TestCase):
         # the drop reads that heading (run87: dug west, tossed west, stepped west into the pile).
         agent = self._agent()
         agent._drop_hole_blocked = True
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._note_heading((-59.5, 85.0, 44.5), (-93.5, 6.0, 35.3))
         agent._note_heading((-93.5, 6.0, 35.3), (-93.6, 6.0, 35.3))
         g = GameState()
@@ -2283,6 +2331,37 @@ class DropHoleTest(unittest.TestCase):
                          "[DROP_HOLE_UNAVAILABLE] No adjacent terrain can be excavated into "
                          "a dry, enclosed disposal pit.")
         self.assertTrue(agent._drop_hole_blocked)
+
+    def test_the_refused_pit_keeps_the_cell_it_was_refused_at(self) -> None:
+        # The answer is the ground's at one cell, so the cell travels with it. Without it the latch
+        # can only be the run's, which is how run117 carried one gravel pocket at (-86, 1, -339)
+        # through 127 open-ground drops.
+        agent = self._agent()
+        g = GameState()
+        g.pos = (-86.3, 1.0, -339.5)
+        agent._note_drop(self._Action("drop_junk"), False,
+                         "[DROP_HOLE_UNAVAILABLE] No adjacent terrain can be excavated into "
+                         "a dry, enclosed disposal pit.", g)
+        self.assertTrue(agent._drop_hole_blocked)
+        self.assertEqual(agent._drop_hole_cell, (-86.3, 1.0, -339.5))
+
+    def test_the_latch_holds_while_the_bot_stands_on_that_ground(self) -> None:
+        agent = self._agent()
+        agent._drop_hole_blocked = True
+        agent._drop_hole_cell = (-86.3, 1.0, -339.5)
+        agent._release_hole_memory((-85.9, 1.0, -340.2))
+        self.assertTrue(agent._drop_hole_blocked)
+
+    def test_the_latch_releases_once_the_bot_has_walked_on(self) -> None:
+        # run117: the pit was refused at it88 in a gravel pocket at (-86, 1, -339); by it126 the
+        # bot was digging deepslate thirty blocks away at (-82.7, -19, -363.6), where a pit was
+        # never tried again for the rest of the run.
+        agent = self._agent()
+        agent._drop_hole_blocked = True
+        agent._drop_hole_cell = (-86.3, 1.0, -339.5)
+        agent._release_hole_memory((-82.7, -19.0, -363.6))
+        self.assertFalse(agent._drop_hole_blocked)
+        self.assertIsNone(agent._drop_hole_cell)
 
     def test_ignores_success_and_other_labels(self) -> None:
         agent = self._agent()
@@ -2313,6 +2392,10 @@ class DropHoleTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = True
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -2320,6 +2403,116 @@ class DropHoleTest(unittest.TestCase):
         agent._drop_heading = None
         agent._heading = None
         self.assertTrue(agent._inject(gs()).drop_hole_blocked)
+
+
+class DropUndoneTest(unittest.TestCase):
+    """An open drop the bot walks back over is a drop that never happened.
+
+    Live, run117: from it126 the bot shed its surplus at (-82.7, -19, -363.6), stepped three
+    blocks off it, and the next tick walked back over the pile and carried all of it - 179
+    cobblestone, 30 tuff, 17 cobbled deepslate. 115 of the run's 125 open drops came back within
+    three ticks, and 257 of its 684 ticks went to dropping and walking off.
+    """
+
+    class _Action:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            self.tool = "drop_item"
+            self.args: dict = {}
+
+    CELL = (-82.7, -19.0, -363.6)
+    BACK = (-82.5, -20.0, -363.5)
+    DROPPED = {"cobblestone": 179, "cobbled_deepslate": 17, "tuff": 30, "diorite": 3}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._drop_hole_blocked = True
+        agent._drop_hole_cell = None
+        agent._drop_open_pending = False
+        agent._drop_pos = None
+        agent._drop_heading = None
+        agent._heading = None
+        agent._step_away_fails = 0
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
+        agent._stuck_off = {}
+        agent.log = []
+        return agent
+
+    def _shed(self, agent) -> None:
+        agent._note_drop_undone(self._Action("drop_junk"), True,
+                                {"inventory_delta": {k: -v for k, v in self.DROPPED.items()}},
+                                self.CELL)
+
+    def _walk_back(self, agent, pos=None) -> None:
+        agent._note_drop_undone(self._Action("mine_diamond"), False,
+                                {"inventory_delta": {"cobblestone": 179, "tuff": 30,
+                                                    "cobbled_deepslate": 17, "diorite": 3}},
+                                pos if pos is not None else self.BACK)
+
+    def test_the_open_drop_is_remembered_with_what_went_out(self) -> None:
+        agent = self._agent()
+        self._shed(agent)
+        self.assertEqual(agent._drop_junk_cell, self.CELL)
+        self.assertEqual(agent._drop_junk_items, self.DROPPED)
+
+    def test_the_walk_back_over_the_pile_is_an_undone_drop(self) -> None:
+        agent = self._agent()
+        self._shed(agent)
+        self._walk_back(agent)
+        self.assertEqual(agent._drop_undone, 1)
+        self.assertIsNone(agent._drop_junk_cell)
+
+    def test_a_few_blocks_mined_is_not_the_pile_coming_back(self) -> None:
+        # The bot is standing on the vein, so a tick that picks up a handful of cobblestone is
+        # the vein, not the pile it shed: only the amount that went out counts as it coming back.
+        agent = self._agent()
+        self._shed(agent)
+        agent._note_drop_undone(self._Action("mine_diamond"), True,
+                                {"inventory_delta": {"cobblestone": 7, "diorite": 1}}, self.BACK)
+        self.assertEqual(agent._drop_undone, 0)
+        self.assertEqual(agent._drop_junk_cell, self.CELL)
+
+    def test_two_undone_drops_withhold_the_label(self) -> None:
+        from mlaya.graph import DROP_UNDONE_GIVE_UP, STUCK_COOLDOWN
+        agent = self._agent()
+        for _ in range(DROP_UNDONE_GIVE_UP):
+            self._shed(agent)
+            self._walk_back(agent)
+        self.assertEqual(agent._stuck_off.get("drop_junk"), STUCK_COOLDOWN)
+        self.assertEqual(agent._drop_undone, 0)
+        self.assertEqual(agent.log[-1]["reason"], "drop_undone_dropped")
+
+    def test_one_undone_drop_does_not_withhold_it_yet(self) -> None:
+        # The first pile may have been picked up by a path that had no way round it; only a spot
+        # that undoes the drop twice in a row is given up on.
+        agent = self._agent()
+        self._shed(agent)
+        self._walk_back(agent)
+        self.assertNotIn("drop_junk", agent._stuck_off)
+
+    def test_a_pit_drop_leaves_nothing_on_the_ground(self) -> None:
+        agent = self._agent()
+        agent._drop_hole_blocked = False
+        agent._drop_junk_cell = self.CELL
+        agent._drop_junk_items = dict(self.DROPPED)
+        agent._drop_undone = 1
+        agent._note_drop_undone(self._Action("drop_junk"), True,
+                                {"inventory_delta": {"cobblestone": -179}}, self.CELL)
+        self.assertIsNone(agent._drop_junk_cell)
+        self.assertEqual(agent._drop_junk_items, {})
+        self.assertEqual(agent._drop_undone, 0)
+
+    def test_walking_away_from_the_pile_releases_it(self) -> None:
+        # The junk left behind despawns; a bot that has moved on is not undoing anything, and the
+        # count of undone drops starts over for the next spot it sheds at.
+        agent = self._agent()
+        self._shed(agent)
+        agent._note_drop_undone(self._Action("explore"), True,
+                                {"inventory_delta": {"cobblestone": 12}}, (-95.0, -19.0, -363.0))
+        self.assertIsNone(agent._drop_junk_cell)
+        self.assertEqual(agent._drop_undone, 0)
 
 
 class ChestSupportTest(unittest.TestCase):
@@ -2417,6 +2610,10 @@ class ChestSupportTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -2523,6 +2720,10 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -2703,6 +2904,10 @@ class ChestLidTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -2872,6 +3077,10 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -3094,6 +3303,10 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -3484,6 +3697,10 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -3845,6 +4062,10 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -4104,6 +4325,10 @@ class NetherCrossingTest(unittest.TestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None
@@ -4485,6 +4710,10 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._boxed = (None, 0)
         agent._dig_out_tries = 0
         agent._drop_hole_blocked = False
+        agent._drop_hole_cell = None
+        agent._drop_junk_cell = None
+        agent._drop_junk_items = {}
+        agent._drop_undone = 0
         agent._drop_open_pending = False
         agent._defer_quiet = 0
         agent._drop_pos = None

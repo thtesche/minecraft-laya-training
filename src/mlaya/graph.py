@@ -164,6 +164,20 @@ PASS_TIME_LABELS = ("wait", "sleep")
 # consecutive refusals the walk off is given up and the bot moves on; the junk stays dropped,
 # because the bot marches away from it, not over it, so the auto-pickup never reaches it.
 STEP_AWAY_GIVE_UP = 3
+# A `[DROP_HOLE_UNAVAILABLE]` describes the ground under the bot, not the run: the pit the terrain
+# could not make at one cell it can make at the next. run117 latched it at it88 in a gravel pocket
+# at (-86, 1, -339) and from then on every one of the run's 127 drops went onto open ground, 115 of
+# them picked back up within three ticks. The latch holds only while the bot is within this many
+# blocks of the cell that refused, so a bot that walks on gets a pit again.
+DROP_HOLE_MEMORY = 12.0
+# An open drop is undone by the walk back to the vein the bot was standing on: run117 it126 shed
+# 179 cobblestone at (-82.7, -19, -363.6), the step off it went three blocks, and the next tick
+# walked back over the pile and carried all of it back. Two drops in a row that come back are a spot
+# where dropping does not work, and `drop_junk` is withheld for the same window the other guards use
+# so the tick goes to the base chain instead of the two-tick cycle (run117 spent 257 of its 684
+# ticks on drop and walk-off).
+DROP_UNDONE_GIVE_UP = 2
+DROP_UNDONE_REACH = 6.0
 # Foreground calls in a row that ran out of `[mcp] action_wait_ms` with the body still held
 # (`[BODY_HELD]`) before the run stops with `"stop": "body_held"`. run89's hostile reflex held the
 # body in a `fight`/`hold` against a zombie 1.6 m off for nearly three hours - full health, no
@@ -436,13 +450,23 @@ class Agent:
         self._defer_quiet = 0
         # Foreground calls in a row that ended `[BODY_HELD]` (`_note_held`).
         self._held_ticks = 0
-        # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): from
-        # then on the relief drops the surplus on the open ground instead. That still frees the
-        # slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall on it.
+        # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): while the
+        # bot stays by that cell the relief drops the surplus on the open ground instead. That still
+        # frees the slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall
+        # on it. The refusal is the ground's, not the run's, so the cell it happened at is kept and
+        # the latch is released once the bot has walked away from it (`DROP_HOLE_MEMORY`).
         self._drop_hole_blocked = False
+        self._drop_hole_cell: tuple[float, float, float] | None = None
         # After dropping junk on open ground (no pit), step away so items aren't re-collected.
         self._drop_open_pending = False
         self._drop_pos: tuple[float,float,float]|None = None
+        # The junk an open drop left on the ground and how much of each item it was, so the tick that
+        # carries it back into the pack can be read as a drop that never happened (`_note_drop_undone`).
+        self._drop_junk_cell: tuple[float, float, float] | None = None
+        self._drop_junk_items: dict[str, int] = {}
+        # Open drops in a row that were walked back over; `DROP_UNDONE_GIVE_UP` of them withholds the
+        # label for `STUCK_COOLDOWN` ticks.
+        self._drop_undone = 0
         # The way the bot last walked (`_note_heading`), and its value when the drop was made.
         self._heading: tuple[float, float] | None = None
         self._drop_heading: tuple[float, float] | None = None
@@ -573,6 +597,7 @@ class Agent:
         self._water_ticks = self._water_ticks + 1 if (gs.in_water and not gs.on_ground) else 0
         gs.water_ticks = self._water_ticks
         gs.defer_quiet = self._defer_quiet
+        self._release_hole_memory(gs.pos)
         gs.drop_hole_blocked = self._drop_hole_blocked
         gs.drop_open_pending = self._drop_open_pending
         gs.drop_pos = self._drop_pos
@@ -1881,16 +1906,34 @@ class Agent:
             return
         self.base = (bx, y, bz)
 
+    def _release_hole_memory(self, pos: tuple[float, float, float] | None) -> None:
+        """Let a pit the terrain refused be tried again once the bot has walked away from it.
+
+        `[DROP_HOLE_UNAVAILABLE]` is the ground's answer at the cell the bot stood on, not the
+        run's: run117 got it at it88 in a gravel pocket at (-86, 1, -339) and from then on every
+        one of the run's 127 drops went onto open ground, 115 of them picked back up within three
+        ticks, while the deepslate the bot dug through a hundred blocks later could have held a pit.
+        """
+        if not self._drop_hole_blocked or self._drop_hole_cell is None or pos is None:
+            return
+        dx, dy, dz = (pos[0] - self._drop_hole_cell[0],
+                      pos[1] - self._drop_hole_cell[1],
+                      pos[2] - self._drop_hole_cell[2])
+        if dx * dx + dy * dy + dz * dz > DROP_HOLE_MEMORY * DROP_HOLE_MEMORY:
+            self._drop_hole_blocked = False
+            self._drop_hole_cell = None
+
     def _note_drop(self, action, ok: bool, text: str | None, gs=None) -> None:
         """Remember where a `drop_junk` left its junk on open ground, so the next tick walks off
         it.
 
-        Two facts are kept apart, because only one of them is about the ground. A refused pit
-        (`[DROP_HOLE_UNAVAILABLE]`) is a property of the terrain and latches for the rest of the
-        run -- the drop then goes onto open ground, where it still frees the slot. But an open
-        drop lands under the bot's own feet, and dropped items are gathered again by walking over
-        them, so that drop is not finished when the tool returns: it is finished three blocks
-        away. `drop_open_pending` carries that unfinished step until `step_away_drops` closes it.
+        Two facts are kept apart, because only one of them is about the body. A refused pit
+        (`[DROP_HOLE_UNAVAILABLE]`) is the ground's answer at the cell the bot stood on, and it
+        holds only while the bot is still there (`_release_hole_memory`) -- the drop then goes onto
+        open ground, where it still frees the slot. But an open drop lands under the bot's own
+        feet, and dropped items are gathered again by walking over them, so that drop is not
+        finished when the tool returns: it is finished three blocks away. `drop_open_pending`
+        carries that unfinished step until `step_away_drops` closes it.
 
         The position is recorded on the drop itself rather than read later, because by the time
         the walk-back runs the bot has already started moving off it.
@@ -1906,6 +1949,63 @@ class Agent:
             return
         if "DROP_HOLE_UNAVAILABLE" in (text or ""):
             self._drop_hole_blocked = True
+            self._drop_hole_cell = gs.pos if gs is not None else None
+
+    def _note_drop_undone(self, action, ok: bool, delta: dict,
+                         pos: tuple[float, float, float] | None) -> None:
+        """Count an open-ground drop the bot walks back over as a drop that never happened.
+
+        A pit drop is closed behind the bot, so the surplus stays gone. An open drop lands at the
+        bot's own feet, and the walk off it ends three blocks away - which is exactly the cell the
+        vein it was working is three blocks from. run117 it126 shed 179 cobblestone, 30 tuff and
+        eleven other stacks at (-82.7, -19, -363.6), the step off it went three blocks, and the next
+        tick walked back and carried all of it: 115 of the run's 125 open drops came back within
+        three ticks, and 257 of its 684 ticks went to dropping and walking off.
+
+        The pile is remembered with the amount of each item that went out of the pack. A tick that
+        brings at least that much of any of them back near that cell is the pile being hoovered up,
+        not the vein being worked: mining two blocks away gains a handful, never the whole stack that
+        was just shed. Two of those in a row say the spot cannot be shed at, and `drop_junk` is
+        withheld for the same countdown the other guards use so the tick goes to the base chain
+        instead - a chest to craft and stand, a bed, the search - and the junk left behind despawns.
+        """
+        if action.label == "drop_junk":
+            if not ok:
+                return
+            if self._drop_hole_blocked:
+                self._drop_junk_cell = pos
+                self._drop_junk_items = {k: -v for k, v in
+                                        (delta.get("inventory_delta") or {}).items() if v < 0}
+            else:
+                # The surplus went into a hole the server plugged: nothing is on the ground to
+                # come back, and an earlier pile is stale.
+                self._drop_junk_cell = None
+                self._drop_junk_items = {}
+                self._drop_undone = 0
+            return
+        if self._drop_junk_cell is None or pos is None:
+            return
+        dx, dy, dz = (pos[0] - self._drop_junk_cell[0],
+                      pos[1] - self._drop_junk_cell[1],
+                      pos[2] - self._drop_junk_cell[2])
+        if dx * dx + dy * dy + dz * dz > DROP_UNDONE_REACH * DROP_UNDONE_REACH:
+            # The bot has left the pile behind: the drop did its job, and the count starts over.
+            self._drop_junk_cell = None
+            self._drop_junk_items = {}
+            self._drop_undone = 0
+            return
+        gained = {k: v for k, v in (delta.get("inventory_delta") or {}).items() if v > 0}
+        if not any(gained.get(item, 0) >= amount for item, amount in self._drop_junk_items.items()):
+            return
+        self._drop_junk_cell = None
+        self._drop_junk_items = {}
+        self._drop_undone += 1
+        if self._drop_undone < DROP_UNDONE_GIVE_UP:
+            return
+        self._drop_undone = 0
+        self._stuck_off["drop_junk"] = STUCK_COOLDOWN
+        self.log.append({"stage": "policy", "reason": "drop_undone_dropped",
+                        "label": "drop_junk", "ticks": STUCK_COOLDOWN})
 
     def _note_heading(self, before, after) -> None:
         """Keep the way the bot last walked, as a unit vector in the horizontal plane.
@@ -2341,6 +2441,7 @@ class Agent:
         delta = vmod.diff(before, after)
         self._note_held(res, before, after)
         self._note_hurt(before, after)
+        self._note_drop_undone(action, _ok, delta, after.pos)
         self._note_build(action, _ok, delta)
         self._note_stow(action, _ok, delta)
         self._note_take_powder(action, _ok, _text, delta)
