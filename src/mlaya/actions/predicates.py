@@ -920,9 +920,17 @@ def _food_source_in_reach(gs: GameState) -> bool:
     Testing the loaded area instead, to stop the gate flipping when the bot stands in a tunnel,
     was tried live (run19b) and reverted: a gate no hunt within reach can satisfy pushed the run
     into the far hunt below, which is the far worse failure.
+
+    The zombie branch has to carry the same condition the hunt itself does. Rotten flesh is
+    `EDIBLE` but never `PROVISIONS`, so a zombie only feeds the reserve when the pack is at the
+    eating floor (`_food_target`'s emergency branch); counted unconditionally it made the source
+    look reachable while nothing on the offer could take it. Live, run126 it49-100: fifty-two
+    `wait` ticks at the base, the reserve short of 64, one zombie at 20.3 m and no animal inside
+    the daylight reach - the gate held the expedition on a hunt that was never offered.
     """
     return (_nearest_food_mob(gs, FOOD_HUNT_RANGE_DAY) is not None
-            or (gs.mob_nearest("zombie") or float("inf")) <= ZOMBIE_HUNT_RANGE)
+            or (_eating_now(gs)
+                and (gs.mob_nearest("zombie") or float("inf")) <= ZOMBIE_HUNT_RANGE))
 
 
 def _provision_count(counts: dict[str, int]) -> int:
@@ -1090,7 +1098,12 @@ def _nether_haul_home(gs: GameState) -> bool:
     # a chest with room in it. A rod neither can reach is dead weight, and a rod or powder that
     # every chest has refused is carried supply the eyes can spend directly, not a haul owed to
     # the network (run124 it54: `[CONTAINER_BATCH_INCOMPLETE] ... blaze_powder 0/2`).
-    return ((powder > 0 and _chest_ready(gs) and _storage_target(gs) is not None)
+    # Powder the eye chain can spend from the pack is already processed - it is the next eye, not
+    # a haul still waiting for a lid. run126 it16-100: two powder and one pearl in the pack held
+    # the departure gate shut for eighty ticks while the stronghold phase waited on a deposit the
+    # eye-fuel rule would never let happen.
+    return ((powder > 0 and not _powder_is_eye_fuel(gs)
+            and _chest_ready(gs) and _storage_target(gs) is not None)
             or (rods > 0 and _has(inv, "crafting_table")))
 
 
@@ -2898,10 +2911,15 @@ def nether_expedition_complete(gs: GameState) -> bool:
     inspection on every tick of a long run, so the deposit is latched by the loop when the action
     reports success (`gs.powder_stowed`, `Agent._note_stow`) - the same shape as `frame_complete`.
 
-    Powder still in the pack does not count: the point is that the haul is safe at home, and a bot
-    that dies on the way back loses the inventory in one step.
+    Powder still in the pack does not count while the bot is still below the gate: the point is
+    that the haul is safe at home, and a bot that dies on the way back loses the inventory in one
+    step. Once it is back in the Overworld the haul is home whatever the lid did with it - run126
+    it16-100 came back from the Nether with two powder and one pearl, the deposit rule would not
+    let that powder be banked while a pearl was in hand, and the latch never set: the stronghold
+    block stayed shut, `craft_ender_eye` and the pearl hunt were never offered, and the run held on
+    `wait`.
     """
-    return bool(gs.powder_stowed)
+    return bool(gs.powder_stowed) or (_overworld(gs) and _blaze_powder(gs.inventory) > 0)
 
 
 def nether_expedition_open(gs: GameState) -> bool:

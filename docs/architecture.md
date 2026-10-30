@@ -956,7 +956,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–125 (2026-10-28 … 30)
+## Live findings run108–126 (2026-10-28 … 30)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1128,6 +1128,11 @@ at `(-10,70,-50)` could not anchor it either - `bed_frame_site` checks the frame
 ground would carry, and the standing frame is a different plane three blocks off. Adoption now asks
 the narrower question: flint and steel in the pack, or the diamond pickaxe obsidian is mined with.
 
+**The chest relief chain fires live.** run126 it33-35: the main chest at `(-10,70,-49)` and the
+overflow at `(-8,68,-54)` both came back full, `craft_chest` then `place_chest` raised a third at
+`(-11,70,-50)`, and `_storage_target` moved to it. A network that has run out of lids builds a new
+one rather than refusing the deposit.
+
 **Powder the eyes can spend is not a haul to bank.** run125 it16-529: one pearl and two blaze
 powder in the pack, sixteen eyes owed. `stow_blaze_powder` (the haul block) and `take_blaze_powder`
 (the stronghold block) were both live on the same tick, and the model crossed the lid in one
@@ -1136,11 +1141,29 @@ label's progress in `verify`, so the stuck guard never counted a single one. The
 only when the carried powder is surplus to the eyes owed now: a pearl in hand, a table in the pack
 and no more powder than the frame costs means the pack holds the next eye, not a haul.
 
+**A haul is home when the bot is back at the base, not when the lid takes it.** run126 it16-185:
+the fix above worked - the ping-pong stopped - but the same rule read the other way left the run
+with nothing to do. Two powder and one pearl in the pack meant the deposit was refused, so
+`powder_stowed` never latched, `nether_expedition_complete` stayed false, the stronghold block
+never opened, and `craft_ender_eye` was never offered: 102 of 186 ticks were `wait`. The latch is
+now "powder stowed **or** back in the Overworld with powder in the pack", and `_nether_haul_home`
+excludes powder the eye chain can spend from the pack - processed supply is not a trip still
+pending. Replaying run126's it100 snapshot through the new code gives
+`['swap_to_gold_helmet', 'enter_portal', 'take_blaze_powder', 'craft_ender_eye', 'mine_gold_reserve']`
+where the live run offered `['wait']`.
+
+**A food source has to be one the offer can serve.** `_food_source_in_reach` counted any zombie
+inside melee range as provisions, but rotten flesh is `EDIBLE` and never `PROVISIONS`, so a zombie
+only feeds the reserve when the pack is at the eating floor. With the pack full and a zombie 20 m
+off, the gate held the expedition on a hunt that was never on the offer. The zombie branch now
+carries `_eating_now(gs)`, the same condition `_food_target`'s emergency branch uses.
+
 Net: the crossing, the fortress march and the rod haul all run live, and the powder reaches the
 chest at the gate (run124 it6, run125 it1-3, `powder_stowed` latched); what no run has done yet is
 turn that powder into an eye of ender. The water, footing and foreground guards closed the
 runtime-crash and the walk-back-and-forth classes. run125 never crossed at all - it had no base
-anchor to walk to - and its remaining stall was a chest lid rather than a fight.
+anchor to walk to - and its remaining stall was a chest lid rather than a fight; run126 crossed the
+lid and stalled on the latch that was supposed to say the haul was done.
 
 ## Next milestones
 

@@ -15,7 +15,8 @@ from types import SimpleNamespace
 from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _bed_at_base,
                           _bed_cells, _bed_reachable, _bed_reach_stance, _bed_stance,
                           _click_gap, _crowding_hostiles, _diamond_reason, _expedition_prepared,
-                          _eyes_owed, _frame_empty, _nether_haul_home, _nether_topup_wanted,
+                          _eyes_owed, _frame_empty, _food_source_in_reach, _nether_haul_home,
+                           _nether_topup_wanted,
                           _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_target, _rods_target,
                           _frame_needs_obsidian, _gold_reserve_short, _known_footings,
                           _centre,
@@ -1521,6 +1522,19 @@ class TechTreeCompleteTest(unittest.TestCase):
             "diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64,
             "cooked_beef": 8})
         self.assertFalse(tech_tree_complete(g))
+
+    def test_a_zombie_is_not_a_reserve_source_while_the_pack_is_fed(self) -> None:
+        # Rotten flesh is EDIBLE but never PROVISIONS, so a zombie can only fill the reserve when
+        # the pack is at the eating floor. Counted unconditionally it reads as a source the offer
+        # cannot serve: run126 it49-100, fifty-two `wait` ticks at the base, the reserve short of
+        # 64, one zombie 20 m off and no animal in the daylight reach.
+        g = self._complete(mobs=[("zombie", "hostile", 1, 10.0)], inventory={
+            "diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64,
+            "cooked_beef": 8})
+        g.food = 20.0
+        self.assertFalse(_food_source_in_reach(g))
+        self.assertTrue(tech_tree_complete(g))
+        self.assertNotIn("hunt_food", candidates(g))
 
     def test_a_source_beyond_reach_drops_the_reserve_requirement(self) -> None:
         # A mob merely *loaded* (here a cow past the daylight hunt range, and a zombie past melee
@@ -4856,12 +4870,22 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertNotIn("craft_arrows", candidates(g))
         self.assertIn("get_wood", candidates(g))
 
-    def test_the_goal_is_the_powder_in_the_chest(self) -> None:
-        # Still carried is not done: the point of the trip is that the haul is safe at home.
+    def test_the_goal_is_the_powder_home_at_the_base(self) -> None:
+        # Home is the point of the trip, and the bot is home the moment it is back in the
+        # Overworld with the haul - the chest is three blocks away. Waiting for the deposit
+        # specifically is what stalled run126 it16-100: the powder sat in the pack, the eye chain
+        # could spend it, the deposit was not offered, and the latch never set.
         g = self._home(blaze_powder=18)
-        self.assertFalse(nether_expedition_complete(g))
+        self.assertTrue(nether_expedition_complete(g))
         g.powder_stowed = True
         self.assertTrue(nether_expedition_complete(g))
+
+    def test_powder_below_the_gate_is_not_home_yet(self) -> None:
+        # The other half of the same rule: a haul still below the gate is one death away from
+        # nothing, so the phase does not open on it.
+        g = self._home(blaze_powder=18)
+        g.dimension = "minecraft:the_nether"
+        self.assertFalse(nether_expedition_complete(g))
 
     def test_a_stowed_expedition_closes_the_blaze_chain(self) -> None:
         # The rod trip is over: no blaze hunt, no powder craft, no stow. But the pearl waves
@@ -5127,12 +5151,25 @@ class StrongholdPhaseTest(unittest.TestCase):
                                                   *self.GATE, 2.0)]}
         return g
 
-    def test_the_phase_is_silent_before_the_haul(self) -> None:
+    def test_the_phase_is_silent_while_the_haul_is_below_the_gate(self) -> None:
+        # The haul has to be home before the eyes are worth crafting. Home is the base, not the
+        # chest lid: run126 it16-100 sat in the Overworld with two powder and a pearl in the pack,
+        # the eye-fuel rule refused the deposit, the latch never set, and the phase stayed shut on
+        # a stow that could never happen - fifty-two `wait` ticks at the gate.
         g = self._home(ender_pearl=16, blaze_powder=16)
         g.powder_stowed = False
+        g.dimension = self.NETHER
         for label in ("hunt_enderman", "take_blaze_powder", "craft_ender_eye",
                       "locate_stronghold", "activate_end_portal"):
             self.assertNotIn(label, candidates(g))
+
+    def test_the_phase_opens_with_the_haul_carried_home(self) -> None:
+        # Back in the Overworld with the powder in the pack, the eyes can be crafted from it
+        # directly; the stronghold chain does not wait for the chest to take it.
+        g = self._home(ender_pearl=16, blaze_powder=16)
+        g.powder_stowed = False
+        self.assertTrue(nether_expedition_complete(g))
+        self.assertIn("craft_ender_eye", candidates(g))
 
     def test_pearls_and_powder_craft_the_eyes(self) -> None:
         g = self._home(ender_pearl=16, blaze_powder=16)
@@ -5562,6 +5599,15 @@ class PowderInPackIsEyeFuelTest(unittest.TestCase):
         g.inventory["ender_eye"] = 1
         self.assertFalse(_powder_is_eye_fuel(g))
         self.assertIn("stow_blaze_powder", candidates(g))
+
+    def test_eye_fuel_powder_does_not_hold_the_departure_gate(self) -> None:
+        # The other half of the same reading: powder the eyes can spend from the pack is not a haul
+        # owed to the network either, so `_nether_haul_home` - the predicate that keeps the
+        # departure chain shut while a trip is still pending - does not read it as one. run126
+        # it16-100: two powder and a pearl in the pack, no rod in it, and the gate held on it while
+        # the phase that could use it stayed closed.
+        g = self._home(ender_pearl=1, blaze_powder=2)
+        self.assertFalse(_nether_haul_home(g))
 
 
 class DiamondsForTheSparePickaxeTest(unittest.TestCase):

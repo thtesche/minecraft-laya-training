@@ -76,9 +76,10 @@ A death in the Nether drops the whole pack, so the pearl hunt is not bolted onto
 runs in **waves** that come home in between (the user's structure, reversing commit 584a51a, which
 had put the barter inside the rods trip because "the bot is already down there"):
 
-- **Welle 1 - rods only.** The expedition banks the blaze powder and closes (`powder_stowed` →
-  `nether_expedition_complete`). Nothing else is attempted down there: no barter, no endermen. The
-  haul is safe at home before any risk is taken again.
+- **Welle 1 - rods only.** The expedition brings the blaze powder home and closes (`powder_stowed`,
+  or the bot back in the Overworld with powder in the pack → `nether_expedition_complete`). Nothing
+  else is attempted down there: no barter, no endermen. The haul is safe at home before any risk is
+  taken again.
 - **Welle 2+ - gold, barter, endermen.** `_nether_pearl_wave_wanted` reopens `nether_expedition_open`
   the way `_nether_topup_wanted` does, and the Nether block in `planner.candidates` splits on
   `_pearl_wave_trip`: the pearl ladder is `barter_pearls` → `hunt_enderman` → `search_enderman` →
