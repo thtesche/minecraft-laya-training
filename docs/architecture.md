@@ -1100,6 +1100,25 @@ a dimension where there is no water to scoop and no gravel to dig. Two fixes: th
 scoped to the Overworld, and `gs.portal_lit` is now a latch, seeded by the scan, by `light_portal`
 and by any crossing - the same shape `frame_complete` and `powder_stowed` already have.
 
+**The pearl wave banked its pearls where no step could reach them.** run124 it53: `stow_surplus`
+deposited the wave's four ender pearls into the base chest - `KEEP_MATERIALS` names blaze rods and
+powder but not the pearl or the eye, and the whitelist's rule is that anything unnamed is surplus.
+No step withdraws pearls, so `craft_ender_eye` read an empty pack and `_pearls_owed` sent the bot
+back to the endermen. Pearls and eyes are now on the whitelist.
+
+**A haul the network cannot take is not a haul.** run124 it54, one tick after the same chest
+swallowed the surplus: `stow_blaze_powder` fell back to the main chest's coordinates even though the
+server had just called that lid full, and answered `[CONTAINER_BATCH_INCOMPLETE] ... blaze_powder
+0/2`. The deposit now needs a chest with room, and `_nether_haul_home` counts powder as a pending
+haul only while some lid can take it - otherwise the carried powder is supply the eyes can spend
+directly, and the departure gate is not shut on it.
+
+**An exclusive offer must still obey the stuck guard.** run124 it18-36: eighteen ticks whose only
+candidate was `swap_to_gold_helmet`, each answered "No new action started; body owner:
+hostile_reflex". The helmet swap returns its list early, before the `gs.stuck_labels` filter at the
+end of `candidates`, so a withheld label stayed the sole offer forever. The same early return that
+owns the shed tick (`drop_junk`) is guarded now.
+
 Net: the crossing, the fortress march and the rod haul all run live, and the water, footing and
 foreground guards closed the runtime-crash and ping-pong classes; **no run has carried blaze
 powder back to the chest at the gate**. run118 died after 57 consecutive ticks (it92-151) whose

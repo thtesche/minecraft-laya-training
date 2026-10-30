@@ -1087,9 +1087,11 @@ def _nether_haul_home(gs: GameState) -> bool:
         # The frame is paid for: what the pack holds is spare, not a haul.
         return False
     # A haul only counts while it can actually be banked - the craft needs a table, the deposit
-    # a chest. A rod neither can reach is dead weight, and shutting the gate on it is the
-    # deadlock run123 stood in.
-    return (powder > 0 and _chest_ready(gs)) or (rods > 0 and _has(inv, "crafting_table"))
+    # a chest with room in it. A rod neither can reach is dead weight, and a rod or powder that
+    # every chest has refused is carried supply the eyes can spend directly, not a haul owed to
+    # the network (run124 it54: `[CONTAINER_BATCH_INCOMPLETE] ... blaze_powder 0/2`).
+    return ((powder > 0 and _chest_ready(gs) and _storage_target(gs) is not None)
+            or (rods > 0 and _has(inv, "crafting_table")))
 
 
 def _nether_topup_wanted(gs: GameState) -> bool:
@@ -1764,6 +1766,10 @@ KEEP_MATERIALS = frozenset({
     "coal", "charcoal", "redstone",
     # Nether-Vorbereitung.
     "blaze_rod", "blaze_powder", "raw_gold", "raw_iron", "netherite_scrap", "ancient_debris",
+    # The stronghold currency. A pearl banked in the chest is a pearl the eye chain cannot spend:
+    # `craft_ender_eye` reads the pack, and no step withdraws pearls. run124 it53 filed the wave's
+    # four pearls as surplus, and by it54 the bot was hunting endermen again with none in hand.
+    "ender_pearl", "ender_eye",
     # Betten. The item is `white_bed`, not `bed` - writing `bed` here kept nothing and would have
     # filed the run's only bed as surplus, which is the exact failure this whitelist has to not
     # have. The wrong colours of *wool* are not kept, but a bed always is: it cannot be made

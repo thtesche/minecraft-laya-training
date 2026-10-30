@@ -471,8 +471,12 @@ def candidates(gs: GameState) -> list[str]:
             # the swap owns the tick outright, like the rescues at the top of this function.
             # (Urgent survival - a meal the body needs, a drowning, a shut-in - has already
             # returned above, so nothing it would preempt is lost here.)
-            if _gold_helmet_needed(gs):
+            if _gold_helmet_needed(gs) and "swap_to_gold_helmet" not in gs.stuck_labels:
                 return ["swap_to_gold_helmet"]
+            # The early return above skips the stuck filter at the end of this function, so a swap
+            # the server keeps refusing owns every tick forever: run124 it18-36, eighteen ticks of
+            # "No new action started; body owner: hostile_reflex" with nothing else on the list.
+            # Once the guard has withheld it, the tick falls to the rest of the Nether chain.
             # A pack full of droppable junk (netherrack) reads as "out of room" and would send the
             # bot home with nothing. The junk frees itself with `drop_junk`; the room does not. So
             # while the pack is full of something that can be dropped, the bot sheds it and keeps
@@ -546,7 +550,11 @@ def candidates(gs: GameState) -> list[str]:
                         # in a full pack, so emptying it is a precondition of the haul, not a
                         # preference between two steps - the same reason the pearl wave above sheds
                         # alone, and the same reason the gold helmet swap owns its tick.
-                        return (["eat_food"] if eating else []) + ["drop_junk"]
+                        # The shed owns the tick, but not a tick the server refuses: an early return
+                        # here skips the stuck filter at the end of the function, so a shed the ground
+                        # keeps rejecting would own the run (the shape run118's 36/36 pack had).
+                        shed = [] if "drop_junk" in gs.stuck_labels else ["drop_junk"]
+                        return (["eat_food"] if eating else []) + shed
                     out.append("explore")
         else:
             # Overworld side: the gate is the way in, and it opens once the expedition is stocked.
@@ -578,7 +586,7 @@ def candidates(gs: GameState) -> list[str]:
                 if _blaze_rods(inv) > 0 and _has(inv, "crafting_table") \
                         and _blaze_powder(inv) < _powder_target(gs):
                     out.append("craft_blaze_powder")
-                if _blaze_powder(inv) > 0 and _chest_ready(gs):
+                if _blaze_powder(inv) > 0 and _chest_ready(gs) and _storage_target(gs) is not None:
                     out.append("stow_blaze_powder")
 
     # --- The stronghold (the phase after the Nether haul) ---
@@ -1328,7 +1336,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # The blaze powder belongs in a chest of the network that can still take it: the main
         # one may well be the one a stow filled up, and powder deposited into a full chest is
         # powder held in the pack on the way back through the gate.
-        cell = _storage_target(gs) or tuple(gs.chest_pos)
+        cell = _storage_target(gs)
+        if cell is None:
+            # Every chest in the network has been called full. Depositing into a closed lid is a
+            # refusal the stuck guard counts (run124 it54: `[CONTAINER_BATCH_INCOMPLETE] ...
+            # blaze_powder 0/2`), and the powder in the pack is supply the eyes can spend directly
+            # rather than a haul the network still owes.
+            return None
         if not _near_cell(gs, cell):
             wx, wy, wz = cell
             return Action(label, "navigate", {"x": wx, "y": wy, "z": wz},

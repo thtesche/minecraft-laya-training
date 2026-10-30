@@ -3235,6 +3235,33 @@ class StorageNetworkTest(unittest.TestCase):
         self.assertEqual(a.tool, "craft_item")
         self.assertEqual(a.args["items"], [{"item_name": "chest"}])
 
+    def test_powder_is_not_poured_into_a_full_network(self) -> None:
+        # run124 it54: `[CONTAINER_BATCH_INCOMPLETE] Observed item transfers: blaze_powder 0/2`.
+        # The deposit fell back to the main chest's coordinates even though the server had just
+        # called that lid full, and the refusal repeated on every tick.
+        g = self._network(frozenset({StorageNetworkTest.MAIN}), blaze_powder=2)
+        g.nether_entered = True
+        self.assertNotIn("stow_blaze_powder", candidates(g))
+        self.assertIsNone(resolve("stow_blaze_powder", g))
+
+    def test_powder_no_chest_can_take_is_not_a_pending_haul(self) -> None:
+        # `_nether_haul_home` keeps the departure gate shut while a haul waits to be banked. With
+        # every lid full there is nothing to bank it into, and the powder in the pack is supply the
+        # eyes can spend directly - the same reasoning that stopped a lone rod from shutting the
+        # gate (run123).
+        g = self._network(frozenset({StorageNetworkTest.MAIN}), blaze_powder=2)
+        g.nether_entered = True
+        self.assertFalse(_nether_haul_home(g))
+
+    def test_pearls_are_not_filed_as_surplus(self) -> None:
+        # run124 it53: `stow_surplus` banked the pearl wave's four pearls, and no step withdraws
+        # pearls - `craft_ender_eye` reads the pack, so the wave had to be hunted again.
+        g = self._network(frozenset(), ender_pearl=4, warped_roots=6)
+        g.slots_used = 36
+        a = resolve("stow_surplus", g)
+        if a is not None:
+            self.assertTrue(all(i["item_name"] != "ender_pearl" for i in a.args["items"]))
+
     def test_the_overflow_chest_is_stood_behind_the_main_one(self) -> None:
         g = self._network(frozenset({StorageNetworkTest.MAIN}), chest=1)
         self.assertIn("place_chest", candidates(g))
@@ -4364,6 +4391,14 @@ class NetherExpeditionTest(unittest.TestCase):
         # The exploration/search steps that shared the list before are gone until the swap runs.
         g.resources = {"netherrack": [BlockHit("netherrack", "netherrack", 20, 65, 0, 9.0)]}
         self.assertEqual(candidates(g), ["swap_to_gold_helmet"])
+
+    def test_a_swap_the_server_keeps_refusing_does_not_own_the_run(self) -> None:
+        # run124 it18-36: eighteen ticks of "No new action started; body owner: hostile_reflex".
+        # The swap's early return skipped the stuck filter at the end of `candidates`, so a label
+        # the guard had withheld stayed the only offer forever.
+        g = self._down(golden_helmet=1)
+        g.stuck_labels = frozenset({"swap_to_gold_helmet"})
+        self.assertNotIn("swap_to_gold_helmet", candidates(g))
 
     def test_a_meal_the_body_needs_still_outranks_the_swap(self) -> None:
         # The helmet is a hard gate, but survival is a harder one: a bot that must eat eats first,
