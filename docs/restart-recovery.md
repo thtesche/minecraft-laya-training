@@ -83,7 +83,7 @@ inventory delta, in that order.
 
 ## The stronghold phase, latch by latch
 
-| Loop latch | After restart | Quelle | Recovery | Cost |
+| Loop latch | After restart | Source | Recovery | Cost |
 |---|---|---|---|---|
 | inventory / gear | — (server-side) | scan | read fresh every tick | none |
 | gate, chests, furnace, frame, filled sockets | — (world / container DB) | ledger, then scan | bootstrapped from the ledger; re-adopted near base (`_adopt_homebase`) | none |
@@ -134,8 +134,11 @@ does three things:
 
 None of the old ones remain. The gate, the bed, the frame, the sockets, the bearing and the portal
 are all read from the ledger before the first decision, so a restart mid-phase does not rewind the
-bot to "re-do the Nether haul" or "re-light a gate that burns". The one thing the ledger cannot say is a fact a *different* bot recorded: every table here lives in
-the per-bot database (`~/.mine-ai/bot-data/server-<host>-port-<port>-seedHash-<hash>/bots/<bot>/
-bot-data.sqlite`), so a gate lit by another bot in the same world is not in this bot's rows. If the
-ledger is silent, the run behaves as it always did — it falls back to the scan, then the latch, and
-walks to the gate to look.
+bot to "re-do the Nether haul" or "re-light a gate that burns".
+
+The one thing the ledger cannot say is a fact a *different* bot recorded: every table here lives in
+the per-bot database
+(`~/.mine-ai/bot-data/server-<host>-port-<port>-seedHash-<hash>/bots/<bot>/bot-data.sqlite`), so a
+gate lit by another bot in the same world is not in this bot's rows. If the ledger is silent, the
+run behaves as it always did — it falls back to the scan, then the latch, and walks to the gate to
+look.
