@@ -956,7 +956,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–120 (2026-10-28 … 30)
+## Live findings run108–123 (2026-10-28 … 30)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1079,6 +1079,18 @@ squared from that centre, and still did not sleep. mineflayer activates the bed 
 vanilla only resolves a bed click on the *head* half, or on the foot when the player faces the head -
 so the heading the walk leaves the body on is the next thing to pin down, which is what
 `scripts/bed_probe.py` measures stance by stance.
+
+**A leftover blaze rod held the gate shut.** run123 it23-60: thirty-eight `wait` ticks at
+(-10.45, 70, -51.47) with the gate portal lit three blocks away, full diamond kit, full hunger, and
+the only offer in the shortlist being `wait`. The pack carried **one** `blaze_rod` from an earlier
+run in the same world and no powder. `_nether_haul_home` read that rod as "a haul still on its way
+in" and closed the departure gate (`_nether_departure_ready`), while `craft_blaze_powder` would only
+grind at the flat nine-rod target and `stow_blaze_powder` had nothing to deposit — the haul could
+neither be processed nor be replaced by a new trip. Two changes: the haul now means *a haul the
+chain still needs and can actually bank* (the eyes owed > 0, and a crafting table for the rods or
+powder plus a chest for the deposit), and the powder target is the eyes the frame owes rather than
+`BLAZE_POWDER`, so one rod in the pack grinds into two powder and gets stowed instead of waiting for
+eight more.
 
 Net: the crossing, the fortress march and the rod haul all run live, and the water, footing and
 foreground guards closed the runtime-crash and ping-pong classes; **no run has carried blaze

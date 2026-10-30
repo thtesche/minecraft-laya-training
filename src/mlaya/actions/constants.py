@@ -202,13 +202,21 @@ FORTRESS_MIN_M = 2.0
 # --- The stronghold phase (phase 4) ---
 # Twelve sockets activate the end portal. Up to four may generate pre-filled, the estimate and the
 # locate each throw an eye, and about one throw in five shatters; sixteen eyes is the safe upper
-# bound that still leaves enough after the throws to fill twelve empty sockets. The Nether haul
-# banks eighteen blaze powder, two to spare over sixteen. The counts live here because the Nether
-# gates need them: `nether_expedition_open` asks whether a top-up trip is wanted, and that
-# predicate cannot reach into `stronghold` without an import cycle.
+# bound that still leaves enough after the throws to fill twelve empty sockets. The counts live
+# here because the Nether gates need them: `nether_expedition_open` asks whether a top-up trip is
+# wanted, and that predicate cannot reach into `stronghold` without an import cycle.
+#
+# The rod haul is sized on these numbers, not on a flat nine: the chain is rods -> powder -> pearls
+# -> eyes -> frame, so the rods owed are the ones the *empty sockets* still need, and a rod carried
+# from an earlier run is supply the demand already counts (see `_rods_target`).
+END_PORTAL_SOCKETS = 12
+# The eyes carried beyond the frame's empty sockets: the estimate throw spends one, and roughly one
+# throw in five shatters. Four is the working margin; once the estimate is saved the buffer is no
+# longer owed and the frame's sockets alone decide the count.
+EYE_THROW_BUFFER = 4
 ENDER_PEARL_ITEM = "ender_pearl"
 ENDER_EYE_ITEM = "ender_eye"
-ENDER_EYES = 16
+ENDER_EYES = END_PORTAL_SOCKETS + EYE_THROW_BUFFER
 ENDER_PEARLS = ENDER_EYES
 # When the Nether trip has to end. Blazes hit hard, so the bot leaves at a quarter of its health
 # and well before it is hungry; both thresholds are checked on the state, never guessed at runtime.

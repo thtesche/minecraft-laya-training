@@ -17,7 +17,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       _frame_complete_at_base, _frame_short_at_base,
                       BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
-                      FORTRESS_MIN_M, BLAZE_ROD_ITEM)
+                      FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS)
 from .brain import Brain, escalate_to_system2
 from .mcp import _find
 from .memory import MemoryLog
@@ -575,6 +575,13 @@ class Agent:
         # chest, not necessarily `chest_pos`. `take_blaze_powder` withdraws from these, and the
         # exhaustion latch only fires once every remembered cell has come up empty.
         self._powder_cells: list[tuple[int, int, int]] = []
+        # Blaze powder the loop booked into the remembered chest cells, counted from the stow and
+        # withdraw deltas. The rod haul is sized on the eyes the frame still owes, and the only
+        # honest way to know how much of that powder is already banked is to book it here.
+        self._powder_bank = 0
+        # Sockets of the end portal frame this run has filled, from the eyes `activate_portal`
+        # spent (`_note_portal`). The world's own pre-filled sockets are never reported.
+        self._frame_eyes = 0
         # Fortress landmark cells the bot has already stood on with nothing to show for it
         # (`_note_landmark`); `_fortress_hit` refuses them, so the Nether search moves on instead
         # of re-walking a cage it is already on.
@@ -657,6 +664,8 @@ class Agent:
         gs.powder_exhausted = self._powder_exhausted
         gs.pearl_wave_trips = self._pearl_wave_trips
         gs.powder_cells = tuple(self._powder_cells)
+        gs.powder_bank = self._powder_bank
+        gs.frame_eyes = self._frame_eyes
         gs.nether_landmarks = frozenset(self._nether_landmarks)
         return gs
 
@@ -881,6 +890,12 @@ class Agent:
                 if name in perception.EDIBLE_NAMES and int(count) > 0:
                     edible[name] = edible.get(name, 0) + int(count)
                     stores.append((cell, name, int(count)))
+        # The same read answers the question the rod gate asks: how much blaze powder the network
+        # actually holds. Booked from the world rather than from the run's own arithmetic, the
+        # demand-sized haul (`_rods_target`) knows whether the eyes are already paid for instead
+        # of trusting a book a raided chest would have falsified.
+        self._powder_bank = sum(int(counts.get(BLAZE_POWDER_ITEM, 0))
+                                for cell, counts in rows if cell in network)
         self.banked = edible
         self._banked_stores = tuple(stores)
         self._adopt_powder_stow(powder_cells)
@@ -1419,6 +1434,8 @@ class Agent:
         gs.powder_exhausted = self._powder_exhausted
         gs.pearl_wave_trips = self._pearl_wave_trips
         gs.powder_cells = tuple(self._powder_cells)
+        gs.powder_bank = self._powder_bank
+        gs.frame_eyes = self._frame_eyes
         gs.nether_landmarks = frozenset(self._nether_landmarks)
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.defer_quiet = self._defer_quiet
@@ -1817,6 +1834,8 @@ class Agent:
             return
         if (delta.get("inventory_delta", {}) or {}).get("blaze_powder", 0) < 0:
             self._powder_stowed = True
+            # The bank the eye chain sizes its rod haul on: what the deposit put in the chest.
+            self._powder_bank += -delta["inventory_delta"]["blaze_powder"]
             # A fresh stow refills the chest a stronghold withdraw had found empty: the
             # second-Nether top-up is done and `take_blaze_powder` may offer again.
             self._powder_exhausted = False
@@ -1845,6 +1864,9 @@ class Agent:
                             for code in ("NO_MATCHING_ITEMS", "CONTAINER_BATCH_INCOMPLETE"))
         if not reached:
             return
+        # A withdraw moves powder out of the chest and into the pack, so the bank shrinks by
+        # exactly what the pack gained.
+        self._powder_bank -= (delta.get("inventory_delta", {}) or {}).get(BLAZE_POWDER_ITEM, 0)
         if (delta.get("inventory_delta", {}) or {}).get(BLAZE_POWDER_ITEM, 0) <= 0:
             # The cell the withdraw stood at is out of powder; the bank is only truly empty
             # when every cell a stow remembered has come up empty. A top-up aimed at the main
@@ -1878,13 +1900,25 @@ class Agent:
         if action.label == "locate_stronghold" and ok and (action.args or {}).get("phase") == "estimate":
             self._stronghold_estimated = True
 
-    def _note_portal(self, action, ok: bool) -> None:
-        """Remember that the end portal stands active (the stronghold goal).
+    def _note_portal(self, action, ok: bool, delta: dict) -> None:
+        """Remember that the end portal stands active (the stronghold goal), and how far the
+        frame is filled.
 
         `activate_portal` confirms every interior portal block before it answers ok, so its own
         success is the latch, the same shape as `_note_stow`; a refused fill leaves the goal open.
+
+        The eyes the call spent are booked into `frame_eyes`: the frame's sockets are the only
+        number the eye chain can size the rod haul on, and the world's own pre-filled sockets are
+        never reported (`view_blocks` names the block, not its `eye` state). A partial fill - the
+        bot carried fewer eyes than the frame needed - is still progress, and the sockets it took
+        are sockets the phase no longer owes.
         """
-        if action.label == "activate_end_portal" and ok:
+        if action.label != "activate_end_portal":
+            return
+        spent = -(delta.get("inventory_delta", {}) or {}).get(ENDER_EYE_ITEM, 0)
+        if spent > 0:
+            self._frame_eyes = min(END_PORTAL_SOCKETS, self._frame_eyes + spent)
+        if ok:
             self._end_portal_active = True
 
     def _note_build(self, action, ok: bool, delta: dict) -> None:
@@ -2546,7 +2580,7 @@ class Agent:
         self._note_take_powder(action, _ok, _text, delta)
         self._note_locate(action, _ok)
         self._note_barter(action, _ok)
-        self._note_portal(action, _ok)
+        self._note_portal(action, _ok, delta)
         self._note_landmark(action, delta, after)
         progressed = vmod.progressed(action.label, delta, _ok)
         self._track_stuck(action.label, _ok, _text, progressed)

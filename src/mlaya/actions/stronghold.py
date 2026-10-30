@@ -12,20 +12,17 @@ ENDERMAN_MOB = "enderman"
 # The frame block the perception scan finds once the locate phase has stood the bot at the
 # stronghold; `activate_portal` is given any one of its cells and fills the whole frame.
 END_PORTAL_FRAME = "end_portal_frame"
-# The eye/pearl item names and the `ENDER_EYES` / `ENDER_PEARLS` counts live in `constants` -
-# the Nether gates read them for the top-up predicate (`predicates.nether_expedition_open`).
+# The eye/pearl item names and the counts (`ENDER_EYES`, `END_PORTAL_SOCKETS`, `EYE_THROW_BUFFER`)
+# live in `constants`: the frame has twelve sockets, `activate_portal` needs a carried eye for
+# every one not already generated filled, and the extra four are the throw margin - the estimate
+# spends an eye and about one throw in five shatters. The Nether gates read the same numbers for
+# the top-up predicate (`predicates.nether_expedition_open`).
 
 # An enderman teleports and hits hard, and the hunt happens in the Overworld where the run would
 # otherwise sleep. Same safe-hunt shape as the blaze: one target in reach, the bot healthy, no
 # other hostile crowding the fight. The eyes are not worth the diamond kit.
 ENDERMAN_HUNT_RANGE = 24.0
 ENDERMAN_HUNT_HEALTH = 14.0
-
-# The end portal frame has twelve sockets; `activate_portal` needs a carried eye for every one not
-# already generated filled. Twelve is the floor the locate travel has to keep in hand, while
-# `ENDER_EYES` (sixteen) is the build target - the extra four a buffer for eyes shattered on a
-# throw. Once the estimate throw is behind the bot, a shaved eye must not drag it back to sixteen.
-END_PORTAL_SOCKETS = 12
 
 # The labels this module owns; `planner.resolve` hands each of them to `resolve_stronghold`.
 STRONGHOLD_LABELS = frozenset({
@@ -42,11 +39,6 @@ def _ender_pearls(inv: dict[str, int]) -> int:
 def _ender_eyes(inv: dict[str, int]) -> int:
     """Eyes of ender carried in the pack."""
     return int(inv.get(ENDER_EYE_ITEM, 0))
-
-
-def _eyes_owed(gs: GameState) -> int:
-    """How many more eyes of ender the phase still has to craft."""
-    return max(0, ENDER_EYES - _ender_eyes(gs.inventory))
 
 
 def _enderman_in_reach(gs: GameState) -> bool:
@@ -185,10 +177,10 @@ def stronghold_candidates(gs: GameState) -> list[str]:
     # `_nether_topup_wanted`, not this one.
     if not _overworld(gs):
         return out
-    # Before the first (estimate) throw the buffer is built to ENDER_EYES; once the estimate is
-    # saved, the frame needs only END_PORTAL_SOCKETS, so an eye shattered on that throw does not
-    # send the bot back to re-craft - the locate travel proceeds on that floor.
-    locate_need = END_PORTAL_SOCKETS if gs.stronghold_estimated else ENDER_EYES
+    # Before the first (estimate) throw the buffer is built on top of the frame's empty sockets;
+    # once the estimate is saved, only the sockets are owed, so an eye shattered on that throw does
+    # not send the bot back to re-craft - the locate travel proceeds on that floor.
+    locate_need = _eyes_in_hand(gs)
     if _at_stronghold(gs) and not gs.end_portal_active:
         # Standing at the frame. With eyes in hand, fill it and nothing else. With none left -
         # the frame took more eyes than the bot carried in - do not re-offer an activate it cannot
@@ -285,7 +277,7 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
                        "temporary_workstation": True},
                       f"craft {want} eyes of ender, one ender pearl and one blaze powder each")
     if label == "locate_stronghold":
-        need = END_PORTAL_SOCKETS if gs.stronghold_estimated else ENDER_EYES
+        need = _eyes_in_hand(gs)
         if not _overworld(gs) or _ender_eyes(inv) < need or _at_stronghold(gs):
             return None
         # Two phases, keyed by a loop latch: `estimate` saves the eye-of-ender triangulation

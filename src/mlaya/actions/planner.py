@@ -560,11 +560,17 @@ def candidates(gs: GameState) -> list[str]:
                 if _gold_helmet_needed(gs):
                     out.append("swap_to_gold_helmet")
                 out.append("enter_portal")
-            if gs.nether_entered and not _in_nether(gs):
+            # The haul, back in the Overworld: the helmet comes off, the rods become powder, the
+            # powder goes into the chest. `nether_entered` is this run's latch, so a rod left in
+            # the pack by an earlier run sat here unprocessed while `_nether_haul_home` read it as
+            # a haul still on its way in - the gate shut on a trip that could never start
+            # (run123, ten `wait` ticks at the base). Carried rods or powder are a haul whatever
+            # run carried them across.
+            if not _in_nether(gs) and (gs.nether_entered or _blaze_rods(inv) or _blaze_powder(inv)):
                 if _worn(gs, GOLD_HELMET_ITEM) and (_has(inv, "diamond_helmet")
                                                     or _worn(gs, "diamond_helmet")):
                     out.append("swap_to_diamond_helmet")
-                if _blaze_rods(inv) >= _rods_target(gs) and _has(inv, "crafting_table") \
+                if _blaze_rods(inv) > 0 and _has(inv, "crafting_table") \
                         and _blaze_powder(inv) < _powder_target(gs):
                     out.append("craft_blaze_powder")
                 if _blaze_powder(inv) > 0 and _chest_ready(gs):
@@ -1296,10 +1302,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                                                   "destination": "head"}]},
                       "wear the diamond helmet again, now that the bot is back in the Overworld")
     if label == "craft_blaze_powder":
-        if (_in_nether(gs) or _blaze_rods(inv) < _rods_target(gs) or not _has(inv, "crafting_table")
+        # Any rod in the pack is worth crafting while the eyes still owe powder: the old gate
+        # demanded the whole haul (`_rods_target`) before it would craft, so a single rod left
+        # over from an earlier run could never become powder, and with it never leave the pack -
+        # the gate stayed shut on a haul that could not be processed (run123, ten `wait` ticks
+        # at the base with one rod and a burning portal).
+        if (_in_nether(gs) or _blaze_rods(inv) <= 0 or not _has(inv, "crafting_table")
                 or _blaze_powder(inv) >= _powder_target(gs)):
             return None
-        want = _powder_target(gs) - _blaze_powder(inv)
+        want = min(2 * _blaze_rods(inv), _powder_target(gs) - _blaze_powder(inv))
+        if want <= 0:
+            return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": BLAZE_POWDER_ITEM, "count": want}],
                        "temporary_workstation": True},

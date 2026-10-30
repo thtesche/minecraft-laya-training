@@ -172,6 +172,15 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         return d["inventory_delta"].get("blaze_powder", 0) > 0
     if label == "craft_ender_eye":
         return d["inventory_delta"].get("ender_eye", 0) > 0
+    if label == "activate_end_portal":
+        # The frame fills from the pack: eyes leaving it is the step working. A call the server
+        # answers ok to with nothing spent is a frame it already completed or a portal already
+        # open, and that is the phase goal, not a stall.
+        return d["inventory_delta"].get("ender_eye", 0) < 0 or bool(d.get("portal_lit"))
+    if label == "locate_stronghold":
+        # The locate is a travel step: covering ground is the step working, and an estimate that
+        # saved its bearing has nothing to move.
+        return (d["pos_delta"] or 0) > 2 or (ok and not d["inventory_delta"])
     # Home base. Walking home (or up to the surface) shows as movement; the chest shows as the
     # item entering or leaving the pack; stowing/dropping shows as any carried item going down.
     if label in ("surface_up", "establish_base", "go_home"):

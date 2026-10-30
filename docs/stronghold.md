@@ -96,11 +96,13 @@ wandering.
 
 ### Why no second Nether trip by default
 
-The first expedition already targets nine rods / eighteen powder, which is more than the sixteen
-powder sixteen eyes cost. So "top up blaze rods from the Nether if needed" is a *fallback*, not a
-normal step: it reopens only when the banked powder plus carried powder cannot pay for the eyes the
-phase still owes (a death on the way back, the chest raided). The relaunch latch the Nether phase
-already grew (`_nether_haul_home`, `e812d83`) is the hook for reopening the expedition.
+The chain is rods → powder → pearls → eyes → frame, so the haul is sized on the eyes the frame still
+owes, not on the nine-rod goal: sixteen eyes owed means eight rods and sixteen powder, and a frame
+that needs nine sockets needs five rods. So "top up blaze rods from the Nether if needed" is a
+*fallback*, not a normal step: it reopens only when the powder the chain can reach (carried plus
+banked) cannot pay for the eyes it owes (a death on the way back, the chest raided). The relaunch
+latch the Nether phase already grew (`_nether_haul_home`, `e812d83`) is the hook for reopening the
+expedition.
 
 ## Safety gates (carried over, plus new ones)
 
@@ -211,6 +213,37 @@ constants, not to the eyes still owed. All three parts are now fixed:
   it back to finish the frame. `activate_portal` only latches `end_portal_active` on a *full* frame,
   so a partial fill stays not-done; each pass fills ≥ 1 of the twelve sockets and the fill persists,
   so the activate ↔ procurement loop is self-terminating.
+
+## The demand is the frame, not the constant (2026-10-30)
+
+Every step of the chain now sizes itself on one derived number, `predicates._eyes_owed`:
+
+```
+eyes owed = (12 - sockets already filled) + throw buffer - eyes in the pack
+```
+
+- **`_eyes_in_hand`** is the frame's empty sockets plus the `EYE_THROW_BUFFER` (4) — the buffer only
+  while the `estimate` throw has not been made yet, since after it the frame is the only thing the
+  eyes are for. `_eyes_owed` subtracts the eyes already carried. `stronghold.py` no longer keeps its
+  own copy of this count; it reads the same function the Nether gates do.
+- **The sockets already in the frame cannot be read.** `view_blocks` names the block, not its `eye`
+  state, and `activate_portal` only reports that it skipped the filled ones. So `gs.frame_eyes` is
+  booked from the `ender_eye` inventory delta of each `activate_portal` call (`Agent._note_portal`),
+  capped at `END_PORTAL_SOCKETS`. Until the server confirms an open portal, twelve empty sockets is
+  the honest upper bound: the chain never under-supplies, and it stops the tick the portal lights.
+- **`_rods_target` / `_powder_target`** are `ceil(eyes_owed / 2)` and `min(BLAZE_POWDER, eyes_owed)`
+  — two powder to a rod, one powder to an eye. `craft_blaze_powder` now grinds whatever rods the pack
+  holds (`min(2 * rods, powder_target - powder)`) instead of waiting for nine.
+- **`gs.powder_bank`** is the powder booked into the chest at the gate: seeded from the chest scan,
+  then adjusted by every stow and withdraw delta. `powder_exhausted` is the world saying the bank is
+  empty, and it wins over the book. The top-up trigger is the demand, not that latch: it opens
+  whenever `eyes_owed > carried powder + banked powder`.
+- **`_nether_haul_home` means "a haul the chain still needs and can actually bank".** A rod left over
+  from an earlier run is supply the demand already counts, and a rod the pack cannot process (no
+  crafting table, no chest) is dead weight, not a pending haul. run123 is the case this closed: one
+  `blaze_rod` in the pack, no powder, sixteen eyes owed — the leftover rod kept the departure gate
+  shut, `craft_blaze_powder` wanted nine rods before it would grind, and the bot spent ten `wait`
+  ticks at the lit gate with a complete kit.
 
 ## Out of reach / later (deliberately not in this phase)
 

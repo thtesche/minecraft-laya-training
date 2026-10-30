@@ -154,6 +154,8 @@ class WaterTicksTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._water_ticks = 0
         agent._defer_quiet = 0
         return agent
@@ -479,6 +481,8 @@ class PourSkipTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -586,6 +590,8 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -745,6 +751,8 @@ class StanceSkipTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
@@ -873,6 +881,8 @@ class RescueSkipTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
@@ -997,6 +1007,8 @@ class StuckOfferTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent.furnace_pos = None
         agent.smoker_pos = None
         agent.chest_pos = None
@@ -1701,6 +1713,8 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent.base = None
         agent.surface = None
         agent.chest_pos = None
@@ -1919,6 +1933,8 @@ class FrameRefusalTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._water_ticks = 0
         agent._defer_quiet = 0
         return agent
@@ -2029,6 +2045,8 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent.base = None
         agent.chest_pos = None
         agent._extra_chests = []
@@ -2337,6 +2355,8 @@ class DropHoleTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -2608,6 +2628,8 @@ class ChestSupportTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -2718,6 +2740,8 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._blocked_cell = None
         agent._chest_above = None
         agent.build_site = None
@@ -2932,6 +2956,8 @@ class ChestLidTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._blocked_cell = None
         agent.build_site = None
         agent._base_adopted = False
@@ -3112,6 +3138,8 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._home_anchor = None
         agent._home_ticks = 0
         agent._pour_skip = set()
@@ -3300,6 +3328,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._blocked_cell = None
         agent._chest_above = None
         agent._base_adopted = False
@@ -3611,6 +3641,8 @@ class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent.log = []
         agent.mcp = mcp
         return agent
@@ -3885,6 +3917,8 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -4263,6 +4297,8 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         self.assertTrue(agent._inject(gs()).base_adopted)
 
 
@@ -4532,6 +4568,8 @@ class NetherCrossingTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent.settings = Settings()
@@ -4754,6 +4792,36 @@ class NetherCrossingTest(unittest.TestCase):
         self.assertFalse(agent._powder_exhausted)
         self.assertEqual(agent._powder_cells, [(-190, -46, -100)])
 
+    def test_the_bank_books_the_powder_in_and_out(self) -> None:
+        # The rod haul is sized on the eyes the frame still owes, and the only number for "how
+        # much powder is already banked" is the one the deposits and withdrawals add up to: a
+        # chest that covers the eyes sends the bot back through the gate for nothing.
+        agent = self._agent()
+        deposit = Action("stow_blaze_powder", "use_container",
+                         {"operation": "deposit", "x": -196, "y": -46, "z": -98}, "")
+        agent._note_stow(deposit, True, {"inventory_delta": {"blaze_powder": -16}})
+        self.assertEqual(agent._powder_bank, 16)
+        take = Action("take_blaze_powder", "use_container",
+                      {"operation": "withdraw", "x": -196, "y": -46, "z": -98,
+                       "items": [{"item_name": "blaze_powder", "count": 6}]}, "")
+        agent._note_take_powder(take, True, "", {"inventory_delta": {"blaze_powder": 6}})
+        self.assertEqual(agent._inject(gs()).powder_bank, 10)
+
+    def test_the_frame_books_the_eyes_it_took(self) -> None:
+        # The sockets already in the frame are sockets the chain no longer owes. The world never
+        # reports its own pre-filled ones, so the count is booked from the eyes the activate
+        # call spent - a partial fill is still progress toward the twelve.
+        agent = self._agent()
+        fill = Action("activate_end_portal", "activate_portal",
+                      {"x": 100, "y": 60, "z": 200}, "")
+        agent._note_portal(fill, False, {"inventory_delta": {"ender_eye": -5}})
+        self.assertEqual(agent._frame_eyes, 5)
+        self.assertFalse(agent._end_portal_active)
+        agent._note_portal(fill, True, {"inventory_delta": {"ender_eye": -7}})
+        self.assertEqual(agent._frame_eyes, 12)
+        self.assertTrue(agent._end_portal_active)
+        self.assertEqual(agent._inject(gs()).frame_eyes, 12)
+
     def test_the_stowed_expedition_alone_keeps_the_run_going(self) -> None:
         # `powder_stowed` is a latch that only ever sets, while `tech_tree_complete` reads the
         # live world - a creepers' bed or a dropped tool turns it false again. So the run carries
@@ -4918,6 +4986,8 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._water_ticks = 0
         agent._defer_quiet = 0
         agent._home_anchor = None

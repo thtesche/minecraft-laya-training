@@ -844,6 +844,16 @@ class GameState:
     # come up empty - a top-up aimed at the main chest while the powder sits in an overflow
     # chest would send the bot back through the gate for nothing.
     powder_cells: tuple[tuple[int, int, int], ...] = ()
+    # Blaze powder the loop booked into the chest at the gate, counted from the stow and withdraw
+    # deltas (`Agent._note_stow`, `_note_take_powder`) rather than read back from the lid. The rod
+    # haul and the top-up are sized on it: the Nether is only owed a trip when the powder it can
+    # reach is short of the eyes the frame still needs.
+    powder_bank: int = 0
+    # Sockets of the end portal frame this run has filled, from the eyes `activate_portal` spent
+    # (`Agent._note_portal`). The world's own pre-filled sockets are never reported, so the frame
+    # is counted from what the bot put in and is only known complete when the server confirms the
+    # portal active (`end_portal_active`).
+    frame_eyes: int = 0
     # Death cells (`actions._cell`) a recovery walk already reached and found empty
     # (`[NO_MATCHING_ITEMS]` and the other final codes). `_can_recover` refuses to offer the walk
     # there again, so a bot whose gear is gone does not stand at the death site for the whole
@@ -966,6 +976,8 @@ class GameState:
             "stronghold_estimated": self.stronghold_estimated,
             "end_portal_active": self.end_portal_active,
             "powder_cells": [list(cell) for cell in self.powder_cells],
+            "powder_bank": self.powder_bank,
+            "frame_eyes": self.frame_eyes,
             "nether_landmarks": [list(cell) for cell in self.nether_landmarks],
         }
 
@@ -994,6 +1006,7 @@ class GameState:
                       "nether_entered", "nether_arrival", "nether_gate", "nether_ticks",
                       "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
                       "stronghold_estimated", "end_portal_active", "powder_cells",
+                      "powder_bank", "frame_eyes",
                       "nether_landmarks"):
             value = data.get(field)
             if value is not None:

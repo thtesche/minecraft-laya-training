@@ -1064,27 +1064,44 @@ def _nether_haul_home(gs: GameState) -> bool:
     drops both, so an empty-handed return reopens the relaunch; a successful return still holds
     it shut until the powder is crafted and stowed. Rods only ever come from the Nether, so
     before the first trip this is false - identical to the old `not nether_entered` there.
+
+    Two things the flat "anything in the pack" reading missed, both live in run123: a rod left
+    over from an earlier run is supply the eye demand already counts, not a haul owed, and a rod
+    the pack cannot process is not a pending haul either. At it23-31 the bot carried one
+    `blaze_rod`, `craft_blaze_powder` wanted nine rods before it would craft, `stow_blaze_powder`
+    had no powder to deposit, and `_nether_departure_ready` read the leftover as a haul still on
+    its way in - ten `wait` ticks at (-10.4, 70, -51.5) with a burning gate and a complete kit.
     """
-    return _blaze_rods(gs.inventory) > 0 or _blaze_powder(gs.inventory) > 0
+    inv = gs.inventory
+    rods, powder = _blaze_rods(inv), _blaze_powder(inv)
+    if not (rods or powder):
+        return False
+    if _eyes_owed(gs) <= 0:
+        # The frame is paid for: what the pack holds is spare, not a haul.
+        return False
+    # A haul only counts while it can actually be banked - the craft needs a table, the deposit
+    # a chest. A rod neither can reach is dead weight, and shutting the gate on it is the
+    # deadlock run123 stood in.
+    return (powder > 0 and _chest_ready(gs)) or (rods > 0 and _has(inv, "crafting_table"))
 
 
 def _nether_topup_wanted(gs: GameState) -> bool:
     """Whether the stronghold phase has to send the bot back to the Nether for more powder.
 
     The fallback the user named: top up blaze rods from the Nether only if needed. It is not a
-    normal step - the first expedition banks eighteen powder, more than the sixteen the eyes
-    cost - so this stays shut unless the banked powder was lost (the chest raided, a death on
-    the way back). The trigger is the gate chest coming up empty of powder (`gs.powder_exhausted`)
-    while the phase still owes eyes it has no powder to craft. Reopening reuses the whole tested
-    Nether chain; a fresh stow clears `powder_exhausted` and the eye-crafting resumes.
+    normal step - the first expedition banks more powder than the eyes cost - so this stays shut
+    while the powder the chain can reach already pays for the eyes it owes. The trigger is the
+    demand, not a latch: `eyes owed > carried powder + banked powder`. `gs.powder_exhausted` is
+    one way that becomes true (the gate chest came up empty on a withdraw); the other is a bank
+    the book says is short of the eyes. Reopening reuses the whole tested Nether chain; a fresh
+    stow clears `powder_exhausted` and the eye-crafting resumes.
 
     It lives here rather than in `stronghold` because `nether_expedition_open` below reads it:
     the gate that reopens the chain has to be visible to the Nether predicates themselves, and
     `predicates` cannot import `stronghold` without a cycle.
     """
     return (nether_expedition_complete(gs) and not gs.end_portal_active
-            and gs.powder_exhausted
-            and _eyes_still_owed(gs) > _blaze_powder(gs.inventory))
+            and _eyes_owed(gs) > _powder_on_hand(gs))
 
 
 def _nether_pearl_wave_wanted(gs: GameState) -> bool:
@@ -1107,7 +1124,7 @@ def _nether_pearl_wave_wanted(gs: GameState) -> bool:
     stranded on an empty Nether.
     """
     if not (nether_expedition_complete(gs) and not gs.end_portal_active
-            and _eyes_still_owed(gs) > 0):
+            and _eyes_owed(gs) > 0):
         return False
     if _in_nether(gs):
         return not gs.powder_exhausted
@@ -1127,34 +1144,85 @@ def _pearl_wave_trip(gs: GameState) -> bool:
     return nether_expedition_complete(gs) and not gs.powder_exhausted
 
 
-def _eyes_still_owed(gs: GameState) -> int:
-    """Eyes of ender the stronghold phase still owes, read here without importing `stronghold`.
+def _frame_eyes(gs: GameState) -> int:
+    """Sockets of the end portal frame this run has already filled (`Agent._note_portal`).
 
-    `stronghold._eyes_owed` is the same number; the Nether haul can only size itself on it through
-    a local copy, since `predicates` cannot import `stronghold` without a cycle - the same reason
-    `_nether_topup_wanted` lives here.
+    The world's own pre-filled sockets are never read: `view_blocks` names the block, not its
+    `eye` state, and `activate_portal` only says it skipped the filled ones. So the frame is
+    counted from what the bot actually put into it, and it is only ever *known* complete when the
+    server confirms the open portal (`gs.end_portal_active`). Until then twelve is the honest
+    upper bound - the chain never under-supplies, and it stops the tick the portal opens.
     """
-    return max(0, ENDER_EYES - int(gs.inventory.get(ENDER_EYE_ITEM, 0)))
+    return int(gs.frame_eyes)
+
+
+def _frame_empty(gs: GameState) -> int:
+    """Empty sockets in the end portal frame: twelve, minus the ones already filled."""
+    if gs.end_portal_active:
+        return 0
+    return max(0, END_PORTAL_SOCKETS - _frame_eyes(gs))
+
+
+def _eyes_in_hand(gs: GameState) -> int:
+    """Eyes of ender the pack has to hold for the stronghold trip to be worth starting.
+
+    The frame's empty sockets, plus the throw buffer while the estimate has not been made yet.
+    """
+    return _frame_empty(gs) + (0 if gs.stronghold_estimated else EYE_THROW_BUFFER)
+
+
+def _eyes_owed(gs: GameState) -> int:
+    """Eyes of ender the chain still has to craft, counting the eyes already carried.
+
+    This is the demand the whole chain sizes itself on - the rods the Nether hauls, the powder it
+    banks, the pearls it hunts. `stronghold` reads the same function; the Nether gates can only
+    reach it through this copy because `predicates` cannot import `stronghold` without a cycle.
+    """
+    return max(0, _eyes_in_hand(gs) - int(gs.inventory.get(ENDER_EYE_ITEM, 0)))
+
+
+def _powder_bank(gs: GameState) -> int:
+    """Blaze powder the loop booked into the chest at the gate.
+
+    Booked from the stow and withdraw deltas (`Agent._note_stow`, `_note_take_powder`) rather than
+    read back from the chest every tick, the same shape as the `powder_stowed` latch.
+    `powder_exhausted` is the world's answer that the bank is empty, and it wins over the book.
+    """
+    return 0 if gs.powder_exhausted else max(0, int(gs.powder_bank))
+
+
+def _powder_on_hand(gs: GameState) -> int:
+    """Powder the eye chain can pay with right now: carried in the pack plus banked in the chest."""
+    return _blaze_powder(gs.inventory) + _powder_bank(gs)
 
 
 def _rods_target(gs: GameState) -> int:
-    """How many blaze rods the current expedition should haul.
+    """How many blaze rods the pack has to end up holding for the eyes still owed.
 
-    The first trip hauls the full `BLAZE_RODS` (nine, two powder to spare). A stronghold top-up is
-    a *replacement*, not a re-haul: it only owes the powder the shattered eyes cost, so it is sized
-    to `ceil((eyes_owed - carried_powder) / 2)`, clamped to `[1, BLAZE_RODS]`. Going back for nine
-    rods to replace two broken eyes is seven needless fortress fights, each one another fireball
-    between the bot and its own portal.
+    The chain is rods -> powder -> pearls -> eyes -> frame, so the haul is sized on the demand,
+    not on the nine-rod goal: two powder to a rod, one powder to an eye, and the eyes owed are the
+    frame's empty sockets plus the throw buffer, minus what is already in the pack. `BLAZE_RODS`
+    stays the ceiling - a pack that owes sixteen eyes cannot carry more than nine rods worth of
+    powder anyway, and a haul bigger than that is a second trip.
+
+    Going back for nine rods to replace two broken eyes is seven needless fortress fights, each
+    one another fireball between the bot and its own portal; carrying a rod from an earlier run
+    and being unable to craft it because the target demanded nine is how run123 spent its whole
+    Nether phase at the base.
     """
-    if not _nether_topup_wanted(gs):
-        return BLAZE_RODS
-    short = max(0, _eyes_still_owed(gs) - _blaze_powder(gs.inventory))
-    return max(1, min(BLAZE_RODS, -(-short // 2)))
+    short = _eyes_owed(gs) - _powder_on_hand(gs)
+    if short <= 0:
+        return 0
+    return min(BLAZE_RODS, -(-short // 2))
 
 
 def _powder_target(gs: GameState) -> int:
-    """How much blaze powder the current expedition should end up with (two powder to a rod)."""
-    return BLAZE_POWDER if not _nether_topup_wanted(gs) else _rods_target(gs) * 2
+    """How much blaze powder the expedition should end up with (two powder to a rod).
+
+    Exactly the eyes still owed, capped at one trip's haul: the powder is the middle of the chain,
+    and the chain only ever needs as much as the frame's empty sockets.
+    """
+    return min(BLAZE_POWDER, _eyes_owed(gs))
 
 
 def _safe_blaze_hunt(gs: GameState) -> bool:
@@ -1440,9 +1508,11 @@ def _pearls_owed(gs: GameState) -> int:
     """Ender pearls still needed to craft the eyes of ender, counting the pearls in the pack.
 
     The pearl half of an eye comes from piglin barter in the Nether (docs/stronghold.md), so the
-    expedition sizes its gold reserve and its barter calls on this number.
+    expedition sizes its gold reserve and its barter calls on this number. It is the same demand
+    `_eyes_owed` states, not a flat sixteen: a frame that needs nine sockets cannot be paid for by
+    hunting sixteen teleporting endermen.
     """
-    return max(0, ENDER_PEARLS - int(gs.inventory.get(ENDER_PEARL_ITEM, 0)))
+    return max(0, _eyes_owed(gs) - int(gs.inventory.get(ENDER_PEARL_ITEM, 0)))
 
 
 def _gold_ingots_wanted(gs: GameState) -> int:

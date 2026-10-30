@@ -15,6 +15,8 @@ from types import SimpleNamespace
 from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _bed_at_base,
                           _bed_cells, _bed_reachable, _bed_reach_stance, _bed_stance,
                           _click_gap, _crowding_hostiles, _diamond_reason, _expedition_prepared,
+                          _eyes_owed, _frame_empty, _nether_haul_home, _nether_topup_wanted,
+                          _nether_pearl_wave_wanted, _pearls_owed, _powder_target, _rods_target,
                           _frame_needs_obsidian, _gold_reserve_short, _known_footings,
                           _centre,
                           _hoard_surplus, _idle_off_base, _nether_prep_steps,
@@ -4722,13 +4724,15 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertEqual(a.tool, "equip")
         self.assertEqual(a.args["items"], [{"item_name": "diamond_helmet", "destination": "head"}])
 
-    def test_the_rods_become_eighteen_powder(self) -> None:
+    def test_the_rods_become_the_powder_the_eyes_owe(self) -> None:
+        # Nine rods could make eighteen powder, but the chain only ever needs what the eyes still
+        # owe: sixteen sockets, sixteen powder. The two rods to spare stay in the pack.
         g = self._home(blaze_rod=9, crafting_table=1)
         g.nether_entered = True
         self.assertIn("craft_blaze_powder", candidates(g))
         a = resolve("craft_blaze_powder", g)
         self.assertEqual(a.tool, "craft_item")
-        self.assertEqual(a.args["items"], [{"item_name": "blaze_powder", "count": 18}])
+        self.assertEqual(a.args["items"], [{"item_name": "blaze_powder", "count": 16}])
         self.assertTrue(a.args["temporary_workstation"])
 
     def test_powder_is_not_crafted_down_in_the_nether(self) -> None:
@@ -4802,6 +4806,7 @@ class NetherExpeditionTest(unittest.TestCase):
         # chain only reopens when the pack is empty of pearls again.
         g = self._home(ender_pearl=4)
         g.powder_stowed = True
+        g.powder_bank = 16
         self.assertFalse(nether_expedition_open(g))
         self.assertNotIn("enter_portal", candidates(g))
 
@@ -4810,6 +4815,7 @@ class NetherExpeditionTest(unittest.TestCase):
         # enderman roam takes the hunt over, so the goal is never stranded on an empty Nether.
         g = self._home()
         g.powder_stowed = True
+        g.powder_bank = 16
         g.pearl_wave_trips = PEARL_WAVE_MAX_TRIPS
         self.assertFalse(nether_expedition_open(g))
         self.assertNotIn("enter_portal", candidates(g))
@@ -5039,6 +5045,7 @@ class StrongholdPhaseTest(unittest.TestCase):
         g = at_home(geared(**stock), base=self.BASE)
         g.chest_pos = self.CHEST
         g.powder_stowed = True
+        g.powder_bank = 18
         g.health = 20.0
         g.food = 20.0
         g.dimension = self.OVERWORLD
@@ -5304,6 +5311,128 @@ class StrongholdPhaseTest(unittest.TestCase):
         g.resource_found = {"end_portal_frame": 7}
         self.assertIn("activate_end_portal", candidates(g))
         self.assertNotIn("locate_stronghold", candidates(g))
+
+
+class RodDemandSizedToTheFrameTest(unittest.TestCase):
+    """How many rods the Nether owes: the eyes the frame still needs, and nothing more.
+
+    The chain is rods -> powder -> pearls -> eyes -> frame, so the haul is a demand, not a goal
+    number. Live, run123 (it23-31): one `blaze_rod` left in the pack from an earlier run, no
+    powder, sixteen eyes owed. `_nether_haul_home` read the rod as a haul still on its way in,
+    `craft_blaze_powder` demanded the whole nine-rod haul before it would craft, and
+    `stow_blaze_powder` had no powder to deposit - the gate never opened, and ten ticks went to
+    `wait` at (-10.4, 70, -51.5) with a burning portal and a complete kit.
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-196, -46, -98)
+    GATE = (-195, -46, -98)
+
+    def _home(self, **inv) -> GameState:
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, golden_helmet=1,
+                     cooked_mutton=64, white_bed=1, diamond_pickaxe=2)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.chest_pos = self.CHEST
+        g.dimension = "minecraft:overworld"
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  *self.GATE, 2.0)]}
+        return g
+
+    def test_a_leftover_rod_is_processed_then_banked(self) -> None:
+        # The run123 tick, one step further: the rod becomes powder, the powder reaches the
+        # chest, and the gate opens for the trip the eyes still owe.
+        g = self._home(blaze_rod=1)
+        self.assertTrue(_nether_haul_home(g))
+        self.assertIn("craft_blaze_powder", candidates(g))
+        self.assertEqual(resolve("craft_blaze_powder", g).args["items"][0]["count"], 2)
+        g.inventory["blaze_rod"] = 0
+        g.inventory["blaze_powder"] = 2
+        self.assertIn("stow_blaze_powder", candidates(g))
+        g.inventory["blaze_powder"] = 0
+        g.powder_stowed = True
+        g.powder_bank = 2
+        self.assertFalse(_nether_haul_home(g))
+        self.assertIn("enter_portal", candidates(g))
+
+    def test_a_rod_that_cannot_be_crafted_is_not_a_haul(self) -> None:
+        # No table in the pack: nothing can turn the rod into powder this tick, so holding the
+        # gate shut on it buys a deadlock, not a haul.
+        g = self._home(blaze_rod=1)
+        g.inventory.pop("crafting_table")
+        self.assertFalse(_nether_haul_home(g))
+        self.assertIn("enter_portal", candidates(g))
+
+    def test_paid_eyes_make_a_carried_rod_spare(self) -> None:
+        # Sixteen eyes crafted: the rod in the pack is dead weight, and the trip is owed to the
+        # frame, not to the pack.
+        g = self._home(blaze_rod=1, crafting_table=1, ender_eye=16)
+        self.assertFalse(_nether_haul_home(g))
+        self.assertEqual(_rods_target(g), 0)
+
+    def test_the_haul_is_sized_to_the_eyes_still_owed(self) -> None:
+        g = self._home()
+        self.assertEqual(_eyes_owed(g), 16)          # twelve sockets plus the throw buffer
+        self.assertEqual(_rods_target(g), 8)         # two powder to a rod, not a flat nine
+        g.inventory["ender_eye"] = 8
+        self.assertEqual(_eyes_owed(g), 8)
+        self.assertEqual(_rods_target(g), 4)
+
+    def test_banked_powder_pays_for_the_eyes(self) -> None:
+        g = self._home()
+        g.powder_stowed = True
+        g.powder_bank = 16
+        self.assertEqual(_rods_target(g), 0)
+        self.assertFalse(_nether_topup_wanted(g))
+        # The gate is still open, but for pearls rather than rods: the wave ladder owns the
+        # trip, not a second blaze hunt.
+        self.assertTrue(_nether_pearl_wave_wanted(g))
+        self.assertFalse(_pearl_wave_trip(g) is False and _nether_topup_wanted(g))
+
+    def test_a_short_bank_reopens_the_gate(self) -> None:
+        # Four eyes shattered on the throws and only two powder left in the chest: the frame
+        # owes four powder, the bank covers two of them, so the top-up hauls one rod - not the
+        # first trip's eight.
+        g = self._home(ender_eye=8)
+        g.powder_stowed = True
+        g.powder_bank = 2
+        g.stronghold_estimated = True
+        self.assertEqual(_eyes_owed(g), 4)
+        self.assertTrue(_nether_topup_wanted(g))
+        self.assertEqual(_rods_target(g), 1)
+        self.assertEqual(_powder_target(g), 4)
+
+    def test_sockets_already_in_the_frame_are_not_owed_again(self) -> None:
+        # The frame's own pre-filled sockets are never reported by the world, so the count is
+        # booked from the eyes the bot put in; the portal opening ends the demand outright.
+        g = self._home()
+        g.stronghold_estimated = True
+        g.frame_eyes = 9
+        self.assertEqual(_frame_empty(g), 3)
+        self.assertEqual(_eyes_owed(g), 3)
+        self.assertEqual(_rods_target(g), 2)
+        g.end_portal_active = True
+        self.assertEqual(_eyes_owed(g), 0)
+        self.assertEqual(_rods_target(g), 0)
+
+    def test_the_pearl_hunt_stops_at_the_eyes_owed(self) -> None:
+        g = self._home()
+        g.stronghold_estimated = True
+        g.frame_eyes = 10
+        self.assertEqual(_pearls_owed(g), 2)
+
+    def test_the_locate_carries_the_sockets_plus_the_buffer(self) -> None:
+        g = self._home()
+        g.powder_stowed = True
+        g.powder_bank = 16
+        g.inventory["ender_eye"] = 15
+        self.assertNotIn("locate_stronghold", candidates(g))
+        g.inventory["ender_eye"] = 16
+        self.assertIn("locate_stronghold", candidates(g))
+        g.frame_eyes = 4
+        # Four sockets the frame already holds: twelve eyes are enough to travel.
+        g.inventory["ender_eye"] = 12
+        self.assertIn("locate_stronghold", candidates(g))
 
 
 class DiamondsForTheSparePickaxeTest(unittest.TestCase):
@@ -6786,6 +6915,8 @@ class RefreshAfterTest(unittest.TestCase):
         agent._stronghold_estimated = False
         agent._powder_exhausted = False
         agent._powder_cells = []
+        agent._powder_bank = 0
+        agent._frame_eyes = 0
         agent._stuck_off = {}
         agent._defer_quiet = 0
         agent._boxed = (None, 0)
