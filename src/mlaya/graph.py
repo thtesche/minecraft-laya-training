@@ -989,14 +989,34 @@ class Agent:
         self._stock_read = gs.pos
         network = {tuple(self.chest_pos)} if self.chest_pos is not None else set()
         network |= {tuple(cell) for cell in self._extra_chests}
+        # The milestone's chest set, which is wider than the network when the run has no base
+        # yet. A bot that starts in the Nether never adopts one: `_walk_home_to_memory` steps out
+        # down there, so `network` is empty and the powder a previous run banked at the gate is
+        # invisible to the latch that gates the whole stronghold phase -- `nether_expedition_open`
+        # then reopens and marches the bot back through the gate for rods already in a chest it
+        # cannot see. For the milestone, a chest is the base's chest when it holds powder and
+        # stands beside the gate the ledger recorded lighting, or beside the home the loop
+        # remembered. The network filter that `stow_surplus` and `take_stored_food` use is
+        # untouched: a milestone is not a licence to raid somebody else's container.
+        milestone = set(network)
+        anchor = self._gate_anchor()
+        if self.chest_pos is None and anchor is not None:
+            for cell, counts in rows:
+                if cell in milestone or int(counts.get(BLAZE_POWDER_ITEM, 0)) <= 0:
+                    continue
+                if (abs(cell[0] - anchor[0]) <= progress.GATE_CHEST_RADIUS
+                        and abs(cell[2] - anchor[2]) <= progress.GATE_CHEST_RADIUS):
+                    milestone.add(cell)
         edible: dict[str, int] = {}
         stores: list[tuple] = []
         powder_cells: list[tuple] = []
         for cell, counts in rows:
-            if cell not in network:
+            if cell not in milestone:
                 continue
             if int(counts.get(BLAZE_POWDER_ITEM, 0)) > 0:
                 powder_cells.append(cell)
+            if cell not in network:
+                continue
             for name, count in counts.items():
                 if name in perception.EDIBLE_NAMES and int(count) > 0:
                     edible[name] = edible.get(name, 0) + int(count)
