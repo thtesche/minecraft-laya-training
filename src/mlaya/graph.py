@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from . import perception
+from . import progress
 from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
@@ -324,6 +325,12 @@ class AgentState(TypedDict, total=False):
 
 
 class Agent:
+    # The world's durable record, read once by `_bootstrap_world`. A class default rather than an
+    # `__init__` assignment so a stub agent built with `Agent.__new__` still has one: the
+    # milestone resolver reads it on every tick, and an empty `DurableFacts` is exactly "the
+    # ledger said nothing". It is never mutated in place, only replaced.
+    _durable: progress.DurableFacts = progress.DurableFacts()
+
     def __init__(self, settings: Settings, executor):
         self.settings = settings
         self.mcp = executor
@@ -594,7 +601,93 @@ class Agent:
         # (`_note_landmark`); `_fortress_hit` refuses them, so the Nether search moves on instead
         # of re-walking a cage it is already on.
         self._nether_landmarks: list[tuple[int, int, int]] = []
+        # The world's own record of what is already built, read once (`_bootstrap_world`) from the
+        # server's durable database, and the checkpoint this loop wrote for the same world. Every
+        # milestone the run decides on is resolved against these in `progress.progress_of`.
+        self._durable: progress.DurableFacts = progress.DurableFacts()
+        self._bootstrapped = False
+        # The milestone set the last checkpoint note was written for. A tuple, never a method:
+        # `_checkpoint_key` is the function that computes it, `_checkpoint_written` the record of
+        # what was written, so a phase change is a difference between the two.
+        self._checkpoint_written: tuple | None = None
+        self._checkpoint_warned = False
         self.graph = self._build()
+
+    async def _bootstrap_world(self, gs) -> None:
+        """Once per run: read what this world already contains, and stand it in the latches.
+
+        A cold start on a half-played world is the case this exists for. The ~40 loop latches
+        come back `False`/`[]`, and the two world reads that could correct them -- `view_blocks`
+        and the inventory -- only answer inside loaded chunks. A run that restarts 300 m from its
+        base therefore sees no gate, no bed, no chest and no frame, and the honest reading of that
+        is "nothing has been built yet": the obsidian chain reopens, the bed is crafted again, the
+        rod haul is re-run for powder sitting in a chest the bot cannot see (run47 poured a second
+        portal beside a lit one for exactly this reason).
+
+        The server's own tables answer across the death, the dimension and the restart, so they
+        are read once at the start and written into the same latches the actions set. Nothing here
+        is a new kind of truth: it is the ledger taking the place of a scan that cannot reach.
+
+        The reads are individually guarded. A world with no ledger rows, a table the server has
+        not created yet and a transport blip all look the same -- an absent fact -- and the
+        milestone then falls back to the scan and the latch exactly as it did before.
+        """
+        if self._bootstrapped:
+            return
+        self._bootstrapped = True
+        try:
+            facts = await progress.bootstrap_progress(self.mcp)
+        except Exception as exc:
+            self.log.append({"stage": "policy", "reason": "world_ledger_unreadable",
+                            "error": str(exc)[:160]})
+            return
+        self._durable = facts
+        restored = []
+        if facts.gate_lit and not self._portal_lit:
+            self._portal_lit = True
+            restored.append("gate_lit")
+        if facts.frame_complete and not self._frame_complete:
+            self._frame_complete = True
+            restored.append("frame_complete")
+        if facts.end_portal_active and not self._end_portal_active:
+            self._end_portal_active = True
+            restored.append("end_portal_active")
+        if facts.frame_eyes > self._frame_eyes:
+            self._frame_eyes = facts.frame_eyes
+            restored.append("frame_eyes")
+        if facts.stronghold_estimated and not self._stronghold_estimated:
+            self._stronghold_estimated = True
+            restored.append("stronghold_estimated")
+        if facts.nether_entered and not self._nether_entered:
+            self._nether_entered = True
+            restored.append("nether_entered")
+        # The counters only this run knows: how many pearl waves it already spent, how many
+        # barter rolls the gold reserve has burned. The checkpoint note is the only source.
+        note = facts.checkpoint
+        if note:
+            trips = note.get("pearl_wave_trips")
+            if isinstance(trips, int) and trips > self._pearl_wave_trips:
+                self._pearl_wave_trips = trips
+                restored.append("pearl_wave_trips")
+            barter = note.get("barter_attempts")
+            if isinstance(barter, int) and barter > self._barter_attempts:
+                self._barter_attempts = barter
+                restored.append("barter_attempts")
+            cells = note.get("powder_cells")
+            if isinstance(cells, list):
+                for cell in cells:
+                    if (isinstance(cell, (list, tuple)) and len(cell) == 3
+                            and tuple(cell) not in self._powder_cells):
+                        self._powder_cells.append(tuple(cell))
+                if self._powder_cells:
+                    restored.append("powder_cells")
+            bank = note.get("powder_bank")
+            if isinstance(bank, int) and bank > self._powder_bank:
+                self._powder_bank = bank
+                restored.append("powder_bank")
+        if restored:
+            self.log.append({"stage": "policy", "reason": "world_state_restored",
+                             "facts": restored, "gate": facts.gate_cell})
 
     def _inject(self, gs):
         """Carry the loop-owned facts perception cannot see into the GameState."""
@@ -681,6 +774,9 @@ class Agent:
         gs.powder_bank = self._powder_bank
         gs.frame_eyes = self._frame_eyes
         gs.nether_landmarks = frozenset(self._nether_landmarks)
+        # The one milestone object, resolved after every latch above has been copied in, so the
+        # ledger, the scan and the run's own bookkeeping meet in one place with one precedence.
+        gs.progress = progress.progress_of(gs, self._durable)
         return gs
 
     async def _scan_build_site(self, gs) -> None:
@@ -770,6 +866,7 @@ class Agent:
     async def _observe(self):
         """One perception read, with the loop-owned facts and the base-site scan folded in."""
         gs = await perception.build(self.mcp)
+        await self._bootstrap_world(gs)
         await self._adopt_portal_base(gs)
         await self._scan_bed_site(gs)
         await self._scan_drop_ground(gs)
@@ -909,10 +1006,27 @@ class Agent:
         # demand-sized haul (`_rods_target`) knows whether the eyes are already paid for instead
         # of trusting a book a raided chest would have falsified.
         self._powder_bank = sum(int(counts.get(BLAZE_POWDER_ITEM, 0))
-                                for cell, counts in rows if cell in network)
+                                for cell, counts in rows if cell in milestone)
         self.banked = edible
         self._banked_stores = tuple(stores)
         self._adopt_powder_stow(powder_cells)
+
+    def _gate_anchor(self) -> tuple[int, int, int] | None:
+        """The cell the base's gate stands on, for measuring a chest against it.
+
+        The run's own chest, then its base, then the gate the server's ledger recorded lighting --
+        in that order, because the loop's own anchor is the only one it can act on, and the
+        ledger's is the only one that survives a cold start. None when neither knows: a world
+        with no recorded gate has no anchor to measure a chest against, and the milestone stays
+        unclaimed rather than guessed.
+        """
+        if self.chest_pos is not None:
+            return tuple(self.chest_pos)
+        if self.base is not None:
+            return tuple(self.base)
+        if self._durable.gate_cell is not None:
+            return self._durable.gate_cell
+        return None
 
     def _adopt_powder_stow(self, powder_cells: list[tuple]) -> None:
         """Re-derive the powder-stowed milestone from the chest a previous run filled.
@@ -1476,6 +1590,70 @@ class Agent:
         # after. One tick is the whole difference between a tunnel and suffocating (run95).
         gs.boxed_in = self._boxed[1] >= BOXED_REPEATS
         gs.dig_out_try = self._dig_out_tries
+        gs.progress = progress.progress_of(gs, self._durable)
+
+    def _milestones(self, gs) -> progress.Progress:
+        return gs.progress or progress.progress_of(gs, self._durable)
+
+    def _checkpoint_key(self, gs) -> tuple:
+        """The milestone set that defines the phase the run is in.
+
+        A change here is a phase boundary: the gate lit, the bed laid, the frame finished, the
+        powder banked, the bearing saved, the portal opened, a quarter of the frame filled. Those
+        are the moments worth writing down, and a run crosses a handful of them.
+        """
+        p = self._milestones(gs)
+        return (p.gate_lit, p.frame_complete, p.bed_at_base, p.powder_banked,
+                p.stronghold_estimated, p.end_portal_active, p.frame_eyes // 4)
+
+    async def _write_checkpoint(self, gs, reason: str) -> None:
+        """Save the counters no ledger can prove, so a restart can pick the run up.
+
+        Pearl waves spent, barter rolls made, the cells the powder was stowed into: the server's
+        own tables record actions, not decisions, and the loop is the only writer of these. The
+        note is durable per bot and world, so a cold start reads it back in
+        `progress.bootstrap_progress`.
+
+        `note_save` is a foreground action, which is why this is called only at a phase boundary
+        and never while a reflex is holding the body: a note per tick would be a call the loop
+        cannot afford and would pin the bot in place. A failure is logged once and dropped -- a
+        run that cannot write its own memory is not a run that should stop.
+        """
+        p = self._milestones(gs)
+        payload = {
+            "phase": perception.phase_persona(gs),
+            "gate_lit": p.gate_lit,
+            "frame_complete": p.frame_complete,
+            "bed_at_base": p.bed_at_base,
+            "powder_banked": p.powder_banked,
+            "powder_bank": self._powder_bank,
+            "powder_cells": [list(cell) for cell in self._powder_cells],
+            "frame_eyes": self._frame_eyes,
+            "end_portal_active": self._end_portal_active,
+            "stronghold_estimated": self._stronghold_estimated,
+            "pearl_wave_trips": self._pearl_wave_trips,
+            "barter_attempts": self._barter_attempts,
+        }
+        try:
+            await self.mcp.call("note_save",
+                                {"note": perception.CHECKPOINT_PREFIX + " " + json.dumps(payload),
+                                 "context": reason},
+                                "checkpoint the run's counters so a restart can resume the phase")
+            self._checkpoint_written = self._checkpoint_key(gs)
+        except Exception as exc:
+            if not self._checkpoint_warned:
+                self._checkpoint_warned = True
+                self.log.append({"stage": "policy", "reason": "checkpoint_unwritten",
+                                 "error": str(exc)[:160]})
+
+    async def _maybe_checkpoint(self, gs, iteration: int) -> None:
+        """Write the checkpoint when the phase changed.
+
+        `getattr` rather than a direct read because a stub agent built with `Agent.__new__` has no
+        `__init__`: `None` there means "nothing written yet", which is the same as a fresh run.
+        """
+        if self._checkpoint_key(gs) != getattr(self, "_checkpoint_written", None):
+            await self._write_checkpoint(gs, f"phase transition at iteration {iteration}")
 
     def _note_hurt(self, before, after) -> None:
         """A hit while the loop works hands the next contact back to the survival policy."""
