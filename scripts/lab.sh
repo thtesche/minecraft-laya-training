@@ -35,7 +35,9 @@ mkdir -p "$STATE"
 log() { printf '%s\n' "$*"; }
 
 world_up() {
-  docker compose -f "$COMPOSE" ps --format '{{.Name}} {{.State}}' 2>/dev/null | grep -q running
+  # `timeout` because a stalled daemon must not hang the lab: an unreachable container is
+  # treated as down, and `up` starts it again.
+  timeout 15 docker compose -f "$COMPOSE" ps --format '{{.Name}} {{.State}}' 2>/dev/null | grep -q running
 }
 
 host_up() {
@@ -81,17 +83,24 @@ EOF
   log "ops seeded for $(IFS=' '; echo "${OPS_USERS[*]}")"
 }
 
+# The world's own log file is bind-mounted, so it is a faster and steadier readiness signal
+# than the Docker log API, which stalls when the daemon is busy. Either source is enough.
+world_ready() {
+  nc -z -w 1 127.0.0.1 "$MC_PORT" 2>/dev/null || return 1
+  grep -q 'Done (' "$REPO/infra/world/logs/latest.log" 2>/dev/null && return 0
+  timeout 15 docker compose -f "$COMPOSE" logs world 2>/dev/null | grep -q 'Done ('
+}
+
 wait_world() {
   for ((i = 0; i < 120; i++)); do
-    if nc -z -w 1 127.0.0.1 "$MC_PORT" 2>/dev/null && \
-       docker compose -f "$COMPOSE" logs world 2>/dev/null | grep -q 'Done ('; then
+    if world_ready; then
       return 0
     fi
     sleep 1
   done
   # Say which half of the gate failed: a closed port is a container that is not up,
   # a missing "Done (" is a server that is still generating the world or crashed.
-  log "world gate failed after 120 s: port $(nc -z -w 1 127.0.0.1 "$MC_PORT" >/dev/null 2>&1 && echo open || echo closed), 'Done (' in the log $(docker compose -f "$COMPOSE" logs world 2>/dev/null | grep -q 'Done (' && echo yes || echo no)"
+  log "world gate failed after 120 s: port $(nc -z -w 1 127.0.0.1 "$MC_PORT" >/dev/null 2>&1 && echo open || echo closed), 'Done (' in the log $(world_ready && echo yes || echo no)"
   return 1
 }
 
