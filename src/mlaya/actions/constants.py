@@ -252,6 +252,13 @@ NETHER_GATE_APPROACH = 3
 # How far a lone spider may be for a *single* string (`_safe_string_hunt`, repairing the Nether
 # bow). Wider than the bed-chain's spider guard, which is about three strings at once.
 STRING_HUNT_RANGE = 24.0
+# Nether exit is staged in hops when the distance to the gate is larger than this (meters).
+# Pathfinder search timeout is 2000ms, which in sparse/lava-heavy Nether terrain works up to ~120 m.
+# Stages the exit into intermediate waypoints (120 m per hop) until close enough for direct crossing.
+NETHER_EXIT_STAGING_DISTANCE = 120.0
+# Minimum food items (count >= 1) required in pack before any Nether trip. Without this,
+# pearl waves end in starvation (hunger reaching zero) far from home.
+NETHER_FOOD_MIN_RESERVE = 1
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
 # not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.

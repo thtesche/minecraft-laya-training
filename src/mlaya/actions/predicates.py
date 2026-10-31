@@ -1436,6 +1436,16 @@ def _mine_diamond_wanted(gs: GameState) -> bool:
             and _diamond_dig_short(gs))
 
 
+def _nether_food_secured(gs: GameState) -> bool:
+    """Whether the pack has at least one edible item before entering Nether.
+
+    Without food carried down, pearl waves end in starvation far from home. Every Nether trip
+    (blaze hunt, pearl wave, or powder top-up) must start with `NETHER_FOOD_MIN_RESERVE` edible
+    items to survive a long search or emergency return.
+    """
+    return _edible_count(gs.inventory) >= NETHER_FOOD_MIN_RESERVE
+
+
 def _nether_departure_ready(gs: GameState) -> bool:
     """Whether the Overworld gate is the bot's next job and it has to be standing at the base.
 
@@ -1472,7 +1482,8 @@ def _nether_departure_ready(gs: GameState) -> bool:
     """
     return (nether_expedition_open(gs) and not _nether_haul_home(gs)
             and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
-            and (_has(gs.inventory, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)))
+            and (_has(gs.inventory, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM))
+            and _nether_food_secured(gs))
 
 
 def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:

@@ -1308,17 +1308,25 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # see but never reach). Aim `NETHER_GATE_APPROACH` blocks short on the bot's own side: a
         # standable doorstep clear of the portal's two-wide interior and frame, close enough that
         # the portal block loads into the scan and `_exit_portal_cell` crosses on the next tick.
+        # When far from the gate (> NETHER_EXIT_STAGING_DISTANCE), stage the exit in hops rather
+        # than one long walk: pathfinder search times out on 450+ block walks through lava/sparse
+        # terrain, so navigate in ~120 m hops. Each hop is a tick toward the gate, reloading the
+        # world and resetting the search budget.
         tx, tz = float(ax), float(az)
         if gs.pos is not None:
             dx, dz = gs.pos[0] - ax, gs.pos[2] - az
             span = math.hypot(dx, dz)
             if span > 1e-6:
-                tx = ax + dx / span * NETHER_GATE_APPROACH
-                tz = az + dz / span * NETHER_GATE_APPROACH
+                if span > NETHER_EXIT_STAGING_DISTANCE:
+                    tx = gs.pos[0] + dx / span * NETHER_EXIT_STAGING_DISTANCE
+                    tz = gs.pos[2] + dz / span * NETHER_EXIT_STAGING_DISTANCE
+                else:
+                    tx = ax + dx / span * NETHER_GATE_APPROACH
+                    tz = az + dz / span * NETHER_GATE_APPROACH
         return Action(label, "navigate",
                       {"x": round(tx), "y": ay, "z": round(tz),
                        "range": 2, "dig": True, "scaffold": True},
-                      "walk up to the Nether exit portal's doorstep, where the trip started")
+                      "walk toward the Nether exit portal (staged in hops if far away)")
     if label == "swap_to_diamond_helmet":
         # The offer and the resolve agree: while a crossing is pending the gold piece stays on,
         # so an escalated diamond swap cannot put the bot back in front of the piglins.

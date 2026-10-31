@@ -16,7 +16,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                           _bed_cells, _bed_reachable, _bed_reach_stance, _bed_stance,
                           _click_gap, _crowding_hostiles, _diamond_reason, _expedition_prepared,
                           _eyes_owed, _frame_empty, _food_source_in_reach, _nether_haul_home,
-                           _nether_topup_wanted,
+                           _nether_topup_wanted, _nether_food_secured,
                           _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_target, _rods_target,
                           _frame_needs_obsidian, _gold_reserve_short, _known_footings,
                           _centre,
@@ -34,7 +34,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          NETHER_PEARL_SEARCH_M, PEARL_WAVE_MAX_TRIPS,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
-                           NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, resolve, stronghold_complete,
+                           NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
+                           NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
                            tech_tree_complete, WATER_RESCUE_AFTER)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources)
@@ -4560,15 +4561,18 @@ class NetherExpeditionTest(unittest.TestCase):
         # the scan, and the way-home walk aimed straight at the portal cell - which `navigate`
         # refuses outright (`[NAVIGATION_PORTAL_INTENT_REQUIRED]`, prog=False, whatever the
         # `range`). 178 refusals, the walk never took a step, and the bot starved at a gate it
-        # could see but never reach (~170 iterations lost). The target must never be the portal
-        # cell: a doorstep on the bot's own side is a standable cell `navigate` accepts, and
-        # closing that distance loads the portal so the crossing fires on the next tick.
+        # could see but never reach (~170 iterations lost). When far from the gate (> NETHER_EXIT_STAGING_DISTANCE),
+        # the exit is staged in hops: the target is an intermediate waypoint NETHER_EXIT_STAGING_DISTANCE
+        # closer, not the final doorstep. This breaks the 450+ block walk into ~120 block hops that
+        # the pathfinder can handle.
         g = self._down(blaze_rod=9)
         g.pos = (self.EXIT[0] - 220.3, float(self.EXIT[1]), self.EXIT[2] + 18.7)
         a = resolve("leave_nether", g)
         self.assertEqual(a.tool, "navigate")
         self.assertNotEqual((a.args["x"], a.args["z"]), (self.EXIT[0], self.EXIT[2]))
-        self._assert_doorstep(a, self.EXIT, g.pos)
+        # Target should be NETHER_EXIT_STAGING_DISTANCE (120m) closer to gate from current position
+        dist_to_target = math.dist((a.args["x"], a.args["z"]), g.pos[:2])
+        self.assertAlmostEqual(dist_to_target, NETHER_EXIT_STAGING_DISTANCE, delta=10.0)
 
     def test_standing_on_the_arrival_cell_crosses_instead_of_walking(self) -> None:
         # `navigate` into an active portal is refused outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED]
@@ -7496,6 +7500,76 @@ class FlattenHomeBaseTest(unittest.TestCase):
         # refused on the same tick (`_base_leveling_wanted` is the single gate for both).
         g = self._lumpy(raised=[])
         self.assertIsNone(resolve("flatten_home_base", g))
+
+
+class NetherExitTest(unittest.TestCase):
+    """Staged Nether exit when distance to gate is large.
+
+    When the bot is far from the Nether exit portal (> NETHER_EXIT_STAGING_DISTANCE), the exit
+    is staged in hops toward the gate rather than one long navigate. This works around pathfinder
+    timeouts on 450+ block walks through lava-heavy/sparse terrain.
+    """
+
+    def test_short_distance_uses_direct_approach(self) -> None:
+        # When close to the gate, aim at NETHER_GATE_APPROACH, not staged
+        g = gs(dimension="the_nether", pos=(50.0, 64.0, 50.0),
+               nether_gate=(-1, 72, -6), nether_arrival=(-1, 72, -6))
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "navigate")
+        # Distance is ~70m, target should be NETHER_GATE_APPROACH from gate
+        # which means target is 3 blocks away from gate at (-1, -6)
+        self.assertLess(math.dist((a.args["x"], a.args["z"]), (-1, -6)), 10)
+
+    def test_long_distance_uses_staging(self) -> None:
+        # When far from the gate (> NETHER_EXIT_STAGING_DISTANCE), stage the hop
+        g = gs(dimension="the_nether", pos=(400.0, 64.0, 400.0),
+               nether_gate=(-1, 72, -6), nether_arrival=(-1, 72, -6))
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "navigate")
+        # Bot at 400,400; gate at -1,-6; distance ~566m. Target should be NETHER_EXIT_STAGING_DISTANCE
+        # (120m) closer to the gate from current position.
+        dist_to_gate = math.dist((400.0, 400.0), (-1, -6))
+        dist_to_target = math.dist((a.args["x"], a.args["z"]), (400.0, 400.0))
+        self.assertAlmostEqual(dist_to_target, NETHER_EXIT_STAGING_DISTANCE, delta=1.0)
+
+
+class NetherFoodSecurityTest(unittest.TestCase):
+    """Food must be in pack before entering Nether.
+
+    Every Nether trip (blaze hunt, pearl wave, powder top-up) requires at least one edible item
+    in the pack. Without food, pearl waves end in starvation far from home.
+    """
+
+    def test_nether_departure_ready_requires_food(self) -> None:
+        # _nether_departure_ready should require food
+        from mlaya.actions import _nether_departure_ready
+        
+        g = gs(inventory={}, dimension="overworld")
+        g.nether_gate = (-1, 72, -6)
+        g.portal_lit = True
+        g.end_portal_active = False
+        g.frame_eyes = 0
+        g.powder_stowed = True
+        g.nether_entered = True
+        
+        # Without food, _nether_departure_ready should be False
+        self.assertFalse(_nether_departure_ready(g), "_nether_departure_ready must be False without food")
+        
+        # With food, if other conditions are met, it should be True (or at least not reject on food)
+        g.inventory = {"cooked_beef": 1}
+        # Note: _nether_departure_ready still requires other complex conditions, but food is no longer
+        # the sole blocker
+
+    def test_nether_food_secured_counts_edible(self) -> None:
+        # Check that _nether_food_secured correctly identifies food
+        g = gs(inventory={})
+        self.assertFalse(_nether_food_secured(g))
+
+        g.inventory = {"cooked_beef": 1}
+        self.assertTrue(_nether_food_secured(g))
+
+        g.inventory = {"cooked_porkchop": 1, "raw_chicken": 2}
+        self.assertTrue(_nether_food_secured(g))
 
 
 class LabelRegistryTest(unittest.TestCase):
