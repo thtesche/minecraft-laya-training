@@ -126,6 +126,12 @@ wait_host() {
 }
 
 start_host() {
+  # A killed host releases port 25575 only when its process is actually gone. Starting
+  # too early fails with "port in use" and leaves the lab with no host at all.
+  for ((i = 0; i < 20; i++)); do
+    nc -z -w 1 127.0.0.1 "$MCP_PORT" 2>/dev/null || break
+    sleep 1
+  done
   (cd "$MCP_REPO" && bun src/server/host.ts --minecraft-host 127.0.0.1 \
     --minecraft-port "$MC_PORT" --username MineAI --version 1.21.4 \
     --data-root "$MCP_DATA_ROOT" \
@@ -205,6 +211,7 @@ cmd_up() {
   fi
   if ! wait_host; then
     log "MCP host did not answer /health with a connected bot in 60 s - check runs/mcp.log"
+    tail -5 "$REPO/runs/mcp.log" 2>/dev/null
     return 1
   fi
   log "MCP host healthy on 127.0.0.1:$MCP_PORT"
