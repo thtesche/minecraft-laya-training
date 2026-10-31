@@ -1709,10 +1709,6 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
                 out.append("smelt_gold")
         elif _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
             out.append("mine_gold")
-    # Cobblestone: a deep stack for bridging over lava and gaps in the Nether (the arrival portal
-    # is deliberately left unprotected, docs/nether-prep.md "(B) After arrival").
-    if inv.get("cobblestone", 0) < NETHER_COBBLE - NETHER_COBBLE_SLACK and _can_mine(gs, "stone"):
-        out.append("mine_stone")
     return out
 
 
