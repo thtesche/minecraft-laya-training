@@ -89,6 +89,9 @@ wait_world() {
     fi
     sleep 1
   done
+  # Say which half of the gate failed: a closed port is a container that is not up,
+  # a missing "Done (" is a server that is still generating the world or crashed.
+  log "world gate failed after 120 s: port $(nc -z -w 1 127.0.0.1 "$MC_PORT" >/dev/null 2>&1 && echo open || echo closed), 'Done (' in the log $(docker compose -f "$COMPOSE" logs world 2>/dev/null | grep -q 'Done (' && echo yes || echo no)"
   return 1
 }
 
