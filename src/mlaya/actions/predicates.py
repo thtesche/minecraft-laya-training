@@ -1441,9 +1441,10 @@ def _nether_food_secured(gs: GameState) -> bool:
 
     Without food carried down, pearl waves end in starvation far from home. Every Nether trip
     (blaze hunt, pearl wave, or powder top-up) must start with `NETHER_FOOD_MIN_RESERVE` edible
-    items to survive a long search or emergency return.
+    items to survive a long search or emergency return. Banked rotten flesh counts toward the reserve.
     """
-    return _edible_count(gs.inventory) >= NETHER_FOOD_MIN_RESERVE
+    return (_edible_count(gs.inventory) + gs.banked.get("rotten_flesh", 0) 
+            >= NETHER_FOOD_MIN_RESERVE)
 
 
 def _nether_departure_ready(gs: GameState) -> bool:
