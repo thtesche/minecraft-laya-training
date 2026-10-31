@@ -56,6 +56,10 @@ Hard limits: at most three autonomous fixes per loop; every fix carries a test t
 without it; the same defect in two consecutive runs stops the loop and goes to the user;
 code is never changed while a run is in flight.
 
+Never edit `scripts/lab.sh` while a `lab.sh` process is still executing. Bash reads a script
+lazily: a mid-run edit shifts the byte offsets and the running shell executes garbage
+(`line 366: ose: command not found`), which takes the run and the host down with it.
+
 ## Server-side fixes (mine-ai-mcp, branch `bot-run`)
 
 The host always runs from `bot-run`. A patch to the server follows the repo's own path:
