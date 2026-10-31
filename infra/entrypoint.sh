@@ -21,4 +21,12 @@ if [[ "$EULA" == "true" ]]; then
   echo "eula=true" > /data/minecraft/eula.txt
 fi
 
-exec java "-Xmx${JAVA_MEMORY:-2G}" -jar /opt/server.jar nogui
+# A FIFO on fd 3 gives the server a console the lab can write to, so commands such as
+# `op LayaView` work without attaching to the container.
+[[ -p /tmp/minecraft-input ]] || mkfifo /tmp/minecraft-input
+exec 3<>/tmp/minecraft-input
+
+java "-Xmx${JAVA_MEMORY:-2G}" -jar /opt/server.jar nogui <&3 &
+java_pid=$!
+trap 'kill "$java_pid" 2>/dev/null' TERM INT
+wait "$java_pid"

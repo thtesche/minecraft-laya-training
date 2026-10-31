@@ -71,6 +71,30 @@ Merge back into `bot-run`, restart the host (`lab.sh down --run-only` then `lab.
 and re-run. A server patch that is not merged into `bot-run` is not in effect for the next
 run, no matter how it looks in the editor.
 
+## Rechte in der Container-Welt
+
+A dedicated server has no operators by default — unlike a singleplayer LAN world, where the
+host is automatically OP. Nothing is cheated: the server is vanilla 1.21.4 with
+`online-mode=false` (offline authentication, so MineAI can join) and `spawn-protection=0`.
+
+To get command rights, use the server console:
+
+```bash
+./scripts/lab.sh console "op <dein Name>"     # or: ./scripts/lab.sh op <dein Name>
+./scripts/lab.sh console "list"              # who is online
+```
+
+The viewer needs the same: `LayaView` must be spectator, otherwise it counts as a living
+player and the bot can no longer sleep through the night.
+
+## The ledger decides what the world "already has"
+
+`bootstrap_progress` reads the server's SQLite (`action_executions`, `events`,
+`stronghold_throws`) once per run, and those facts outrank a fresh block scan. The lab keeps
+that ledger under `runs/.lab/bot-data` so `--fresh` wipes world and ledger together. A run
+that reports `gate_lit`, `frame_complete` and `stronghold_estimated` at tick 0 in a world
+that has none of them is reading an old ledger, not the world.
+
 ## The metric the loop optimises
 
 The goal is the whole chain to the stronghold in as few iterations as possible, with the bot

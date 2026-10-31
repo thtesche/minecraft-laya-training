@@ -4,6 +4,7 @@
 #   ./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   start world, host, run
 #   ./scripts/lab.sh status                                    JSON: world, host, run, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
+#   ./scripts/lab.sh console "op LayaView"                      server console command
 #   ./scripts/lab.sh down [--run-only]                         stop run, host, world
 #
 # Rules the lab enforces: one run at a time (lock file), a run only starts when the world
@@ -14,6 +15,9 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 MCP_REPO="/Users/thtesche/VibeCoding/mine-ai-mcp"
 # The host always runs from our own server branch: the patches the runs need live there.
 MCP_BRANCH="bot-run"
+# The bot's ledger (action_executions, events, frontier) is what the loop reads back as
+# "this world already stands". Keeping it beside the world makes a fresh world actually fresh.
+MCP_DATA_ROOT="$REPO/runs/.lab/bot-data"
 COMPOSE="$REPO/infra/docker-compose.yml"
 STATE="$REPO/runs/.lab"
 PY="$REPO/.venv/bin/python"
@@ -106,8 +110,8 @@ cmd_up() {
   fi
 
   if [[ $fresh == 1 ]]; then
-    rm -rf "$REPO/infra/world"
-    log "world wiped: fresh world from the seed in infra/docker-compose.yml"
+    rm -rf "$REPO/infra/world" "$MCP_DATA_ROOT"
+    log "world and the bot's ledger wiped: fresh world from the seed in infra/docker-compose.yml"
   fi
 
   if ! world_up; then
@@ -127,6 +131,7 @@ cmd_up() {
   if ! host_up; then
     (cd "$MCP_REPO" && bun src/server/host.ts --minecraft-host 127.0.0.1 \
       --minecraft-port "$MC_PORT" --username MineAI --version 1.21.4 \
+      --data-root "$MCP_DATA_ROOT" \
       > "$REPO/runs/mcp.log" 2>&1 &)
     log "MCP host starting from $MCP_BRANCH @ $(mcp_commit) (log: runs/mcp.log)"
   fi
@@ -267,10 +272,20 @@ cmd_host_test() {
   (cd "$MCP_REPO" && bun run test)
 }
 
+cmd_console() {
+  if [[ $# -eq 0 ]]; then
+    echo "usage: lab.sh console \"op LayaView\""
+    return 1
+  fi
+  docker compose -f "$COMPOSE" exec world sh -c 'printf "%s\n" "$1" > /tmp/minecraft-input' sh "$*"
+}
+
 case "${1:-status}" in
   up) shift; cmd_up "$@" ;;
   status) cmd_status ;;
   analyze) shift; cmd_analyze "$@" ;;
+  console) shift; cmd_console "$@" ;;
+  op) shift; cmd_console "op $*"; ;;
   host-test) cmd_host_test ;;
   down) shift; cmd_down "$@" ;;
   *) echo "usage: lab.sh up|status|analyze|host-test|down" ; exit 1 ;;
