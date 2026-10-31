@@ -1727,14 +1727,14 @@ def _nether_bank_carried(gs: GameState) -> bool:
 
 
 def _expedition_prepared(gs: GameState) -> bool:
-    """The trip is fully stocked - only the lighting (and the bed laid right after) is left.
+    """The trip is fully stocked - only the lighting is left.
 
-    The diamond kit, a bed at hand, every prep step banked and the deep food reserve met. The
-    frame must stand (`_portal_built`): `_all_nether_prep_steps` reports an empty list both once
-    every step is done *and* before the prep window opens, so the frame is what tells a stocked
-    trip apart from one still before its lull.
+    The diamond kit, every prep step banked and the deep food reserve met. A bed must be available
+    either at hand or at the base (spawn point set). The frame must stand (`_portal_built`): 
+    `_all_nether_prep_steps` reports an empty list both once every step is done *and* before the 
+    prep window opens, so the frame is what tells a stocked trip apart from one still before its lull.
     """
-    return (_gear_ready(gs) and _portal_built(gs) and _bed_available(gs)
+    return (_gear_ready(gs) and _portal_built(gs) and (_bed_available(gs) or _bed_at_base(gs))
             and not _all_nether_prep_steps(gs)
             and _food_reserve_met(gs))
 
