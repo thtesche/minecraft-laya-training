@@ -193,7 +193,9 @@ class Brain:
         if band:
             # The gate over-read a distant mob; keep working instead of standing aside.
             in_danger = False
-        if in_danger:
+        if in_danger and "enter_portal" not in candidates:
+            # Danger defers to the survival policy, except when entering the portal is ready:
+            # the crossing is the escape route from the Overworld and must not be blocked.
             return Decision(None, deferred=True, candidates=candidates,
                             answers=answers, probabilities=probabilities,
                             note="in danger -> survival policy")
