@@ -1353,6 +1353,12 @@ class GameState:
                 pct = left / mx
                 if pct <= 0.25:
                     worn.append(f"{meta.get('item') or cls} at {pct * 100:.0f}% durability")
+        for cls, meta in self.armor.items():
+            left, mx = meta.get("left"), meta.get("max")
+            if isinstance(left, (int, float)) and isinstance(mx, (int, float)) and mx > 0:
+                pct = left / mx
+                if pct <= 0.25:
+                    worn.append(f"{meta.get('item') or cls} at {pct * 100:.0f}% durability")
         if worn:
             parts.append("low durability: " + ", ".join(worn))
         close = [(n, c, d) for n, c, d in self.hostiles if d is None or d <= 16]

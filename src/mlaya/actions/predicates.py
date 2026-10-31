@@ -603,6 +603,28 @@ def _gear_ready(gs: GameState) -> bool:
     return _offhand(gs, SHIELD_ITEM)
 
 
+def _armor_worn_out(gs: GameState) -> bool:
+    """Any worn diamond armour below durability threshold, or the shield if worn.
+
+    A worn piece below LOW_DURABILITY (15%) counts as short and triggers replacement crafting,
+    so the bot wears a full kit instead of risking one that may break out of reach.
+    Shield: 336 uses max; checked only if it is actively worn (off-hand slot).
+    """
+    for slot, _ in DIAMOND_ARMOR:
+        if not _worn(gs, f"diamond_{slot}"):
+            continue
+        meta = gs.armor.get(slot)
+        if meta and isinstance(meta.get("left"), (int, float)) and isinstance(meta.get("max"), (int, float)):
+            if meta["max"] > 0 and meta["left"] / meta["max"] < LOW_DURABILITY:
+                return True
+    if _offhand(gs, SHIELD_ITEM):
+        meta = gs.armor.get("offhand")
+        if meta and isinstance(meta.get("left"), (int, float)) and isinstance(meta.get("max"), (int, float)):
+            if meta["max"] > 0 and meta["left"] / meta["max"] < LOW_DURABILITY:
+                return True
+    return False
+
+
 def _portal_lit_scan(gs: GameState) -> bool:
     """The raw read: a lit portal block in a chunk the world currently has loaded."""
     return (gs.resource_distance(PORTAL_BLOCK) is not None
@@ -2877,8 +2899,9 @@ def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:
     """The next diamond thing worth building, and what it costs in diamonds.
 
     The order is the tech tree: pickaxe (3, unlocks obsidian), then sword (2, needs the
-    pickaxe to exist), then the armour set - most protection per diamond first. `None` means
-    the diamond goals are met.
+    pickaxe to exist), then the armour set - most protection per diamond first. A worn piece
+    below the durability threshold counts as short and needs replacement. `None` means the
+    diamond goals are met.
     """
     inv = gs.inventory
     if _pick_tier(inv, gs.tools) < DIAMOND_PICK_TIER:
@@ -2888,6 +2911,12 @@ def _next_diamond_item(gs: GameState) -> tuple[str, int] | None:
     for slot, cost in DIAMOND_ARMOR:
         if not _armor_present(gs, slot):
             return f"diamond_{slot}", cost
+        # A worn piece below durability threshold counts as short.
+        if _worn(gs, f"diamond_{slot}"):
+            meta = gs.armor.get(slot)
+            if meta and isinstance(meta.get("left"), (int, float)) and isinstance(meta.get("max"), (int, float)):
+                if meta["max"] > 0 and meta["left"] / meta["max"] < LOW_DURABILITY:
+                    return f"diamond_{slot}", cost
     return None
 
 

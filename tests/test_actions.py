@@ -12,7 +12,7 @@ import re
 import unittest
 from types import SimpleNamespace
 
-from mlaya.actions import (_all_nether_prep_steps, _barter_pearls_wanted, _bed_at_base,
+from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pearls_wanted, _bed_at_base,
                           _bed_cells, _bed_reachable, _bed_reach_stance, _bed_stance,
                           _click_gap, _crowding_hostiles, _diamond_reason, _expedition_prepared,
                           _eyes_owed, _frame_empty, _food_source_in_reach, _nether_haul_home,
@@ -1188,6 +1188,29 @@ class DiamondArmorTest(unittest.TestCase):
                    for slot in ("chestplate", "leggings", "boots", "helmet")}
         self.assertNotIn("mine_diamond", candidates(g))
         self.assertIsNone(resolve("mine_diamond", g))
+
+
+    def test_worn_out_armor_is_detected(self) -> None:
+        # Armor below 15% durability is considered worn out.
+        g = self._ready(diamond=8)
+        g.armor = {"chestplate": {"tier": "diamond", "item": "diamond_chestplate",
+                                  "left": 70.0, "max": 518}}  # ~13.5% durability
+        self.assertTrue(_armor_worn_out(g))
+
+    def test_healthy_armor_not_worn_out(self) -> None:
+        # Armor at or above 15% durability is healthy.
+        g = self._ready(diamond=8)
+        g.armor = {"chestplate": {"tier": "diamond", "item": "diamond_chestplate",
+                                  "left": 80.0, "max": 518}}  # ~15.4% durability
+        self.assertFalse(_armor_worn_out(g))
+
+    def test_worn_out_armor_triggers_replacement_craft(self) -> None:
+        # A worn-out piece triggers replacement crafting in _next_diamond_item.
+        g = self._ready(diamond=8, resources=_ore("diamond_ore"))
+        g.armor = {"chestplate": {"tier": "diamond", "item": "diamond_chestplate",
+                                  "left": 70.0, "max": 518}}
+        # Worn-out chestplate should trigger craft_diamond_chestplate.
+        self.assertIn("craft_diamond_chestplate", candidates(g))
 
 
 class ShieldTest(unittest.TestCase):

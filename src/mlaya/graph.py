@@ -687,6 +687,29 @@ class Agent:
         if restored:
             self.log.append({"stage": "policy", "reason": "world_state_restored",
                              "facts": restored, "gate": facts.gate_cell})
+        # Explicit equipment audit: report missing pieces so re-armament is visible at cold start
+        self._audit_kit(gs)
+
+    def _audit_kit(self, gs) -> None:
+        """Report any missing pieces of the diamond kit at cold start.
+        
+        The kit_worn milestone is scan-based (live), so a missing piece reopens the tree. This audit
+        logs what is missing so the re-armament is visible in the narrative.
+        """
+        from .actions.predicates import _armor_present, _has, DIAMOND_ARMOR, DIAMOND_PICK_TIER, _pick_tier
+        missing = []
+        inv = gs.inventory
+        tier = _pick_tier(inv, gs.tools)
+        if tier < DIAMOND_PICK_TIER:
+            missing.append("diamond_pickaxe")
+        if not _has(inv, "diamond_sword"):
+            missing.append("diamond_sword")
+        for slot, _ in DIAMOND_ARMOR:
+            if not _armor_present(gs, slot):
+                missing.append(f"diamond_{slot}")
+        if missing:
+            self.log.append({"stage": "policy", "reason": "kit_audit",
+                           "missing": missing})
 
     def _inject(self, gs):
         """Carry the loop-owned facts perception cannot see into the GameState."""
