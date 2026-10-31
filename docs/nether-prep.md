@@ -96,8 +96,13 @@ Nether terrain is already provided for in the server reflex.
 - **Never sleep / place a bed in the Nether.** Beds explode there. `sleep`, `place_bed` (and
   `fill_bucket`, since water evaporates) are restricted to the overworld via `_overworld(gs)`
   (`gs.dimension`; `apply_policy` automatically reapplies the server policy on a dimension change).
-- **Check food and cobblestone** before the passage (minimum reserve), so that the bot does not "by
-  accident" walk in with half an inventory.
+- **Food security before any Nether trip** (`_nether_food_secured`): at least `NETHER_FOOD_MIN_RESERVE = 24`
+  edible items must be in pack before blaze hunt, pearl wave, or powder top-up. Nether movement costs
+  hunger fast; 24 items provide a safe buffer before `NETHER_RETURN_FOOD = 8.0` forces the exit,
+  covering a typical ~400 m pearl-wave search without starvation.
+- **Staged Nether exit** (when distance to gate > `NETHER_EXIT_STAGING_DISTANCE = 120.0` m): navigate in
+  120 m hops toward the gate instead of one large walk. Pathfinder search times out on 450+ block walks
+  through sparse/lava-heavy Nether terrain; ~120 m hops reload the world and reset the search budget per tick.
 - **Gold dig only during the day:** the deep dig for gold is not on offer at night (the run
   sleeps then), but stays open for the auto-stop — otherwise the night would end the run too early.
 

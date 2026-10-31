@@ -46,8 +46,10 @@ rationale and the zero-shot findings behind this split are in
 | Homebase — surface anchor with bed, chest and furnace | reached, validated live |
 | Nether portal — bucket → obsidian → flint & steel → frame → lit portal | reached, validated live |
 | Nether prep — bow + arrows, gold helmet, cobblestone/food reserve | implemented, part of the auto-stop |
+| Nether safety (staged exit, food security, per-trip requirement) | implemented; staged exit (120 m hops), food security gate (`NETHER_FOOD_MIN_RESERVE = 24`), per-trip checks — see [`docs/nether-prep.md`](docs/nether-prep.md) |
 | Storage network — chests per cell, overflow chests, provisions fetched back | reached, validated live |
 | Stall guards — refusals, wandering, idle steps, quiet defers, `wait` hold | implemented (see [`docs/architecture.md`](docs/architecture.md#stall-guards)) |
+| Equipment durability audit and replacement crafting | implemented; worn-out armor (below 15%) triggers replacement craft from reserve — see [`docs/architecture.md`](docs/architecture.md#equipment-durability-audit-and-replacement-crafting) |
 | Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented; live through the fortress and the blaze hunt (run104–107, up to 12 rods carried out in run106), **no powder banked home yet** — see [`docs/nether-prep.md`](docs/nether-prep.md) |
 | Stronghold → End portal (phase 4) — eyes of ender, stronghold search, end-portal activation, demand-sized re-supply | implemented; not yet live (the Nether haul is not home yet) — see [`docs/stronghold.md`](docs/stronghold.md) |
 | M3, second round — run79–86 head on top of the 2026-10-14 checkpoint | trained (held-out accuracy 0.767 → 0.885), served live since run87 via `LAYA_EXTRA_MODELS` |

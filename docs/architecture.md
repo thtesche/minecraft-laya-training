@@ -711,6 +711,25 @@ for one night. A successful `wait` now holds `[loop] wait_hold_s` (default 30 s,
 itself is no longer waited for: `place_bed` lays the gate bed by day as well (see **Homebase**
 under the next milestones).
 
+## Equipment durability audit and replacement crafting
+
+Worn-out diamond gear now triggers re-crafting instead of silent loss of protection:
+
+- **Durability audit at bootstrap** (`_audit_kit`, `Agent._bootstrap_world`): when a run cold-starts on
+  a world with existing inventory, all diamond armor is checked for durability below 15% of max.
+  Worn pieces are flagged as missing in the Kit, and the normal craft chain rebuilds them.
+- **Durability check in the loop** (`_armor_worn_out`, `_next_diamond_item`): every decision reads
+  armor durability from `gs.inventory.armor`. When a piece falls below 15%, it no longer counts
+  towards `_gear_ready`; the next tick treats it as missing and offers the normal `craft_diamond_*`
+  action. No anvil repair is available (MCP server limitation), so craft-and-replace is the path.
+- **Kit recovery gates** (`_gear_ready`, `_expedition_prepared`, `_nether_departure_ready`): a bot
+  short a piece cannot hunt, mine, or attempt anything beyond `wait`. This cascade chains backwards to
+  force the missing craft before returning to progression.
+
+This keeps the survival kit complete without manual intervention, cost of a few crafts from the
+reserve ore vein. Open decisions: diamond reserve location, `fetch_reserve` activation, and re-supply
+logistics for multi-phase runs; these are left for future design.
+
 ## Live findings run80–86 (2026-10-21 … 22)
 
 | Run | Result | What held it back | Fix |
