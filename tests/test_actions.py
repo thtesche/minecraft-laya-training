@@ -7565,10 +7565,13 @@ class NetherFoodSecurityTest(unittest.TestCase):
         g = gs(inventory={})
         self.assertFalse(_nether_food_secured(g))
 
-        g.inventory = {"cooked_beef": 1}
-        self.assertTrue(_nether_food_secured(g))
+        g.inventory = {"cooked_beef": 23}
+        self.assertFalse(_nether_food_secured(g), "23 items is below NETHER_FOOD_MIN_RESERVE")
 
-        g.inventory = {"cooked_porkchop": 1, "raw_chicken": 2}
+        g.inventory = {"cooked_beef": 24}
+        self.assertTrue(_nether_food_secured(g), "24 items meets NETHER_FOOD_MIN_RESERVE")
+
+        g.inventory = {"cooked_porkchop": 12, "cooked_beef": 12}
         self.assertTrue(_nether_food_secured(g))
 
 

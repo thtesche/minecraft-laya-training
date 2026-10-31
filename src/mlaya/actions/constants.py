@@ -256,9 +256,10 @@ STRING_HUNT_RANGE = 24.0
 # Pathfinder search timeout is 2000ms, which in sparse/lava-heavy Nether terrain works up to ~120 m.
 # Stages the exit into intermediate waypoints (120 m per hop) until close enough for direct crossing.
 NETHER_EXIT_STAGING_DISTANCE = 120.0
-# Minimum food items (count >= 1) required in pack before any Nether trip. Without this,
-# pearl waves end in starvation (hunger reaching zero) far from home.
-NETHER_FOOD_MIN_RESERVE = 1
+# Minimum food items (count >= 24) required in pack before any Nether trip. Without this,
+# pearl waves end in starvation (hunger reaching zero) far from home. Nether movement costs hunger
+# fast; 24 items give enough margin before NETHER_RETURN_FOOD (8.0) forces the exit.
+NETHER_FOOD_MIN_RESERVE = 24
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
 # not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.
