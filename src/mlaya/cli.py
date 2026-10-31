@@ -246,6 +246,40 @@ def cmd_teacher(args) -> int:
     return 0
 
 
+def cmd_analyze(args) -> int:
+    """Turn a run log into a defect report: refusals, stalls, movement, milestones, diff."""
+    from . import analysis
+
+    settings = load_settings()
+    log = _resolve(args.log) if args.log else settings.log_path()
+    if not log.exists():
+        print(json.dumps({"error": "run log not found", "path": str(log)}))
+        return 2
+
+    run_log = _resolve(args.run_log) if args.run_log else None
+    if run_log is None:
+        candidates = sorted((ROOT / "runs").glob("run*.log"), key=lambda p: p.stat().st_mtime)
+        run_log = candidates[-1] if candidates else None
+
+    records = analysis.read_records(log)
+    report = analysis.summarize(records, run_log)
+
+    diff = None
+    if args.baseline:
+        base = _resolve(args.baseline)
+        if base.exists():
+            diff = analysis.compare(report, analysis.summarize(analysis.read_records(base)))
+            diff["baseline_log"] = str(base)
+
+    out = _resolve(args.out) if args.out else _resolve(f"runs/report-{log.stem}.md")
+    out.write_text(analysis.to_markdown(report, diff), encoding="utf-8")
+    report["report_markdown"] = str(out)
+    if diff:
+        report["diff"] = diff
+    print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+    return 0
+
+
 def _train_base(settings, name: str = "") -> str:
     """The checkpoint a fine-tune starts from: `--base`, else `[train] base_model`.
 
@@ -362,6 +396,15 @@ def main(argv: list[str] | None = None) -> int:
                      help="instead of running the teacher, re-judge the disagreements in this "
                            "side-file with the blind pair's A/B slots swapped (the flip test)")
 
+    ana = sub.add_parser("analyze", help="turn a run log into a defect report: refusals, "
+                                         "stalls, movement, milestones, diff against a baseline")
+    ana.add_argument("--log", default="", help="decisions log (default: the configured log)")
+    ana.add_argument("--baseline", default="",
+                     help="an earlier run's log to compare against (runs/history/decisions-runNN.jsonl)")
+    ana.add_argument("--run-log", default="",
+                     help="the run's own log carrying the end JSON (default: newest runs/run*.log)")
+    ana.add_argument("--out", default="", help="markdown report path (default runs/report-<log>.md)")
+
     trn = sub.add_parser("train", help="fine-tune a Laya checkpoint head on the dataset")
     trn.add_argument("--data", default="", help="training JSONL (default data/train.jsonl)")
     trn.add_argument("--base", default="",
@@ -388,6 +431,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(cmd_policy(args))
     if cmd == "dataset":
         return cmd_dataset(args)
+    if cmd == "analyze":
+        return cmd_analyze(args)
     if cmd == "teacher":
         return cmd_teacher(args)
     if cmd == "train":

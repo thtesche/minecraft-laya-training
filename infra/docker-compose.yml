@@ -1,0 +1,15 @@
+# The lab's world: a vanilla 1.21.4 dedicated server on a bind-mounted world folder,
+# so `lab up --fresh` can wipe it and the user's client can join 127.0.0.1:25565.
+services:
+  world:
+    build:
+      context: .
+    ports:
+      - "127.0.0.1:25565:25565"
+    volumes:
+      - ./world:/data/minecraft
+    environment:
+      EULA: "true"
+      SEED: "97996358"
+      JAVA_MEMORY: "2G"
+    stop_grace_period: 60s
