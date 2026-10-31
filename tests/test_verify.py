@@ -151,6 +151,19 @@ class HomeBaseProgressTest(unittest.TestCase):
                                     diff(gs(inventory={"oak_planks": 8}),
                                          gs(inventory={"oak_planks": 0}))))
 
+    def test_the_iron_kit_is_its_own_gain(self) -> None:
+        # run141: `craft_iron_chestplate` (iron_ingot -8, iron_chestplate +1) read as no
+        # progress. A tick the verifier calls wasted is dropped from the dataset, so the
+        # fine-tune never saw a state in which armour is being crafted.
+        d = diff(gs(inventory={"iron_ingot": 10}),
+                 gs(inventory={"iron_ingot": 2, "iron_chestplate": 1}))
+        self.assertTrue(progressed("craft_iron_chestplate", d))
+        self.assertTrue(progressed("craft_iron_sword",
+                                   diff(gs(inventory={"iron_ingot": 2, "stick": 1}),
+                                        gs(inventory={"iron_sword": 1}))))
+        self.assertFalse(progressed("craft_iron_boots",
+                                    diff(gs(inventory={"iron_ingot": 4}), gs(inventory={}))))
+
     def test_place_chest_is_the_chest_leaving_the_pack(self) -> None:
         d = diff(gs(inventory={"chest": 1}), gs(inventory={}))
         self.assertTrue(progressed("place_chest", d))

@@ -67,6 +67,15 @@ class TestSummarize(unittest.TestCase):
         self.assertEqual(movement["still_ticks"], 7)
         self.assertEqual(movement["longest_still_streak"], 7)
 
+    def test_a_tick_that_gains_without_walking_is_not_still(self):
+        # run141 spent 8 ticks at the furnace: no step, one iron ingot each. Counting those
+        # as standing put still_ratio at 0.84 for a run that was working the whole time.
+        report = analysis.summarize([action(i, "smelt_iron", status="succeeded", gained=1)
+                                     for i in range(8)])
+        self.assertEqual(report["movement"]["still_ticks"], 0)
+        self.assertEqual(report["movement"]["still_ratio"], 0.0)
+        self.assertEqual(report["stalls"], [])
+
     def test_deaths_come_from_the_policy_record(self):
         self.assertEqual(self.report["vitals"]["deaths"], 1)
         self.assertEqual(self.report["vitals"]["death_iterations"], [12])

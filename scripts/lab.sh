@@ -97,14 +97,18 @@ wait_world() {
 
 # A host that answers /health but is not connected to the world is not usable: the
 # transport is up, the bot is not. `ok` and `minecraft.connected` are the real gate.
-wait_host() {
-  for ((i = 0; i < 60; i++)); do
-    body=$(curl -s -m 3 "http://127.0.0.1:$MCP_PORT/health")
-    if [[ -n "$body" ]] && printf '%s' "$body" | "$PY" -c '
+host_connected() {
+  body=$(curl -s -m 3 "http://127.0.0.1:$MCP_PORT/health")
+  [[ -n "$body" ]] && printf '%s' "$body" | "$PY" -c '
 import json, sys
 d = json.load(sys.stdin)
 sys.exit(0 if d.get("ok") and (d.get("minecraft") or {}).get("connected") else 1)
-'; then
+'
+}
+
+wait_host() {
+  for ((i = 0; i < 60; i++)); do
+    if host_connected; then
       return 0
     fi
     sleep 1
@@ -182,6 +186,13 @@ cmd_up() {
     pkill -f 'src/server/host.ts'
     sleep 2
     start_host
+  elif ! host_connected; then
+    # The world container can restart under a running host; the mineflayer client does not
+    # reconnect on its own, and a host with a dead Minecraft connection is not a host.
+    log "MCP host is running but not connected to the world - restarting it"
+    pkill -f 'src/server/host.ts'
+    sleep 2
+    start_host
   fi
   if ! wait_host; then
     log "MCP host did not answer /health with a connected bot in 60 s - check runs/mcp.log"
@@ -251,6 +262,10 @@ last = actions[-1] if actions else {}
 state_ = last.get("state", {})
 
 anomalies = []
+if running("src/server/host.ts") and not (health.get("minecraft") or {}).get("connected"):
+    # The run reads the world through the host. A host that answers /health but is not
+    # connected to Minecraft is blind, and every tick after that is a failed perception.
+    anomalies.append("host is not connected to the world")
 hp, food = state_.get("health"), state_.get("food")
 if hp is not None and hp <= 8:
     anomalies.append(f"low health {hp}")
@@ -274,6 +289,7 @@ print(json.dumps({
                                        "rev-parse", "--short", "HEAD"],
                                       capture_output=True, text=True).stdout.strip(),
              "runtime": (health.get("runtime") or {}).get("state"),
+             "connected": (health.get("minecraft") or {}).get("connected"),
              "foreground": health.get("foreground"),
              "bot": (health.get("minecraft") or {}).get("position")},
     "run": {"running": pid_alive(state / "run.pid"),

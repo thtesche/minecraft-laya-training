@@ -72,6 +72,13 @@ def _gained(record: dict[str, Any]) -> int:
     return sum(v for v in inventory.values() if isinstance(v, (int, float)) and v > 0)
 
 
+def _wasted(record: dict[str, Any]) -> bool:
+    """The report's definition of a wasted tick: neither the body nor the inventory moved.
+    A tick that smelts iron in front of a furnace gains an item without walking; calling
+    that standing would make a productive run look idle."""
+    return _pos_delta(record) < MOVE_EPS and _gained(record) == 0
+
+
 def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dict[str, Any]:
     actions = [r for r in records if r.get("stage") == "action"]
     defers = [r for r in records if r.get("stage") == "defer"]
@@ -88,11 +95,11 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
             refusal_labels.setdefault(code, set()).add(str(r.get("label")))
 
     moved = sum(_pos_delta(r) for r in actions)
-    still = [r for r in actions if _pos_delta(r) < MOVE_EPS]
+    still = [r for r in actions if _wasted(r)]
     longest_still = 0
     streak = 0
     for r in actions:
-        if _pos_delta(r) < MOVE_EPS:
+        if _wasted(r):
             streak += 1
             longest_still = max(longest_still, streak)
         else:
@@ -102,7 +109,7 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
     i = 0
     while i < len(actions):
         j = i
-        while j < len(actions) and _pos_delta(actions[j]) < MOVE_EPS and _gained(actions[j]) == 0:
+        while j < len(actions) and _wasted(actions[j]):
             j += 1
         window = actions[i:j]
         if len(window) >= STALL_TICKS:

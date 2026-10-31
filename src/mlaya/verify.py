@@ -67,6 +67,13 @@ def diff(before: GameState, after: GameState) -> dict:
 INVENTORY_LABELS = {
     "get_wood", "mine_stone", "mine_iron", "mine_coal", "craft_pickaxe", "craft_table",
     "craft_stone_pickaxe", "craft_furnace", "smelt_iron", "craft_iron_pickaxe", "craft_bed",
+    # The iron kit. These were missing, so a tick that produced the item still read as no
+    # progress: live run141 crafted an iron chestplate (iron_ingot -8, iron_chestplate +1) and
+    # the verifier called it a wasted tick. A dropped tick is not only a wrong number in the
+    # report - the dataset builder keeps progressed ticks, so the fine-tune never sees a state
+    # in which armour is being crafted.
+    "craft_iron_sword", "craft_iron_chestplate", "craft_iron_leggings",
+    "craft_iron_boots", "craft_iron_helmet",
     "mine_diamond", "craft_diamond_pickaxe", "craft_diamond_sword",
     "craft_diamond_chestplate", "craft_diamond_leggings", "craft_diamond_boots",
     "craft_diamond_helmet", "craft_shield",
