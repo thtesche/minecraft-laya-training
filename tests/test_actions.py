@@ -760,7 +760,8 @@ class NetherPrepTest(unittest.TestCase):
         g.resources = {**g.resources,
                        "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
         cand = candidates(g)
-        self.assertIn("craft_arrows", cand)
+        # Bow and arrows are no longer part of the prep gate.
+        self.assertNotIn("craft_arrows", cand)
         self.assertIn("mine_gold", cand)
 
     def test_no_prep_before_the_portal(self) -> None:
@@ -1447,34 +1448,33 @@ class TechTreeCompleteTest(unittest.TestCase):
         g = self._complete(resources={"white_bed": self._gate()["white_bed"]})
         self.assertFalse(tech_tree_complete(g))
 
-    def test_a_lost_bow_is_not_done(self) -> None:
-        # The prep step drops out when the string to rebuild the bow is out of reach, and an empty
-        # step list reads as "prep done" - which ended run32 at its first tick with a goal it had
-        # not reached. The bank is judged as carried, so a lost piece sends the run back to work.
+    def test_a_lost_bow_is_still_done(self) -> None:
+        # Bow and arrows are no longer required; the tech tree is complete even without them.
+        # (Previously, run32 ended early when the bow was lost and could not be rebuilt.)
         g = self._complete()
         self.assertTrue(tech_tree_complete(g))
         g.inventory = {k: v for k, v in g.inventory.items() if k not in ("bow", "arrow")}
-        self.assertFalse(tech_tree_complete(g))
+        self.assertTrue(tech_tree_complete(g))
 
-    def test_one_string_short_of_the_bow_is_still_a_lost_bow(self) -> None:
-        # Two string and no spider in reach: the bow cannot be rebuilt, so it cannot count as
-        # banked - which is the state run32 stopped in.
+    def test_incomplete_string_with_no_spider_is_still_done(self) -> None:
+        # Bow and string are no longer required; tech_tree_complete is true even if string
+        # is short and no spider is in reach. (Previously, run32 blocked on an unrepairable bow.)
         g = self._complete(inventory={"diamond_sword": 1, "string": 2, "stick": 3,
                                       "cobblestone": 64})
-        self.assertFalse(tech_tree_complete(g))
+        self.assertTrue(tech_tree_complete(g))
 
-    def test_a_spider_in_reach_repairs_the_bow(self) -> None:
-        # The old spider guard wanted one within 10 m in a clear field, which made a single missing
-        # string unreachable and the bow unrepairable for good.
+    def test_spider_does_not_trigger_string_hunt_anymore(self) -> None:
+        # Bow and arrows are optional; hunt_string is not offered even if a spider is in reach.
         g = self._complete(inventory={"diamond_sword": 1, "string": 2, "stick": 3,
                                       "cobblestone": 64}, health=20.0)
         g.mobs = [("spider", "hostile", 1, 18.0)]
-        self.assertIn("hunt_string", candidates(g))
+        self.assertNotIn("hunt_string", candidates(g))
 
-    def test_a_half_made_arrow_reserve_is_not_done(self) -> None:
+    def test_bow_and_arrows_are_no_longer_required(self) -> None:
+        # Bow and arrows are optional; tech_tree_complete is true even with a partial arrow reserve.
         g = self._complete()
         g.inventory = {**g.inventory, "bow": 1, "arrow": 8}
-        self.assertFalse(tech_tree_complete(g))
+        self.assertTrue(tech_tree_complete(g))
 
     def test_a_missing_bed_is_not_done(self) -> None:
         g = self._complete(resources={"nether_portal": self._gate()["nether_portal"]})
@@ -4344,15 +4344,14 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertIsNone(resolve("enter_portal", g))
 
     def test_a_bow_less_bot_may_still_depart(self) -> None:
-        # The bow is part of the bank, not a precondition for the trip: a diamond sword and shield
-        # are what the bot fights blazes with, and holding the departure for a bow made run34 wait
-        # at its own gate for an item nothing on the map could supply. The Overworld section is
-        # still not "done" - the bank is short - so the run keeps working either way.
-        g = self._home()
-        g.inventory.pop("bow", None)
-        g.inventory.pop("arrow", None)
+        # Bow and arrows are no longer a precondition for the trip: the bot can depart even without
+        # them. A diamond sword and shield are what fights blazes. The Overworld section may still not
+        # be "done" because other prep items (gold helmet, cobblestone) are short.
+        g = self._home(golden_helmet=1, cobblestone=64)
+        # Even without bow and arrows, the gate can open.
         self.assertIn("enter_portal", candidates(g))
-        self.assertFalse(tech_tree_complete(g))
+        # Tech tree is now complete with all other items ready, even without bow/arrows.
+        self.assertTrue(tech_tree_complete(g))
 
     def test_a_haul_home_holds_the_gate_shut(self) -> None:
         # A trip home with its rods still in the pack is processing work - craft the powder, stow
@@ -4919,16 +4918,17 @@ class NetherExpeditionTest(unittest.TestCase):
         g.pos = (-250.5, 40.0, -120.5)
         self.assertNotIn("go_home", candidates(g))
 
-    def test_a_short_arrow_reserve_is_topped_up(self) -> None:
-        # Sticks run out one per arrow and nothing else gathers them, so the arrow step used to
-        # drop out at the three the bow left behind and the expedition left on eight arrows.
+    def test_arrows_are_no_longer_required(self) -> None:
+        # Arrows are no longer required; the bot may depart with a short reserve or none at all.
         g = self._home(flint_and_steel=1, bow=1, arrow=8, golden_helmet=1,
-                       cooked_mutton=64, white_bed=1, flint=2, feather=12)
+                       cooked_mutton=64, white_bed=1, flint=2, feather=12, cobblestone=64)
         g.resources = dict(g.resources)
         g.resources.pop("nether_portal")  # the frame stands unlit: the prep window
         g.resources["obsidian"] = [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)]
+        # Arrows are not offered anymore.
         self.assertNotIn("craft_arrows", candidates(g))
-        self.assertIn("get_wood", candidates(g))
+        # No get_wood is needed for arrows anymore.
+        self.assertNotIn("get_wood", candidates(g))
 
     def test_the_goal_is_the_powder_home_at_the_base(self) -> None:
         # Home is the point of the trip, and the bot is home the moment it is back in the

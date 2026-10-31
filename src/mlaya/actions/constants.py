@@ -124,6 +124,7 @@ EDIBLE = {
 #   rotten_flesh    4 hunger, and most of it poisons
 #   dried_kelp       1 hunger, for a whole stack
 #   mushroom_stew    6 hunger but it does not stack: 64 of them are 64 slots
+# Rotten flesh is now emergency-only (used by the reflex, not banked), not thrown as junk.
 PROVISIONS = frozenset(EDIBLE) - {"rotten_flesh", "dried_kelp", "mushroom_stew"}
 
 # Pickaxe tier by registry prefix (tools[] reports e.g. {"class": "pickaxe", "tier": "wooden"}).
@@ -292,10 +293,11 @@ WATER_RESCUE_AFTER = 2
 # refused with `[INVENTORY_FULL]`, so the loop sheds these to make room. Deliberately excludes
 # anything a recipe consumes: cobblestone (portal corners, furnace), planks/logs/sticks, wool,
 # string, coal, iron, flint, gravel, obsidian and food.
+# Rotten flesh is no longer junk; it is now used as emergency food.
 JUNK_ITEMS = ("tuff", "calcite", "diorite", "andesite", "granite", "cobbled_deepslate",
               "deepslate", "dirt", "coarse_dirt", "pointed_dripstone", "lapis_lazuli",
               "leather", "bone", "raw_copper", "glow_ink_sac",
-              "egg", "rotten_flesh", "mossy_stone_brick_slab", "sand", "dripstone_block")
+              "egg", "mossy_stone_brick_slab", "sand", "dripstone_block")
 
 # Geometry of the gear the tech chain upgrades through, weakest material first. A carried tool
 # or armour piece of a lower tier than the best the bot already carries, wears or holds is dead

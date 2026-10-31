@@ -1688,6 +1688,8 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
     This is the one source both `candidates` (through `_nether_prep_steps`) and
     `tech_tree_complete` read, so the offered steps and the completion gate cannot disagree on
     what the expedition still needs.
+
+    Bow and arrows are no longer part of the prep gate; the expedition departs without them.
     """
     if not _nether_idle(gs):
         return []
@@ -1697,28 +1699,6 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
     planks = _planks(inv)
     sticks = _can_sticks(inv, logs, planks)
     out: list[str] = []
-    # Bow: three string from spiders and three sticks, crafted at the table.
-    if not _has(inv, BOW_ITEM):
-        if table and inv.get("string", 0) >= BOW_STRING and sticks:
-            out.append("craft_bow")
-        elif _safe_string_hunt(gs):
-            out.append("hunt_string")
-    elif inv.get(ARROW_ITEM, 0) < NETHER_ARROWS:
-        # Arrows: one flint, one stick and one feather each, crafted at the table.
-        if table and _has(inv, FLINT_ITEM) and _has(inv, FEATHER_ITEM) and sticks:
-            out.append("craft_arrows")
-        else:
-            if not _has(inv, FLINT_ITEM) and gs.resource_distance("gravel") is not None:
-                out.append("get_flint")
-            if not _has(inv, FEATHER_ITEM) and gs.mob_nearest("chicken") is not None:
-                out.append("hunt_feather")
-            # Sticks run out long before the arrow reserve does - one per arrow - and nothing else
-            # in the chain gathers them, so the step silently dropped out at the three sticks the
-            # bow left behind and the expedition departed on half the arrows it is meant to
-            # carry (live, run30: 8 arrows, nothing on offer, and no way to top them up).
-            if (table and _has(inv, FLINT_ITEM) and _has(inv, FEATHER_ITEM) and not sticks
-                    and logs == 0 and planks == 0):
-                out.append("get_wood")
     # Gold helmet: mine the ore, smelt it, craft the piece (worn later, in the Nether).
     if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
         if inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS:
@@ -1739,26 +1719,11 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
 def _nether_bank_carried(gs: GameState) -> bool:
     """The banked trip kit, judged as *carried* rather than as "no step is pending".
 
-    `_all_nether_prep_steps` drops a step out whose material it cannot reach right now, which is
-    what keeps an unreachable item from blocking the chain - but an empty list then reads as "prep
-    done" to both `_expedition_prepared` and `tech_tree_complete`. Losing the bow therefore read as
-    a finished Overworld goal and ended the run at its first tick (live, run32: `bow` gone, two
-    string left, no spider near enough, `tech_tree_complete` True, `{"iterations": 1,
-    "stop": "goal"}`). The bow and its arrow reserve are therefore checked as the inventory they
-    are, so a lost one sends the run back to work rather than home.
-
-    The gold helmet stays on the pending-step side on purpose: an unreachable material must not be
-    able to block completion (`test_unreachable_prep_does_not_block_completion`), and unlike the
-    bow it is not a piece the run quietly carries the whole trip without.
-
-    This gates the *completion claim*, not the trip: `_expedition_prepared` deliberately does not
-    read it, so a bot that cannot rebuild its bow can still walk through the gate. Holding the
-    departure for a bow made the run wait at its own gate for an item nothing on the map could
-    supply (live, run34: no spider within reach for hours), while a diamond sword and shield are
-    what it actually fights blazes with.
+    Historically this checked the bow, an item that could be unreachable (no spiders), so an
+    unreachable bow would not block completion. Now the bow is optional, so this returns True:
+    all required items are checked in `_all_nether_prep_steps`.
     """
-    inv = gs.inventory
-    return _has(inv, BOW_ITEM) and inv.get(ARROW_ITEM, 0) >= NETHER_ARROWS
+    return True
 
 
 def _expedition_prepared(gs: GameState) -> bool:
