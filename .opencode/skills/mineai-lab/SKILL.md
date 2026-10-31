@@ -80,12 +80,24 @@ host is automatically OP. Nothing is cheated: the server is vanilla 1.21.4 with
 To get command rights, use the server console:
 
 ```bash
-./scripts/lab.sh console "op <dein Name>"     # or: ./scripts/lab.sh op <dein Name>
-./scripts/lab.sh console "list"              # who is online
+./scripts/lab.sh op Sanskrita       # grant op while the player is online
+./scripts/lab.sh console "list"     # who is online
+./scripts/lab.sh console "deop Sanskrita"
 ```
 
-The viewer needs the same: `LayaView` must be spectator, otherwise it counts as a living
-player and the bot can no longer sleep through the night.
+Two things the lab handles for you:
+
+- **The UUID is not the name-derived one.** With `online-mode=false` a real client still
+  presents its own UUID (Sanskrita: `4dabc317-2a5c-3155-8243-72f254ea7906`). An ops.json
+  written with the `UUID.nameUUIDFromBytes("Player<name>")` value matches nobody and grants
+  nothing. `lab.sh op <name>` records the UUID the server actually assigns into
+  `runs/.lab/ops-known.json`, and every world start reseeds `infra/world/ops.json` from it
+  with permission level 4 — so after `--fresh` the rights exist from the first tick.
+- **Level matters.** An ops.json entry with `"level": 0` is parsed but grants no rights.
+
+Vanilla has no `/spectate`; spectator mode is `/gamemode spectator`. The viewer player
+`LayaView` should be spectator, otherwise it counts as a living player and the bot can no
+longer sleep through the night.
 
 ## The ledger decides what the world "already has"
 

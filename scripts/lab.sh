@@ -18,8 +18,14 @@ MCP_BRANCH="bot-run"
 # The bot's ledger (action_executions, events, frontier) is what the loop reads back as
 # "this world already stands". Keeping it beside the world makes a fresh world actually fresh.
 MCP_DATA_ROOT="$REPO/runs/.lab/bot-data"
+# Players that get operator rights on every world start. A dedicated server has an empty
+# ops list, unlike a singleplayer LAN world where the host is automatically OP. The UUID a
+# client uses is not the name-derived offline one, so the lab remembers the UUID the server
+# actually assigns and reseeds ops.json before each world start.
+OPS_USERS=("Sanskrita" "LayaView")
 COMPOSE="$REPO/infra/docker-compose.yml"
 STATE="$REPO/runs/.lab"
+OPS_KNOWN="$STATE/ops-known.json"
 PY="$REPO/.venv/bin/python"
 MCP_PORT=25575
 MC_PORT=25565
@@ -60,6 +66,21 @@ run_up() {
   [[ -f "$STATE/run.pid" ]] && kill -0 "$(cat "$STATE/run.pid")" 2>/dev/null
 }
 
+# Operator rights for the lab's players. Being in ops.json is not enough: the entry needs a
+# permission level above 0, and the UUID must be the one the client actually presents.
+seed_ops() {
+  mkdir -p "$REPO/infra/world"
+  [[ -f "$OPS_KNOWN" ]] || return 0
+  "$PY" - "$OPS_KNOWN" "$REPO/infra/world/ops.json" <<'EOF'
+import json, sys
+known = json.load(open(sys.argv[1]))
+ops = [{"uuid": u, "name": n, "level": 4, "bypassesPlayerLimit": False}
+       for n, u in known.items()]
+open(sys.argv[2], "w").write(json.dumps(ops, indent=2) + "\n")
+EOF
+  log "ops seeded for $(IFS=' '; echo "${OPS_USERS[*]}")"
+}
+
 wait_world() {
   for ((i = 0; i < 120; i++)); do
     if nc -z -w 1 127.0.0.1 "$MC_PORT" 2>/dev/null && \
@@ -71,9 +92,16 @@ wait_world() {
   return 1
 }
 
+# A host that answers /health but is not connected to the world is not usable: the
+# transport is up, the bot is not. `ok` and `minecraft.connected` are the real gate.
 wait_host() {
   for ((i = 0; i < 60; i++)); do
-    if curl -s -m 3 "http://127.0.0.1:$MCP_PORT/health" | grep -q '"transport"'; then
+    body=$(curl -s -m 3 "http://127.0.0.1:$MCP_PORT/health")
+    if [[ -n "$body" ]] && printf '%s' "$body" | "$PY" -c '
+import json, sys
+d = json.load(sys.stdin)
+sys.exit(0 if d.get("ok") and (d.get("minecraft") or {}).get("connected") else 1)
+'; then
       return 0
     fi
     sleep 1
@@ -81,8 +109,16 @@ wait_host() {
   return 1
 }
 
-next_run_number() {
-  max=0
+start_host() {
+  (cd "$MCP_REPO" && bun src/server/host.ts --minecraft-host 127.0.0.1 \
+    --minecraft-port "$MC_PORT" --username MineAI --version 1.21.4 \
+    --data-root "$MCP_DATA_ROOT" \
+    > "$REPO/runs/mcp.log" 2>&1 &)
+  echo "$MCP_DATA_ROOT" > "$STATE/host_args"
+  log "MCP host starting from $MCP_BRANCH @ $(mcp_commit) (log: runs/mcp.log)"
+}
+
+next_run_number() {  max=0
   for f in "$REPO"/runs/run*.log "$REPO"/runs/history/decisions-run*.jsonl; do
     n=$(basename "$f" | sed -n 's/.*run\([0-9]*\).*/\1/p')
     [[ -n "$n" && "$n" -gt "$max" ]] && max="$n"
@@ -110,11 +146,19 @@ cmd_up() {
   fi
 
   if [[ $fresh == 1 ]]; then
+    # The world folder is bind-mounted into the running server. Wiping it while the
+    # server is up deletes its working directory under it: the process keeps running,
+    # every write fails, and the run looks alive with an empty world. Stop first.
+    if world_up; then
+      docker compose -f "$COMPOSE" down
+      log "world container stopped for the wipe"
+    fi
     rm -rf "$REPO/infra/world" "$MCP_DATA_ROOT"
     log "world and the bot's ledger wiped: fresh world from the seed in infra/docker-compose.yml"
   fi
 
   if ! world_up; then
+    seed_ops
     docker compose -f "$COMPOSE" up -d
     log "world container starting"
   fi
@@ -129,19 +173,23 @@ cmd_up() {
   fi
   echo "$(mcp_commit)" > "$STATE/mcp_commit"
   if ! host_up; then
-    (cd "$MCP_REPO" && bun src/server/host.ts --minecraft-host 127.0.0.1 \
-      --minecraft-port "$MC_PORT" --username MineAI --version 1.21.4 \
-      --data-root "$MCP_DATA_ROOT" \
-      > "$REPO/runs/mcp.log" 2>&1 &)
-    log "MCP host starting from $MCP_BRANCH @ $(mcp_commit) (log: runs/mcp.log)"
+    start_host
+  elif [[ "$(cat "$STATE/host_args" 2>/dev/null)" != "$MCP_DATA_ROOT" ]]; then
+    log "MCP host is running with a stale bot ledger - restarting with $MCP_DATA_ROOT"
+    pkill -f 'src/server/host.ts'
+    sleep 2
+    start_host
   fi
   if ! wait_host; then
-    log "MCP host did not answer /health in 60 s - check runs/mcp.log"
+    log "MCP host did not answer /health with a connected bot in 60 s - check runs/mcp.log"
     return 1
   fi
   log "MCP host healthy on 127.0.0.1:$MCP_PORT"
 
-  "$PY" -m mlaya.cli probe | head -2
+  if ! "$PY" -m mlaya.cli probe; then
+    log "probe failed - the host is not usable, the run is not started"
+    return 1
+  fi
 
   run_no=$(next_run_number)
   if [[ -f "$REPO/runs/decisions.jsonl" ]]; then
@@ -163,7 +211,7 @@ cmd_up() {
 
 cmd_status() {
   "$PY" - "$REPO" "$(world_up && echo yes || echo no)" <<'EOF'
-import json, subprocess, sys, time
+import json, os, subprocess, sys, time
 from pathlib import Path
 
 repo = Path(sys.argv[1])
@@ -175,8 +223,8 @@ def running(pattern):
 
 def pid_alive(path):
     try:
-        pid = int(path.read_text().strip())
-        return subprocess.run(["kill", "-0", str(pid)]).returncode == 0
+        os.kill(int(path.read_text().strip()), 0)
+        return True
     except Exception:
         return False
 
@@ -272,6 +320,31 @@ cmd_host_test() {
   (cd "$MCP_REPO" && bun run test)
 }
 
+cmd_op() {
+  if [[ $# -eq 0 ]]; then
+    echo "usage: lab.sh op <player>   (the player must be online)"
+    return 1
+  fi
+  cmd_console "op $*"
+  "$PY" - "$REPO/infra/world/ops.json" "$OPS_KNOWN" "$*" <<'EOF'
+import json, os, sys
+world, known_path, name = sys.argv[1], sys.argv[2], sys.argv[3]
+known = json.load(open(known_path)) if os.path.exists(known_path) else {}
+try:
+    entries = json.load(open(world))
+except Exception:
+    entries = []
+for e in entries:
+    if e.get("name") == name and e.get("level", 0) > 0:
+        known[name] = e["uuid"]
+        print(f"{name} is op (uuid {e['uuid']}); remembered for every future world start")
+        break
+else:
+    print(f"{name} is not in ops.json - the console grants op only to a player who is online")
+json.dump(known, open(known_path, "w"), indent=2)
+EOF
+}
+
 cmd_console() {
   if [[ $# -eq 0 ]]; then
     echo "usage: lab.sh console \"op LayaView\""
@@ -285,7 +358,7 @@ case "${1:-status}" in
   status) cmd_status ;;
   analyze) shift; cmd_analyze "$@" ;;
   console) shift; cmd_console "$@" ;;
-  op) shift; cmd_console "op $*"; ;;
+  op) shift; cmd_op "$*" ;;
   host-test) cmd_host_test ;;
   down) shift; cmd_down "$@" ;;
   *) echo "usage: lab.sh up|status|analyze|host-test|down" ; exit 1 ;;
