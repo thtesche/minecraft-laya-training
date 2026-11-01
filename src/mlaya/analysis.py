@@ -202,6 +202,15 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
 
     wait_ticks = sum(1 for r in actions if r.get("label") == "wait")
 
+    # System 2: the generative escalation, asked only where System 1 runs out -- a label the
+    # tech tree offered but `resolve` could not turn into a concrete action. Every call is
+    # logged (`stage: escalation`) with the label that failed, the model's plan and the label
+    # the loop actually ran, and the action record that follows carries `escalated: true`.
+    escalations = [r for r in records if r.get("stage") == "escalation"]
+    esc_actions = [r for r in actions if r.get("escalated")]
+    esc_trigger = Counter(str(e.get("label")) for e in escalations)
+    esc_chosen = Counter(str(e.get("chosen")) for e in escalations)
+
     waste = sorted(
         (r for r in actions if not r.get("progressed")),
         key=lambda r: tuple(-refusals.get(c, 0) for c in CODE_RE.findall(str(r.get("text") or ""))),
@@ -233,6 +242,27 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
             "adrift_ticks": len(adrift),
             "swim_blocks": round(sum(_swim(r) for r in water), 1),
             "escape_ticks": sum(1 for r in actions if r.get("label") == "escape_water"),
+        },
+        "system2": {
+            "calls": len(escalations),
+            "ticks": len(esc_actions),
+            "progressed": sum(1 for r in esc_actions if r.get("progressed")),
+            "progress_rate": round(sum(1 for r in esc_actions if r.get("progressed"))
+                                   / len(esc_actions), 3) if esc_actions else None,
+            "fallbacks": sum(1 for e in escalations if not e.get("chosen")),
+            "errors": sum(1 for e in escalations if (e.get("plan") or {}).get("error")),
+            "triggers": [{"label": label, "count": count}
+                         for label, count in esc_trigger.most_common()],
+            "chosen": [{"label": label, "count": count}
+                       for label, count in esc_chosen.most_common()],
+            "calls_detail": [
+                {"iteration": e.get("iteration"),
+                 "unresolved": e.get("label"),
+                 "chosen": e.get("chosen"),
+                 "goal": str((e.get("plan") or {}).get("goal") or "")[:120],
+                 "note": str((e.get("plan") or {}).get("note") or "")[:160]}
+                for e in escalations[:10]
+            ],
         },
         "refusals": [
             {"code": code, "count": count, "first_iteration": refusal_first.get(code),
@@ -274,7 +304,7 @@ def compare(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
         "end.stop", "ticks.action", "progress.progress_rate",
         "movement.blocks_per_tick", "movement.still_ratio",
         "waits.wait_ticks", "waits.defer_ticks", "vitals.deaths",
-        "water.ratio", "water.adrift_ticks",
+        "water.ratio", "water.adrift_ticks", "system2.calls",
     ]
     deltas: dict[str, Any] = {}
     for key in keys:
@@ -318,6 +348,15 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
         for s in report["stalls"][:10]:
             lines.append(f"- it{s['start_iteration']}–it{s['end_iteration']}: {s['ticks']} ticks on "
                          f"{', '.join(s['labels'])}{' · ' + ', '.join(s['codes']) if s['codes'] else ''}")
+
+    s2 = report.get("system2") or {}
+    if s2.get("calls"):
+        lines.append(f"\n## System 2 escalations ({s2['calls']})")
+        lines.append(f"- {s2['ticks']} ticks ran on an escalated action, progress rate "
+                     f"{s2['progress_rate']} · {s2['fallbacks']} fell back to the default")
+        for d in s2["calls_detail"]:
+            lines.append(f"- it{d['iteration']}: `{d['unresolved']}` had no action -> "
+                         f"`{d['chosen']}` — {d['goal']}")
 
     if report["milestones"]:
         lines.append("\n## Milestones")

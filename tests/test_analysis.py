@@ -13,7 +13,7 @@ from mlaya import analysis
 
 def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
            gained=0, health=20.0, food=20.0, progressed=None,
-           water=False, swim=None) -> dict:
+           water=False, swim=None, escalated=False) -> dict:
     return {
         "ts": 1000 + iteration,
         "stage": "action",
@@ -22,6 +22,7 @@ def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
         "tool": "navigate",
         "status": status,
         "text": text,
+        "escalated": escalated,
         "progressed": progressed if progressed is not None else (status == "succeeded"),
         "state": {"health": health, "food": food, "position": [0, 64, 0], "in_water": water},
         "delta": {
@@ -32,6 +33,13 @@ def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
             "inventory_delta": {"cobblestone": gained} if gained else {},
         },
     }
+
+
+def escalation(iteration: int, unresolved: str, plan: dict, chosen: str | None) -> dict:
+    """One System 2 call: the label System 1 offered but could not resolve, the model's plan,
+    and the label the loop ended up running."""
+    return {"ts": 1000 + iteration, "stage": "escalation", "iteration": iteration,
+            "label": unresolved, "plan": plan, "chosen": chosen}
 
 
 STALL = [action(i, "leave_nether", text="[NAVIGATION_TARGET_UNSUPPORTED] no path")
@@ -130,6 +138,48 @@ class TestWater(unittest.TestCase):
         text = analysis.to_markdown(self.report)
         self.assertIn("7 ticks off the feet", text)
         self.assertIn("6 of them adrift", text)
+
+
+class TestSystem2(unittest.TestCase):
+    """System 2 calls: the escalation the loop pays when System 1 runs out.
+
+    The tech tree can offer a label whose concrete action cannot be built from the state
+    (`resolve` returns None); that is the only path to the generative model, and the run log
+    records the call and the action it produced.
+    """
+
+    def setUp(self):
+        self.report = analysis.summarize([
+            escalation(5, "hunt_string", {"action": "hunt_string", "goal": "get string",
+                                          "note": "spider nearby"}, "hunt_string"),
+            action(5, "hunt_string", status="succeeded", pos=3.0, escalated=True),
+            escalation(6, "cook_food", {"error": "missing STRATA_API_KEY"}, None),
+            action(6, "explore", status="succeeded", pos=0.0, progressed=False, escalated=True),
+        ])
+
+    def test_calls_and_their_outcome_are_counted(self):
+        s2 = self.report["system2"]
+        self.assertEqual(s2["calls"], 2)
+        self.assertEqual(s2["ticks"], 2)
+        self.assertEqual(s2["progressed"], 1)
+        self.assertEqual(s2["progress_rate"], 0.5)
+        self.assertEqual(s2["fallbacks"], 1)
+        self.assertEqual(s2["errors"], 1)
+
+    def test_the_trigger_label_and_the_chosen_one_are_listed(self):
+        s2 = self.report["system2"]
+        self.assertEqual(s2["triggers"], [{"label": "hunt_string", "count": 1},
+                                         {"label": "cook_food", "count": 1}])
+        self.assertEqual(s2["chosen"][0], {"label": "hunt_string", "count": 1})
+        self.assertEqual(s2["calls_detail"][0]["goal"], "get string")
+
+    def test_a_run_that_never_escalates_reports_zero(self):
+        self.assertEqual(analysis.summarize(MOVING)["system2"]["calls"], 0)
+
+    def test_markdown_names_the_escalations(self):
+        text = analysis.to_markdown(self.report)
+        self.assertIn("System 2 escalations (2)", text)
+        self.assertIn("`hunt_string` had no action -> `hunt_string`", text)
 
 
 class TestCompare(unittest.TestCase):

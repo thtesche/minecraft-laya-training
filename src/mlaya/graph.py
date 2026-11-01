@@ -1523,8 +1523,8 @@ class Agent:
         )
         label = (plan or {}).get("action")
         alt = resolve(label, gs) if label else None
-        self.log.append({"stage": "escalation", "label": decision.action_label,
-                         "plan": plan, "chosen": label})
+        self.log.append({"stage": "escalation", "iteration": state.get("iteration", 0),
+                        "label": decision.action_label, "plan": plan, "chosen": label})
         if alt is not None:
             return {"action": alt, "escalated": True, "note": f"escalated -> {label}"}
         return {"action": resolve(FALLBACK_LABEL, gs), "escalated": True,

@@ -487,6 +487,14 @@ a **food acquisition** that fits "actually survive".
   run115 spent 332 of 527 ticks in water, **every one adrift**, 271 of them `escape_water` aimed
   at a foothold the pathfinder could not reach. `compare` tracks `water.ratio` and
   `water.adrift_ticks`, so a fix that gets the bot onto dry ground shows up as a gain.
+- **System 2 is a cost the report now shows (run77, live):** the generative model is asked only
+  when System 1 offers a label that `resolve` cannot turn into an action — the one path to
+  `brain.escalate_to_system2`. Each call is logged (`stage: escalation`, with the iteration, the
+  unresolved label, the plan and the label the loop ran), and the action that follows carries
+  `escalated: true`. `system2.calls/ticks/progress_rate/fallbacks/errors` and the trigger and
+  chosen label counts come from those records: run77 paid **521 calls**, 450 of them for an
+  unresolved `explore`, and only 11.7 % of the escalated ticks made progress. `compare` tracks
+  `system2.calls`, so a tech-tree fix that closes a gap shows up as fewer escalations.
 - **Why danger rows:** Laya selects the head via the **question type** (the checkpoint carries a
   `type_emb.`), so `in_danger` and `intent` **share one** `choice` head. A pure
   intent dataset would silently unlearn the gate. Hence one `in_danger` row per
