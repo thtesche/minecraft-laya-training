@@ -495,6 +495,15 @@ a **food acquisition** that fits "actually survive".
   chosen label counts come from those records: run77 paid **521 calls**, 450 of them for an
   unresolved `explore`, and only 11.7 % of the escalated ticks made progress. `compare` tracks
   `system2.calls`, so a tech-tree fix that closes a gap shows up as fewer escalations.
+- **A bounce is its own metric (`analysis._loops`):** `still_ratio` cannot see a label that walks
+  five blocks every tick and ends where it started. The report takes each label's feet-cells,
+  slides a `LOOP_TICKS`-wide window over them, and calls a window a loop when it walked
+  `LOOP_WALK` blocks yet ended within `path / LOOP_RATIO` of its start, merging overlapping windows
+  into one streak inside `LOOP_SPAN` iterations. Run143 flagged exactly one label: 76 ticks of
+  `approach_lava` hopping between two stances beside the same two flows, while the portal frame
+  still owed ten obsidian. The brain-side answer is the walk's own memory (`lava_walked`): a body
+  the bot has already stood beside answered "no source" from that footing, so the walk moves on
+  instead of hopping back.
 - **Why danger rows:** Laya selects the head via the **question type** (the checkpoint carries a
   `type_emb.`), so `in_danger` and `intent` **share one** `choice` head. A pure
   intent dataset would silently unlearn the gate. Hence one `in_danger` row per

@@ -868,6 +868,11 @@ class GameState:
     # timed out before it could reach that cell from the pocket the body is floating in, so aiming
     # at it again can only time out again. The rescue passes these over and picks another foothold.
     rescue_skip: frozenset = frozenset()
+    # Stances an `approach_lava` walk already ended on. A lava body the bot has stood beside and
+    # still shows no level-0 source cannot produce obsidian from that footing, so the walk picks
+    # another body instead of hopping back to it (live, run143: 94 `approach_lava` ticks bouncing
+    # between two stances 5.6 blocks apart beside the same two flows, never a source).
+    lava_walked: frozenset = frozenset()
     # A `drop_junk` the terrain refused to give a disposal pit for (`[DROP_HOLE_UNAVAILABLE]`):
     # from then on the drop goes onto the open ground instead of into a dug hole. Both free the
     # slots the relief is for, and the open drop cannot fail, so the loop cannot stall on it.

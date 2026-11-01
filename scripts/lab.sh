@@ -4,11 +4,13 @@
 #   ./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   start world, host, run
 #   ./scripts/lab.sh status                                    JSON: world, host, run, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
+#   ./scripts/lab.sh report [run number]                        write the finished run's report
 #   ./scripts/lab.sh console "op LayaView"                      server console command
 #   ./scripts/lab.sh down [--run-only]                         stop run, host, world
 #
 # Rules the lab enforces: one run at a time (lock file), a run only starts when the world
-# and the host are both healthy, and the previous decisions log is archived first.
+# and the host are both healthy, the previous decisions log is archived first, and a run that
+# ends writes its own report -- nobody has to ask for the analysis.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -148,6 +150,25 @@ next_run_number() {  max=0
   echo $((max + 1))
 }
 
+# A finished run reports itself. The JSON summary and the markdown go next to the archived log,
+# so the next `up` can diff against it without anyone remembering to ask. `analyze` reads the
+# end JSON from the newest runs/run*.log, which is still this run's at that moment.
+report_run() {
+  run_no="${1:-$(cat "$STATE/run_number" 2>/dev/null)}"
+  [[ -n "$run_no" ]] || return 0
+  baseline="$REPO/runs/history/decisions-run$((run_no - 1)).jsonl"
+  out_md="$REPO/runs/history/report-run$run_no.md"
+  out_json="$REPO/runs/history/summary-run$run_no.json"
+  if [[ -f "$baseline" ]]; then
+    "$PY" -m mlaya.cli analyze --log "$REPO/runs/decisions.jsonl" \
+      --baseline "$baseline" --out "$out_md" > "$out_json" 2>&1
+  else
+    "$PY" -m mlaya.cli analyze --log "$REPO/runs/decisions.jsonl" \
+      --out "$out_md" > "$out_json" 2>&1
+  fi
+  log "run $run_no reported: runs/history/report-run$run_no.md"
+}
+
 cmd_up() {
   n=600
   fresh=0
@@ -232,10 +253,15 @@ cmd_up() {
   [[ $ignore_goal == 1 ]] && args+=(--ignore-goal)
   cd "$REPO"
   nohup "$PY" -m mlaya.cli run "${args[@]}" > "$REPO/runs/run$run_no.log" 2>&1 &
-  echo $! > "$STATE/run.pid"
+  run_pid=$!
+  echo "$run_pid" > "$STATE/run.pid"
   echo "$run_no" > "$STATE/run_number"
   touch "$STATE/lock"
-  log "run $run_no started (${args[*]}) -> runs/run$run_no.log"
+  # The report writes itself once the run's process is gone: nobody has to remember to ask
+  # for the analysis, and the next `up` can diff against it straight away.
+  ( while kill -0 "$run_pid" 2>/dev/null; do sleep 5; done; report_run "$run_no" ) &
+  echo $! > "$STATE/report.pid"
+  log "run $run_no started (${args[*]}) -> runs/run$run_no.log, report written on completion"
   return 0
 }
 
@@ -333,10 +359,14 @@ cmd_analyze() {
   fi
 }
 
+cmd_report() {
+  report_run "${1:-}"
+}
+
 cmd_down() {
   if run_up; then
     kill "$(cat "$STATE/run.pid")" 2>/dev/null
-    rm -f "$STATE/run.pid" "$STATE/lock"
+    rm -f "$STATE/run.pid" "$STATE/report.pid" "$STATE/lock"
     log "run stopped"
   fi
   if [[ ${1:-} != --run-only ]]; then
@@ -392,9 +422,10 @@ case "${1:-status}" in
   up) shift; cmd_up "$@" ;;
   status) cmd_status ;;
   analyze) shift; cmd_analyze "$@" ;;
+  report) shift; cmd_report "$@" ;;
   console) shift; cmd_console "$@" ;;
   op) shift; cmd_op "$*" ;;
   host-test) cmd_host_test ;;
   down) shift; cmd_down "$@" ;;
-  *) echo "usage: lab.sh up|status|analyze|host-test|down" ; exit 1 ;;
+  *) echo "usage: lab.sh up|status|analyze|report|host-test|down" ; exit 1 ;;
 esac

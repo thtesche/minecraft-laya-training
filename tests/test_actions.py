@@ -1860,6 +1860,26 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("approach_lava", candidates(g))
         self.assertIsNone(resolve("approach_lava", g))
 
+    def test_approach_lava_does_not_walk_back_to_a_body_it_stood_beside(self) -> None:
+        # Live, run143 it63-78: two flows 60 m from the anchor, no level-0 source in the scan. The
+        # walk went to the stance beside one; from there the other body was out of reach, so the
+        # next tick walked back to the first stance, and so on for 94 ticks. A body the bot has
+        # stood beside answered "no source" already; another stance of it is the same answer.
+        g = self._geared(water_bucket=1, obsidian=3)
+        g.pos = (-66.5, 8.0, -67.4)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -66, 7, -73, 5.6, above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -66, 7, -67, 5.9, above="air", below="stone", level=8),
+        ]}
+        # First the hop itself: with no memory the walk aims at the stance beside the far flow.
+        first = resolve("approach_lava", g)
+        self.assertIsNotNone(first)
+        self.assertEqual((first.args["x"], first.args["y"], first.args["z"]), (-66, 8, -72))
+        # Once that stance has been stood on, both bodies are spent and the walk stays out.
+        g.lava_walked = frozenset({(-66, 8, -72)})
+        self.assertNotIn("approach_lava", candidates(g))
+        self.assertIsNone(resolve("approach_lava", g))
+
     def test_mine_obsidian_needs_an_open_pour_cell(self) -> None:
         # The surface pond's only usable cell is capped by stone, so no water can be placed
         # there: the step refuses instead of pouring into a wall.

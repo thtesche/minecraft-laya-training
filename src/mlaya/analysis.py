@@ -14,6 +14,7 @@ better run regardless of how many ticks it had available.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from collections import Counter
@@ -28,6 +29,15 @@ STALL_TICKS = 6
 # Below this a tick counts as standing still. A step is a block; 0.5 separates a real
 # move from the jitter of a pathfinding attempt that never left its cell.
 MOVE_EPS = 0.5
+# A label that walks every tick and ends where it began is a bounce, not work. The ratio is the
+# one the loop's orbit guard uses; the window is shorter so the report also catches a hop the
+# guard's 12-tick trail lets through (live, run143: 94 `approach_lava` ticks hopping between two
+# stances 5.6 blocks apart beside the same two lava flows). `LOOP_SPAN` keeps a streak an episode:
+# eight `sleep` ticks spread over 150 iterations are not a bounce, they are the run's shape.
+LOOP_TICKS = 8
+LOOP_WALK = 36.0
+LOOP_RATIO = 5.0
+LOOP_SPAN = 24
 
 
 def read_records(path: Path) -> list[dict[str, Any]]:
@@ -99,6 +109,66 @@ def _swim(record: dict[str, Any]) -> float:
     return float(value)
 
 
+def _position(record: dict[str, Any]) -> tuple[float, float, float] | None:
+    state = record.get("state") or {}
+    pos = state.get("position")
+    if not isinstance(pos, (list, tuple)) or len(pos) != 3:
+        return None
+    return (float(pos[0]), float(pos[1]), float(pos[2]))
+
+
+def _loops(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Labels whose ticks walk a long path and end where they started.
+
+    `still_ratio` cannot see this: a bot hopping between two stances moves five blocks every
+    tick, which reads as movement. The test is the one the orbit guard uses, over a sliding
+    window of `LOOP_TICKS` ticks of one label — a window that walked `LOOP_WALK` blocks yet
+    ended within `path / LOOP_RATIO` of where it began is a bounce. Overlapping windows of the
+    same label merge into one streak, so the report quotes the whole ping-pong, not one window,
+    and a window only counts while it sits inside `LOOP_SPAN` iterations -- eight `sleep` ticks
+    spread over 150 iterations are the run's shape, not a loop.
+    """
+    trails: dict[str, list[tuple[int, tuple[float, float, float]]]] = {}
+    for r in actions:
+        pos = _position(r)
+        if pos is None:
+            continue
+        trails.setdefault(str(r.get("label")), []).append((int(r.get("iteration", 0)), pos))
+
+    loops = []
+    for label, trail in trails.items():
+        if len(trail) < LOOP_TICKS:
+            continue
+        windows = []
+        for i in range(len(trail) - LOOP_TICKS + 1):
+            window = trail[i:i + LOOP_TICKS]
+            path = sum(math.dist(window[k][1], window[k + 1][1]) for k in range(len(window) - 1))
+            net = math.dist(window[0][1], window[-1][1])
+            if (path >= LOOP_WALK and net < path / LOOP_RATIO
+                    and window[-1][0] - window[0][0] <= LOOP_SPAN):
+                windows.append((i, path, net))
+        if not windows:
+            continue
+        # Overlapping windows of the same bounce merge into one streak, but only while the streak
+        # stays inside `LOOP_SPAN` iterations: a hop is an episode, not the run's whole shape.
+        streaks = []
+        for i, path, net in windows:
+            if (streaks and i <= streaks[-1][1] - LOOP_TICKS + 1
+                    and trail[i + LOOP_TICKS - 1][0] - trail[streaks[-1][0]][0] <= LOOP_SPAN):
+                streaks[-1][1] = max(streaks[-1][1], i + LOOP_TICKS)
+                streaks[-1][2] += path
+                streaks[-1][3] += net
+                streaks[-1][4] += 1
+            else:
+                streaks.append([i, i + LOOP_TICKS, path, net, 1])
+        for start, end, path, net, count in streaks:
+            loops.append({"label": label, "ticks": end - start,
+                          "start_iteration": trail[start][0], "end_iteration": trail[end - 1][0],
+                          "path_blocks": round(path / count, 1),
+                          "net_blocks": round(net / count, 1)})
+    return sorted(loops, key=lambda e: -e["ticks"])
+
+
 def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dict[str, Any]:
     actions = [r for r in records if r.get("stage") == "action"]
     defers = [r for r in records if r.get("stage") == "defer"]
@@ -159,6 +229,8 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
         else:
             streak = 0
     adrift = [r for r in water if _swim(r) < MOVE_EPS]
+
+    loops = _loops(actions)
 
     healths = [r["state"]["health"] for r in actions
                if isinstance(r.get("state"), dict) and r["state"].get("health") is not None]
@@ -243,6 +315,11 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
             "swim_blocks": round(sum(_swim(r) for r in water), 1),
             "escape_ticks": sum(1 for r in actions if r.get("label") == "escape_water"),
         },
+        "loops": {
+            "labels": len(loops),
+            "ticks": sum(l["ticks"] for l in loops),
+            "detail": loops,
+        },
         "system2": {
             "calls": len(escalations),
             "ticks": len(esc_actions),
@@ -304,7 +381,7 @@ def compare(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
         "end.stop", "ticks.action", "progress.progress_rate",
         "movement.blocks_per_tick", "movement.still_ratio",
         "waits.wait_ticks", "waits.defer_ticks", "vitals.deaths",
-        "water.ratio", "water.adrift_ticks", "system2.calls",
+        "water.ratio", "water.adrift_ticks", "loops.ticks", "system2.calls",
     ]
     deltas: dict[str, Any] = {}
     for key in keys:
@@ -348,6 +425,14 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
         for s in report["stalls"][:10]:
             lines.append(f"- it{s['start_iteration']}–it{s['end_iteration']}: {s['ticks']} ticks on "
                          f"{', '.join(s['labels'])}{' · ' + ', '.join(s['codes']) if s['codes'] else ''}")
+
+    loops = report.get("loops") or {}
+    if loops.get("labels"):
+        lines.append(f"\n## Loops ({loops['ticks']} ticks walking, going nowhere)")
+        for l in loops["detail"]:
+            lines.append(f"- it{l['start_iteration']}–it{l['end_iteration']}: {l['ticks']} ticks on "
+                         f"`{l['label']}` — {l['path_blocks']} blocks walked per window, "
+                         f"{l['net_blocks']} net")
 
     s2 = report.get("system2") or {}
     if s2.get("calls"):

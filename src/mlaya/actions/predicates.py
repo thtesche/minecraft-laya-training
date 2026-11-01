@@ -2373,9 +2373,18 @@ def _lava_walk_target(gs: GameState) -> tuple[int, int, int] | None:
             continue  # already at the lava: `mine_obsidian` owns that tick
         if h.pos in gs.pour_skip:
             continue
-        stance = _pour_stance(gs, h)
-        if stance is not None:
-            return stance
+        options = [p for p in _stance_options(gs, h) if p not in gs.stance_skip]
+        if not options:
+            continue
+        # A body the bot has already stood beside answered "no source" from that footing; another
+        # stance of the same body is the same answer (live, run143: 94 ticks hopping between two
+        # stances of the same two flows). The pour step does not read this set, so a source that
+        # the closer scan finally lists is still poured at.
+        if any(p in gs.lava_walked for p in options):
+            continue
+        if gs.pos is None:
+            return options[0]
+        return min(options, key=lambda p: _dist(gs.pos, p))
     return None
 
 

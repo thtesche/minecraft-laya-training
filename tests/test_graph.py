@@ -943,6 +943,49 @@ class RescueSkipTest(unittest.TestCase):
         self.assertEqual((action.args["x"], action.args["y"], action.args["z"]), (4, 71, 281))
 
 
+class LavaWalkTest(unittest.TestCase):
+    """A lava body the bot has already stood beside is not walked to again.
+
+    Live, run143 it63-78: `approach_lava` picked the nearest body out of pouring reach; arriving at
+    its stance put that body in reach and the next tick sent the bot back to the other one -- 94
+    ticks hopping between two stances 5.6 blocks apart beside the same two flows, ten obsidian
+    still owed. The walk's own memory is what breaks the hop.
+    """
+
+    class _Action:
+        def __init__(self, label: str, tool: str, args: dict | None = None) -> None:
+            self.label = label
+            self.tool = tool
+            self.args = args or {}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._lava_walked = set()
+        return agent
+
+    def test_records_the_stance_a_walk_ended_on(self) -> None:
+        agent = self._agent()
+        agent._note_lava_walk(
+            self._Action("approach_lava", "navigate", {"x": -66, "y": 8, "z": -72}), True)
+        self.assertEqual(agent._lava_walked, {(-66, 8, -72)})
+
+    def test_a_failed_walk_is_not_a_stance_the_bot_reached(self) -> None:
+        agent = self._agent()
+        agent._note_lava_walk(
+            self._Action("approach_lava", "navigate", {"x": 1, "y": 2, "z": 3}), False)
+        self.assertEqual(agent._lava_walked, set())
+
+    def test_only_the_walk_to_the_lava_counts(self) -> None:
+        # `mine_obsidian` walks to the same kind of stance, but that tick ends in a pour: the
+        # body is being worked, not merely visited.
+        agent = self._agent()
+        agent._note_lava_walk(self._Action("mine_obsidian", "navigate", {"x": 4, "y": 5, "z": 6}),
+                             True)
+        agent._note_lava_walk(self._Action("approach_lava", "collect_block", {"x": 7, "y": 8, "z": 9}),
+                             True)
+        self.assertEqual(agent._lava_walked, set())
+
+
 class StuckOfferTest(unittest.TestCase):
     """A label that keeps answering the identical refusal is withheld, so the fallback moves.
 

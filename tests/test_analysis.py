@@ -13,7 +13,7 @@ from mlaya import analysis
 
 def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
            gained=0, health=20.0, food=20.0, progressed=None,
-           water=False, swim=None, escalated=False) -> dict:
+           water=False, swim=None, escalated=False, at=(0, 64, 0)) -> dict:
     return {
         "ts": 1000 + iteration,
         "stage": "action",
@@ -24,7 +24,7 @@ def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
         "text": text,
         "escalated": escalated,
         "progressed": progressed if progressed is not None else (status == "succeeded"),
-        "state": {"health": health, "food": food, "position": [0, 64, 0], "in_water": water},
+        "state": {"health": health, "food": food, "position": list(at), "in_water": water},
         "delta": {
             "pos_delta": pos,
             # The x/z plane the body actually crossed. A tick that only drifts up and back
@@ -138,6 +138,58 @@ class TestWater(unittest.TestCase):
         text = analysis.to_markdown(self.report)
         self.assertIn("7 ticks off the feet", text)
         self.assertIn("6 of them adrift", text)
+
+
+class TestLoops(unittest.TestCase):
+    """Ticks that walk a long path and end where they began.
+
+    `still_ratio` cannot see a bounce: a bot hopping between two stances moves five blocks every
+    tick, which reads as movement. Live, run143 it63-78: `approach_lava` between (-66,8,-67) and
+    (-66,7,-73) for 94 ticks while the portal frame still owed ten obsidian.
+    """
+
+    A = (-66.5, 8.0, -67.4)
+    B = (-66.5, 7.0, -72.9)
+
+    def setUp(self):
+        self.report = analysis.summarize(
+            [action(i, "approach_lava", status="succeeded", pos=5.6,
+                    at=self.A if i % 2 else self.B) for i in range(12)]
+            + [action(12, "mine_iron", status="succeeded", pos=6.0, gained=2, at=(10, 64, 10))]
+        )
+
+    def test_a_bounce_between_two_stances_is_a_loop(self):
+        loops = self.report["loops"]
+        self.assertEqual(loops["labels"], 1)
+        self.assertEqual(loops["ticks"], 12)
+        detail = loops["detail"][0]
+        self.assertEqual(detail["label"], "approach_lava")
+        self.assertEqual(detail["start_iteration"], 0)
+        self.assertEqual(detail["end_iteration"], 11)
+
+    def test_a_walk_that_gets_somewhere_is_not_a_loop(self):
+        report = analysis.summarize([action(i, "explore", status="succeeded", pos=6.0,
+                                           at=(6 * i, 64, 0)) for i in range(12)])
+        self.assertEqual(report["loops"]["labels"], 0)
+
+    def test_a_label_scattered_over_the_run_is_not_one_episode(self):
+        # Eight sleep ticks twelve iterations apart hop between two cells, but they are not one
+        # bounce: the bot went home, worked elsewhere, came back. The span is what makes an episode.
+        report = analysis.summarize([action(i, "sleep", status="succeeded", pos=6.0,
+                                           at=self.A if k % 2 else self.B)
+                                     for k, i in enumerate(range(0, 100, 12))])
+        self.assertEqual(report["loops"]["labels"], 0)
+
+    def test_loops_show_in_the_markdown(self):
+        text = analysis.to_markdown(self.report)
+        self.assertIn("Loops (12 ticks walking, going nowhere)", text)
+        self.assertIn("`approach_lava`", text)
+
+    def test_a_loop_that_ends_shows_in_the_diff(self):
+        dry = analysis.summarize([action(i, "mine_iron", status="succeeded", pos=6.0,
+                                         gained=1, at=(6 * i, 64, 0)) for i in range(12)])
+        diff = analysis.compare(dry, self.report)
+        self.assertEqual(diff["deltas"]["loops.ticks"], -12)
 
 
 class TestSystem2(unittest.TestCase):

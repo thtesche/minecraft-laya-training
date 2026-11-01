@@ -338,6 +338,11 @@ class Agent:
     # in place, only replaced with a fresh set.
     _surface_wet: frozenset[tuple[int, int]] = frozenset()
 
+    # Stances an `approach_lava` walk already ended on. Class default for the same reason as
+    # `_durable`: a stub agent built with `Agent.__new__` reads it through `_inject`, and an empty
+    # set is exactly "no lava body has been stood beside yet". Replaced, never mutated in place.
+    _lava_walked: frozenset[tuple[int, int, int]] = frozenset()
+
     def __init__(self, settings: Settings, executor):
         self.settings = settings
         self.mcp = executor
@@ -437,6 +442,10 @@ class Agent:
         # pathfinder cannot reach that cell from the water pocket the body is floating in, so the
         # rescue aims at the next foothold instead of diving at the same one every tick.
         self._rescue_skip: set[tuple[int, int, int]] = set()
+        # Stances an `approach_lava` walk ended on. A lava body the bot has already stood beside
+        # without a level-0 source appearing has no footing left to try, so the walk moves on to
+        # the next body instead of hopping back (see `_note_lava_walk`).
+        self._lava_walked: set[tuple[int, int, int]] = set()
         # The stuck-offer guard, one run per label: the last refusal code and the count of
         # identical failures for that label, and the ticks left in the cooling-off window that
         # withholds it (see `STUCK_REPEATS`/`STUCK_COOLDOWN` and `_track_stuck`). Per label, not a
@@ -743,6 +752,7 @@ class Agent:
         gs.pour_skip = frozenset(self._pour_skip)
         gs.stance_skip = frozenset(self._stance_skip)
         gs.rescue_skip = frozenset(self._rescue_skip)
+        gs.lava_walked = frozenset(self._lava_walked)
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.recover_written_off = frozenset(self._recover_written_off)
         gs.boxed_in = self._boxed[1] >= BOXED_REPEATS
@@ -1867,6 +1877,24 @@ class Agent:
         if all(isinstance(v, int) for v in pos):
             self._rescue_skip.add(pos)
 
+    def _note_lava_walk(self, action, ok: bool) -> None:
+        """Remember the stance an `approach_lava` walk ended on, so that body is not walked to again.
+
+        A lava body shows up in the scan as *flows* long before its level-0 source is close enough
+        to be listed, so the walk is the chain's link to the pour. Live, run143: the walk picked the
+        nearest body not yet in pouring reach; arriving at it put the next body in reach, and the
+        tick after that sent the bot back to the first -- 94 `approach_lava` ticks hopping between
+        two stances 5.6 blocks apart beside the same two flows, while the frame still owed ten
+        obsidian. Standing beside a body once is the whole test: if no source appeared from that
+        footing, another stance of the same body is the same test.
+        """
+        if not ok or action.label != "approach_lava" or action.tool != "navigate":
+            return
+        args = action.args or {}
+        pos = (args.get("x"), args.get("y"), args.get("z"))
+        if all(isinstance(v, int) for v in pos):
+            self._lava_walked = set(self._lava_walked) | {pos}
+
     def _track_stuck(self, label: str, ok: bool, text: str | None,
                      progressed: bool) -> None:
         """Withhold a label that keeps answering the identical refusal without progress.
@@ -2869,6 +2897,7 @@ class Agent:
         self._note_pour(action, _ok, _text)
         self._note_stance(action, _ok, _text)
         self._note_rescue(action, _ok, _text)
+        self._note_lava_walk(action, _ok)
         self._note_base(action, _ok, _text)
         self._note_drop(action, _ok, _text, before)
         self._note_chest(action, _ok, _text)
