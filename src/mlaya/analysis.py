@@ -79,6 +79,26 @@ def _wasted(record: dict[str, Any]) -> bool:
     return _pos_delta(record) < MOVE_EPS and _gained(record) == 0
 
 
+def _in_water(record: dict[str, Any]) -> bool:
+    state = record.get("state") or {}
+    return bool(state.get("in_water"))
+
+
+def _swim(record: dict[str, Any]) -> float:
+    """Horizontal distance the body actually crossed this tick.
+
+    `pos_delta` counts vertical drift, and a body adrift in a flooded pocket travels three
+    blocks straight up and back down on the same column every tick (live run115: 281 rescue
+    walks at (-0.5, 62, 281), `pos_delta` 3.5 each, never on ground). Only the x/z plane says
+    whether a swim went anywhere.
+    """
+    delta = record.get("delta") or {}
+    value = delta.get("swim_delta")
+    if value is None:
+        return 0.0
+    return float(value)
+
+
 def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dict[str, Any]:
     actions = [r for r in records if r.get("stage") == "action"]
     defers = [r for r in records if r.get("stage") == "defer"]
@@ -124,6 +144,21 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
                                     for c in CODE_RE.findall(f"{w.get('text') or ''}")}),
                 })
         i = j if j > i else i + 1
+
+    # Water: how much of the run is spent off the feet, and how much of that swim goes
+    # nowhere. A bot adrift in a flooded pocket answers `escape_water` on tick after tick
+    # aimed at a foothold the pathfinder cannot reach (live, run115: 281 rescue walks from
+    # (-0.5, 62, 281), each one "visited 30902 nodes ... closest node was -1, 59, 281").
+    water = [r for r in actions if _in_water(r)]
+    longest_water = 0
+    streak = 0
+    for r in actions:
+        if _in_water(r):
+            streak += 1
+            longest_water = max(longest_water, streak)
+        else:
+            streak = 0
+    adrift = [r for r in water if _swim(r) < MOVE_EPS]
 
     healths = [r["state"]["health"] for r in actions
                if isinstance(r.get("state"), dict) and r["state"].get("health") is not None]
@@ -191,6 +226,14 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
             "longest_still_streak": longest_still,
         },
         "waits": {"wait_ticks": wait_ticks, "defer_ticks": len(defers)},
+        "water": {
+            "ticks": len(water),
+            "ratio": round(len(water) / len(actions), 3) if actions else 0.0,
+            "longest_streak": longest_water,
+            "adrift_ticks": len(adrift),
+            "swim_blocks": round(sum(_swim(r) for r in water), 1),
+            "escape_ticks": sum(1 for r in actions if r.get("label") == "escape_water"),
+        },
         "refusals": [
             {"code": code, "count": count, "first_iteration": refusal_first.get(code),
              "labels": sorted(refusal_labels.get(code, set()))}
@@ -231,6 +274,7 @@ def compare(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
         "end.stop", "ticks.action", "progress.progress_rate",
         "movement.blocks_per_tick", "movement.still_ratio",
         "waits.wait_ticks", "waits.defer_ticks", "vitals.deaths",
+        "water.ratio", "water.adrift_ticks",
     ]
     deltas: dict[str, Any] = {}
     for key in keys:
@@ -258,6 +302,11 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
                  f"{report['movement']['blocks_per_tick']}/tick, "
                  f"{report['movement']['still_ratio']:.0%} of ticks standing still")
     lines.append(f"- waits: {report['waits']['wait_ticks']} · defers: {report['waits']['defer_ticks']} · deaths: {report['vitals']['deaths']}")
+    water = report.get("water") or {}
+    if water.get("ticks"):
+        lines.append(f"- water: {water['ticks']} ticks off the feet ({water['ratio']:.0%}), longest "
+                     f"streak {water['longest_streak']}, {water['adrift_ticks']} of them adrift, "
+                     f"{water['escape_ticks']} rescue ticks")
 
     if report["refusals"]:
         lines.append("\n## Refusals")
