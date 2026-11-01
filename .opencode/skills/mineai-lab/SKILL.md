@@ -5,15 +5,23 @@ description: Start, monitor and analyse a MineAI run end to end — the world co
 
 # Running the lab
 
-The lab is one command with four verbs. Everything else in this skill is the discipline
+The lab is one command with a handful of verbs. Everything else in this skill is the discipline
 around them.
 
 ```bash
 ./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   # world + host + run
 ./scripts/lab.sh status                                   # JSON: world, host, run, last tick
-./scripts/lab.sh analyze [--baseline runs/history/…]      # defect report
+./scripts/lab.sh report [run number]                      # the report a finished run writes itself
+./scripts/lab.sh analyze [--baseline runs/history/…]      # defect report for the newest log
+./scripts/lab.sh console "op LayaView"                    # server console command
+./scripts/lab.sh op Sanskrita                             # grant op, remembering the real UUID
 ./scripts/lab.sh down [--run-only]                        # stop run, host, world
 ```
+
+A run reports itself: `lab up` starts a watcher that writes
+`runs/history/report-runNN.md` and `summary-runNN.json` the moment the loop's process exits,
+diffing against the newest archived log long enough to compare against. Nobody has to ask for
+the analysis.
 
 `lab up` refuses to start a second run while one is running, refuses to start the host on
 any branch other than `bot-run`, and only starts the loop once the world answers on 25565
@@ -29,8 +37,9 @@ live in the `mineai-minecraft-run` skill; this skill is the sequence, not the to
 3. **Watch, do not hover.** `lab.sh status` every few minutes. It reports the last tick,
    health, food, dimension and an `anomalies` list. Notify the user immediately on:
    health ≤ 8, hunger ≤ 6, a stall window, or `host.runtime: failed`.
-4. **Analyse.** `lab.sh analyze --baseline runs/history/decisions-runNN.jsonl`. Read the
-   refusals, the stalls, the movement per tick and the milestone timeline.
+4. **Analyse.** The report writes itself when the run ends. `lab.sh report NN` rewrites an
+   archived run's report on demand. Read the refusals, the stalls, the loops, the movement per
+   tick and the milestone timeline.
 5. **Attribute.** Each defect belongs to one of two codebases:
    - the **brain** (`src/mlaya/…`) — candidates, predicates, planner, verifier, policy;
    - the **server** (`/Users/thtesche/VibeCoding/mine-ai-mcp`, branch `bot-run`) — tool
@@ -119,7 +128,13 @@ moving on every tick. The report measures exactly that:
 - `goal.ticks_to_stronghold` — the iteration `stronghold_estimated` first appears at;
 - `movement.blocks_per_tick` and `movement.still_ratio` — a tick that moves neither the body
   nor the inventory is waste;
+- `loops.ticks` — ticks that walk every tick and end where they started. `still_ratio` cannot
+  see a bounce: five blocks a tick reads as movement. Each entry names the label, the iteration
+  window and the cells it kept aiming at;
+- `water.ratio` / `water.adrift_ticks` — ticks off the feet, and of those the ones in water with
+  no horizontal swim at all;
 - `waits.wait_ticks` and `waits.defer_ticks` — every wait is a tick the bot did not use;
+- `system2.calls` — how often System 1 offered a label it could not resolve;
 - `stalls` — windows of six or more ticks on one or two labels with no gain.
 
 A run is better when the chain closes in fewer ticks **and** the still ratio goes down. Both
