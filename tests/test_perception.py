@@ -325,6 +325,66 @@ class BlindWorldTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("perception_blind", src)
         self.assertIn("return 2", src)
 
+    class _SeqExec:
+        """Answers `view_status` from a list: a string is a refusal text, a dict is a payload."""
+
+        def __init__(self, answers):
+            self.answers = list(answers)
+            self.reads = 0
+
+        async def read(self, tool, args, why):
+            if tool == "view_status":
+                self.reads += 1
+            if tool != "view_status":
+                return BlindWorldTest._Read(None)
+            answer = self.answers.pop(0) if self.answers else None
+            if isinstance(answer, str):
+                return BlindWorldTest._Read(None, answer)
+            return BlindWorldTest._Read(answer)
+
+    def setUp(self) -> None:
+        from mlaya import perception
+        # The retry sleeps; a test that waits three seconds per attempt is a slow test for a
+        # rule that is about the number of reads, not about the pause.
+        self._delay = perception.PERCEPTION_RETRY_DELAY
+        perception.PERCEPTION_RETRY_DELAY = 0.0
+
+    def tearDown(self) -> None:
+        from mlaya import perception
+        perception.PERCEPTION_RETRY_DELAY = self._delay
+
+    async def test_a_stalled_connection_is_read_again_before_the_run_stops(self) -> None:
+        # Live, run145: one 30 s timeout ended a 200-tick plan at iteration 130, while the host
+        # and the bot were both still alive.
+        from mlaya import perception
+        payload = {"response": {"data": {"result": {"situation": {
+            "position": {"x": -80.0, "y": 61.0, "z": 74.0, "onGround": True},
+            "vitals": {"health": 20.0, "food": 20.0},
+        }}}}}
+        exec_ = self._SeqExec(["[MINECRAFT_DISCONNECTED] client timed out after 30000 milliseconds",
+                              payload])
+        gs = await perception.build(exec_)
+        self.assertEqual(gs.pos, (-80.0, 61.0, 74.0))
+        self.assertEqual(exec_.reads, 2)
+
+    async def test_a_connection_that_never_answers_stops_the_run_after_the_retries(self) -> None:
+        from mlaya import perception
+        exec_ = self._SeqExec(["[MINECRAFT_DISCONNECTED] client timed out after 30000 milliseconds"]
+                              * perception.PERCEPTION_RETRIES)
+        with self.assertRaises(perception.PerceptionBlind):
+            await perception.build(exec_)
+        self.assertEqual(exec_.reads, perception.PERCEPTION_RETRIES)
+
+    async def test_a_world_that_is_not_a_disconnect_is_not_retried(self) -> None:
+        # An empty answer is the run72 shape: the transport answered, there is simply nothing in
+        # it. Reading it three times changes nothing and only delays the stop.
+        from mlaya import perception
+        empty = {"response": {"data": {"result": {"situation": {}}}}}
+        exec_ = self._SeqExec([None, empty])
+        with self.assertRaises(perception.PerceptionBlind):
+            await perception.build(exec_)
+        self.assertEqual(exec_.reads, 1)
+
 
 class RememberedStockParseTest(unittest.TestCase):
     """The chest's contents, read out of the server's container database.

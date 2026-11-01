@@ -505,6 +505,12 @@ a **food acquisition** that fits "actually survive".
   the bot has already stood beside answered "no source" from that footing, so the walk moves on
   instead of hopping back. It is a `LAVA_WALK_COOLDOWN` countdown, not a lock, so a body the dig
   has changed can be tried again later in the run.
+- **A dropped connection is retried before the run stops:** `perception._read_status` re-reads
+  `view_status` up to `PERCEPTION_RETRIES` times while the answer says the Minecraft connection
+  timed out (`PERCEPTION_RETRY_DELAY` between tries). Run145 ended at iteration 130 of a 200-tick
+  plan on a single 30 s timeout while the host and the bot were both alive. A status that answers
+  with something else and no position (the run72 shape) is not retried: that world really is
+  unreadable, and a retry only delays the honest stop.
 - **Why danger rows:** Laya selects the head via the **question type** (the checkpoint carries a
   `type_emb.`), so `in_danger` and `intent` **share one** `choice` head. A pure
   intent dataset would silently unlearn the gate. Hence one `in_danger` row per

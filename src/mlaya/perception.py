@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -1968,6 +1969,16 @@ def _age_seconds(now_iso: Any, then_iso: Any) -> float | None:
     return None
 
 
+# A `view_status` that answers with a dead Minecraft connection is not always a dead run: the
+# host is alive, the bot is in the world, and the server merely stalled. The read is retried
+# before the loop declares itself blind (live, run145: one 30 s timeout ended a 200-tick plan at
+# iteration 130). Only that shape is retried - a status that answers with something else and no
+# position is a world that is really unreadable, and retrying only delays the honest stop.
+PERCEPTION_RETRIES = 3
+PERCEPTION_RETRY_DELAY = 3.0
+DISCONNECT_RE = re.compile(r"MINECRAFT_DISCONNECTED|CONNECTION_LOST|client timed out", re.I)
+
+
 class PerceptionBlind(RuntimeError):
     """The world could not be read, so there is nothing to decide from.
 
@@ -1983,9 +1994,28 @@ class PerceptionBlind(RuntimeError):
     """
 
 
+async def _read_status(executor):
+    """`view_status`, retried while the answer says the Minecraft connection dropped.
+
+    The transport is answering (the host is up and the tool ran); only the bot's own connection
+    stalled. That is the one failure worth a second try: a lag spike or a chunk load that ends in
+    a few seconds should not end a run. A status that answers with something else and no position
+    is not retried - that is the world really being unreadable.
+    """
+    status = await executor.read("view_status", {}, "read live bot vitals and position")
+    for _ in range(PERCEPTION_RETRIES - 1):
+        if parse_status(coerce(status.data, status.text)).pos is not None:
+            break
+        if not DISCONNECT_RE.search(status.text or ""):
+            break
+        await asyncio.sleep(PERCEPTION_RETRY_DELAY)
+        status = await executor.read("view_status", {}, "read live bot vitals and position")
+    return status
+
+
 async def build(executor) -> GameState:
     """Perceive through the MCP read tools (ungated, cheap)."""
-    status = await executor.read("view_status", {}, "read live bot vitals and position")
+    status = await _read_status(executor)
     status_data = coerce(status.data, status.text)
     # Walk the event backlog to the newest events; reactions only use fresh ones.
     events, unread, preview = await _drain_events(executor)
