@@ -201,6 +201,11 @@ DROP_UNDONE_REACH = 6.0
 # naming the *same* action id - and never reached the third in a row, so the guard never fired
 # and 18% of the run went into waiting on a body nobody was going to release.
 BODY_HELD_STOP = 2
+# A held tick whose body crossed at least this much ground is the bot's own walk still running,
+# not run89's standoff: live, run151 it55-64, six `[BODY_HELD]` ticks on `leave_nether` while the
+# dig-scaffold walk it had started advanced the body 869 -> 1043 blocks. The guard ended that run
+# at it65 with the exit half walked because it only looked for heals, rods and thinning packs.
+HELD_MOVE_EPS = 0.5
 
 # A death first seen older than this was not this run's to answer (`Agent._rearm_policy`).
 DEATH_REAPPLY_AGE_S = 90.0
@@ -1812,7 +1817,11 @@ class Agent:
         healed = (after.health or 0) > (before.health or 0)
         rods = after.inventory.get(BLAZE_ROD_ITEM, 0) > before.inventory.get(BLAZE_ROD_ITEM, 0)
         thinned = _hostile_count(after) < _hostile_count(before)
-        self._held_ticks = 0 if (healed or rods or thinned) else self._held_ticks + 1
+        # A held tick whose body walked is the foreground action still making ground, not a
+        # deadlock: the walk owns the body, and it is going somewhere.
+        moved = (before.pos is not None and after.pos is not None
+                 and math.dist(before.pos, after.pos) >= HELD_MOVE_EPS)
+        self._held_ticks = 0 if (healed or rods or thinned or moved) else self._held_ticks + 1
 
     def _note_block(self, label: str, ok: bool, text: str | None) -> None:
         """Update the surroundings-block bookkeeping from one action's result.

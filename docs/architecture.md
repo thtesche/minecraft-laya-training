@@ -900,7 +900,10 @@ up to three times, so it311 came 31 minutes after it310 and it317 93 minutes aft
 drains and its own wait. A call that runs out of it returns `[BODY_HELD]` with the holder the
 last progress answer named (owner, response kind/phase, phase ticks) and status `held`, without
 resubmitting. `Agent._note_held` counts such calls in a row — a defer between them does not reset
-the count — and `BODY_HELD_STOP = 2` of them end the run with `"stop": "body_held"`. Nothing the
+the count — and `BODY_HELD_STOP = 2` of them end the run with `"stop": "body_held"`. A hold that
+moved the fight forward — a heal, a rod, a thinned pack, or the body crossing `HELD_MOVE_EPS`
+(0.5) blocks of ground — breaks the streak instead: run151 walked its exit hop 869 -> 1043 blocks
+across six held ticks before the guard ended the run at it65 with the walk half done. Nothing the
 loop can send moves a body the reflex owns; the fix for the endless `hold` itself belongs in
 `mine-ai-mcp`. The second call is what makes the report timely: run95 spent three *pairs* of
 five-minute waits on one held action id each (it268/269, it279/280, it354/355) and never saw a

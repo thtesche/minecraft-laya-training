@@ -5734,6 +5734,22 @@ class BodyHeldStopTest(unittest.TestCase):
                                gs(health=20.0, inventory={"blaze_rod": 11}, hostiles=[("blaze", 9, 5.0)]))
         self.assertEqual(agent._held_ticks, 0)
 
+    def test_a_walk_that_makes_ground_is_not_a_deadlock(self) -> None:
+        # Live, run151 it55-64: six held `leave_nether` ticks while the dig-scaffold walk the
+        # loop had already started advanced the body 869 -> 1043 blocks toward the gate. The
+        # guard saw only holds with no heal, rod or thinning and ended the run at it65 with the
+        # exit half walked. A held tick whose body crossed ground is the walk still working.
+        agent = self._agent()
+        held = SimpleNamespace(status="held")
+        flat = dict(health=20.0, inventory={}, hostiles=[])
+        agent._note_held(held, gs(pos=(869.5, 117.0, 1270.6), **flat),
+                               gs(pos=(906.7, 117.0, 1364.5), **flat))
+        self.assertEqual(agent._held_ticks, 0)
+        # A hold that moved centimetres is still run89's standoff: the count keeps running.
+        agent._note_held(held, gs(pos=(906.7, 117.0, 1364.5), **flat),
+                               gs(pos=(906.9, 117.0, 1364.7), **flat))
+        self.assertEqual(agent._held_ticks, 1)
+
 
 class FleeStageTest(unittest.IsolatedAsyncioTestCase):
     """`leave_nether` crosses home under the flee stage, so the reflex stops fighting whatever is
