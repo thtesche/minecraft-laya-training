@@ -280,6 +280,10 @@ FLINT_GRAVEL = 16
 OBSIDIAN_REACH = 6.0
 # How near the bot must be to a lava cell before the bucket can be emptied into it.
 POUR_REACH = 4.5
+# How far apart two lava cells may be and still be the same pool. The server's own cast search
+# groups lava sources within 8 blocks of one another (`LAVA_POOL_RADIUS` in `cast-targets.ts`),
+# so a stance inside that radius is a stance of the body the bot already stood beside.
+LAVA_POOL_RADIUS = 8.0
 
 # Decisions a bot may spend off its feet in water before `escape_water` owns the tick. The rescue
 # exists because work that needs the feet planted cannot run from a floating stance, not because a

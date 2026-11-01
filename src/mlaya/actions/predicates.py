@@ -2284,6 +2284,17 @@ def _within_reach(gs: GameState, hit, reach: float) -> bool:
 _LATERAL = ((1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1))
 
 
+def _is_pour_cell(h: BlockHit, sources: set[tuple[int, int, int]]) -> bool:
+    """A lava cell the carried water can actually turn into obsidian.
+
+    Open above, standing on solid ground, and touching a lava source laterally. This is the same
+    test `_lava_pour_target` applies; the walk uses it too so it aims at a cell that can be
+    poured on rather than at whatever flow happens to be nearest.
+    """
+    return (h.above in AIR_NAMES and h.below not in (None, "lava") and h.below not in AIR_NAMES
+            and any((h.x + dx, h.y, h.z + dz) in sources for dx, _, dz in _LATERAL))
+
+
 def _lava_pour_target(gs: GameState) -> BlockHit | None:
     """The nearest lava cell the carried water can actually turn into obsidian, or None.
 
@@ -2308,19 +2319,17 @@ def _lava_pour_target(gs: GameState) -> BlockHit | None:
     if not sources:
         return None
     for h in hits:  # already nearest first
-        if (h.pos in gs.pour_skip or h.above not in AIR_NAMES
-                or h.below in (None, "lava") or h.below in AIR_NAMES):
+        if h.pos in gs.pour_skip or not _is_pour_cell(h, sources):
             continue
-        if any((h.x + dx, h.y, h.z + dz) in sources for dx, _, dz in _LATERAL):
-            # A source whose every walkable stance the server already refused has no footing to
-            # pour from (see `_pour_stance`), so the search moves to the next source -- the same
-            # move `pour_skip` makes for a refused pour. A cell within pouring reach is poured at
-            # directly, so it is not passed over.
-            if not _within_reach(gs, h, POUR_REACH):
-                options = _stance_options(gs, h)
-                if options and all(o in gs.stance_skip for o in options):
-                    continue
-            return h
+        # A source whose every walkable stance the server already refused has no footing to
+        # pour from (see `_pour_stance`), so the search moves to the next source -- the same
+        # move `pour_skip` makes for a refused pour. A cell within pouring reach is poured at
+        # directly, so it is not passed over.
+        if not _within_reach(gs, h, POUR_REACH):
+            options = _stance_options(gs, h)
+            if options and all(o in gs.stance_skip for o in options):
+                continue
+        return h
     return None
 
 
@@ -2367,6 +2376,10 @@ def _lava_walk_target(gs: GameState) -> tuple[int, int, int] | None:
     offer fell to the `explore`/`go_home` fallback for 66 ticks while the frame still owed seven
     blocks. The walk is the chain's missing link: standing beside the lava loads the source, and
     the pour step opens on the next tick.
+
+    By the time this runs there is no pour-able cell in the scan at all (`candidates` offers the
+    walk only when `_lava_pour_target` is None), so every hit here is a flow or a source the water
+    cannot reach yet.
     """
     for h in gs.resources.get("lava") or []:  # already nearest first
         if _within_reach(gs, h, POUR_REACH):
@@ -2378,9 +2391,12 @@ def _lava_walk_target(gs: GameState) -> tuple[int, int, int] | None:
             continue
         # A body the bot has already stood beside answered "no source" from that footing; another
         # stance of the same body is the same answer (live, run143: 94 ticks hopping between two
-        # stances of the same two flows). The pour step does not read this set, so a source that
-        # the closer scan finally lists is still poured at.
-        if any(p in gs.lava_walked for p in options):
+        # stances of the same two flows; run148: 50 ticks hopping between eleven stances of one
+        # pool 55 blocks below the base). The grouping is the radius the server itself uses to
+        # call lava one pool. The pour step does not read this set, so a source that the closer
+        # scan finally lists is still poured at.
+        if any(_dist(p, walked) <= LAVA_POOL_RADIUS
+               for p in options for walked in gs.lava_walked):
             continue
         if gs.pos is None:
             return options[0]

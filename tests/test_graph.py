@@ -793,6 +793,28 @@ class StanceSkipTest(unittest.TestCase):
                            "[NAVIGATION_STOPPED] repeated_movement_failure")
         self.assertEqual(agent._stance_skip, set())
 
+    def test_a_stance_the_pathfinder_cannot_reach_is_remembered_too(self) -> None:
+        # Live, run148 it109-147: five walks to (-161,20,-86) each ending "search timed out after
+        # 2000 ms ... closest node was -162,20,-87". A cell the pathfinder exhausts 20 000 nodes
+        # on without arriving is not one the next tick reaches either, and 22 ticks of the same
+        # stance is half of that run's 50 loop ticks.
+        agent = self._agent()
+        agent._note_stance(
+            self._Action("approach_lava", "navigate", {"x": -161, "y": 20, "z": -86}),
+            False,
+            "[NAVIGATION_STOPPED] Pathfinder stopped: search timed out after 2000 ms compute "
+            "(limit 2000 ms); no path or usable partial route found; visited 20824 nodes, "
+            "generated 40064; closest node was -162,20,-87.")
+        self.assertEqual(agent._stance_skip, {(-161, 20, -86)})
+
+    def test_a_stop_that_is_not_a_missing_route_is_not_a_stance(self) -> None:
+        # `[NAVIGATION_STOPPED]` also means "the body is held by a reflex", which says nothing
+        # about the cell being aimed at.
+        agent = self._agent()
+        agent._note_stance(self._Action("approach_lava", "navigate", {"x": -161, "y": 20, "z": -86}),
+                           False, "[NAVIGATION_STOPPED] Pathfinder stopped: repeated_movement_failure")
+        self.assertEqual(agent._stance_skip, set())
+
     def test_inject_hands_the_set_to_the_state(self) -> None:
         agent = self._agent()
         agent._stance_skip = {(-187, -36, 18)}

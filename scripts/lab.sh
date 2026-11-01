@@ -154,16 +154,25 @@ next_run_number() {  max=0
   echo $((max + 1))
 }
 
-# The comparison run is the newest archived log long enough to mean something. The run right
-# before is usually it, but an aborted one is not: run 145 reported against run 144, which died
-# at iteration 5, and every line of that diff said "+124 ticks" about a run that never started.
-BASELINE_MIN_TICKS=30
+# The comparison run is the newest archived log that is long enough to mean something, and
+# preferably one that ran to its iteration limit. An aborted run is not a baseline: run 145
+# reported against run 144, which died at iteration 5, and every line of that diff said
+# "+124 ticks" about a run that never started; run 148 diffed against run 146, cut off at 40
+# ticks by the shell timeout that killed it.
+BASELINE_MIN_TICKS=100
 pick_baseline() {
+  fallback=""
   for ((n = $1 - 1; n >= 1; n--)); do
     f="$REPO/runs/history/decisions-run$n.jsonl"
     [[ -f "$f" ]] || continue
-    [[ "$(wc -l < "$f")" -ge $BASELINE_MIN_TICKS ]] && { echo "$f"; return 0; }
+    [[ "$(wc -l < "$f")" -ge $BASELINE_MIN_TICKS ]] || continue
+    # The run's own end line says whether it finished or was cut short.
+    if grep -q '"stop": *"limit"' "$REPO/runs/run$n.log" 2>/dev/null; then
+      echo "$f"; return 0
+    fi
+    [[ -z "$fallback" ]] && fallback="$f"
   done
+  [[ -n "$fallback" ]] && { echo "$fallback"; return 0; }
   return 1
 }
 

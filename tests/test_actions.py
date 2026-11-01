@@ -1880,6 +1880,21 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("approach_lava", candidates(g))
         self.assertIsNone(resolve("approach_lava", g))
 
+    def test_approach_lava_walks_to_a_pool_beyond_the_one_it_visited(self) -> None:
+        # The memory is per pool, not per run. Run148's eleven stances all sat within five blocks
+        # of one another; a body outside the radius the server calls one pool is a different test
+        # and the walk must still reach it.
+        g = self._geared(water_bucket=1, obsidian=3)
+        g.pos = (-66.5, 8.0, -67.4)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -66, 7, -73, 5.6, above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -78, 7, -73, 12.2, above="air", below="stone", level=2),
+        ]}
+        g.lava_walked = frozenset({(-66, 8, -72)})
+        a = resolve("approach_lava", g)
+        self.assertIsNotNone(a)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-77, 8, -73))
+
     def test_mine_obsidian_needs_an_open_pour_cell(self) -> None:
         # The surface pond's only usable cell is capped by stone, so no water can be placed
         # there: the step refuses instead of pouring into a wall.

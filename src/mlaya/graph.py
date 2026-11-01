@@ -1845,19 +1845,33 @@ class Agent:
     def _note_stance(self, action, ok: bool, text: str | None) -> None:
         """Remember a pour stance the server refused, so it is never walked to again.
 
-        `[NAVIGATION_TARGET_UNSUPPORTED]` on the `mine_obsidian` or `approach_lava` walk says the
-        server found no
-        footing at that cell: the cell over the lava's neighbour is air, or the lake below is too
-        deep to stand on (live, run16: one stance over a deep lava lake answered the identical
-        refusal on 215 ticks and the run never made a single obsidian). It is a property of the
-        stance cell, not of the attempt, so the step reads the set back out of the GameState
-        (`stance_skip`), stands on another neighbour, and once every stance of that source is
-        refused `_lava_pour_target` passes over the source itself -- the move `pour_skip` makes
-        for a refused pour.
+        Two refusals on the `mine_obsidian` or `approach_lava` walk both say the same thing about
+        the cell: it cannot be stood on.
+          * `[NAVIGATION_TARGET_UNSUPPORTED]` - the server found no footing there: the cell over
+            the lava's neighbour is air, or the lake below is too deep to stand on (live, run16:
+            one stance over a deep lava lake answered the identical refusal on 215 ticks and the
+            run never made a single obsidian).
+          * `[NAVIGATION_STOPPED]` with no route - the pathfinder ran out of compute before it
+            got there (live, run148: five walks to (-161,20,-86), each ending "search timed out
+            after 2000 ms ... closest node was -162,20,-87", 22 ticks of the same stance while the
+            frame still owed obsidian). A cell the pathfinder cannot reach from the lava pocket
+            it is standing in is not one the next tick will reach either.
+
+        It is a property of the stance cell, not of the attempt, so the step reads the set back
+        out of the GameState (`stance_skip`), stands on another neighbour, and once every stance
+        of that source is refused `_lava_pour_target` passes over the source itself -- the move
+        `pour_skip` makes for a refused pour.
         """
         if ok or action.label not in ("mine_obsidian", "approach_lava") or action.tool != "navigate":
             return
-        if "NAVIGATION_TARGET_UNSUPPORTED" not in (text or ""):
+        text = text or ""
+        # `[NAVIGATION_STOPPED]` covers two different failures. "no path or usable partial route
+        # found ... closest node was ..." is the pathfinder exhausting its budget on a cell it
+        # cannot reach; "repeated_movement_failure" is the body being held by a reflex, which says
+        # nothing about the cell. Only the first is a property of the stance.
+        unreachable = ("NAVIGATION_STOPPED" in text
+                       and ("no path" in text or "no usable route" in text))
+        if "NAVIGATION_TARGET_UNSUPPORTED" not in text and not unreachable:
             return
         args = action.args or {}
         pos = (args.get("x"), args.get("y"), args.get("z"))

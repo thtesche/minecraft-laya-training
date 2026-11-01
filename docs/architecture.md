@@ -504,7 +504,16 @@ a **food acquisition** that fits "actually survive".
   still owed ten obsidian. The brain-side answer is the walk's own memory (`lava_walked`): a body
   the bot has already stood beside answered "no source" from that footing, so the walk moves on
   instead of hopping back. It is a `LAVA_WALK_COOLDOWN` countdown, not a lock, so a body the dig
-  has changed can be tried again later in the run.
+  has changed can be tried again later in the run. Run148 showed the memory needs the radius the
+  server uses: eleven stances of one pool 55 blocks below the base were each remembered separately,
+  so the walk hopped between them for 50 ticks. A stance within `LAVA_POOL_RADIUS` (8, the same
+  grouping `cast-targets.ts` applies to lava sources) is the same body.
+- **A stance the pathfinder cannot reach is written off like a stance with no footing:**
+  `_note_stance` records `[NAVIGATION_TARGET_UNSUPPORTED]` *and* a `[NAVIGATION_STOPPED]` whose
+  text says no route was found. Run148 walked to (-161,20,-86) five times, each ending "search
+  timed out after 2000 ms ... closest node was -162,20,-87". A stop that says
+  `repeated_movement_failure` (the body held by a reflex) is not about the cell and is not
+  recorded.
 - **A dropped connection is retried before the run stops:** `perception._read_status` re-reads
   `view_status` up to `PERCEPTION_RETRIES` times while the answer says the Minecraft connection
   timed out (`PERCEPTION_RETRY_DELAY` between tries). Run145 ended at iteration 130 of a 200-tick
