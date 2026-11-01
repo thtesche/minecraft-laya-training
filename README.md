@@ -72,11 +72,15 @@ the powder home ends with `"stop": "limit"`, and `--ignore-goal` (or
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e .
 cp .env.example .env        # enter STRATA_API_KEY (only for System-2 escalation)
+./scripts/install-hooks.sh  # install pre-commit hook (runs tests before each commit)
 ```
 
 `.env` is loaded automatically on every CLI run (real environment variables take
 precedence) and is gitignored. Prerequisite: the mine-ai MCP server running at
 `http://localhost:25575/mcp`.
+
+Tests run automatically on every `git commit` (via pre-commit hook) and on every push
+via GitHub Actions (CI).
 
 ## Usage
 
