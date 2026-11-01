@@ -124,6 +124,13 @@ def _position(record: dict[str, Any]) -> tuple[float, float, float] | None:
     return (float(pos[0]), float(pos[1]), float(pos[2]))
 
 
+def _target(record: dict[str, Any]) -> tuple[int, int, int] | None:
+    """The cell an action aimed at, when the tick logged one."""
+    args = record.get("args") or {}
+    cell = (args.get("x"), args.get("y"), args.get("z"))
+    return cell if all(isinstance(v, int) for v in cell) else None
+
+
 def _loops(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Labels whose ticks walk a long path and end where they started.
 
@@ -140,7 +147,8 @@ def _loops(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         pos = _position(r)
         if pos is None:
             continue
-        trails.setdefault(str(r.get("label")), []).append((int(r.get("iteration", 0)), pos))
+        trails.setdefault(str(r.get("label")), []).append(
+            (int(r.get("iteration", 0)), pos, _target(r)))
 
     loops = []
     for label, trail in trails.items():
@@ -169,10 +177,14 @@ def _loops(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             else:
                 streaks.append([i, i + LOOP_TICKS, path, net, 1])
         for start, end, path, net, count in streaks:
+            cells = sorted({t for _, _, t in trail[start:end] if t is not None})
             loops.append({"label": label, "ticks": end - start,
                           "start_iteration": trail[start][0], "end_iteration": trail[end - 1][0],
                           "path_blocks": round(path / count, 1),
-                          "net_blocks": round(net / count, 1)})
+                          "net_blocks": round(net / count, 1),
+                          # The cells the bouncing label kept aiming at: the hop is a stance
+                          # problem, and the cell names are what make it fixable.
+                          "targets": [list(c) for c in cells]})
     return sorted(loops, key=lambda e: -e["ticks"])
 
 
@@ -454,6 +466,9 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
             lines.append(f"- it{l['start_iteration']}–it{l['end_iteration']}: {l['ticks']} ticks on "
                          f"`{l['label']}` — {l['path_blocks']} blocks walked per window, "
                          f"{l['net_blocks']} net")
+            if l.get("targets"):
+                cells = ", ".join(f"({c[0]},{c[1]},{c[2]})" for c in l["targets"][:6])
+                lines.append(f"  aimed at {len(l['targets'])} cell(s): {cells}")
 
     s2 = report.get("system2") or {}
     if s2.get("calls"):

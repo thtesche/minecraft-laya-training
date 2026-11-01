@@ -15,7 +15,7 @@ from mlaya import analysis
 
 def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
            gained=0, health=20.0, food=20.0, progressed=None,
-           water=False, swim=None, escalated=False, at=(0, 64, 0)) -> dict:
+           water=False, swim=None, escalated=False, at=(0, 64, 0), args=None) -> dict:
     return {
         "ts": 1000 + iteration,
         "stage": "action",
@@ -24,6 +24,7 @@ def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
         "tool": "navigate",
         "status": status,
         "text": text,
+        "args": args or {},
         "escalated": escalated,
         "progressed": progressed if progressed is not None else (status == "succeeded"),
         "state": {"health": health, "food": food, "position": list(at), "in_water": water},
@@ -186,6 +187,19 @@ class TestLoops(unittest.TestCase):
         text = analysis.to_markdown(self.report)
         self.assertIn("Loops (12 ticks walking, going nowhere)", text)
         self.assertIn("`approach_lava`", text)
+
+    def test_a_loop_names_the_cells_it_kept_aiming_at(self):
+        # The hop is a stance problem, so the report has to say which stances: run145's
+        # `approach_lava` bounced between two cells and the log said nothing about either.
+        report = analysis.summarize([
+            action(i, "approach_lava", status="succeeded", pos=5.6,
+                   at=self.A if i % 2 else self.B,
+                   args={"x": -66, "y": 8, "z": -72} if i % 2 else {"x": -66, "y": 7, "z": -73})
+            for i in range(12)
+        ])
+        detail = report["loops"]["detail"][0]
+        self.assertEqual(detail["targets"], [[-66, 7, -73], [-66, 8, -72]])
+        self.assertIn("aimed at 2 cell(s)", analysis.to_markdown(report))
 
     def test_a_loop_that_ends_shows_in_the_diff(self):
         dry = analysis.summarize([action(i, "mine_iron", status="succeeded", pos=6.0,

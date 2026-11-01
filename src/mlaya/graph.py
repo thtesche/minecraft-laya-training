@@ -2063,7 +2063,11 @@ class Agent:
             return
         if pos is None:
             return
-        if (any(delta.get("inventory_delta") or {})
+        # Only a *gain* is progress. Live, run145: 79 `approach_lava` ticks hopped between two
+        # stances and 39 of them carried an inventory delta that was a loss - junk dropped, a
+        # meal eaten. A tick that walks five blocks and gives three cobblestone away has not got
+        # anywhere, and the window reset on it 39 times so the guard never filled.
+        if (any(v > 0 for v in (delta.get("inventory_delta") or {}).values())
                 or delta.get("armor_delta") or delta.get("offhand_delta")
                 or delta.get("dimension_changed")):
             self._orbit_path.pop(label, None)
@@ -2963,6 +2967,10 @@ class Agent:
             "candidates": state["decision"].candidates,
             "label": action.label,
             "tool": action.tool,
+            # The cell the action aimed at. Without it a walk loop is only visible as a position
+            # ping-pong, never as the target the brain kept choosing (live, run145: 79 ticks of
+            # `approach_lava` between two stances, and the log said nothing about which cells).
+            "args": action.args or {},
             "escalated": state.get("escalated", False),
             "ok": bool(getattr(res, "ok", False)),
             "status": getattr(res, "status", None),

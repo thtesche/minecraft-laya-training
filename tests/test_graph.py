@@ -996,6 +996,20 @@ class LavaWalkTest(unittest.TestCase):
         self.assertEqual(agent._lava_walked, {})
 
 
+class TickRecordTest(unittest.TestCase):
+    """The cell an action aimed at is written to the log.
+
+    Live, run145: 79 `approach_lava` ticks bounced between two stances, and the log named neither
+    cell. The orbit guard, the analyzer and anyone reading the run afterwards had to infer the
+    target from the feet alone.
+    """
+
+    def test_the_action_target_is_in_the_log(self) -> None:
+        import inspect
+        src = inspect.getsource(Agent._verify)
+        self.assertIn('"args": action.args', src)
+
+
 class StuckOfferTest(unittest.TestCase):
     """A label that keeps answering the identical refusal is withheld, so the fallback moves.
 
@@ -1630,6 +1644,18 @@ class OrbitGuardTest(unittest.TestCase):
         agent._track_orbit("mine_diamond", delta, self.CELL_B)
         self.assertEqual(agent._orbit_path, {})
         self.assertEqual(agent._stuck_off, {})
+
+    def test_a_tick_that_only_spends_is_not_progress(self) -> None:
+        # Live, run145: 79 `approach_lava` ticks hopped between two stances, and 39 of them
+        # carried an inventory delta that was a loss - junk dropped, a meal eaten. The window
+        # reset on those 39 times and the guard never filled.
+        agent = self._agent()
+        for i in range(ORBIT_WINDOW * 2):
+            delta = self._nothing()
+            delta["inventory_delta"] = {"cobblestone": -1}
+            agent._track_orbit("approach_lava", delta,
+                               self.CELL_A if i % 2 == 0 else self.CELL_B)
+        self.assertEqual(agent._stuck_off.get("approach_lava"), STUCK_COOLDOWN)
 
     def test_a_dimension_crossing_starts_the_window_over(self) -> None:
         agent = self._agent()
