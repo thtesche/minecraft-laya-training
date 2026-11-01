@@ -469,6 +469,17 @@ a **food acquisition** that fits "actually survive".
   Only ticks with **more than one** candidate carry an `intent` choice — a single-candidate tick
   is deterministic (the filter already chose it) and teaches nothing. Dedup over
   `(state, candidates)`.
+   **Every craft that yields an item must be in `verify.INVENTORY_LABELS` (run141, live):**
+   `progressed` reads the inventory delta, and a craft whose label the set does not list reads as
+   no progress even when the item appeared — so the tick is dropped and the fine-tune never sees
+   that state. run141 crafted an iron chestplate (`iron_ingot -8`, `iron_chestplate +1`) and the
+   verifier called it wasted; the iron kit (`craft_iron_sword/chestplate/leggings/boots/helmet`)
+   is now listed. The run report keeps its **own** parallel notion of a productive tick in
+   `analysis._wasted` (body *and* inventory: `pos_delta < MOVE_EPS and _gained == 0`), widened at
+   the same time so a furnace batch worked at a fixed spot — items gained, no step taken — is not
+   counted as standing (run141 read 8 smelt ticks as idle, putting `still_ratio` at 0.84 for a run
+   that worked the whole time). The two definitions live in different modules and are maintained
+   apart.
 - **Why danger rows:** Laya selects the head via the **question type** (the checkpoint carries a
   `type_emb.`), so `in_danger` and `intent` **share one** `choice` head. A pure
   intent dataset would silently unlearn the gate. Hence one `in_danger` row per
@@ -1482,7 +1493,20 @@ lid and stalled on the latch that was supposed to say the haul was done.
   next tick climbs with `dig`/`scaffold` to exactly this cell (measured live: from `y = -15`
   to `y = 74` in ~92 s, 12 cobblestone scaffold). If the column changes, it is checked anew (another
   column can lie dozens of blocks higher/lower); a failed *ascent* leaves the cell standing
-  and is simply repeated. `Agent._scan_build_site` also now scans only at `_at_surface`,
+  and is simply repeated. **A column the server names water is a dead end (run142, live):** a
+   height-less `navigate` resolves the top of the bot's own column, and when that top is a fluid
+   the server's shore search reaches only 8 blocks, so it refuses with `[NAVIGATION_TARGET_WATER]
+   The ground at x, z is water …` and the body never moves. Re-probing the same column answers
+   the same way every tick (run142 it55-57: three identical refusals at `(5.51, -19, -115.34)`,
+   the loop only broken by an unrelated `get_flint`). `Agent._note_surface` now reads the named
+   column out of the refusal (`perception.parse_water_column`, the probe's own target as
+   fallback) into the per-run set `self._surface_wet`; the loop injects it as `gs.surface_wet`.
+   The next `surface_up` sees its own column is proven wet and instead aims at the nearest column
+   the ground scan shows has **dry open-sky footing** (`predicates._dry_surface_foot`:
+   `hit.standable`, i.e. `above == "air"`; a cell at or below the bot's own feet is a cave floor,
+   not a way out, and is skipped), reached by `navigate` with `dig`/`scaffold`. With nothing dry
+   in view the label offers nothing, so the tick goes elsewhere rather than probing the water
+   again. `Agent._scan_build_site` also now scans only at `_at_surface`,
   otherwise it would propose the cave floor itself. Live: `fill_bucket`↔`go_home` oscillated 45
   iterations, because the bucket was to be filled even after banking the obsidian (fix: the
   bucket chain is bound to the frame still missing, like `mine_obsidian` — see the obsidian
