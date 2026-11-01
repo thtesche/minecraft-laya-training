@@ -39,6 +39,13 @@ LOOP_WALK = 36.0
 LOOP_RATIO = 5.0
 LOOP_SPAN = 24
 
+# The chain a run is meant to close, in the order the loop works through it. These are the keys of
+# every tick's `progress` block, so a milestone is the tick the loop first believed the fact --
+# which is the only measurement the goal metric can use: a run that reaches the stronghold in
+# fewer ticks is a better run, and without these numbers "reached" is a guess.
+CHAIN_FACTS = ("bed_at_base", "frame_complete", "gate_lit", "nether_entered",
+               "powder_banked", "stronghold_estimated", "end_portal_active")
+
 
 def read_records(path: Path) -> list[dict[str, Any]]:
     """One dict per line; a half-written line from a run still in progress is skipped."""
@@ -252,12 +259,19 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
                 # Policy records carry no iteration of their own; the tick they fall between
                 # is when the loop learned the fact.
                 milestones.append({"fact": fact, "iteration": tick})
+        # The chain facts are on every tick's `progress` block, so a milestone is the tick the
+        # loop first believed it. Only a restored world writes `facts`, which is why run143's
+        # report had no Milestones section at all: the chain was never measured, only assumed.
+        progress = (r.get("state") or {}).get("progress") or {}
+        for fact, value in progress.items():
+            if fact in CHAIN_FACTS and value and fact not in seen_facts:
+                seen_facts.add(fact)
+                milestones.append({"fact": fact, "iteration": tick})
 
     # The chain the run is meant to close, in the order the loop works through it. The
     # iteration a fact first appears at is the cost of that phase, and the difference
     # between two runs is the whole point of the lab.
-    chain = ["nether_entered", "powder_bank", "stronghold_estimated",
-             "frame_complete", "end_portal_active"]
+    chain = list(CHAIN_FACTS)
     reached = {fact: next((m["iteration"] for m in milestones if m["fact"] == fact), None)
                for fact in chain}
     reached_chain = [v for v in reached.values() if v is not None]
@@ -356,6 +370,7 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
         "milestones": milestones,
         "goal": {
             "reached": reached,
+            "missing": [f for f in chain if reached[f] is None],
             "ticks_to_stronghold": reached.get("stronghold_estimated"),
             "chain_closed": all(v is not None for v in reached.values()),
             "last_milestone_iteration": max(reached_chain) if reached_chain else None,
@@ -382,6 +397,7 @@ def compare(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
         "movement.blocks_per_tick", "movement.still_ratio",
         "waits.wait_ticks", "waits.defer_ticks", "vitals.deaths",
         "water.ratio", "water.adrift_ticks", "loops.ticks", "system2.calls",
+        "goal.ticks_to_stronghold",
     ]
     deltas: dict[str, Any] = {}
     for key in keys:
@@ -455,6 +471,8 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
         goal = report.get("goal", {})
         lines.append(f"- chain closed: {goal.get('chain_closed')} · "
                      f"ticks to stronghold: {goal.get('ticks_to_stronghold')}")
+        if goal.get("missing"):
+            lines.append(f"- still owed: {', '.join(goal['missing'])}")
 
     if diff:
         base = diff.get("baseline_log", "")

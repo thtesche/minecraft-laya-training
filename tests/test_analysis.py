@@ -268,6 +268,53 @@ class TestEnd(unittest.TestCase):
         self.assertIn("Against the baseline (decisions-run143.jsonl)", text)
 
 
+class TestMilestones(unittest.TestCase):
+    """The chain, read out of the tick's own `progress` block.
+
+    Live: run143 and run145 both reported no Milestones section at all. Only a restored world
+    writes `facts`, so the goal metric - how many ticks the chain took - was never measured.
+    """
+
+    def _tick(self, iteration: int, **facts) -> dict:
+        record = action(iteration, "explore", status="succeeded", pos=6.0,
+                       at=(6 * iteration, 64, 0))
+        record["state"]["progress"] = facts
+        return record
+
+    def test_a_fact_is_milestoned_at_the_tick_it_first_turns_true(self):
+        report = analysis.summarize([
+            self._tick(0, nether_entered=False, gate_lit=False),
+            self._tick(1, nether_entered=True, gate_lit=True),
+            self._tick(2, nether_entered=True, gate_lit=True, stronghold_estimated=True),
+        ])
+        facts = {m["fact"]: m["iteration"] for m in report["milestones"]}
+        self.assertEqual(facts["gate_lit"], 2)
+        self.assertEqual(facts["stronghold_estimated"], 3)
+        self.assertEqual(report["goal"]["ticks_to_stronghold"], 3)
+        self.assertFalse(report["goal"]["chain_closed"])
+        self.assertEqual(report["goal"]["missing"],
+                         ["bed_at_base", "frame_complete", "powder_banked", "end_portal_active"])
+
+    def test_a_closed_chain_is_called_closed(self):
+        report = analysis.summarize([self._tick(i, **{f: True for f in analysis.CHAIN_FACTS})
+                                     for i in range(5)])
+        self.assertTrue(report["goal"]["chain_closed"])
+        self.assertEqual(report["goal"]["missing"], [])
+        text = analysis.to_markdown(report)
+        self.assertIn("Milestones", text)
+        self.assertIn("chain closed: True", text)
+
+    def test_the_chain_cost_shows_in_the_diff(self):
+        # The same milestone reached thirty ticks earlier is a better run, and the diff has to
+        # say so in ticks rather than leaving "chain closed: True" as the whole story.
+        baseline = analysis.summarize([self._tick(i, stronghold_estimated=i >= 39)
+                                       for i in range(50)])
+        current = analysis.summarize([self._tick(i, stronghold_estimated=i >= 9)
+                                      for i in range(20)])
+        diff = analysis.compare(current, baseline)
+        self.assertEqual(diff["deltas"]["goal.ticks_to_stronghold"], -30)
+
+
 class TestCompare(unittest.TestCase):
     def test_diff_against_a_baseline(self):
         baseline = analysis.summarize(
