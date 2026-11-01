@@ -5,6 +5,7 @@
 #   ./scripts/lab.sh status                                    JSON: world, host, run, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
 #   ./scripts/lab.sh report [run number]                        write the finished run's report
+#   ./scripts/lab.sh dataset [flags]                            fine-tuning corpus from every archived run
 #   ./scripts/lab.sh console "op LayaView"                      server console command
 #   ./scripts/lab.sh down [--run-only]                         stop run, host, world
 #
@@ -398,6 +399,16 @@ cmd_report() {
   report_run "${1:-}"
 }
 
+# The fine-tuning corpus: every archived run plus the live log, rebuilt through today's
+# renderer so the head is trained on exactly the wording the loop serves. Extra flags
+# (--rerender, --include-failed, --limit …) go straight to `mlaya.cli dataset`.
+cmd_dataset() {
+  logs=()
+  for f in "$REPO"/runs/history/decisions-run*.jsonl; do logs+=(--log "$f"); done
+  if [[ -f "$REPO/runs/decisions.jsonl" ]]; then logs+=(--log "$REPO/runs/decisions.jsonl"); fi
+  "$PY" -m mlaya.cli dataset "${logs[@]}" --out "$REPO/data/train.jsonl" "$@"
+}
+
 cmd_down() {
   if run_up; then
     kill "$(cat "$STATE/run.pid")" 2>/dev/null
@@ -458,6 +469,7 @@ case "${1:-status}" in
   status) cmd_status ;;
   analyze) shift; cmd_analyze "$@" ;;
   report) shift; cmd_report "$@" ;;
+  dataset) shift; cmd_dataset "$@" ;;
   console) shift; cmd_console "$@" ;;
   op) shift; cmd_op "$*" ;;
   host-test) cmd_host_test ;;

@@ -13,6 +13,7 @@ around them.
 ./scripts/lab.sh status                                   # JSON: world, host, run, last tick
 ./scripts/lab.sh report [run number]                      # the report a finished run writes itself
 ./scripts/lab.sh analyze [--baseline runs/history/…]      # defect report for the newest log
+./scripts/lab.sh dataset [mlaya dataset flags]            # fine-tuning corpus from every archived run
 ./scripts/lab.sh console "op LayaView"                    # server console command
 ./scripts/lab.sh op Sanskrita                             # grant op, remembering the real UUID
 ./scripts/lab.sh down [--run-only]                        # stop run, host, world
@@ -133,6 +134,9 @@ moving on every tick. The report measures exactly that:
   window and the cells it kept aiming at;
 - `water.ratio` / `water.adrift_ticks` — ticks off the feet, and of those the ones in water with
   no horizontal swim at all;
+- `vitals.death_causes` / `vitals.water_deaths` — each death carries the cause the server names
+  and whether the body was in water on its last tick before the death line; a cause naming
+  drowning or a body standing in water at death counts as a water death;
 - `waits.wait_ticks` and `waits.defer_ticks` — every wait is a tick the bot did not use;
 - `system2.calls` — how often System 1 offered a label it could not resolve;
 - `stalls` — windows of six or more ticks on one or two labels with no gain.
