@@ -1667,13 +1667,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"block_name": CHEST_ITEM, "x": ox, "y": oy, "z": oz},
                       "set up another chest beside the base: the storage network is full through")
     if label == "place_furnace":
-        cell = _furnace_site(gs)
+        args = _furnace_args(gs)
         if (_furnace_ready(gs) or gs.furnace_blocked or not _has(inv, "furnace")
-                or cell is None):
+                or args is None):
             return None
-        fx, fy, fz = cell
-        return Action(label, "place_block",
-                      {"block_name": "furnace", "x": fx, "y": fy, "z": fz},
+        return Action(label, "place_block", args,
                       "place the carried furnace at the home base so cooking reuses it")
     if label == "stow_surplus":
         items = [{"item_name": n, "count": inv[n]}

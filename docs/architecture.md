@@ -1698,9 +1698,14 @@ lid and stalled on the latch that was supposed to say the haul was done.
   `temporary_workstation`, so that the same furnace stays standing. The step runs only in the lull
   (`_nether_idle`) — before the gate frame stands the chain still needs the carried furnace for smelting
   away from the base —, and `_furnace_site` refuses the cell if a bed already stands there
-  (the `[PLACE_TARGET_OCCUPIED]` unblock would otherwise dig away the respawn bed); if the floor
-  cannot support the furnace (`[PLACE_NO_SUPPORT]`), the chain drops away (`Agent._note_furnace` →
-  `gs.furnace_blocked`) and cooking uses the temporary build again.
+  (the `[PLACE_TARGET_OCCUPIED]` unblock would otherwise dig away the respawn bed). A cell the
+  ground cannot support (`[PLACE_NO_SUPPORT]`, live in runs 86, 99, 103-110, 148, 149) is one
+  cell, not the base: `_furnace_args` then sends `place_block` without coordinates and the server
+  stands the furnace on the nearest clear, dry, supported cell around the body - the same choice
+  the temporary workstation already makes. Only when that attempt is refused too does the chain
+  drop away (`Agent._note_furnace` → `gs.furnace_blocked`) and cooking fall back to the temporary
+  build. The cellless attempt waits for the gate to burn: while the frame stands unlit its six
+  interior cells are air, and a furnace in one of them closes the portal for good.
   Tested in `tests/test_actions.py::HomeBaseTest`, `tests/test_actions.py::BaseFurnaceTest`,
   `tests/test_targets.py::BaseTargetTest`,
   `tests/test_graph.py::GuardUnblockTest`, `tests/test_graph.py::PortalBaseAdoptTest`,

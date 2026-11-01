@@ -896,6 +896,10 @@ class GameState:
     # like the chest, that is a property of the base's ground, so the loop gives the permanent
     # furnace up and falls back to the temporary workstation `smelt_item` places itself.
     furnace_blocked: bool = False
+    # The cell the base layout wants for the furnace has no footing (`[PLACE_NO_SUPPORT]`), so the
+    # next attempt names no cell at all and lets the server stand it on one that has (see
+    # `_furnace_args`). Only a refusal of *that* attempt gives the furnace up.
+    furnace_site_refused: bool = False
     # What the standing furnace at the base was last seen to hold, read from a `use_container
     # inspect` (`Agent._note_furnace`). An empty dict means "not looked at yet", which is why
     # `collect_smelted` inspects before it reaches in: a cook is only interrupted by a furnace
@@ -1163,6 +1167,7 @@ class GameState:
             "furnace_occupied": self.furnace_occupied,
             "furnace_contents": dict(self.furnace_contents),
             "furnace_blocked": self.furnace_blocked,
+            "furnace_site_refused": self.furnace_site_refused,
             "events": self.events,
             "unread": self.unread,
             "notifications": self.notifications,

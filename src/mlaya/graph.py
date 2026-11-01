@@ -350,6 +350,12 @@ class Agent:
     # beside yet". `_note_lava_walk` rebinds a fresh dict, so the default is never mutated.
     _lava_walked: dict[tuple[int, int, int], int] = {}
 
+    # The cell the base layout wants for the furnace has no footing, so the next attempt names no
+    # cell at all. Class default for the same reason as `_durable`: a stub agent built with
+    # `Agent.__new__` reads it through `_inject`, and False is exactly "no furnace placement has
+    # been refused yet".
+    _furnace_site_refused: bool = False
+
     def __init__(self, settings: Settings, executor):
         self.settings = settings
         self.mcp = executor
@@ -533,6 +539,10 @@ class Agent:
         # the cell beside the base cannot hold it. The chain is dropped so `cook_food` falls back
         # to the temporary workstation `smelt_item` places itself.
         self._furnace_blocked = False
+        # The layout's cell beside the base has no footing: the next attempt names no cell and
+        # lets the server pick one it can support (`_furnace_args`). Only that attempt failing
+        # gives the permanent furnace up.
+        self._furnace_site_refused = False
         # What the base furnace was last seen to hold, from a `use_container inspect`. Empty until
         # `collect_smelted` looks; `_note_furnace` clears it once the furnace has been emptied, so
         # the step stops interrupting cooks.
@@ -779,6 +789,7 @@ class Agent:
                         if self._drop_open_pending and self._drop_pos is not None else None)
         gs.chest_blocked = self._chest_blocked
         gs.furnace_blocked = self._furnace_blocked
+        gs.furnace_site_refused = self._furnace_site_refused
         gs.furnace_contents = dict(self._furnace_contents)
         gs.furnace_occupied = self._furnace_occupied
         gs.blocked_cell = self._blocked_cell
@@ -2545,7 +2556,7 @@ class Agent:
             self._drop_pos = None
             self._step_away_fails = 0
 
-    def _note_result(self, action, ok: bool) -> None:
+    def _note_result(self, action, ok: bool, res=None) -> None:
         """Report one result to the two latches that read its outcome.
 
         The walk-off is reported both ways: `STEP_AWAY_GIVE_UP` releases the latch inside
@@ -2557,7 +2568,7 @@ class Agent:
         """
         self._note_step_away(action, ok)
         if ok:
-            self._note_placed(action)
+            self._note_placed(action, res)
 
     def _note_chest(self, action, ok: bool, text: str | None) -> None:
         """Remember that the base's ground cannot hold the chest, so the chain is dropped.
@@ -2691,8 +2702,10 @@ class Agent:
         temporary workstation.
 
         Two refusals mean the standing furnace is finished. `[PLACE_NO_SUPPORT]` on the
-        `place_furnace` itself: no solid block touches the cell beside the base, so it can never
-        stand there. `[FURNACE_NOT_EMPTY]` on a `smelt_item`: the furnace still holds output, which
+        `place_furnace` itself: no solid block touches the cell beside the base. That is one cell,
+        not the ground under the whole base, so the attempt after it names no coordinates and the
+        server picks a supported cell; only when that one is refused too is the furnace given up.
+        `[FURNACE_NOT_EMPTY]` on a `smelt_item`: the furnace still holds output, which
         used to be the end of that cell too - no MCP tool could open a furnace, so the loop dropped
         the cell and cooked in a carried one instead (live, run26: a completed cook at a full pack
         left its output behind and every `cook_food` after answered the same refusal).
@@ -2722,7 +2735,14 @@ class Agent:
             return
         if action.label == "place_furnace":
             if "PLACE_NO_SUPPORT" in text:
-                self._furnace_blocked = True
+                if {"x", "y", "z"} <= set(getattr(action, "args", None) or {}):
+                    # One cell has no footing, which is not the same as the base holding no
+                    # furnace at all: the next attempt names no cell and the server stands it on
+                    # the nearest supported one (live, runs 86, 99, 103-110, 148, 149: a single
+                    # refusal at (-160, 76, -73) closed the base oven for the whole run).
+                    self._furnace_site_refused = True
+                else:
+                    self._furnace_blocked = True
             return
         if action.tool == "smelt_item" and "FURNACE_NOT_EMPTY" in text:
             # Not the end of the cell: flag that it is occupied so `collect_smelted` drains it.
@@ -2880,7 +2900,7 @@ class Agent:
         if isinstance(bed, dict) and all(isinstance(bed.get(k), int) for k in ("x", "y", "z")):
             self.bed_pos = (bed["x"], bed["y"], bed["z"])
 
-    def _note_placed(self, action) -> None:
+    def _note_placed(self, action, res=None) -> None:
         """Remember the cell of a placement that just succeeded.
 
         `establish_base` reports the surface cell through its navigate target; the base anchor
@@ -2895,11 +2915,24 @@ class Agent:
         send every later cook to an empty space. A cell the server does not know yet names no
         coordinates: the `surface_up` probe `navigate {x,z}` names the column, not the cell --
         run85's first probe that found an unambiguous surface and walked, met a guard that
-        checked only `x` and died on `KeyError: 'y'` in `verify`, the whole run with it.
+        checked only `x` and died on `KeyError: 'y'` in `verify`, the whole run with it. A
+        coordinate-less `place_block` is the other kind of unnamed cell: the server chose it, and
+        the placement evidence in the result is what names it.
         """
-        if not {"x", "y", "z"} <= set(action.args or {}):
+        args = action.args or {}
+        if not {"x", "y", "z"} <= set(args):
+            if action.label in ("place_furnace", "place_smoker"):
+                placement = _find(getattr(res, "data", None), "placement")
+                target = placement.get("target") if isinstance(placement, dict) else None
+                if isinstance(target, dict) and all(isinstance(target.get(k), int)
+                                                    for k in ("x", "y", "z")):
+                    cell = (target["x"], target["y"], target["z"])
+                    if action.label == "place_furnace":
+                        self.furnace_pos = cell
+                    else:
+                        self.smoker_pos = cell
             return
-        cell = (int(action.args["x"]), int(action.args["y"]), int(action.args["z"]))
+        cell = (int(args["x"]), int(args["y"]), int(args["z"]))
         if action.label == "establish_base":
             self.base = (cell[0], cell[1] - 1, cell[2])
         elif action.label == "place_chest":
@@ -2941,7 +2974,7 @@ class Agent:
         # crossing settles and the teleport fires.
         self._note_crossing(action)
         self._note_stow_blocked(action, _ok, _text)
-        self._note_result(action, _ok)
+        self._note_result(action, _ok, res)
         await self._hold_wait(action, _ok)
         after = await self._observe()
         # After the observation, not before: the `no path found` refusal names the cell the walk

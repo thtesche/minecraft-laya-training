@@ -18,7 +18,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                           _eyes_owed, _frame_empty, _food_source_in_reach, _nether_haul_home,
                            _nether_topup_wanted, _nether_food_secured,
                           _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_target, _rods_target,
-                          _frame_needs_obsidian, _gold_reserve_short, _known_footings,
+                          _frame_needs_obsidian, _furnace_site, _gold_reserve_short, _known_footings,
                           _centre,
                           _hoard_surplus, _idle_off_base, _nether_prep_steps,
                          _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt, _safe_blaze_hunt, _safe_zombie_hunt,
@@ -3553,6 +3553,25 @@ class BaseFurnaceTest(unittest.TestCase):
         self.assertNotIn("place_furnace", candidates(g))
         self.assertIsNone(resolve("place_furnace", g))
 
+    def test_a_refused_cell_hands_the_choice_to_the_server(self) -> None:
+        # Runs 86, 99, 103-110, 148 and 149: no solid block touches the cell beside the base, so
+        # the attempt after that refusal names no cell at all and the server stands the furnace on
+        # the nearest one that is clear, dry and supported.
+        g = self._lull(furnace=1, beef=2)
+        g.furnace_site_refused = True
+        a = resolve("place_furnace", g)
+        self.assertEqual(a.args, {"block_name": "furnace"})
+
+    def test_the_cellless_attempt_waits_while_the_frame_is_open(self) -> None:
+        # The server takes the nearest clear cell, and an unlit frame's six interior cells are
+        # exactly that: a furnace standing in one of them closes the gate for good, so the
+        # coordinate-less attempt waits for the gate to burn.
+        g = at_home(geared(furnace=1, beef=2))
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        g.furnace_site_refused = True
+        self.assertNotIn("place_furnace", candidates(g))
+        self.assertIsNone(resolve("place_furnace", g))
+
     def test_go_home_to_stand_the_furnace_at_the_base(self) -> None:
         g = self._lull(furnace=1, beef=2)
         g.pos = (-250.5, 64.0, -120.5)   # away from the base
@@ -3576,13 +3595,15 @@ class BaseFurnaceTest(unittest.TestCase):
 
     def test_the_furnace_keeps_clear_of_a_placed_bed(self) -> None:
         # A bed on the furnace cell would make the placement `[PLACE_TARGET_OCCUPIED]` and
-        # `make_room` would dig the respawn bed away, so the furnace stands nowhere there and
-        # cooking falls back to the temporary workstation.
+        # `make_room` would dig the respawn bed away. The layout's cell is still refused, but the
+        # furnace no longer names it: the server picks a cell around the body, and an occupied one
+        # is never among them, so the bed stays and the oven stands beside it.
         g = self._lull(furnace=1, beef=2, acacia_planks=3)
         g.resources = {**g.resources,
                        "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -99, 2.0)]}
-        self.assertNotIn("place_furnace", candidates(g))
-        self.assertIsNone(resolve("place_furnace", g))
+        self.assertIsNone(_furnace_site(g))
+        self.assertIn("place_furnace", candidates(g))
+        self.assertEqual(resolve("place_furnace", g).args, {"block_name": "furnace"})
         self.assertTrue(resolve("cook_food", g).args["temporary_workstation"])
 
     def test_smelt_gold_reuses_the_base_furnace(self) -> None:

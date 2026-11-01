@@ -250,7 +250,7 @@ class LoggedStateRoundTripTest(unittest.TestCase):
         rebuilt = GameState.from_state(original.as_state())
         for field in ("inventory", "tools", "pos", "dimension", "phase", "base", "chest_pos",
                       "furnace_pos", "furnace_occupied", "furnace_contents",
-                      "furnace_blocked", "base_adopted"):
+                      "furnace_blocked", "furnace_site_refused", "base_adopted"):
             self.assertEqual(getattr(rebuilt, field), getattr(original, field), field)
 
     def test_the_rebuilt_state_answers_the_questions_the_run_asked(self) -> None:

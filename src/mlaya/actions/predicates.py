@@ -2105,13 +2105,13 @@ def _banked_stores(gs: GameState) -> list[tuple[tuple[int, int, int], dict[str, 
 
 
 def _furnace_site(gs: GameState) -> tuple[int, int, int] | None:
-    """The cell the base furnace goes on, or None when it cannot stand there.
+    """The cell the base furnace goes on, or None when the layout cannot name one.
 
     One block out from the base on the side opposite the chest, clear of the portal's frame
     plane (which runs along z == bz). The one refusal is a placed bed on that exact cell: the
     placement would answer `[PLACE_TARGET_OCCUPIED]` and `make_room` would dig the respawn bed
-    away. The bed's cells are scanned (`white_bed`), so the furnace simply stands nowhere there
-    and cooking falls back to the temporary workstation.
+    away. A cell this refuses is not the end of the furnace - `_furnace_args` then names no
+    coordinates at all and the server stands the oven on a cell around the body.
     """
     if gs.base is None:
         return None
@@ -2120,6 +2120,30 @@ def _furnace_site(gs: GameState) -> tuple[int, int, int] | None:
     if any(hit.pos == cell for hit in gs.resources.get("white_bed", [])):
         return None
     return cell
+
+
+def _furnace_args(gs: GameState) -> dict | None:
+    """The `place_block` arguments for the base furnace: the layout's cell, or no cell at all.
+
+    The cell one block out from the base is the one the layout wants, but the ground beside the
+    base decides: live, runs 86, 99, 103-110, 148 and 149 answered `[PLACE_NO_SUPPORT]` there -
+    no solid block touches it, so the furnace can never stand on it and the run lost its permanent
+    oven for the whole run. Once that cell is refused the loop stops naming one: `place_block`
+    without coordinates picks the nearest clear, dry, supported cell around the body, the same
+    choice the temporary workstation already makes. Two things bound that attempt. The open frame
+    is the one cell the server must not take: while the gate is unlit the six interior cells of
+    the portal are air, and a furnace standing in one of them closes the gate for good, so the
+    cellless attempt waits for the gate to burn. And a bed on the layout's cell is no longer a
+    refusal at all - the server never chooses an occupied cell, so the respawn bed stays where it
+    is and the furnace simply stands next to it.
+    """
+    if gs.furnace_site_refused and not _portal_lit(gs):
+        return None
+    cell = None if gs.furnace_site_refused else _furnace_site(gs)
+    if cell is None:
+        return {"block_name": "furnace"}
+    fx, fy, fz = cell
+    return {"block_name": "furnace", "x": fx, "y": fy, "z": fz}
 
 
 def _smoker_site(gs: GameState) -> tuple[int, int, int] | None:
@@ -2186,7 +2210,7 @@ def _furnace_worth_placing(gs: GameState) -> bool:
     inv = gs.inventory
     return (_nether_idle(gs) and gs.base is not None and not _furnace_ready(gs)
             and not gs.furnace_blocked and _has(inv, "furnace")
-            and _furnace_site(gs) is not None)
+            and _furnace_args(gs) is not None)
 
 
 def _furnace_ready(gs: GameState) -> bool:

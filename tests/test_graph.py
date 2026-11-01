@@ -2874,6 +2874,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._nether_landmarks = []
         agent._chest_blocked = False
         agent._furnace_blocked = False
+        agent._furnace_site_refused = False
         agent._furnace_contents = {}
         agent._furnace_occupied = False
         agent.furnace_pos = None
@@ -2919,6 +2920,17 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._note_furnace(self._Action("place_furnace"), False,
                             "[PLACE_NO_SUPPORT] No adjacent solid block can support placement "
                             "into the target cell.")
+        self.assertTrue(agent._furnace_site_refused)
+        self.assertFalse(agent._furnace_blocked)
+
+    def test_a_furnace_refused_without_a_cell_is_given_up(self) -> None:
+        # The second refusal is the one that means the base holds no oven: the attempt that
+        # named no coordinates at all, so the server's own choice of cell was refused too.
+        agent = self._agent()
+        agent._note_furnace(self._Action("place_furnace"), False, "[PLACE_NO_SUPPORT]")
+        cellless = self._Action("place_furnace")
+        cellless.args = {"block_name": "furnace"}
+        agent._note_furnace(cellless, False, "[PLACE_NO_SUPPORT] No adjacent solid block")
         self.assertTrue(agent._furnace_blocked)
 
     def test_ignores_success_and_other_labels(self) -> None:
@@ -4446,6 +4458,17 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(agent.chest_pos)
         self.assertEqual(agent.base, self.BASE)
         self.assertEqual(agent._extra_chests, [])
+
+    def test_a_cell_the_server_picked_is_remembered(self) -> None:
+        # A `place_block` with no coordinates names no cell in its arguments: the placement
+        # evidence the server returns is what says where the furnace actually stands.
+        agent = self._agent()
+        place = self._Action("place_furnace", "place_block", {"block_name": "furnace"})
+        res = SimpleNamespace(data={"result": {"placement": {
+            "requestedBlock": "furnace", "target": {"x": -161, "y": 76, "z": -71}, "placed": True}}})
+        agent._note_placed(place, res)
+        self.assertEqual(agent.furnace_pos, (-161, 76, -71))
+        self.assertIsNone(agent.smoker_pos)
 
     def test_the_grounds_refusal_at_an_overflow_cell_keeps_the_chain(self) -> None:
         # One candidate is refused: the next is picked. Only the main cell's refusal gives the
