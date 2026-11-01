@@ -13,6 +13,9 @@ dependencies = [
     "python-dotenv",
 ]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.scripts]
 mlaya = "mlaya.cli:main"
 
