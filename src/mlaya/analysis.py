@@ -403,7 +403,12 @@ def compare(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
 def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> str:
     lines = [f"# Run report ({report['generated']})"]
     end = report.get("end") or {}
-    lines.append(f"- stop: **{end.get('stop', 'unknown')}** · iterations: {end.get('iterations', report['ticks']['action'])}")
+    # A run that died mid-tick has no `stop`: its end line is the error JSON. Naming the
+    # failure here is what tells the reader the run was cut short rather than finished.
+    stop = end.get("stop") or end.get("error") or "unknown"
+    lines.append(f"- stop: **{stop}** · iterations: {end.get('iterations', report['ticks']['action'])}")
+    if end.get("detail"):
+        lines.append(f"- the run stopped reading the world: {end['detail'][:160]}")
     lines.append(f"- progress rate: {report['progress']['progress_rate']} · failed calls: {report['progress']['failed']}")
     lines.append(f"- movement: {report['movement']['total_blocks']} blocks, "
                  f"{report['movement']['blocks_per_tick']}/tick, "
@@ -452,7 +457,9 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
                      f"ticks to stronghold: {goal.get('ticks_to_stronghold')}")
 
     if diff:
-        lines.append("\n## Against the baseline")
+        base = diff.get("baseline_log", "")
+        name = Path(base).name if base else "previous run"
+        lines.append(f"\n## Against the baseline ({name})")
         for key, value in diff["deltas"].items():
             lines.append(f"- {key}: {value:+}")
         if diff["new_refusals"]:

@@ -6,7 +6,9 @@ a run that walks in place on one label, a death record from the policy stage.
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from mlaya import analysis
 
@@ -232,6 +234,38 @@ class TestSystem2(unittest.TestCase):
         text = analysis.to_markdown(self.report)
         self.assertIn("System 2 escalations (2)", text)
         self.assertIn("`hunt_string` had no action -> `hunt_string`", text)
+
+
+class TestEnd(unittest.TestCase):
+    """How the report says a run ended, read from the run's own log line."""
+
+    def test_a_run_cut_short_names_the_failure(self):
+        # Live, run145: the world container died mid-run and the end line was an error JSON,
+        # so the headline said "stop: unknown" and nothing said why.
+        log = Path(tempfile.mkdtemp()) / "run145.log"
+        log.write_text('{"error": "perception_blind", "detail": "view_status answered without '
+                       'a position; the Minecraft connection is gone"}\n', encoding="utf-8")
+        report = analysis.summarize([action(i, "explore", status="succeeded", pos=6.0)
+                                     for i in range(6)], log)
+        text = analysis.to_markdown(report)
+        self.assertIn("stop: **perception_blind**", text)
+        self.assertIn("the run stopped reading the world", text)
+
+    def test_a_finished_run_still_names_its_stop(self):
+        log = Path(tempfile.mkdtemp()) / "run143.log"
+        log.write_text('{"iterations": 200, "stop": "limit", "note": "goal reached"}\n',
+                       encoding="utf-8")
+        report = analysis.summarize([action(i, "explore", status="succeeded", pos=6.0)
+                                     for i in range(6)], log)
+        text = analysis.to_markdown(report)
+        self.assertIn("stop: **limit**", text)
+        self.assertNotIn("stopped reading the world", text)
+
+    def test_the_diff_names_the_baseline_it_used(self):
+        diff = analysis.compare(analysis.summarize(MOVING), analysis.summarize(STALL))
+        diff["baseline_log"] = "/x/runs/history/decisions-run143.jsonl"
+        text = analysis.to_markdown(analysis.summarize(MOVING), diff)
+        self.assertIn("Against the baseline (decisions-run143.jsonl)", text)
 
 
 class TestCompare(unittest.TestCase):

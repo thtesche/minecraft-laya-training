@@ -154,6 +154,19 @@ next_run_number() {  max=0
   echo $((max + 1))
 }
 
+# The comparison run is the newest archived log long enough to mean something. The run right
+# before is usually it, but an aborted one is not: run 145 reported against run 144, which died
+# at iteration 5, and every line of that diff said "+124 ticks" about a run that never started.
+BASELINE_MIN_TICKS=30
+pick_baseline() {
+  for ((n = $1 - 1; n >= 1; n--)); do
+    f="$REPO/runs/history/decisions-run$n.jsonl"
+    [[ -f "$f" ]] || continue
+    [[ "$(wc -l < "$f")" -ge $BASELINE_MIN_TICKS ]] && { echo "$f"; return 0; }
+  done
+  return 1
+}
+
 # A finished run reports itself. The JSON summary and the markdown go next to the archived log,
 # so the next `up` can diff against it without anyone remembering to ask. `analyze` reads the
 # end JSON from the newest runs/run*.log, which is still this run's at that moment.
@@ -164,7 +177,7 @@ report_run() {
   archived="$REPO/runs/history/decisions-run$run_no.jsonl"
   # Asked for a run by number: report the archived log, not the one the next run is writing.
   if [[ $# -ge 1 && -f "$archived" ]]; then log_file="$archived"; fi
-  baseline="$REPO/runs/history/decisions-run$((run_no - 1)).jsonl"
+  baseline=$(pick_baseline "$run_no") || baseline=""
   out_md="$REPO/runs/history/report-run$run_no.md"
   out_json="$REPO/runs/history/summary-run$run_no.json"
   # The run's own log carries the end JSON; without it the report reads the newest run's.
