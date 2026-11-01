@@ -480,6 +480,13 @@ a **food acquisition** that fits "actually survive".
    counted as standing (run141 read 8 smelt ticks as idle, putting `still_ratio` at 0.84 for a run
    that worked the whole time). The two definitions live in different modules and are maintained
    apart.
+- **Water is its own metric (run115, live):** the run report counts the ticks the state reports
+  `in_water`, the longest streak, and the ticks that are **adrift** — in water with
+  `swim_delta < MOVE_EPS`, a body drifting up and back down the same column while crossing no
+  ground. `pos_delta` reads that drift as movement, which is why the water block is separate:
+  run115 spent 332 of 527 ticks in water, **every one adrift**, 271 of them `escape_water` aimed
+  at a foothold the pathfinder could not reach. `compare` tracks `water.ratio` and
+  `water.adrift_ticks`, so a fix that gets the bot onto dry ground shows up as a gain.
 - **Why danger rows:** Laya selects the head via the **question type** (the checkpoint carries a
   `type_emb.`), so `in_danger` and `intent` **share one** `choice` head. A pure
   intent dataset would silently unlearn the gate. Hence one `in_danger` row per
