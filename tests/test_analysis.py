@@ -15,7 +15,8 @@ from mlaya import analysis
 
 def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
            gained=0, health=20.0, food=20.0, progressed=None,
-           water=False, swim=None, escalated=False, at=(0, 64, 0), args=None) -> dict:
+           water=False, swim=None, escalated=False, at=(0, 64, 0), args=None,
+           death=None) -> dict:
     return {
         "ts": 1000 + iteration,
         "stage": "action",
@@ -27,7 +28,8 @@ def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
         "args": args or {},
         "escalated": escalated,
         "progressed": progressed if progressed is not None else (status == "succeeded"),
-        "state": {"health": health, "food": food, "position": list(at), "in_water": water},
+        "state": {"health": health, "food": food, "position": list(at), "in_water": water,
+                  "last_death": death},
         "delta": {
             "pos_delta": pos,
             # The x/z plane the body actually crossed. A tick that only drifts up and back
@@ -141,6 +143,65 @@ class TestWater(unittest.TestCase):
         text = analysis.to_markdown(self.report)
         self.assertIn("7 ticks off the feet", text)
         self.assertIn("6 of them adrift", text)
+
+
+class TestDeathAttribution(unittest.TestCase):
+    """Where a death happened and what the server names as its cause.
+
+    The cause string lands two ticks after the policy line (run149: the line between it333
+    and it334, `MineAI withered away` first read at it334), and the action record *before*
+    the line is the last tick the body still stood where it died: after the line the bot has
+    already respawned at the bed, dry, so the tick after says nothing about the water the
+    body fell into.
+    """
+
+    def test_drowning_is_attributed_to_the_water_the_body_was_in(self):
+        records = [
+            action(1, "mine_obsidian", status="succeeded", pos=2.0, water=True),
+            {"stage": "policy", "reason": "death"},
+            action(2, "go_home", status="succeeded", pos=1.0),
+            action(3, "go_home", status="succeeded", pos=1.0, death="MineAI drowned"),
+        ]
+        vitals = analysis.summarize(records)["vitals"]
+        self.assertEqual(vitals["deaths"], 1)
+        self.assertEqual(vitals["water_deaths"], 1)
+        cause = vitals["death_causes"][0]
+        self.assertEqual(cause["cause"], "MineAI drowned")
+        self.assertTrue(cause["in_water"])
+        self.assertTrue(cause["water_death"])
+
+    def test_a_death_on_dry_ground_is_not_a_water_death(self):
+        records = [
+            action(1, "drop_junk", status="succeeded", pos=1.0, health=0.8),
+            {"stage": "policy", "reason": "death"},
+            action(2, "drop_junk", status="succeeded", pos=1.0),
+            action(3, "get_wood", status="succeeded", pos=1.0, death="MineAI withered away"),
+        ]
+        vitals = analysis.summarize(records)["vitals"]
+        self.assertEqual(vitals["water_deaths"], 0)
+        self.assertEqual(vitals["death_causes"][0]["cause"], "MineAI withered away")
+
+    def test_a_drowning_cause_counts_even_when_the_body_has_respawned(self):
+        # The footing read can miss: the death line falls between two ticks and the body
+        # respawned before the last action record was written. The cause string still stands.
+        records = [
+            action(1, "explore", status="succeeded", pos=3.0),
+            {"stage": "policy", "reason": "death"},
+            action(2, "go_home", status="succeeded", pos=1.0, death="MineAI drowned"),
+        ]
+        vitals = analysis.summarize(records)["vitals"]
+        self.assertEqual(vitals["water_deaths"], 1)
+
+    def test_markdown_names_the_cause(self):
+        records = [
+            action(1, "drop_junk", status="succeeded", pos=1.0, health=0.8),
+            {"stage": "policy", "reason": "death"},
+            action(2, "get_wood", status="succeeded", pos=1.0, death="MineAI withered away"),
+        ]
+        text = analysis.to_markdown(analysis.summarize(records))
+        self.assertIn("death causes", text)
+        self.assertIn("withered away", text)
+        self.assertIn("water deaths: 0", text)
 
 
 class TestLoops(unittest.TestCase):

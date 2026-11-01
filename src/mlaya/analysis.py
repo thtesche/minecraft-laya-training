@@ -124,6 +124,41 @@ def _position(record: dict[str, Any]) -> tuple[float, float, float] | None:
     return (float(pos[0]), float(pos[1]), float(pos[2]))
 
 
+def _death_causes(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attribute each death: the cause the server names and the footing the body had.
+
+    The policy line marks the tick the loop noticed the death. The server's cause string
+    (`last_death`) lands in the state of the action records that follow -- run149 shows the
+    cause appearing two ticks after the line, not the immediately next one -- so the scan
+    forward takes the first following action record that carries it. Where the body died is
+    read from the action record *before* the line: by the time the cause is reported the bot
+    has already respawned at the bed, so the tick after says nothing about the water the body
+    fell into. A cause naming drowning counts as a water death even without the footing read;
+    a body standing in water at its last tick counts too, whatever the cause says.
+    """
+    out: list[dict[str, Any]] = []
+    for i, r in enumerate(records):
+        if r.get("stage") != "policy" or r.get("reason") != "death":
+            continue
+        cause = ""
+        for nxt in records[i + 1:i + 4]:
+            if nxt.get("stage") == "action":
+                cause = str((nxt.get("state") or {}).get("last_death") or "")
+                if cause:
+                    break
+        in_water = False
+        for prev in reversed(records[:i]):
+            if prev.get("stage") == "action":
+                in_water = bool((prev.get("state") or {}).get("in_water"))
+                break
+        out.append({
+            "cause": cause or "unreported",
+            "in_water": in_water,
+            "water_death": "drown" in cause.lower() or in_water,
+        })
+    return out
+
+
 def _target(record: dict[str, Any]) -> tuple[int, int, int] | None:
     """The cell an action aimed at, when the tick logged one."""
     args = record.get("args") or {}
@@ -314,6 +349,8 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
         key=lambda r: tuple(-refusals.get(c, 0) for c in CODE_RE.findall(str(r.get("text") or ""))),
     )[:10]
 
+    death_causes = _death_causes(records)
+
     return {
         "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
         "end": _end_from_run_log(run_log),
@@ -378,6 +415,8 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
             "min_food": min(foods) if foods else None,
             "deaths": len(death_ticks),
             "death_iterations": death_ticks,
+            "death_causes": death_causes,
+            "water_deaths": sum(1 for d in death_causes if d["water_death"]),
         },
         "milestones": milestones,
         "goal": {
@@ -407,7 +446,7 @@ def compare(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
     keys = [
         "end.stop", "ticks.action", "progress.progress_rate",
         "movement.blocks_per_tick", "movement.still_ratio",
-        "waits.wait_ticks", "waits.defer_ticks", "vitals.deaths",
+        "waits.wait_ticks", "waits.defer_ticks", "vitals.deaths", "vitals.water_deaths",
         "water.ratio", "water.adrift_ticks", "loops.ticks", "system2.calls",
         "goal.ticks_to_stronghold",
     ]
@@ -442,6 +481,12 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
                  f"{report['movement']['blocks_per_tick']}/tick, "
                  f"{report['movement']['still_ratio']:.0%} of ticks standing still")
     lines.append(f"- waits: {report['waits']['wait_ticks']} · defers: {report['waits']['defer_ticks']} · deaths: {report['vitals']['deaths']}")
+    vitals = report.get("vitals") or {}
+    if vitals.get("death_causes"):
+        detail = "; ".join(
+            f"{d['cause']}{' (body in water)' if d['in_water'] else ''}"
+            for d in vitals["death_causes"])
+        lines.append(f"- death causes: {detail} · water deaths: {vitals.get('water_deaths', 0)}")
     water = report.get("water") or {}
     if water.get("ticks"):
         lines.append(f"- water: {water['ticks']} ticks off the feet ({water['ratio']:.0%}), longest "
