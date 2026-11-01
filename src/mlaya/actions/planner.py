@@ -1549,6 +1549,20 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if gs.in_water:
             return None
         mx, mz = math.floor(gs.pos[0]), math.floor(gs.pos[2])
+        # A column the probe already answered `[NAVIGATION_TARGET_WATER]` has no way up: its
+        # top block is a fluid and the server's shore search reaches only 8 blocks, so the same
+        # probe fails the same way every tick (live, run142 it55-57: three identical refusals at
+        # (5.51, -19, -115.34), the body never moving, until an unrelated `get_flint` broke the
+        # loop). The climb then belongs to the nearest column the ground scan shows has dry
+        # open-sky footing, reached by digging and scaffolding the way up to it.
+        if (mx, mz) in gs.surface_wet:
+            foot = _dry_surface_foot(gs, mx, mz)
+            if foot is None:
+                return None
+            fx, fy, fz = foot
+            return Action(label, "navigate", {"x": fx, "y": fy, "z": fz,
+                                             "dig": True, "scaffold": True},
+                          "climb out onto the nearest dry column's open surface ground")
         # A `navigate` without a height asks the server for a column's surface. It walks the bot
         # up to open sky when the answer is unambiguous, and otherwise stops with
         # `[NAVIGATION_HEIGHT_REQUIRED]`, naming the surface it found. That answer is read back

@@ -2967,6 +2967,53 @@ class HomeBaseTest(unittest.TestCase):
         self.assertEqual((a.args["x"], a.args["z"]), (-21, 30))
         self.assertNotIn("y", a.args)
 
+    def test_surface_up_climbs_to_a_dry_column_when_its_own_is_water(self) -> None:
+        # Live, run142 it55-57: the bot sat at (5.51, -19, -115.34) and the probe of its column
+        # answered `[NAVIGATION_TARGET_WATER]` three ticks running -- the server's shore search
+        # reaches only 8 blocks, so a bot under a lake has no way up from where it stands. A
+        # column the loop has proved wet is never probed again; the climb goes to the nearest dry
+        # open-sky footing the ground scan listed, digging and scaffolding the way up to it.
+        g = self._geared()
+        g.pos = (5.51, -19.0, -115.34)
+        g.surface_wet = frozenset({(5, -116)})
+        g.resources = {"grass_block": [BlockHit("grass_block", "grass_block", 5, 28, -83, 57.4,
+                                                above="air", below="stone")]}
+        a = resolve("surface_up", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (5, 29, -83))
+        self.assertTrue(a.args["dig"] and a.args["scaffold"])
+
+    def test_the_nearest_dry_foot_wins_over_a_farther_one(self) -> None:
+        g = self._geared()
+        g.pos = (5.51, -19.0, -115.34)
+        g.surface_wet = frozenset({(5, -116)})
+        g.resources = {"grass_block": [BlockHit("grass_block", "grass_block", 5, 28, -83, 57.4,
+                                                above="air", below="stone")],
+                       "sand": [BlockHit("sand", "sand", 12, 22, -105, 15.0,
+                                         above="air", below="stone")]}
+        a = resolve("surface_up", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (12, 23, -105))
+
+    def test_a_cave_floor_below_the_bot_is_not_a_way_up(self) -> None:
+        # `above == "air"` is open space, not necessarily sky: a footing at or below the bot's own
+        # feet is a cave floor it is already standing in, and climbing to it is not surfacing.
+        g = self._geared()
+        g.pos = (5.51, -19.0, -115.34)
+        g.surface_wet = frozenset({(5, -116)})
+        g.resources = {"stone": [BlockHit("stone", "stone", 3, -21, -110, 6.0,
+                                          above="air", below="deepslate")]}
+        self.assertIsNone(resolve("surface_up", g))
+
+    def test_surface_up_stands_down_when_no_dry_foot_is_in_view(self) -> None:
+        # Nothing dry in the scan: the label offers nothing rather than probing the water again,
+        # and the tick goes to whatever else the tech tree has.
+        g = self._geared()
+        g.pos = (5.51, -19.0, -115.34)
+        g.surface_wet = frozenset({(5, -116)})
+        g.resources = {"gravel": [BlockHit("gravel", "gravel", 5, -25, -124, 10.0,
+                                           above="deepslate", below="gravel")]}
+        self.assertIsNone(resolve("surface_up", g))
+
     def test_no_base_work_once_the_base_is_set(self) -> None:
         self.assertNotIn("establish_base", candidates(self._home(self._geared())))
 

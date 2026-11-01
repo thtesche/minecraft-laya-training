@@ -2225,6 +2225,7 @@ class SurfaceNoteTest(unittest.TestCase):
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.surface = None
+        agent._surface_wet = set()
         return agent
 
     def test_a_resolved_probe_records_the_cell_it_walked_to(self) -> None:
@@ -2253,6 +2254,35 @@ class SurfaceNoteTest(unittest.TestCase):
         agent._note_surface(self._Action("establish_base", {"x": -47, "z": 4}), True, "",
                             (-47.0, 74.0, 4.0))
         self.assertIsNone(agent.surface)
+
+    def test_a_water_probe_remembers_the_column_it_failed_on(self) -> None:
+        # Live, run142 it55-57: the probe of (5, -115) answered the same water refusal three
+        # ticks running with the body never moving. The refusal names the column the server
+        # looked at, and that is the one `surface_up` must never probe again.
+        agent = self._agent()
+        text = ("[NAVIGATION_STOPPED] Pathfinder stopped: [NAVIGATION_TARGET_WATER] The ground at "
+                "5, -116 is water, and no dry ground the bot can stand on lies within 8 blocks of "
+                "it; a ground target on a lake sends the bot to the lake bed.")
+        agent._note_surface(self._Action("surface_up", {"x": 5, "z": -115}), False, text, None)
+        self.assertEqual(agent._surface_wet, {(5, -116)})
+        self.assertIsNone(agent.surface)
+
+    def test_a_water_probe_falls_back_to_the_probe_target(self) -> None:
+        # The refusal line is the server's wording; if it ever changes, the target the loop sent
+        # is still the column that proved wet.
+        agent = self._agent()
+        agent._note_surface(self._Action("surface_up", {"x": -12, "z": 30}), False,
+                            "[NAVIGATION_STOPPED] Pathfinder stopped: [NAVIGATION_TARGET_WATER]",
+                            None)
+        self.assertEqual(agent._surface_wet, {(-12, 30)})
+
+    def test_a_water_probe_keeps_a_surface_learned_in_another_column(self) -> None:
+        agent = self._agent()
+        agent.surface = (-47, 74, 4)
+        agent._note_surface(self._Action("surface_up", {"x": 5, "z": -115}), False,
+                            "[NAVIGATION_TARGET_WATER] The ground at 5, -116 is water", None)
+        self.assertEqual(agent.surface, (-47, 74, 4))
+        self.assertEqual(agent._surface_wet, {(5, -116)})
 
 
 class BaseAnchorRepairTest(unittest.TestCase):

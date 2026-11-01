@@ -959,6 +959,12 @@ class GameState:
     # below this cell -- not the block above the head -- is the surface test `establish_base`
     # needs (live, run9: the base landed at y=-16 under a y=73 surface).
     surface: tuple[int, int, int] | None = None
+    # Columns `(x, z)` whose surface probe answered `[NAVIGATION_TARGET_WATER]`: the top of that
+    # column is a fluid and the server's shore search (8 blocks) found no dry footing. The loop
+    # owns this per run and injects it, like `surface`, so `surface_up` aims at a column it has
+    # not already proved wet instead of probing the same water every tick (live, run142 it55-57:
+    # three identical refusals at (5.51, -19, -115.34), the body never moving).
+    surface_wet: frozenset[tuple[int, int]] = frozenset()
     # Cells of the portal opening (`portal_interior`) that hold a stray block, read from one
     # `view_blocks cells` scan while a frame build is pending. The opening sits *above* the
     # support layer and must end up air: a block left there is built around and `activate_portal`
@@ -1858,6 +1864,22 @@ def parse_surface_height(text: str) -> int | None:
         return None
     # Prefer the highest floor, but the caller must verify it's actually dry/open
     return max(floors)
+
+
+def parse_water_column(text: str) -> tuple[int, int] | None:
+    """A `[NAVIGATION_TARGET_WATER]` answer -> the column it found water in, or None.
+
+    A height-less `navigate` resolves a column's surface; when that surface is a fluid and no
+    dry footing lies within the server's 8-block shore search, it refuses with
+    `[NAVIGATION_TARGET_WATER] The ground at 5, -116 is water, and no dry ground the bot can
+    stand on lies within 8 blocks of it ...`. The column named in that line is the one the probe
+    aimed at, which is exactly what the loop has to remember to aim somewhere else next tick.
+    Any other failure, an unrelated navigation or an empty text returns None.
+    """
+    m = re.search(r"The ground at (-?\d+), (-?\d+) is water", text or "")
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)))
 
 
 def parse_ground_height(text: str) -> int | None:

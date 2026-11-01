@@ -332,6 +332,12 @@ class Agent:
     # ledger said nothing". It is never mutated in place, only replaced.
     _durable: progress.DurableFacts = progress.DurableFacts()
 
+    # Columns whose `surface_up` probe answered `[NAVIGATION_TARGET_WATER]`. The class default is
+    # for the same reason as `_durable`: a stub agent built with `Agent.__new__` reads it through
+    # `_inject`, and an empty set is exactly "no column has proved wet yet". It is never mutated
+    # in place, only replaced with a fresh set.
+    _surface_wet: frozenset[tuple[int, int]] = frozenset()
+
     def __init__(self, settings: Settings, executor):
         self.settings = settings
         self.mcp = executor
@@ -412,6 +418,10 @@ class Agent:
         # `_verify` reads the answer back into here; it is what keeps `establish_base` off a cave
         # floor, since a mined tunnel's `air` reads exactly like open sky. Per-run, like `base`.
         self.surface: tuple[int, int, int] | None = None
+        # Columns whose `surface_up` probe answered `[NAVIGATION_TARGET_WATER]`. A column the
+        # server already named water cannot be climbed out of -- the same probe answers the same
+        # way every tick -- so the next probe aims at another one (see `planner.surface_up`).
+        self._surface_wet: set[tuple[int, int]] = set()
         # Lava cells a pour already failed on with `[BUCKET_NO_FACE]`. That answer is
         # structural -- no solid block beside that cell faces the bot -- so retrying it can
         # only fail again; remembering it lets the next tick pour elsewhere (live: the
@@ -716,6 +726,7 @@ class Agent:
         self._adopt_homebase(gs)
         gs.base = self.base
         gs.surface = self.surface
+        gs.surface_wet = frozenset(self._surface_wet)
         gs.chest_pos = self.chest_pos
         gs.banked = dict(self.banked)
         gs.banked_stores = self._banked_stores
@@ -1618,6 +1629,7 @@ class Agent:
         also counts ticks (`water_ticks`) and must run once per observation.
         """
         gs.surface = self.surface
+        gs.surface_wet = frozenset(self._surface_wet)
         gs.frame_complete = self._frame_complete
         gs.portal_lit = self._portal_lit
         gs.powder_stowed = self._powder_stowed
@@ -2048,6 +2060,20 @@ class Agent:
         was, so the next tick simply retries it.
         """
         if action.label != "surface_up":
+            return
+        if "NAVIGATION_TARGET_WATER" in (text or ""):
+            # The column's surface is a fluid and the server's shore search (8 blocks) found
+            # nothing dry, so the probe has learned something: this column has no way up. Without
+            # the memory the loop re-probes it every tick (live, run142 it55-57: three identical
+            # `[NAVIGATION_STOPPED] ... [NAVIGATION_TARGET_WATER]` answers at (5.51, -19, -115.34)
+            # with the body never moving). The refusal names the column it looked at; the probe's
+            # own target is the fallback.
+            args = action.args or {}
+            col = perception.parse_water_column(text or "")
+            if col is None and isinstance(args.get("x"), int) and isinstance(args.get("z"), int):
+                col = (args["x"], args["z"])
+            if col is not None:
+                self._surface_wet = set(self._surface_wet) | {col}
             return
         # Never anchor the base to a surface learned while the bot is in water or floating.
         gs = getattr(self, "gs", None)

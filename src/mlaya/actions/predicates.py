@@ -2577,6 +2577,38 @@ def _in_base_box(gs: GameState, cell: tuple[int, int, int]) -> bool:
             and abs(y - (by + 1)) <= BASE_RADIUS + 1)
 
 
+def _dry_surface_foot(gs: GameState, mx: int, mz: int) -> tuple[int, int, int] | None:
+    """The nearest feet cell the ground scan shows to be dry open ground, or None.
+
+    `surface_up` needs this when its own column's surface is water: the server resolves a
+    height-less `navigate` to that column's top block, and when it is a fluid its shore search
+    reaches only 8 blocks (`SHORE_SEARCH_RADIUS`), so a bot under a lake has no way up from
+    where it stands (live, run142 it55-57: three identical `[NAVIGATION_TARGET_WATER]` refusals
+    at (5.51, -19, -115.34), the body never moving). The ground groups the tick already scanned
+    name the footing; `above == "air"` is the open-sky test `BlockHit.standable` is built on, and
+    a cell below the bot's feet is a cave floor, not a way out, so it is skipped. Columns the
+    loop has already proved wet are skipped too.
+    """
+    if gs.pos is None:
+        return None
+    best: tuple[float, tuple[int, int, int]] | None = None
+    for pool in (gs.resources, gs.rescue_ground):
+        for hits in pool.values():
+            for hit in hits:
+                if not hit.standable:
+                    continue
+                col = (hit.x, hit.z)
+                if col == (mx, mz) or col in gs.surface_wet:
+                    continue
+                feet = (hit.x, hit.y + 1, hit.z)
+                if feet[1] < math.floor(gs.pos[1]):
+                    continue
+                dist = math.hypot(hit.x - mx, hit.z - mz)
+                if best is None or dist < best[0]:
+                    best = (dist, feet)
+    return best[1] if best else None
+
+
 def _at_surface(gs: GameState) -> bool:
     """Whether the bot stands at open surface ground, high enough to anchor the base.
 

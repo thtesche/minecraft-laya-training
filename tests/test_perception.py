@@ -13,6 +13,7 @@ from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_LIMIT, GROUN
                               REMEMBERED_GATE_SQL,
                               parse_portal_corner, parse_refused_cells, parse_resource_counts,
                               parse_resources, parse_status, parse_surface_height,
+                              parse_water_column,
                               portal_interior, build, GameState)
 
 
@@ -1309,6 +1310,31 @@ class ParseSurfaceHeightTest(unittest.TestCase):
         self.assertIsNone(parse_surface_height(""))
         self.assertIsNone(parse_surface_height(None))
         self.assertIsNone(parse_surface_height("standable feet heights: none."))
+
+
+class ParseWaterColumnTest(unittest.TestCase):
+    """`parse_water_column` reads the column a `[NAVIGATION_TARGET_WATER]` stop names.
+
+    A height-less `navigate` resolves a column's surface; when that surface is a fluid and the
+    server's 8-block shore search finds nothing dry it refuses with the column it looked at. That
+    is the column `surface_up` must stop probing (live, run142 it55-57: the same probe, the same
+    answer, three ticks, the body never moving).
+    """
+
+    def test_the_named_column_is_read(self) -> None:
+        text = ("[NAVIGATION_STOPPED] Pathfinder stopped: [NAVIGATION_TARGET_WATER] The ground at "
+                "5, -116 is water, and no dry ground the bot can stand on lies within 8 blocks of "
+                "it; a ground target on a lake sends the bot to the lake bed.")
+        self.assertEqual(parse_water_column(text), (5, -116))
+
+    def test_a_positive_column_reads(self) -> None:
+        self.assertEqual(parse_water_column("The ground at 12, 40 is water"), (12, 40))
+
+    def test_any_other_failure_is_none(self) -> None:
+        self.assertIsNone(parse_water_column("[NAVIGATION_HEIGHT_REQUIRED] standable feet heights: 74"))
+        self.assertIsNone(parse_water_column("The ground in that column is at y=70."))
+        self.assertIsNone(parse_water_column(""))
+        self.assertIsNone(parse_water_column(None))
 
 
 class ParseGroundHeightTest(unittest.TestCase):
