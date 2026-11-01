@@ -1328,19 +1328,24 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # than one long walk: pathfinder search times out on 450+ block walks through lava/sparse
         # terrain, so navigate in ~120 m hops. Each hop is a tick toward the gate, reloading the
         # world and resetting the search budget.
-        tx, tz = float(ax), float(az)
+        tx, tz, ty = float(ax), float(az), ay
         if gs.pos is not None:
             dx, dz = gs.pos[0] - ax, gs.pos[2] - az
             span = math.hypot(dx, dz)
             if span > 1e-6:
-                if span > NETHER_EXIT_STAGING_DISTANCE:
-                    tx = gs.pos[0] + dx / span * NETHER_EXIT_STAGING_DISTANCE
-                    tz = gs.pos[2] + dz / span * NETHER_EXIT_STAGING_DISTANCE
+                hop = _exit_hop(gs)
+                if span > hop:
+                    # A hop aims at the height the body is standing on, not at the height the gate
+                    # came in at: live, run149 the 120 m hop aimed at y 66 while the bot stood at
+                    # y 37-77, and the terrain refused the same cell sixteen times.
+                    tx = gs.pos[0] + dx / span * hop
+                    tz = gs.pos[2] + dz / span * hop
+                    ty = math.floor(gs.pos[1])
                 else:
                     tx = ax + dx / span * NETHER_GATE_APPROACH
                     tz = az + dz / span * NETHER_GATE_APPROACH
         return Action(label, "navigate",
-                      {"x": round(tx), "y": ay, "z": round(tz),
+                      {"x": round(tx), "y": ty, "z": round(tz),
                        "range": 2, "dig": True, "scaffold": True},
                       "walk toward the Nether exit portal (staged in hops if far away)")
     if label == "swap_to_diamond_helmet":

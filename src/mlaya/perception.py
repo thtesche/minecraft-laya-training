@@ -1033,6 +1033,11 @@ class GameState:
     # saw no crossing to record an arrival from. Run74 had neither and walked its bot to a
     # non-portal: the cell it started on, not the gate at (33,55,34) it never knew about.
     nether_gate: tuple[int, int, int] | None = None
+    # How many hops toward the Nether exit the terrain refused in a row, at the same cell (Agent
+    # `_note_nether_hop`). A hop aimed at a cell with no footing is refused without the body moving,
+    # so the same refusal repeats until the aim is shortened (live, run149: sixteen identical
+    # `[NAVIGATION_TARGET_UNSUPPORTED]` on one 120 m hop).
+    nether_hop_repeats: int = 0
     # Fortress landmark cells the bot has already walked onto and got nothing out of (Agent
     # `_note_landmark`): a cage whose `navigate` answered with 0 metres moved is a searched cage,
     # and offering it again next tick is the same 0-metre step (live, run104: 100+ ticks on one
@@ -1191,6 +1196,7 @@ class GameState:
             "portal_lit": self.portal_lit,
             "nether_arrival": self.nether_arrival,
             "nether_gate": self.nether_gate,
+            "nether_hop_repeats": self.nether_hop_repeats,
             "nether_ticks": self.nether_ticks,
             "nether_travel": self.nether_travel,
             "mobs": self.mobs,

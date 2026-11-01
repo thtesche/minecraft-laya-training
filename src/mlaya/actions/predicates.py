@@ -1510,6 +1510,21 @@ def _nether_way_home(gs: GameState) -> tuple[int, int, int] | None:
     return gs.nether_gate
 
 
+def _exit_hop(gs: GameState) -> float:
+    """How far the next hop toward the Nether exit aims.
+
+    A hop keeps its full length until the terrain refuses it at the same cell: the body did not
+    move, so the next tick would aim at exactly the same air. Live, run149 it156-161 and
+    it318-320: the 120 m hop aimed at the height the gate came in at (y 66) while the bot stood at
+    y 37-77, and `[NAVIGATION_TARGET_UNSUPPORTED]` answered sixteen times - "no ground was found
+    within 64 blocks below it". Halving brings the target back onto the ground the walk starts from.
+    """
+    hop = NETHER_EXIT_STAGING_DISTANCE
+    for _ in range(min(gs.nether_hop_repeats, NETHER_EXIT_HOP_SHRINKS)):
+        hop = max(NETHER_EXIT_HOP_MIN, hop / 2.0)
+    return hop
+
+
 def _furnace_needs_draining(gs: GameState) -> bool:
     """Whether the standing furnace at the base holds output that blocks the next cook.
 

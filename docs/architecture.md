@@ -1237,6 +1237,15 @@ the bot walked deeper into the fortress and died at it22 with eight rods, the po
 the diamond kit. The exit is retried, not pruned: `_track_wander` now skips `leave_nether` while the
 bot is still in the Nether, and `_track_stuck` still owns a crossing that stops moving at all.
 
+**A hop out of the Nether aims at the ground under the feet.** run149 it156-161 and it318-320: the
+staged exit hop kept the height the arrival gate stood at (`ay`) while the bot stood at y 37-77, so
+the target cell hung in the air and `[NAVIGATION_TARGET_UNSUPPORTED]` answered sixteen times - "no
+ground was found within 64 blocks below it" - with the body never moving. The hop now aims at
+`floor(gs.pos[1])`, and `Agent._note_nether_hop` counts the refusals at the same cell so `_exit_hop`
+halves the aim (120 → 60 → 30 m) until the target is terrain the walk can start from. A hop that
+walked, or one refused for a different reason (a mob holding the body, a pathfinder stop), clears
+the count.
+
 **One helmet slot, one offer.** run127 it137-174, and run128 it16-22 on the same gate: at the base
 with the gate lit and the trip stocked, `swap_to_gold_helmet` and `swap_to_diamond_helmet` were both
 on the list every tick, and each swap made the other one wanted again - 61 gold-on and 40 diamond-on

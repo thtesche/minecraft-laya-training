@@ -257,6 +257,13 @@ STRING_HUNT_RANGE = 24.0
 # Pathfinder search timeout is 2000ms, which in sparse/lava-heavy Nether terrain works up to ~120 m.
 # Stages the exit into intermediate waypoints (120 m per hop) until close enough for direct crossing.
 NETHER_EXIT_STAGING_DISTANCE = 120.0
+# How many times a hop the terrain refused may halve before the loop stops shrinking it, and the
+# floor it shrinks to. Live, run149: the 120 m hop aimed at the gate's own height landed in mid
+# air sixteen times - the same cell, the same `[NAVIGATION_TARGET_UNSUPPORTED]`, the bot never
+# moved - while the ground under its own feet was right there. Halving brings the target back onto
+# terrain the walk can start from.
+NETHER_EXIT_HOP_SHRINKS = 2
+NETHER_EXIT_HOP_MIN = 30.0
 # Minimum food items (count >= 24) required in pack before any Nether trip. Without this,
 # pearl waves end in starvation (hunger reaching zero) far from home. Nether movement costs hunger
 # fast; 24 items give enough margin before NETHER_RETURN_FOOD (8.0) forces the exit.

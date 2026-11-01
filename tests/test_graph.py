@@ -5106,6 +5106,23 @@ class NetherCrossingTest(unittest.TestCase):
                                     {"block_name": "stone", "count": 8}, ""))
         self.assertEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
 
+    def test_a_hop_the_ground_refused_is_counted_at_its_cell(self) -> None:
+        # Live, run149 it156-161 and it318-320: sixteen identical `[NAVIGATION_TARGET_UNSUPPORTED]`
+        # on one 120 m hop. The body never moved, so every tick aimed at the same air.
+        agent = self._agent()
+        hop = Action("leave_nether", "navigate", {"x": -1460, "y": 66, "z": -519}, "")
+        agent._note_nether_hop(hop, False, "[NAVIGATION_TARGET_UNSUPPORTED] no footing")
+        self.assertEqual(agent._nether_hop, ((-1460, -519), 1))
+        agent._note_nether_hop(hop, False, "[NAVIGATION_TARGET_UNSUPPORTED] no footing")
+        self.assertEqual(agent._nether_hop, ((-1460, -519), 2))
+        self.assertEqual(agent._inject(GameState()).nether_hop_repeats, 2)
+        # A hop that walked is not the terrain saying no.
+        agent._note_nether_hop(hop, True, "")
+        self.assertEqual(agent._nether_hop, (None, 0))
+        # Neither is a mob holding the body.
+        agent._note_nether_hop(hop, False, "[HOSTILE_CONTACT] evade response")
+        self.assertEqual(agent._nether_hop, (None, 0))
+
     def test_arriving_in_the_nether_is_remembered_with_its_cell(self) -> None:
         # `leave_nether` needs the arrival cell whenever no exit portal block is loaded, and the
         # crossing itself is only observed afterwards as a dimension change - overworld first,

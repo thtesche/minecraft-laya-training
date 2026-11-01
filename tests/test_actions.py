@@ -35,6 +35,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
+                           NETHER_EXIT_HOP_MIN,
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
                            tech_tree_complete, WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
@@ -4714,6 +4715,29 @@ class NetherExpeditionTest(unittest.TestCase):
         # Target should be NETHER_EXIT_STAGING_DISTANCE (120m) closer to gate from current position
         dist_to_target = math.dist((a.args["x"], a.args["z"]), g.pos[:2])
         self.assertAlmostEqual(dist_to_target, NETHER_EXIT_STAGING_DISTANCE, delta=10.0)
+
+    def test_a_hop_aims_at_the_ground_the_bot_stands_on(self) -> None:
+        # Live, run149 it156-161 and it318-320: the hop kept the height the gate came in at (y 66)
+        # while the bot stood at y 37-77, and the terrain answered sixteen times that no footing
+        # was found within 64 blocks below the target cell - it hung in the air.
+        g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] - 220.3, 37.0, self.EXIT[2] + 18.7)
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.args["y"], 37)
+
+    def test_a_refused_hop_halves_the_next_one(self) -> None:
+        # A hop the ground refuses leaves the body where it was, so the same aim is refused again
+        # until it is shortened (run149: sixteen identical refusals on one 120 m hop).
+        g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] - 220.3, 37.0, self.EXIT[2] + 18.7)
+        g.nether_hop_repeats = 1
+        a = resolve("leave_nether", g)
+        self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), g.pos[:2]),
+                               NETHER_EXIT_STAGING_DISTANCE / 2, delta=10.0)
+        g.nether_hop_repeats = 4
+        a = resolve("leave_nether", g)
+        self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), g.pos[:2]),
+                               NETHER_EXIT_HOP_MIN, delta=10.0)
 
     def test_standing_on_the_arrival_cell_crosses_instead_of_walking(self) -> None:
         # `navigate` into an active portal is refused outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED]

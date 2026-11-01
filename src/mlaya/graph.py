@@ -356,6 +356,11 @@ class Agent:
     # been refused yet".
     _furnace_site_refused: bool = False
 
+    # The refused Nether-exit hop and its repeat count. Class default for the same reason as
+    # `_durable`: a stub agent built with `Agent.__new__` reads it through `_inject`, and `(None, 0)`
+    # is exactly "no hop has been refused yet".
+    _nether_hop: tuple[tuple[int, int] | None, int] = (None, 0)
+
     def __init__(self, settings: Settings, executor):
         self.settings = settings
         self.mcp = executor
@@ -603,6 +608,10 @@ class Agent:
         self._last_dimension: str | None = None
         self._nether_gate: tuple[int, int, int] | None = None
         self._gate_read = False
+        # The hop toward the Nether exit the terrain refused, and how many times in a row at the
+        # same cell (`_note_nether_hop`): a refused hop leaves the body where it was, so the same
+        # aim would be refused again until it is shortened.
+        self._nether_hop: tuple[tuple[int, int] | None, int] = (None, 0)
         self._nether_ticks = 0
         self._nether_travel = 0.0
         self._nether_last_pos: tuple[float, float] | None = None   # (x, z) of the last tick
@@ -825,6 +834,7 @@ class Agent:
         gs.nether_entered = self._nether_entered
         gs.nether_arrival = self._nether_arrival
         gs.nether_gate = self._nether_gate
+        gs.nether_hop_repeats = self._nether_hop[1]
         gs.nether_ticks = self._nether_ticks
         gs.powder_stowed = self._powder_stowed
         gs.end_portal_active = self._end_portal_active
@@ -2697,6 +2707,30 @@ class Agent:
         if cell is not None:
             self._chest_above = cell
 
+    def _note_nether_hop(self, action, ok: bool, text: str | None) -> None:
+        """Count a hop toward the Nether exit that the terrain refused at the same cell.
+
+        A hop the ground refuses leaves the body exactly where it was, so the next tick aims at the
+        same air and gets the same answer (live, run149: sixteen `[NAVIGATION_TARGET_UNSUPPORTED]`
+        on one 120 m hop, "no ground was found within 64 blocks below it"). Counting the repeats is
+        what lets `_exit_hop` halve the aim; a hop that walked, or one refused for a different
+        reason (a mob holding the body, a pathfinder stop), is not the terrain saying no to the
+        cell, so it clears the count.
+        """
+        if action.label != "leave_nether":
+            return
+        if ok:
+            self._nether_hop = (None, 0)
+            return
+        if "NAVIGATION_TARGET_UNSUPPORTED" not in (text or ""):
+            return
+        args = getattr(action, "args", None) or {}
+        cell = (args.get("x"), args.get("z"))
+        if cell == self._nether_hop[0]:
+            self._nether_hop = (cell, self._nether_hop[1] + 1)
+        else:
+            self._nether_hop = (cell, 1)
+
     def _note_furnace(self, action, ok: bool, text: str | None, res=None) -> None:
         """Give up a base furnace the loop can no longer use, so cooking falls back to a
         temporary workstation.
@@ -2966,6 +3000,7 @@ class Agent:
         self._note_container(action, _ok, _text)
         self._note_container_missing(action, _ok, _text)
         self._note_furnace(action, _ok, _text, res)
+        self._note_nether_hop(action, _ok, _text)
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
         self._note_bed(action, _ok, res)
