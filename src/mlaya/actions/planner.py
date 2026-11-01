@@ -381,21 +381,24 @@ def candidates(gs: GameState) -> list[str]:
         if not has_flint and not has_fs and gs.resource_distance("gravel") is not None:
             out.append("get_flint")
         # Obsidian is *made*, not dug: the step is offered while the bucket is full and a lava
-        # source can actually be poured on, or while freshly formed obsidian lies within reach
-        # (to mine it). The reach test on the mine side keeps the dig shallow - the natural
-        # deposit under the same lava caves is tens of blocks down and never comes that close.
-        if (_frame_needs_obsidian(gs, inv) and _can_mine(gs, "obsidian")
-                and not _shed_owed(gs, inv)
-                and ((has_water and _lava_pour_target(gs) is not None)
-                     or _obsidian_within_reach(gs))):
+        # source can actually be worked, or while freshly formed obsidian lies within reach
+        # (to mine it). "Worked" has two meanings: a cell the bucket can reach directly
+        # (`_lava_pour_target`), or a source the dig can open for itself (`_lava_cast_pool`).
+        # The reach test on the mine side keeps the dig shallow - the natural deposit under the
+        # same lava caves is tens of blocks down and never comes that close.
+        obsidian_open = (_frame_needs_obsidian(gs, inv) and _can_mine(gs, "obsidian")
+                         and not _shed_owed(gs, inv))
+        if obsidian_open and (_obsidian_within_reach(gs)
+                              or (has_water and (_lava_pour_target(gs) is not None
+                                                 or _lava_cast_pool(gs) is not None))):
             out.append("mine_obsidian")
-        elif (has_water and _frame_needs_obsidian(gs, inv) and _can_mine(gs, "obsidian")
-              and not _shed_owed(gs, inv) and _lava_walk_target(gs) is not None):
+        elif (obsidian_open and has_water and _lava_walk_target(gs) is not None):
             # The obsidian is made at a lava source, and a source is only in the scan when the bot
             # stands near it. With none loaded, the chain has no step at all and the offer falls to
             # the `explore`/`go_home` fallback (live, run114 it159-225: 66 ticks of 55-block
             # ping-pong between base and frontier with seven obsidian still owed). Walking to the
-            # lava the scan *can* see is what reopens it.
+            # lava the scan *can* see is what reopens it. Once a source is in the listing the dig
+            # walks to it itself, so the walk yields to `mine_obsidian`.
             out.append("approach_lava")
         if (not has_fs and has_flint and iron >= FLINT_STEEL_IRON and table
                 and obsidian >= PORTAL_OBSIDIAN):
@@ -984,15 +987,27 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return Action(label, "collect_block",
                           {"block_name": "obsidian", "x": hit.x, "y": hit.y, "z": hit.z},
                           "mine the obsidian the poured water just formed at the bot's feet")
-        # Phase 2: no obsidian in reach, so make some - pour the carried water into a lava
-        # cell that lies beside a real lava source (see `_lava_pour_target`). Natural obsidian
-        # deep under that lava is deliberately *not* a target: tunnelling to it is what left
-        # the bot treading water in a flooded shaft.
+        # Phase 2: no obsidian in reach, so make some - either by pouring the carried water into a
+        # lava cell beside a real source (`_lava_pour_target`), or by letting the dig open a capped
+        # pool itself. Natural obsidian deep under that lava is deliberately *not* a target:
+        # tunnelling to it is what left the bot treading water in a flooded shaft.
         if not _has(inv, WATER_BUCKET):
             return None
         lava = _lava_pour_target(gs)
         if lava is None:
-            return None
+            if _lava_cast_pool(gs) is None:
+                return None
+            # The pool is capped: no cell beside the source is open to the bucket from here. The
+            # server's mine process owns the cast - it routes to the pool, breaks the blocks
+            # standing between the eye and the source, pours, scoops the bucket back and mines what
+            # formed. No coordinates: naming a cell would name the lid the process is there to
+            # remove.
+            return Action(label, "collect_block",
+                          {"block_name": "obsidian",
+                           "count": min(PORTAL_OBSIDIAN - inv.get("obsidian", 0),
+                                        OBSIDIAN_CAST_BATCH)},
+                          "let the dig open the capped lava pool, pour the carried water into it "
+                          "and mine the obsidian that forms")
         if _within_reach(gs, lava, POUR_REACH):
             return Action(label, "use_bucket",
                           {"action": "pour", "liquid": "water",
@@ -1008,7 +1023,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "walk to the lava source, stand on the block beside it and pour")
     if label == "approach_lava":
         if (not _has(inv, WATER_BUCKET) or not _frame_needs_obsidian(gs, inv)
-                or _obsidian_within_reach(gs) or _lava_pour_target(gs) is not None):
+                or _obsidian_within_reach(gs) or _lava_pour_target(gs) is not None
+                or _lava_cast_pool(gs) is not None):
             return None
         stance = _lava_walk_target(gs)
         if stance is None:

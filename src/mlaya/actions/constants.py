@@ -77,7 +77,7 @@ CRITERIA: dict[str, str] = {
     # Overworld -> Nether gate (the portal frame and the bed beside it).
     "craft_bucket": "craft a bucket from three iron ingots; a water bucket is how obsidian is made",
     "fill_bucket": "fill the carried bucket with water at a source, ready to pour onto lava",
-    "mine_obsidian": "carry a water bucket and mine obsidian: the dig pours the water onto lava and mines what forms",
+    "mine_obsidian": "carry a water bucket and mine obsidian: the dig pours the water onto lava, or opens a capped pool itself and pours into that",
     "approach_lava": "walk to the lava the scan can see, so the source that forms obsidian comes into reach",
     "get_flint": "dig gravel for flint, the spark the flint and steel needs",
     "craft_flint_and_steel": "craft flint and steel from flint and an iron ingot to light the portal",
@@ -284,6 +284,11 @@ POUR_REACH = 4.5
 # groups lava sources within 8 blocks of one another (`LAVA_POOL_RADIUS` in `cast-targets.ts`),
 # so a stance inside that radius is a stance of the body the bot already stood beside.
 LAVA_POOL_RADIUS = 8.0
+# How many obsidian one server-side cast asks for. The dig itself opens the pool: `cast-obsidian.ts`
+# breaks up to `EXPOSING_BREAKS = 3` blocks of cap to get a sight line, pours, scoops the bucket back
+# and mines what formed, all inside one `collect_block`. Six keeps the whole frame within two casts
+# while leaving the break budget (requested + `MAX_EXTRA_BREAKS = 4`) room for the three cap blocks.
+OBSIDIAN_CAST_BATCH = 6
 
 # Decisions a bot may spend off its feet in water before `escape_water` owns the tick. The rescue
 # exists because work that needs the feet planted cannot run from a floating stance, not because a

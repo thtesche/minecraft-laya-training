@@ -1379,7 +1379,7 @@ lid and stalled on the latch that was supposed to say the haul was done.
   (`build_structure portal_frame`, 10 obsidian + 4 cobblestone corners) → `light_portal`
   (`activate_portal`) → `place_bed` (`sleep`). The whole chain hangs on `_gear_ready` (a fresh
   run first completes the diamond tier).
-  **Obsidian is made, not mined:** `mine_obsidian` has two phases in `resolve`. If obsidian
+  **Obsidian is made, not mined:** `mine_obsidian` has three phases in `resolve`. If obsidian
   lies in reach (`OBSIDIAN_REACH` = 6 m — whatever the last pour formed), it is
   mined (`collect_block`, exactly the missing blocks up to 10). Otherwise the water bucket is poured onto the
   next lava cell (`use_bucket pour` with `x,y,z`, from `POUR_REACH` = 4.5 m; otherwise first
@@ -1387,9 +1387,21 @@ lid and stalled on the latch that was supposed to say the haul was done.
   As "open" above the pour cell, besides `air`, `cave_air` also counts (`perception.AIR_NAMES`):
   underground lava lakes are covered by cave air instead of `air`, and the pour check discarded
   such cells first (fixed live in the from-zero run).
+  **A pool under a lid is opened by the dig, not by us.** `_lava_pour_target` needs a cell the
+  bucket can actually click: open above, solid under, laterally touching a source. A source under
+  stone fails all three and the chain had no step left (live, run148: the only level-0 source in
+  the scan sat at (-160, 21, -86) with `above=stone`; `approach_lava` spent 50 ticks walking to
+  level-2 and level-8 flows that can never form obsidian). `cast-obsidian.ts` does not need that
+  cell: `CastTargets.scan` finds every source within `LOADED_SEARCH_RADIUS = 64` - the same radius
+  this scan reads - and `castOntoPool` breaks up to `EXPOSING_BREAKS = 3` blocks of cap to open a
+  sight line, pours, scoops the bucket back and mines what formed, all inside one `collect_block`.
+  So when no cell is pour-able but a source is listed, the step sends `collect_block obsidian` with
+  **no coordinates** and a count of `OBSIDIAN_CAST_BATCH` = 6 (the frame's remaining need, capped),
+  and the server does the cast. `approach_lava` yields to it: the walk exists only to load a source
+  into the scan, and once one is listed the dig reaches it.
   Natural obsidian lies only deep (`y ≈ -55`) under the same lava lakes and never falls under
   `OBSIDIAN_REACH`; digging down there is the **water trap** (see reflex below). The step is only
-  offered when "bucket full **and** lava in reach" or "obsidian in reach".
+  offered when "bucket full **and** a lava source in the scan" or "obsidian in reach".
   **Obsidian latch (key design):** the chain closes on the **frame**, not the igniter. It used
   to require obsidian to be banked **before** flint and steel — that craft was the lock that kept
   `mine_obsidian` from re-mining after the build (which yields the 10 blocks), because a pure

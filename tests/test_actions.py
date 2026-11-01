@@ -36,7 +36,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
-                           tech_tree_complete, WATER_RESCUE_AFTER)
+                           tech_tree_complete, WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources)
 
@@ -1795,6 +1795,46 @@ class NetherGateTest(unittest.TestCase):
         self.assertTrue(a.args["dig"])
         self.assertFalse(a.args["scaffold"])
 
+    def test_a_capped_pool_hands_the_cast_to_the_dig(self) -> None:
+        # Live, run148: the only level-0 source in the scan sat at (-160, 21, -86) with `above=stone`.
+        # No cell beside it is open to the bucket, so the pour step closed and `approach_lava` walked
+        # 50 ticks to level-2 and level-8 flows that can never form obsidian. The server's cast
+        # process opens the lid itself: `cast-obsidian.ts` breaks up to `EXPOSING_BREAKS = 3` blocks
+        # to get a sight line, pours, scoops the bucket back and mines what formed - all inside one
+        # `collect_block`, which is why the step names no cell.
+        g = self._geared(water_bucket=1)
+        g.pos = (-160.5, 76.0, -72.5)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -160, 21, -86, 55.4, above="stone", below="stone", level=0),
+            BlockHit("lava", "lava", -159, 21, -85, 55.9, above="stone", below="lava", level=2),
+        ]}
+        offered = candidates(g)
+        self.assertIn("mine_obsidian", offered)
+        self.assertNotIn("approach_lava", offered)
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "obsidian", "count": OBSIDIAN_CAST_BATCH})
+
+    def test_the_cast_asks_only_for_what_the_frame_still_needs(self) -> None:
+        # Seven blocks already in the pack: the dig takes three, not a full batch it cannot use.
+        g = self._geared(water_bucket=1, obsidian=7)
+        g.pos = (-160.5, 76.0, -72.5)
+        g.resources = {"lava": [BlockHit("lava", "lava", -160, 21, -86, 55.4,
+                                         above="stone", below="stone", level=0)]}
+        self.assertEqual(resolve("mine_obsidian", g).args["count"], 3)
+
+    def test_approach_lava_yields_to_a_pool_the_dig_can_open(self) -> None:
+        # The walk exists to load a source into the scan. Once one is listed - open or capped - the
+        # obsidian step reaches the pool itself, and offering both would hand Laya two names for
+        # one move.
+        g = self._geared(water_bucket=1)
+        g.pos = (-160.5, 76.0, -72.5)
+        g.resources = {"lava": [BlockHit("lava", "lava", -160, 21, -86, 55.4,
+                                         above="stone", below="stone", level=0)]}
+        self.assertIn("mine_obsidian", candidates(g))
+        self.assertNotIn("approach_lava", candidates(g))
+        self.assertIsNone(resolve("approach_lava", g))
+
     def test_mine_obsidian_needs_a_source_not_a_flow(self) -> None:
         # Water on flowing lava makes only cobblestone, so with no level-0 source in the
         # listing the pour cannot produce obsidian at all and the step stays out.
@@ -1896,28 +1936,31 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-77, 8, -73))
 
     def test_mine_obsidian_needs_an_open_pour_cell(self) -> None:
-        # The surface pond's only usable cell is capped by stone, so no water can be placed
-        # there: the step refuses instead of pouring into a wall.
+        # The surface pond's only usable cell is capped by stone, so the bucket cannot be emptied
+        # into it. The step does not stand down: the dig opens the pool itself (`_lava_cast_pool`),
+        # so the frame still gets its obsidian - it just stops asking the bucket to reach a cell
+        # behind a wall.
         g = self._geared(water_bucket=1)
         g.pos = (-270.0, 64.0, -56.0)
         g.resources = {"lava": [
             BlockHit("lava", "lava", -270, 64, -56, 3.0, above="stone", below="stone", level=2),
             BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
         ]}
-        self.assertNotIn("mine_obsidian", candidates(g))
-        self.assertIsNone(resolve("mine_obsidian", g))
+        self.assertIn("mine_obsidian", candidates(g))
+        self.assertEqual(resolve("mine_obsidian", g).tool, "collect_block")
 
     def test_mine_obsidian_needs_a_floor_under_the_target(self) -> None:
         # A target cell over lava or air has no solid block to click beside it: that is the
-        # live `[BUCKET_NO_FACE]` that repeated for a whole run on the pond.
+        # live `[BUCKET_NO_FACE]` that repeated for a whole run on the pond. The bucket is out;
+        # the dig is not - it walks to the pool and opens it.
         g = self._geared(water_bucket=1)
         g.pos = (-270.0, 64.0, -56.0)
         g.resources = {"lava": [
             BlockHit("lava", "lava", -270, 64, -56, 3.0, above="air", below="lava", level=2),
             BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
         ]}
-        self.assertNotIn("mine_obsidian", candidates(g))
-        self.assertIsNone(resolve("mine_obsidian", g))
+        self.assertIn("mine_obsidian", candidates(g))
+        self.assertEqual(resolve("mine_obsidian", g).tool, "collect_block")
 
     def test_mine_obsidian_accepts_a_source_under_a_cave_roof(self) -> None:
         # Live, from-zero run: both lava sources in scan reach sat under `cave_air`, and the step
@@ -1937,7 +1980,8 @@ class NetherGateTest(unittest.TestCase):
 
     def test_mine_obsidian_needs_solid_ground_not_cave_air(self) -> None:
         # The floor rule reads the same air variants: `cave_air` under the target is not a block
-        # to click beside, so this cell stays out.
+        # to click beside, so this cell stays out of the pour. The source itself is open above, so
+        # the server's cast lands on it directly and the step is still offered.
         g = self._geared(water_bucket=1)
         g.pos = (-270.0, 64.0, -56.0)
         g.resources = {"lava": [
@@ -1946,8 +1990,8 @@ class NetherGateTest(unittest.TestCase):
             BlockHit("lava", "lava", -270, 64, -57, 4.0,
                      above="air", below="stone", level=0),
         ]}
-        self.assertNotIn("mine_obsidian", candidates(g))
-        self.assertIsNone(resolve("mine_obsidian", g))
+        self.assertIn("mine_obsidian", candidates(g))
+        self.assertEqual(resolve("mine_obsidian", g).tool, "collect_block")
 
     def test_mine_obsidian_skips_a_refused_pour_cell(self) -> None:
         # The loop remembers a cell a pour was refused at; the next tick goes to the next
@@ -1998,8 +2042,9 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-259, 65, -56))
 
     def test_a_source_with_every_stance_refused_is_passed_over(self) -> None:
-        # No second source and the only one's stances are all unusable: the step stands down
-        # instead of walking to a stance the server refuses forever.
+        # No second source and the only one's stances are all unusable: the *walk* to a stance is
+        # out, but the server's own cast stance is not one of ours, so the step hands the pool to
+        # the dig rather than standing down with the frame still owed.
         g = self._geared(water_bucket=1)
         g.pos = (0.0, 64.0, 0.0)
         g.stance_skip = frozenset({(-269, 65, -56), (-271, 65, -56), (-270, 65, -55)})
@@ -2007,8 +2052,8 @@ class NetherGateTest(unittest.TestCase):
             BlockHit("lava", "lava", -270, 64, -56, 3.0, above="air", below="stone", level=2),
             BlockHit("lava", "lava", -270, 64, -57, 4.0, above="stone", below="stone", level=0),
         ]}
-        self.assertNotIn("mine_obsidian", candidates(g))
-        self.assertIsNone(resolve("mine_obsidian", g))
+        self.assertIn("mine_obsidian", candidates(g))
+        self.assertEqual(resolve("mine_obsidian", g).tool, "collect_block")
 
     def test_mine_obsidian_mines_what_the_pour_formed(self) -> None:
         # Obsidian the last pour formed lies at the bot's feet: mine it, even with no water left.

@@ -2333,6 +2333,27 @@ def _lava_pour_target(gs: GameState) -> BlockHit | None:
     return None
 
 
+def _lava_cast_pool(gs: GameState) -> BlockHit | None:
+    """The nearest lava *source* the server's own cast process can work on, or None.
+
+    `_lava_pour_target` needs a cell the bot can see and reach with the bucket: open above, solid
+    under, laterally touching a source. A pool under a lid fails all three, and the run then has no
+    way to make obsidian at all (live, run148: the only level-0 source in the scan sat at
+    (-160, 21, -86) with `above=stone`; `approach_lava` walked 50 ticks to level-2 and level-8
+    flows that can never form obsidian while the frame still owed ten blocks).
+
+    The server does not need that cell. `CastTargets.scan` finds every lava source within
+    `LOADED_SEARCH_RADIUS = 64` of the feet -- the same radius this scan reads -- and
+    `castOntoPool` breaks up to `EXPOSING_BREAKS = 3` blocks of cap to open a sight line before it
+    pours. So a source in the listing is a pool the dig can open by itself, and the step hands the
+    whole job to it.
+    """
+    for h in gs.resources.get("lava") or []:  # already nearest first
+        if h.level == 0:
+            return h
+    return None
+
+
 def _stance_options(gs: GameState, target: BlockHit) -> list[tuple[int, int, int]]:
     """The cells to stand in to pour into `target`: *on top of* a lateral neighbour.
 
@@ -2377,9 +2398,9 @@ def _lava_walk_target(gs: GameState) -> tuple[int, int, int] | None:
     blocks. The walk is the chain's missing link: standing beside the lava loads the source, and
     the pour step opens on the next tick.
 
-    By the time this runs there is no pour-able cell in the scan at all (`candidates` offers the
-    walk only when `_lava_pour_target` is None), so every hit here is a flow or a source the water
-    cannot reach yet.
+    By the time this runs the scan holds no lava the obsidian step can work at all: no cell the
+    bucket can reach (`_lava_pour_target`) and no source the dig could open for itself
+    (`_lava_cast_pool`), so every hit here is a flow.
     """
     for h in gs.resources.get("lava") or []:  # already nearest first
         if _within_reach(gs, h, POUR_REACH):
