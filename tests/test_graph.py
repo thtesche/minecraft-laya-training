@@ -22,7 +22,7 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, BODY_HELD_STOP, BOXED_REPEATS, DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
-                         RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
+                         LAVA_WALK_COOLDOWN, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
                          ORBIT_WINDOW, PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS,
                          WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
@@ -960,20 +960,20 @@ class LavaWalkTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
-        agent._lava_walked = set()
+        agent._lava_walked = {}
         return agent
 
     def test_records_the_stance_a_walk_ended_on(self) -> None:
         agent = self._agent()
         agent._note_lava_walk(
             self._Action("approach_lava", "navigate", {"x": -66, "y": 8, "z": -72}), True)
-        self.assertEqual(agent._lava_walked, {(-66, 8, -72)})
+        self.assertEqual(agent._lava_walked, {(-66, 8, -72): LAVA_WALK_COOLDOWN})
 
     def test_a_failed_walk_is_not_a_stance_the_bot_reached(self) -> None:
         agent = self._agent()
         agent._note_lava_walk(
             self._Action("approach_lava", "navigate", {"x": 1, "y": 2, "z": 3}), False)
-        self.assertEqual(agent._lava_walked, set())
+        self.assertEqual(agent._lava_walked, {})
 
     def test_only_the_walk_to_the_lava_counts(self) -> None:
         # `mine_obsidian` walks to the same kind of stance, but that tick ends in a pour: the
@@ -983,7 +983,17 @@ class LavaWalkTest(unittest.TestCase):
                              True)
         agent._note_lava_walk(self._Action("approach_lava", "collect_block", {"x": 7, "y": 8, "z": 9}),
                              True)
-        self.assertEqual(agent._lava_walked, set())
+        self.assertEqual(agent._lava_walked, {})
+
+    def test_the_stance_returns_when_the_cooldown_runs_out(self) -> None:
+        # The walk digs, and a body the bot comes back to later may now show its source. The
+        # stance is withheld for `LAVA_WALK_COOLDOWN` ticks, not written off for the run.
+        agent = self._agent()
+        agent._note_lava_walk(
+            self._Action("approach_lava", "navigate", {"x": -66, "y": 8, "z": -72}), True)
+        for _ in range(LAVA_WALK_COOLDOWN):
+            agent._note_lava_walk(self._Action("explore", "navigate", {}), True)
+        self.assertEqual(agent._lava_walked, {})
 
 
 class StuckOfferTest(unittest.TestCase):

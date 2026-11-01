@@ -503,7 +503,8 @@ a **food acquisition** that fits "actually survive".
   `approach_lava` hopping between two stances beside the same two flows, while the portal frame
   still owed ten obsidian. The brain-side answer is the walk's own memory (`lava_walked`): a body
   the bot has already stood beside answered "no source" from that footing, so the walk moves on
-  instead of hopping back.
+  instead of hopping back. It is a `LAVA_WALK_COOLDOWN` countdown, not a lock, so a body the dig
+  has changed can be tried again later in the run.
 - **Why danger rows:** Laya selects the head via the **question type** (the checkpoint carries a
   `type_emb.`), so `in_danger` and `intent` **share one** `choice` head. A pure
   intent dataset would silently unlearn the gate. Hence one `in_danger` row per

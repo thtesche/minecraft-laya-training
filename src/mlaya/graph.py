@@ -125,6 +125,12 @@ INVENTORY_CODES = ("INVENTORY_FULL",)
 STUCK_REPEATS = 4
 STUCK_COOLDOWN = 15
 
+# How many ticks a lava stance stays out of the `approach_lava` walk once the bot has stood on it
+# (see `_note_lava_walk`). A countdown, not a lock: the terrain the walk digs can change what the
+# scan sees, so the body gets another try after the exploring in between -- but not on the very
+# next tick, which is what turns two nearby flows into a hop.
+LAVA_WALK_COOLDOWN = 24
+
 # The walking guard, in the same spirit and on the same window: an action that reports walking
 # this far and arriving this close to where it started has not been working. `_track_stuck` only
 # sees refusals, so a `collect_block` that *succeeds* while shambling was never caught: live, run43
@@ -338,10 +344,11 @@ class Agent:
     # in place, only replaced with a fresh set.
     _surface_wet: frozenset[tuple[int, int]] = frozenset()
 
-    # Stances an `approach_lava` walk already ended on. Class default for the same reason as
-    # `_durable`: a stub agent built with `Agent.__new__` reads it through `_inject`, and an empty
-    # set is exactly "no lava body has been stood beside yet". Replaced, never mutated in place.
-    _lava_walked: frozenset[tuple[int, int, int]] = frozenset()
+    # Stances an `approach_lava` walk already ended on, with the ticks left in their cooldown.
+    # Class default for the same reason as `_durable`: a stub agent built with `Agent.__new__`
+    # reads it through `_inject`, and an empty dict is exactly "no lava body has been stood
+    # beside yet". `_note_lava_walk` rebinds a fresh dict, so the default is never mutated.
+    _lava_walked: dict[tuple[int, int, int], int] = {}
 
     def __init__(self, settings: Settings, executor):
         self.settings = settings
@@ -445,7 +452,7 @@ class Agent:
         # Stances an `approach_lava` walk ended on. A lava body the bot has already stood beside
         # without a level-0 source appearing has no footing left to try, so the walk moves on to
         # the next body instead of hopping back (see `_note_lava_walk`).
-        self._lava_walked: set[tuple[int, int, int]] = set()
+        self._lava_walked: dict[tuple[int, int, int], int] = {}
         # The stuck-offer guard, one run per label: the last refusal code and the count of
         # identical failures for that label, and the ticks left in the cooling-off window that
         # withholds it (see `STUCK_REPEATS`/`STUCK_COOLDOWN` and `_track_stuck`). Per label, not a
@@ -1886,14 +1893,17 @@ class Agent:
         tick after that sent the bot back to the first -- 94 `approach_lava` ticks hopping between
         two stances 5.6 blocks apart beside the same two flows, while the frame still owed ten
         obsidian. Standing beside a body once is the whole test: if no source appeared from that
-        footing, another stance of the same body is the same test.
+        footing, another stance of the same body is the same test. The memory is a
+        `LAVA_WALK_COOLDOWN` countdown rather than a lock: the walk digs, the scan changes, and the
+        body gets another try once the ticks in between have had their effect.
         """
-        if not ok or action.label != "approach_lava" or action.tool != "navigate":
-            return
-        args = action.args or {}
-        pos = (args.get("x"), args.get("y"), args.get("z"))
-        if all(isinstance(v, int) for v in pos):
-            self._lava_walked = set(self._lava_walked) | {pos}
+        walked = {pos: left - 1 for pos, left in self._lava_walked.items() if left > 1}
+        if ok and action.label == "approach_lava" and action.tool == "navigate":
+            args = action.args or {}
+            pos = (args.get("x"), args.get("y"), args.get("z"))
+            if all(isinstance(v, int) for v in pos):
+                walked[pos] = LAVA_WALK_COOLDOWN
+        self._lava_walked = walked
 
     def _track_stuck(self, label: str, ok: bool, text: str | None,
                      progressed: bool) -> None:

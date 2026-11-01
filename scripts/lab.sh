@@ -87,10 +87,14 @@ EOF
 
 # The world's own log file is bind-mounted, so it is a faster and steadier readiness signal
 # than the Docker log API, which stalls when the daemon is busy. Either source is enough.
+# A host that is connected to the world is the third proof: the server is up and playable,
+# whatever the log file happens to hold (live: `latest.log` rotated to its tail and the gate
+# refused a world the bot was playing in).
 world_ready() {
   nc -z -w 1 127.0.0.1 "$MC_PORT" 2>/dev/null || return 1
   grep -q 'Done (' "$REPO/infra/world/logs/latest.log" 2>/dev/null && return 0
-  timeout 15 docker compose -f "$COMPOSE" logs world 2>/dev/null | grep -q 'Done ('
+  timeout 15 docker compose -f "$COMPOSE" logs world 2>/dev/null | grep -q 'Done (' && return 0
+  host_connected
 }
 
 wait_world() {
@@ -156,14 +160,22 @@ next_run_number() {  max=0
 report_run() {
   run_no="${1:-$(cat "$STATE/run_number" 2>/dev/null)}"
   [[ -n "$run_no" ]] || return 0
+  log_file="$REPO/runs/decisions.jsonl"
+  archived="$REPO/runs/history/decisions-run$run_no.jsonl"
+  # Asked for a run by number: report the archived log, not the one the next run is writing.
+  if [[ $# -ge 1 && -f "$archived" ]]; then log_file="$archived"; fi
   baseline="$REPO/runs/history/decisions-run$((run_no - 1)).jsonl"
   out_md="$REPO/runs/history/report-run$run_no.md"
   out_json="$REPO/runs/history/summary-run$run_no.json"
+  # The run's own log carries the end JSON; without it the report reads the newest run's.
+  run_log="$REPO/runs/run$run_no.log"
+  extra=()
+  [[ -f "$run_log" ]] && extra=(--run-log "$run_log")
   if [[ -f "$baseline" ]]; then
-    "$PY" -m mlaya.cli analyze --log "$REPO/runs/decisions.jsonl" \
+    "$PY" -m mlaya.cli analyze --log "$log_file" "${extra[@]}" \
       --baseline "$baseline" --out "$out_md" > "$out_json" 2>&1
   else
-    "$PY" -m mlaya.cli analyze --log "$REPO/runs/decisions.jsonl" \
+    "$PY" -m mlaya.cli analyze --log "$log_file" "${extra[@]}" \
       --out "$out_md" > "$out_json" 2>&1
   fi
   log "run $run_no reported: runs/history/report-run$run_no.md"
@@ -202,7 +214,8 @@ cmd_up() {
 
   if ! world_up; then
     seed_ops
-    docker compose -f "$COMPOSE" up -d
+    # A stalled daemon must not hang the lab forever (live: `up` sat on this call for 22 h).
+    timeout 60 docker compose -f "$COMPOSE" up -d
     log "world container starting"
   fi
   if ! wait_world; then
