@@ -1,7 +1,9 @@
 # Nether preparation (pre-gate step)
 
-Status: **phases 1 + 2 implemented** (bow + arrows, cobblestone reserve, gold helmet; safety
-gates). Phase 3 (the actual Nether visit) is still open. Details below.
+Status: **all four phases implemented** (phase 0 reference kit, phase 1 bow + arrows + cobblestone
+reserve, phase 2 gold helmet, phase 3 the Nether visit itself: crossing, fortress, rod haul, walk
+home). What no run has yet done is the last link of the chain — the powder standing in the chest at
+the gate. Details below.
 
 ## Idea
 
@@ -110,6 +112,31 @@ Nether terrain is already provided for in the server reflex.
   through sparse/lava-heavy Nether terrain; ~120 m hops reload the world and reset the search budget per tick.
 - **Gold dig only during the day:** the deep dig for gold is not on offer at night (the run
   sleeps then), but stays open for the auto-stop — otherwise the night would end the run too early.
+
+## The crossing gate as it now stands
+
+`light_portal` fires only when `_expedition_ready` holds, and that is the whole preparation in one
+predicate: the prep steps done, the food reserve banked, **two diamond pickaxes** in the pack
+(`NETHER_PICKAXES = 2`, the spare rides on the lighting gate, not on the craft step), and a bed at
+hand. No hour: `place_bed` lays the carried bed the very next tick, by day as well as by night.
+
+The bed rule around the frame has three parts, all of them corrections from live runs:
+
+- **Where the bed lands.** `_flat_ground_near` looks for a two-block footprint the server can hold
+  (`BED_FOOTPRINT_REACH = 4`); beside an *unlit* frame the nearest flat footprint is often the
+  frame's own 2×3 opening, which `clear_portal` cannot dig out (the movement policy protects a bed
+  from a route dig), so a bed laid before the gate burns strands the lighting on
+  `[PORTAL_NO_FRAME]`.
+- **A bed is not footing.** Beds and portal blocks are in `NON_FOOTING_BLOCKS`, so `navigate` will
+  not path across them; a bot standing next to its bed can still be several blocks away from the
+  click range (`BED_SLEEP_CLICK = 2`, `SLEEP_BED_REACH = 32`), and `sleep` first navigates onto the
+  bed's own ground.
+- **A standing base bed is sleepable.** `_sleep_ready` used to allow the base bed only after the
+  gate burned, while `_sleep_off_base` needs a bed in the pack — run158 held at the anchor for 23
+  night ticks on `wait`. Now a bed standing at the base counts, as long as it is not inside the
+  frame's opening (`_bed_in_opening`); `take_bed` brings a stray bed back into the pack, and that
+  step counts as progress (`INVENTORY_LABELS`). Sleep is refused while a hostile is within
+  `SLEEP_HOSTILE_CLEAR = 12`.
 
 ## Implementation in stages
 

@@ -6,35 +6,67 @@ head is trained. Run-by-run findings live in [`architecture.md`](architecture.md
 
 ## The world and the bot
 
-- **The user hosts the world** in their own Minecraft Java client (`~/Library/Application
-  Support/minecraft/saves/…`), opened to LAN on port 25565 (version 1.21.4). Opening, closing or
-  switching worlds and clients is the user's job; the tooling only reports what it sees.
-- **The MCP server** (`mine-ai-mcp`, a separate repo) connects the bot `MineAI` to that world and
-  serves MCP on `http://127.0.0.1:25575/mcp`:
-  `bun src/server/host.ts --minecraft-host 127.0.0.1 --minecraft-port 25565 --username MineAI --version 1.21.4`.
+- **The world is a vanilla 1.21.4 dedicated server in Docker** (`infra/docker-compose.yml`, seed
+  `97996358`, world folder bind-mounted at `infra/world`, port pinned to `127.0.0.1:25565`).
+  `./scripts/lab.sh up` starts it; `--fresh` wipes the world folder *and* the bot's ledger first,
+  and stops the container before wiping it — deleting a bind-mounted folder under a running server
+  leaves the process alive with no working directory, so the run looks healthy in an empty world.
+  The user's own client can join the same server, and so can the viewer.
+- **The MCP server** (`mine-ai-mcp`, a separate repo at `~/VibeCoding/mine-ai-mcp`) connects the
+  bot `MineAI` to that world and serves MCP on `http://127.0.0.1:25575/mcp`:
+  `bun src/server/host.ts --minecraft-host 127.0.0.1 --minecraft-port 25565 --username MineAI --version 1.21.4 --data-root runs/.lab/bot-data`.
+  `lab.sh` always starts it from the `bot-run` branch (the patches the runs live on) and restarts
+  it when the data root changed or when the host answers `/health` without a connected Minecraft
+  client — a host with a dead world connection is not a host.
   `.venv/bin/python -m mlaya.cli probe` answers whether the loop can reach it.
-- **The bot's database** lives under `~/.mine-ai/bot-data/server-host-<host>-port-<port>-seedHash-<seed>/…/bot-data.sqlite`,
+- **The bot's database** lives under `runs/.lab/bot-data/server-host-<host>-port-<port>-seedHash-<seed>/bots/<uuid>/bot-data.sqlite`,
   one per world. It holds every action request (`action_requests`, with arguments), the server's
   events (`events`, including the survival reflexes' outcomes) and the containers the bot has
   opened (`observed_containers`). Read it read-only (`sqlite3 "file:<path>?mode=ro"`); it is the
-  place to find the arguments of an action the run log does not record.
+  place to find the arguments of an action the run log does not record. It sits next to the world
+  on purpose: a fresh world is only fresh if this ledger is wiped with it.
+- **Operator rights are reseeded on every world start.** A dedicated server has an empty ops list
+  (a LAN world makes its host OP automatically), so `lab.sh` writes `Sanskrita` and `LayaView`
+  into `ops.json` before each start, remembering the UUID the server actually assigns
+  (`runs/.lab/ops-known.json`) — the name-derived offline UUID is not the one a real client uses.
 - **The live view** is the [viewer](../viewer/README.md): a spectator client in the browser. It
   must stay a spectator, or the bot can no longer sleep through the night.
 
 ## A run
 
-1. Archive the previous log: `runs/decisions.jsonl` → `runs/history/decisions-runNN.jsonl`
-   (suffix `-partial` / `-crashed` for a run that did not reach its limit).
-2. Optional: serve a fine-tuned head with
-   `export LAYA_EXTRA_MODELS='{"english": "<repo>/runs/checkpoints/minecraft-<time>"}'`.
-3. Start on the user's word only:
-   `.venv/bin/python .venv/bin/mlaya run -n 600 > runs/runNN.log 2>&1 &`.
-4. Never patch code under a running run: a run keeps the code it started with, and a fix
-   applies from the next run. A run that is stuck is stopped by the user, not by the tooling.
-5. After the run: the last line of `runs/runNN.log` is the end JSON (`iterations`, `stop`
-   `goal`/`limit`/`body_held`, policy; `body_held` means the server's reflex kept the body through three `action_wait_ms` budgets in a row); `runs/decisions.jsonl` has one record per tick (`action`, `defer`,
-   `policy` stages) with the state, the candidates, the chosen label, the result text and the
-   delta.
+One command: `./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]`. The other verbs:
+`status` (JSON: world, host, run, last tick, anomalies), `report [run]`,
+`analyze [--baseline runs/history/…]`, `dataset [flags]`, `console "op LayaView"`,
+`down [--run-only]`.
+
+The lab does the bookkeeping that used to be manual:
+
+1. It refuses a second run while one is running (`runs/.lab/run.pid`), and starts only when the
+   world is ready, the host is connected, and `mlaya.cli probe` passes.
+2. The previous log is archived on its own: `runs/decisions.jsonl` →
+   `runs/history/decisions-runNN.jsonl` (a run that did not reach its limit gets a `-partial` /
+   `-crashed` suffix by hand).
+3. A watcher writes `runs/history/report-runNN.md` and `summary-runNN.json` the moment the loop's
+   process exits, diffing against the previous run's summary — nobody has to ask for the analysis.
+
+`status` names the anomalies worth a look without reading the log: health ≤ 8, food ≤ 6, a host
+that answers `/health` but is not connected to the world, and a stall (six action ticks with at
+most two distinct labels and under 3 blocks moved).
+
+Optional, only when a trained head is meant to run:
+`export LAYA_EXTRA_MODELS='{"english": "<repo>/runs/checkpoints/minecraft-<time>"}'` before `up`.
+Without it the loop runs the base `english` checkpoint.
+
+Manual start, only when the lab is not usable:
+`.venv/bin/python -m mlaya.cli run -n 600 > runs/runNN.log 2>&1 &`.
+
+Never patch code under a running run: a run keeps the code it started with, and a fix
+applies from the next run. A run that is stuck is stopped by the user, not by the tooling.
+When a run ends, the last line of `runs/runNN.log` is the end JSON (`iterations`, `stop`
+`goal`/`limit`/`body_held`, policy; `body_held` means the server's reflex kept the body through
+three `action_wait_ms` budgets in a row), and `runs/decisions.jsonl` holds one record per tick
+(`action`, `defer`, `policy` stages) with the state, the candidates, the chosen label, the result
+text and the delta.
 
 ### Reading the log while it is written
 
@@ -57,8 +89,9 @@ note on stderr rather than ending the reader.
 
 - **Every fix comes with tests**, written from the live state that showed the defect (the cell,
   the label, the refusal text), and the new test must fail without the fix.
-- Tests: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests` (there is no bare
-  `python` on the machine; always `.venv/bin/python`).
+- Tests: `.venv/bin/python -m pytest -q` — that is what the pre-commit hook runs (`pytest` is in
+  the venv; `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests` gives the same 1398
+  tests). There is no bare `python` on the machine; always `.venv/bin/python`.
 - **Commits:** small and thematic, straight on `main`, the message one sentence without a prefix
   that names the live case behind it (run, cell, count). Push only when asked.
 - Agent fixtures in `tests/test_graph.py` build `Agent` with `Agent.__new__` and set each field by

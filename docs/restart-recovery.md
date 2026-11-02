@@ -1,6 +1,7 @@
 # Restart recovery — what survives a cold start, what the loop re-derives
 
-Reviewed 2026-10-30. The question this answers: the game is paused and the MCP server stopped;
+Reviewed 2026-10-30, re-checked against the code and run158 on 2026-11-02. The question this
+answers: the game is paused and the MCP server stopped;
 on a fresh start with the **old Minecraft world** and a **freshly launched MCP server**, does the
 whole decision logic still work?
 
@@ -138,7 +139,10 @@ bot to "re-do the Nether haul" or "re-light a gate that burns".
 
 The one thing the ledger cannot say is a fact a *different* bot recorded: every table here lives in
 the per-bot database
-(`~/.mine-ai/bot-data/server-<host>-port-<port>-seedHash-<hash>/bots/<bot>/bot-data.sqlite`), so a
-gate lit by another bot in the same world is not in this bot's rows. If the ledger is silent, the
-run behaves as it always did — it falls back to the scan, then the latch, and walks to the gate to
-look.
+(`runs/.lab/bot-data/server-<host>-port-<port>-seedHash-<hash>/bots/<bot>/bot-data.sqlite`, the data
+root `lab.sh` gives the host), so a gate lit by another bot in the same world is not in this bot's
+rows. If the ledger is silent, the run behaves as it always did — it falls back to the scan, then
+the latch, and walks to the gate to look.
+
+`lab.sh up --fresh` wipes this ledger with the world folder. That is not a detail: a fresh world
+whose ledger still remembers an old gate is a bot that starts with milestones it never earned.

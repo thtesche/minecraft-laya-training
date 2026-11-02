@@ -168,8 +168,10 @@ def candidates(gs: GameState) -> list[str]:
     # "beside the bot", and at the base that spot is the portal's own interior, which the later
     # frame build - or the still-open unlit opening - cannot clear: live, the bed landed in the
     # opening and `light_portal` answered `[PORTAL_NO_FRAME]` on every tick), and at the base on a
-    # bed actually standing there once the gate is lit. `place_bed` owns the base bed, `take_bed`
-    # brings a leftover home.
+    # bed actually standing there, gate burning or not (run158 held 23 night ticks on `wait`
+    # because the standing bed only counted once the portal lit). `_bed_in_opening` keeps a bed
+    # inside the frame's own opening out of it. `place_bed` owns the base bed, `take_bed` brings a
+    # leftover home.
     # The night offer returns ahead of the withholding filter at the end, so it asks for itself:
     # run86 dropped `sleep` at it2 for `[BED_NOT_FOUND]` and the offer took the next 13 ticks
     # anyway, the window never reaching it.

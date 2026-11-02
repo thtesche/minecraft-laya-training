@@ -263,11 +263,14 @@ Important implementation details:
 **Criterion:** Build a bed, sleep in it at night (skips the night **and** sets the
 respawn point), and actually read the unread notifications and lift them into the state.
 
-- **Bed chain** in `actions.py`: `hunt_wool` (sheep) or `hunt_string` (spider) →
-  `craft_bed` (`white_bed`, 3×3 → `temporary_workstation: true`) → `sleep`.
-  `sleep` is only offered at night and with a carried bed; `sleep` finds/places the bed
-  itself (`view_crafting_requirements` confirms: `white_bed` = 3 `white_wool` + 3 planks,
-  `white_wool` = 4 `string`).
+- **Bed chain** in `actions/planner.py`: `hunt_wool` (sheep) or `hunt_string` (spider) →
+  `craft_bed` (`white_bed`, 3×3 → `temporary_workstation: true`) → `sleep`, with `place_bed` and
+  `take_bed` beside it. `sleep` is offered at night, and a bed may be **carried or standing at the
+  base** (`_sleep_ready`); `place_bed` lays a carried bed by day as well as by night, and
+  `take_bed` brings a bed that stands elsewhere back into the pack. `sleep` finds and clicks the
+  bed itself (`view_crafting_requirements` confirms: `white_bed` = 3 `white_wool` + 3 planks,
+  `white_wool` = 4 `string`). Where a bed may stand and be slept in is the part the live runs
+  rewrote — see the run158 section below and [`nether-prep.md`](nether-prep.md).
 - **`white_wool` is craftable from `string`** — the server computes the chain recursively
   (`craft_item white_bed` first makes wool from `string`, then the bed).
 - **Validation (live):** the full chain ran through: `craft_table` (during the day) → roamed during the day via
@@ -1029,7 +1032,7 @@ Nether / fortress series — the arc toward the first powder home:
 Net: crossing, fortress search and the rod haul all run live, but **no run has carried the blaze
 powder back to the chest at the gate** — `nether_expedition_complete` is still unmet live.
 
-## Live findings run108–128 (2026-10-28 … 30)
+## Live findings run108–149 (2026-10-28 … 11-01)
 
 Ticks below are quoted from the archived logs in `runs/history/`, read with `scripts/dec.py`
 (`8dcb2ed`), the level-1 reader for `decisions.jsonl`.
@@ -1284,13 +1287,15 @@ lid and stalled on the latch that was supposed to say the haul was done.
 
 ## Next milestones
 
-- **Open after run86:** (1) the October fixes above are unit-tested but not yet seen live;
-  (2) the gate may still be lit by day (`86f2846`), which leaves the bot beside an open portal
-  for up to a day — the `wait` hold makes it cheap, not safe; (3) `mine_obsidian` re-made ten
-  obsidian far from a base whose frame already stood (run86 it64–66), presumably because the
-  frame-plane read only exists near the base; (4) other steps that leave the base (`mine_diamond`,
-  `mine_gold`) are not yet held back by `_shed_owed`; (5) the server's `observed_containers`
-  table was empty in the run86 world, so `_walk_home_to_memory` cannot fire there.
+- **Open after run158:** (1) the endgame has never been reached live — no run has banked the
+  powder (`powder_banked`), estimated a stronghold (`stronghold_estimated`) or lit an end portal
+  (`end_portal_active`), so those links are unit-tested only; (2) the fine-tuned head has never
+  been served in a live run (`LAYA_EXTRA_MODELS` unset), and the corpus has no endgame rows to
+  train on; (3) the viewer's chunk window: LayaView loads at `--view-distance 6`, so a bot working
+  beyond it is not on screen — the patch in `viewer/viewer.mjs` is deferred; (4) steps that leave
+  the base (`mine_diamond`, `mine_gold`) are still not held back by `_shed_owed`, only
+  `mine_obsidian` is; (5) the server's `observed_containers` table is empty in the lab world
+  (checked 2026-11-02), so `_walk_home_to_memory` cannot fire there.
 
 - **M3+ (open):** The **out-of-distribution** held-out split is now built (full run
   `run7d`): the zero-shot accuracy there is **0.934**, the fine-tune improves loss/ECE/Brier,
