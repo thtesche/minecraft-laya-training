@@ -85,6 +85,11 @@ INVENTORY_LABELS = {
     # The barter route to pearls: the reserve dig nets raw_gold, and a barter that lands pearls
     # nets them (a barter that only spent gold nets nothing, which is the honest reading).
     "mine_gold_reserve", "barter_pearls",
+    # `take_bed` collects a standing bed, so the bed lands in the pack like any other gather.
+    # It was missing here, which made every one of the 154 `take_bed` ticks in the archived logs
+    # read as a wasted tick - and a tick the verifier calls wasted is dropped from the corpus,
+    # so the fine-tune never sees the state in which a stray bed is being fetched.
+    "take_bed",
 }
 
 

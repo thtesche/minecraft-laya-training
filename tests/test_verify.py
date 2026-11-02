@@ -132,6 +132,18 @@ class NetherProgressTest(unittest.TestCase):
                                     diff(gs(inventory={"white_bed": 1}),
                                          gs(inventory={}))))
 
+    def test_take_bed_is_the_bed_entering_the_pack(self) -> None:
+        # `take_bed` collects a standing bed, so the bed lands in the pack like any gather. It
+        # was not in INVENTORY_LABELS, which made all 154 `take_bed` ticks in the archived logs
+        # read as wasted ticks - and a wasted tick is dropped from the corpus, so the fine-tune
+        # never sees a state in which a stray bed is fetched.
+        d = diff(gs(inventory={}, resources={"white_bed": _hit("white_bed")}),
+                 gs(inventory={"white_bed": 1}))
+        self.assertTrue(progressed("take_bed", d))
+        self.assertFalse(progressed("take_bed",
+                                    diff(gs(inventory={"white_bed": 1}),
+                                         gs(inventory={"white_bed": 1}))))
+
 
 class HomeBaseProgressTest(unittest.TestCase):
     """The base steps: movement for the walks, the chest entering/leaving the pack, and a
