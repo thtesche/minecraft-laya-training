@@ -37,6 +37,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
                            NETHER_EXIT_HOP_MIN,
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
+                           STEW_ITEM, STEW_BATCH,
                            tech_tree_complete, WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources)
@@ -2674,6 +2675,20 @@ class NetherGateTest(unittest.TestCase):
         stance = _bed_reach_stance(g)
         self.assertIsNotNone(stance)
         self.assertNotIn(stance, _bed_cells(g))
+
+    def test_a_bed_is_not_a_footing(self) -> None:
+        # Live, run153 it77-80: the gate bed at (-43,70,89) came back from the ground scan with
+        # `air` over it, so `_known_footings` read the cell above it as a stance and `sleep` walked
+        # four ticks to a column the server refused outright - "[NAVIGATION_TARGET_UNSUPPORTED] No
+        # usable footing was observed within 0 blocks of -43, 71, 89. No ground was found within 64
+        # blocks below it." A bed is a half-block: the body stands beside it, never on it.
+        g = self._run121_base()
+        g.rescue_ground = {}
+        self.assertNotIn((-10, 71, -50), _known_footings(g),
+                        "the cell above a bed block is not ground to stand on")
+        stance = _bed_reach_stance(g)
+        self.assertNotEqual(stance, (-10, 71, -50))
+        self.assertEqual(stance[1], 70, "the stance sits at the bed's own level, beside it")
 
     def test_a_bed_out_of_scan_range_is_not_crafted_again(self) -> None:
         # run121 it80: the bot stood at (228,72,-336), 280 m from the base, and the base chunks
@@ -7713,6 +7728,70 @@ class NetherExitTest(unittest.TestCase):
         self.assertAlmostEqual(dist_to_target, NETHER_EXIT_STAGING_DISTANCE, delta=1.0)
 
 
+class StewPantryTest(unittest.TestCase):
+    """Mushroom stew as food where no animal is in reach.
+
+    Live, run153: a fully stocked bot at its burning gate, 23 edibles, full hunger and no animal
+    inside the daylight reach - `enter_portal` was withheld by one item and `wait` held the base
+    until the iteration limit. The user's rule for the fallback: animals first, and where there
+    is no herd, a bowl and a red plus a brown mushroom, which renew themselves.
+    """
+
+    BASE = (-43, 69, 89)
+    OVERWORLD = "minecraft:overworld"
+
+    def _pantry(self, mobs=(), **inv) -> GameState:
+        stock = dict(cooked_beef=3, crafting_table=1, oak_planks=6)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.dimension = self.OVERWORLD
+        g.resources = {}
+        g.mobs = list(mobs)
+        return g
+
+    def test_no_animal_in_reach_offers_the_stew(self) -> None:
+        g = self._pantry()
+        g.resources = {"red_mushroom": [BlockHit("red_mushroom", "red_mushroom",
+                                                 6, 64, 12, 9.0)],
+                       "brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom",
+                                                   7, 63, 14, 11.0)]}
+        self.assertIn("craft_stew", candidates(g))
+
+    def test_an_animal_in_reach_keeps_the_hunt(self) -> None:
+        # The user's priority: a herd is food on the hoof, and the stew is only the fallback.
+        g = self._pantry(mobs=[("cow", "animal", 3, 12.0)])
+        g.resources = {"red_mushroom": [BlockHit("red_mushroom", "red_mushroom",
+                                                 6, 64, 12, 9.0)],
+                       "brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom",
+                                                   7, 63, 14, 11.0)]}
+        self.assertNotIn("craft_stew", candidates(g))
+
+    def test_no_mushroom_in_the_scan_offers_nothing(self) -> None:
+        g = self._pantry()
+        self.assertNotIn("craft_stew", candidates(g))
+
+    def test_the_missing_mushroom_is_picked_not_crafted(self) -> None:
+        g = self._pantry(bowl=1, red_mushroom=1)
+        g.resources = {"brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom",
+                                                   7, 63, 14, 11.0)]}
+        self.assertIn("craft_stew", candidates(g))
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "brown_mushroom")
+
+    def test_a_full_pantry_brews_the_stew(self) -> None:
+        g = self._pantry(bowl=1, red_mushroom=1, brown_mushroom=1)
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"][0]["item_name"], STEW_ITEM)
+        self.assertLessEqual(a.args["items"][0]["count"], STEW_BATCH)
+
+    def test_no_pantry_is_no_step(self) -> None:
+        # Nothing to pick, nothing to brew: the label resolves to None rather than a guess.
+        g = self._pantry(bowl=1)
+        self.assertIsNone(resolve("craft_stew", g))
+
+
 class NetherFoodSecurityTest(unittest.TestCase):
     """Food must be in pack before entering Nether.
 
@@ -7745,7 +7824,8 @@ class NetherFoodSecurityTest(unittest.TestCase):
         g = gs(inventory={})
         self.assertFalse(_nether_food_secured(g))
 
-        g.inventory = {"cooked_beef": 23}
+        # A cow in reach: the reserve is fillable, so 23 is not enough and the hunt holds the gate.
+        g = gs(inventory={"cooked_beef": 23}, mobs=[("cow", "animal", 3, 12.0)])
         self.assertFalse(_nether_food_secured(g), "23 items is below NETHER_FOOD_MIN_RESERVE")
 
         g.inventory = {"cooked_beef": 24}
@@ -7753,6 +7833,37 @@ class NetherFoodSecurityTest(unittest.TestCase):
 
         g.inventory = {"cooked_porkchop": 12, "cooked_beef": 12}
         self.assertTrue(_nether_food_secured(g))
+
+    def test_a_reserve_no_hunt_can_fill_does_not_hold_the_gate(self) -> None:
+        # Live, run153 it127-140: 23 edibles, full hunger, no animal inside the daylight reach -
+        # `enter_portal` was withheld by one item and `wait` held the base to the iteration limit.
+        # The prep gate already lets an unreachable requirement drop out; the departure gate must
+        # too, or a bot can be "prepared" and never allowed through.
+        g = gs(inventory={"cooked_beef": 23})
+        self.assertTrue(_nether_food_secured(g),
+                        "a hunt nothing can walk to is not a reason to stand at the gate")
+
+        # Below the renewable floor nothing crosses, whatever is (not) in reach.
+        g.inventory = {"cooked_beef": 7}
+        self.assertFalse(_nether_food_secured(g))
+
+    def test_a_stew_pantry_carries_a_trip_on_the_renewable_floor(self) -> None:
+        # A bowl and both mushrooms renew themselves - the bowl comes back from every meal - so
+        # the pack needs the floor, not the full larder.
+        g = gs(inventory={"cooked_beef": 8, "bowl": 1,
+                          "red_mushroom": 1, "brown_mushroom": 1},
+               mobs=[("cow", "animal", 3, 12.0)])
+        self.assertTrue(_nether_food_secured(g))
+
+        # One mushroom short is no pantry: the missing kind has to be walkable.
+        g.inventory = {"cooked_beef": 8, "bowl": 1, "red_mushroom": 1}
+        g.resources = {}
+        self.assertFalse(_nether_food_secured(g))
+
+        g.resources = {"brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom",
+                                                   4, 66, 9, 6.0)]}
+        self.assertFalse(_nether_food_secured(g),
+                         "the cow in reach can fill the larder, so the gate waits for it")
 
 
 class LabelRegistryTest(unittest.TestCase):

@@ -140,6 +140,15 @@ def candidates(gs: GameState) -> list[str]:
             and _food_target(gs) is not None
             and _hunt_ok(gs)):
         out.append("hunt_food")
+    # No animal to hunt: the stew pantry is the fallback the user asked for - a bowl and one red
+    # plus one brown mushroom brew a meal whose bowl comes back, so there is food where there is
+    # no herd. Offered only when the hunt has nothing to walk to (`_food_source_in_reach`), so
+    # animals keep their priority, and only below the renewable floor, so it cannot brew the day
+    # away. Live, run153: 23 edibles and no animal in reach, where `wait` took the rest of the run.
+    if (not eating and not _food_source_in_reach(gs)
+            and _edible_count(inv) < NETHER_FOOD_RENEWABLE_RESERVE
+            and _stew_source_in_reach(gs)):
+        out.append("craft_stew")
     if (_edible_count(inv) < _food_goal(gs) and _banked_provisions(gs)
             and not _in_nether(gs) and _at_base(gs) and _chest_ready(gs)):
         out.append("take_stored_food")
@@ -1466,6 +1475,26 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"mob_name": mob, "drop_name": drop, "count": count,
                        "allow_without_shield": True},
                       f"hunt a {mob} for {drop}")
+    if label == "craft_stew":
+        # Two steps in one label: fetch the mushroom the pack still lacks, or brew once both are
+        # in hand. The bowl is never fetched separately - `craft_item` plans the bowl from the
+        # carried planks on its way to the stew, and the server's own planner knows that recipe.
+        missing = _stew_missing(gs)
+        if missing is not None:
+            hit = gs.resource_nearest(missing)
+            if hit is None:
+                return None
+            return Action(label, "collect_block",
+                          {"block_name": missing, "count": 1},
+                          f"pick a {missing} for the stew; the bowl and the other mushroom are "
+                          "already in the pack")
+        need = NETHER_FOOD_RENEWABLE_RESERVE - _edible_count(inv)
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": STEW_ITEM,
+                                  "count": max(1, min(STEW_BATCH, need))}],
+                       "temporary_workstation": True},
+                      "brew mushroom stew from the bowl and both mushrooms - the bowl comes back "
+                      "from every meal, so this renews itself")
     if label == "collect_smelted":
         if not _furnace_needs_draining(gs) or not _at_base(gs) or not _furnace_room(gs):
             return None

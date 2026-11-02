@@ -54,6 +54,12 @@ RESCUE_ABOVE = ("air", "cave_air")
 # `end_portal_frame` is the stronghold phase's landmark: it loads into the scan once the locate
 # phase has walked the bot to the stronghold, and that is what hands the tick to the activation.
 CHAIN_NAMES = ("lava", "chest", "furnace", "smoker", "gold_ore", "end_portal_frame")
+# The stew pantry, read in both dimensions: a bowl, a red and a brown mushroom brew a meal
+# whose bowl comes back from every bite, and both mushrooms grow on netherrack as well as on
+# Overworld soil. Its own `view_blocks find` group because the resource group already holds all
+# eight names one call accepts.
+MUSHROOM_NAMES = ("red_mushroom", "brown_mushroom")
+MUSHROOM_LIMIT = 4
 # The Nether's own scan group, read *only* in the Nether: the bricks a fortress is built from are
 # the one landmark that tells the bot a blaze spawner is plausibly near, and `spawner` names the
 # cage itself. Blazes are hostile, so they only reach the state through `view_status` once one is
@@ -79,7 +85,7 @@ FRONTIER_HEADING_SQL = ("SELECT heading_degrees FROM frontier_navigation "
                         "WHERE is_frontier = 1 ORDER BY distance_blocks ASC LIMIT 1")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava", "spawner", "nether_bricks", "nether_brick_fence", "nether_brick_stairs",
-                                    "end_portal_frame")
+                                    "end_portal_frame", "red_mushroom", "brown_mushroom")
 RESOURCE_RADIUS = 64.0
 # How far the water rescue looks for dry land. The shore it needs to swim to is the one
 # reach the *last* live stranding missed: the nearest dry ground sat 65.1 m off, a whisker
@@ -2050,7 +2056,9 @@ async def build(executor) -> GameState:
                               (RESCUE_GROUND_NAMES, RESCUE_GROUND_LIMIT,
                                "scan standable ground for navigate targets"),
                               (CHAIN_NAMES, CHAIN_LIMIT,
-                               "scan the lava to pour on and a chest at the base")):
+                               "scan the lava to pour on and a chest at the base"),
+                              (MUSHROOM_NAMES, MUSHROOM_LIMIT,
+                               "scan the mushrooms that brew into stew when no animal is in reach")):
         try:
             blocks = await executor.read(
                 "view_blocks",

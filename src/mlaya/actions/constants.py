@@ -47,6 +47,7 @@ CRITERIA: dict[str, str] = {
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
     "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the gate frame stands, stock the deeper Nether reserve - the chest at the base counts towards this, so a full chest means no hunt at all",
+    "craft_stew": "no animal is in reach: brew mushroom stew instead - pick the red or brown mushroom still missing, or craft it from the bowl and both mushrooms, each meal returning its bowl",
     "take_stored_food": "take cooked food out of the chest at the base and put it in the pack, so the Nether trip is fed from what is already banked rather than hunted again",
     "cook_food": "cook carried raw meat in the furnace at the base (or the carried furnace, set up just for the batch) so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
     "collect_smelted": "take what a cook left sitting in the furnace at the base back into the pack, so the next cook can start",
@@ -268,6 +269,22 @@ NETHER_EXIT_HOP_MIN = 30.0
 # pearl waves end in starvation (hunger reaching zero) far from home. Nether movement costs hunger
 # fast; 24 items give enough margin before NETHER_RETURN_FOOD (8.0) forces the exit.
 NETHER_FOOD_MIN_RESERVE = 24
+# The same reserve when the pack can brew its own meals: a bowl, a red and a brown mushroom are
+# three slots that renew themselves - the bowl comes back from every meal and the mushrooms
+# regrow, in the Nether as well (both grow on netherrack). So a bot that can brew does not need a
+# 24-item larder before it crosses, only enough to reach the first mushrooms.
+#
+# This is the floor as well: below it nothing crosses, whatever the pack can make. Live, run153:
+# 23 edible items, full hunger, no animal inside the daylight reach - `enter_portal` was withheld
+# by one item and `wait` held the base until the iteration limit.
+NETHER_FOOD_RENEWABLE_RESERVE = 8
+STEW_ITEM = "mushroom_stew"
+BOWL_ITEM = "bowl"
+# Both are needed: a stew is one bowl, one red and one brown mushroom.
+STEW_MUSHROOMS = ("red_mushroom", "brown_mushroom")
+# How many stews one brew makes at most. Stews do not stack, so the bowl comes back and the
+# mushrooms are renewable but the slot budget is not - a couple of meals per trip is the idea.
+STEW_BATCH = 2
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
 # not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.
@@ -381,6 +398,14 @@ SLEEP_BED_REACH = 32.0
 # in plan, but a full block above the bed's own level, 5.04 squared - and four identical
 # `[BED_SLEEP_REJECTED] bot is not sleeping` ticks followed.
 BED_SLEEP_CLICK = 2.0
+# Blocks the ground scan reads with open space over them that the server's pathfinder will not
+# accept as a place to stand. A bed is a half-block: the cell above it is not a stance, and a
+# `navigate` to that column is refused outright. Live, run153 it77-80: the gate bed at
+# (-43,70,89) came back from the scan with `air` over it, `_known_footings` turned the cell above
+# it into the sleep stance, and four `sleep` ticks answered "[NAVIGATION_TARGET_UNSUPPORTED] No
+# usable footing was observed within 0 blocks of -43, 71, 89. No ground was found within 64 blocks
+# below it." A lit gate is not a floor either.
+NON_FOOTING_BLOCKS = ("white_bed", PORTAL_BLOCK)
 # A night sleep away from the base needs open ground and no monster at hand. Minecraft refuses a
 # sleep with hostiles near the bed but sets the respawn point first, so a refused sleep still
 # pins the respawn wherever the bed was laid: run87 slept at y=-10 in a zombie cave (it193-197,

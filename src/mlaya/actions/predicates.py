@@ -787,16 +787,18 @@ def _known_footings(gs: GameState) -> set[tuple[int, int, int]]:
     """Every feet cell the ground scan proves the bot can actually stand in.
 
     A `view_blocks find` hit with `air` over it is a block with open space above it, so the cell
-    directly on top of it is footing `navigate` accepts. The base floor is usually cobblestone the
-    run laid itself, which the soil-only `resources` group never lists, so the wider rock cast in
-    `gs.rescue_ground` is read too. An empty set means no ground was read at all (a fixture, or a
-    failed scan), which callers treat as "no footing information", not "no footing anywhere".
+    directly on top of it is footing `navigate` accepts - except for the blocks in
+    `NON_FOOTING_BLOCKS`, which the server will not stand on whatever the scan says is over them.
+    The base floor is usually cobblestone the run laid itself, which the soil-only `resources`
+    group never lists, so the wider rock cast in `gs.rescue_ground` is read too. An empty set means
+    no ground was read at all (a fixture, or a failed scan), which callers treat as "no footing
+    information", not "no footing anywhere".
     """
     cells = set()
     for pool in (gs.resources, gs.rescue_ground):
         for hits in pool.values():
             for hit in hits:
-                if hit.standable:
+                if hit.standable and hit.name not in NON_FOOTING_BLOCKS:
                     cells.add((hit.x, hit.y + 1, hit.z))
     return cells
 
@@ -1436,15 +1438,63 @@ def _mine_diamond_wanted(gs: GameState) -> bool:
             and _diamond_dig_short(gs))
 
 
+def _bowl_available(gs: GameState) -> bool:
+    """Whether a stew bowl is carried, or can be made: three planks at a crafting table."""
+    inv = gs.inventory
+    return inv.get(BOWL_ITEM, 0) > 0 or (_plank_units(inv) >= 3 and _has(inv, "crafting_table"))
+
+
+def _stew_missing(gs: GameState) -> str | None:
+    """The mushroom kind the pack still lacks for a meal, or None when it carries both."""
+    for name in STEW_MUSHROOMS:
+        if gs.inventory.get(name, 0) <= 0:
+            return name
+    return None
+
+
+def _stew_kit(gs: GameState) -> bool:
+    """A bowl and both mushrooms carried: meals that renew themselves out of the pack."""
+    return _bowl_available(gs) and _stew_missing(gs) is None
+
+
+def _stew_source_in_reach(gs: GameState) -> bool:
+    """Whether a full meal can be made from what the pack carries or can walk to.
+
+    Mushrooms are the one food that grows where there is no herd: a red and a brown beside a
+    bowl are a meal, and the bowl comes back from every bite. The scan proves a mushroom is
+    *loaded*, which is enough here for the same reason it is enough for a mine - the bot can walk
+    to it, unlike an animal that has to still be there when the walk ends.
+    """
+    if not _bowl_available(gs):
+        return False
+    missing = [n for n in STEW_MUSHROOMS if gs.inventory.get(n, 0) <= 0]
+    return all(gs.resource_nearest(n) is not None for n in missing)
+
+
 def _nether_food_secured(gs: GameState) -> bool:
-    """Whether the pack has at least one edible item before entering Nether.
+    """Whether the pack can feed a Nether trip.
 
     Without food carried down, pearl waves end in starvation far from home. Every Nether trip
     (blaze hunt, pearl wave, or powder top-up) must start with `NETHER_FOOD_MIN_RESERVE` edible
-    items to survive a long search or emergency return. Banked rotten flesh counts toward the reserve.
+    items to survive a long search or emergency return. Banked rotten flesh counts toward the
+    reserve.
+
+    Two ways to fall short of that larder without being stuck at the gate. A pack carrying a
+    bowl and both mushrooms brews its own meals - the bowl returns from every bite and the
+    mushrooms regrow, in the Nether as much as at home - so it crosses on
+    `NETHER_FOOD_RENEWABLE_RESERVE`, the floor below which nothing crosses. And when no animal
+    is in reach and no mushroom can be walked to, the reserve is simply not fillable from here:
+    the same unreachable rule the prep gate (`_food_reserve_met`) already follows, because the
+    opposite behaviour is a run that waits out its iteration limit at a burning gate (live,
+    run153: 23 edibles, full hunger, no animal inside the daylight reach, and `enter_portal`
+    withheld by one item while `wait` held the base).
     """
-    return (_edible_count(gs.inventory) + gs.banked.get("rotten_flesh", 0) 
-            >= NETHER_FOOD_MIN_RESERVE)
+    packed = _edible_count(gs.inventory) + gs.banked.get("rotten_flesh", 0)
+    if packed >= NETHER_FOOD_MIN_RESERVE:
+        return True
+    if packed < NETHER_FOOD_RENEWABLE_RESERVE:
+        return False
+    return _stew_kit(gs) or not (_food_source_in_reach(gs) or _stew_source_in_reach(gs))
 
 
 def _nether_departure_ready(gs: GameState) -> bool:
