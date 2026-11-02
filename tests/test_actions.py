@@ -3168,6 +3168,28 @@ class HomeBaseTest(unittest.TestCase):
         self.assertEqual(a.args["block_name"], "chest")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -97))
 
+    def test_a_bed_on_the_chest_cell_moves_the_chest_to_the_next_candidate(self) -> None:
+        # Live, run154 it125-162: the gate sleep lays the bed on the footprint the bot is standing
+        # on, and that footprint covered the layout's own chest cell. `place_chest` answered
+        # `[PLACE_TARGET_OCCUPIED] ... contains white_bed` six times and the two `make_room` digs
+        # in between `movement policy prohibits breaking this block`. The bed is the respawn
+        # point: the chest goes to the next free cell instead of digging it away.
+        g = self._home(self._geared(chest=1))
+        g.bed_pos = (-197, -46, -97)
+        a = resolve("place_chest", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -95))
+
+    def test_a_cell_the_ground_cannot_clear_is_passed_over(self) -> None:
+        # The other half of the same fact: once the server has refused a cell for a block the dig
+        # cannot remove, naming it again is a refusal per tick.
+        g = self._home(self._geared(chest=1))
+        g.placement_refused = frozenset({(-197, -46, -97)})
+        a = resolve("place_chest", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -95))
+        g.placement_refused = frozenset({(-197, -46, -97), (-197, -46, -95)})
+        a = resolve("place_chest", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-198, -46, -96))
+
     def test_the_chest_chain_is_dropped_when_the_ground_cannot_hold_it(self) -> None:
         # `[PLACE_NO_SUPPORT]` says no solid block touches the cell beside the base, so the
         # chest cannot stand there (live: the run looped on it and never reached the portal).

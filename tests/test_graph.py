@@ -99,6 +99,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -237,6 +238,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._unblock_attempts = 0
         agent._unblock_done = False
         agent._blocked_cell = None
+        agent._placement_refused = set()
         agent._chest_above = None
         agent._pour_skip = set()
         agent._stance_skip = set()
@@ -404,6 +406,33 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._note_place(dig, True, "")
         self.assertIsNone(agent._blocked_cell)
 
+    def test_a_bed_in_the_cell_leaves_the_chain_to_the_next_candidate(self) -> None:
+        # Live, run154: the gate bed stood on the chest's cell. `place_chest` refused there six
+        # times and `make_room` twice answered `movement policy prohibits breaking this block`.
+        # A block the dig cannot remove is not a cell to retry: it leaves the candidate list, and
+        # `make_room` is not sent at it.
+        agent = self._agent()
+        act = Action("place_chest", "place_block",
+                     {"block_name": "chest", "x": -31, "y": 71, "z": 172}, "place the chest")
+        agent._note_place(act, False,
+                          "[PLACE_TARGET_OCCUPIED] The target cell contains white_bed, "
+                          "which this action will not remove.")
+        self.assertEqual(agent._placement_refused, {(-31, 71, 172)})
+        self.assertIsNone(agent._blocked_cell)
+        dig = Action("make_room", "build_structure",
+                     {"blocks": [{"x": -31, "y": 71, "z": 172, "block_name": "air"}]}, "dig it")
+        agent._note_place(dig, False,
+                          "[BUILD_INCOMPLETE] 1 cell still wrong: 1 were refused "
+                          "(-31,71,172: movement policy prohibits breaking this block).")
+        self.assertEqual(agent._placement_refused, {(-31, 71, 172)})
+        # A diggable block in a different cell still gets the dig.
+        act2 = Action("place_chest", "place_block",
+                      {"block_name": "chest", "x": -30, "y": 71, "z": 172}, "place the chest")
+        agent._note_place(act2, False,
+                          "[PLACE_TARGET_OCCUPIED] The target cell contains grass_block")
+        self.assertEqual(agent._blocked_cell, (-30, 71, 172))
+        self.assertEqual(agent._placement_refused, {(-31, 71, 172)})
+
     async def test_the_placement_block_digs_the_refused_cell(self) -> None:
         agent = self._agent()
         agent._blocked_label = "place_chest"
@@ -518,6 +547,7 @@ class PourSkipTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = {(-129, 66, -30)}
@@ -606,6 +636,7 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent._water_ticks = 0
@@ -763,6 +794,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.base = None
@@ -916,6 +948,7 @@ class RescueSkipTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.base = None
@@ -1110,6 +1143,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.base = None
@@ -1224,6 +1258,7 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -1304,6 +1339,7 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent._settle_home_anchor(gs(pos=(229.5, 61.0, 225.5), base=(229, 61, 225)))
@@ -1850,6 +1886,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -2009,6 +2046,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -2183,6 +2221,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -2597,6 +2636,7 @@ class DropHoleTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = set()
@@ -2764,6 +2804,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent._chest_blocked = False
         agent._furnace_blocked = False
@@ -2822,6 +2863,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = set()
@@ -2883,6 +2925,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent._portal_blocked = []
@@ -2947,6 +2990,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = (-197, -46, -99)
@@ -3105,6 +3149,7 @@ class ChestLidTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -3298,6 +3343,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -3480,6 +3526,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -3728,6 +3775,7 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent._stock_read = None
@@ -3813,6 +3861,7 @@ class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent._stock_read = None
@@ -4315,6 +4364,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent._stock_read = None
         agent._stock_warned = False
@@ -4585,6 +4635,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -4722,6 +4773,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -4857,6 +4909,7 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -5005,6 +5058,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None
@@ -5514,6 +5568,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._extra_chests = []
         agent._chests_full = set()
         agent._overflow_no_support = set()
+        agent._placement_refused = set()
         agent._banked_stores = ()
         agent.banked = {}
         agent.furnace_pos = None

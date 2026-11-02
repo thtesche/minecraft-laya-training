@@ -2102,31 +2102,53 @@ def _storage_full(gs: GameState) -> bool:
     return bool(network) and all(cell in set(gs.chests_full) for cell in network)
 
 
-def _overflow_site(gs: GameState) -> tuple[int, int, int] | None:
-    """A cell for the next overflow chest, or None once none can stand.
+def _chest_candidates(gs: GameState) -> list[tuple[int, int, int]]:
+    """Every cell around the base anchor a chest could stand on, the layout's own cell first.
 
     The candidates march behind the base in +z, past the furnace, the smoker and the frame
     plane; a cell that already has a chest, a bed or the frame's obsidian on it is skipped, as
     is one the ground refused a chest at (`[PLACE_NO_SUPPORT]`, kept per cell so the whole
     chain stays open -- the main ground's refusal is that, a bed the frame cannot use is this).
-    A cell merely *occupied* is not this pick's problem: `make_room` digs it free and the same
-    cell retries.
+    A cell the ground refused *and* cannot clear is skipped too: `make_room` digs a cell to free
+    it, but a bed there stays (see `UNDIGGABLE_BLOCKS`), so naming it again is a refusal per
+    tick. Live, run154: the gate bed covered the layout's own chest cell (-31,71,172), and the
+    first chest was named by coordinate rather than from this list - six
+    `[PLACE_TARGET_OCCUPIED]` ticks and two digs at a block the movement policy will not break.
     """
     if gs.base is None:
-        return None
+        return []
     bx, by, bz = gs.base
     taken = set(_chest_network(gs))
-    for name in ("white_bed", "obsidian"):
-        taken.update(tuple(hit.pos) for hit in gs.resources.get(name, []))
+    taken.update(_bed_cells(gs))
+    taken.update(hit.pos for hit in gs.resources.get("obsidian", []))
     for station in (gs.furnace_pos, gs.smoker_pos):
         if station is not None:
             taken.add(tuple(station))
     taken |= set(gs.overflow_skip)
-    for dx, dz in STORAGE_SITES:
-        cell = (bx + dx, by + 1, bz + dz)
-        if cell not in taken:
-            return cell
-    return None
+    taken |= set(gs.placement_refused)
+    return [(bx + dx, by + 1, bz + dz)
+            for dx, dz in (CHEST_SITE_FIRST,) + STORAGE_SITES
+            if (bx + dx, by + 1, bz + dz) not in taken]
+
+
+def _chest_site(gs: GameState) -> tuple[int, int, int] | None:
+    """The cell the next chest of the network goes on, or None once none can stand.
+
+    With no chest up yet this is the base's own cell; with one, that cell is in the network and
+    the picker moves on to the first free candidate. The first chest and the overflow share one
+    picker on purpose: the bed the gate sleep lays is placed by the server on the footprint the
+    bot is standing on, so the layout's cell is not known to be free until the bed is down.
+    """
+    cells = _chest_candidates(gs)
+    return cells[0] if cells else None
+
+
+def _overflow_site(gs: GameState) -> tuple[int, int, int] | None:
+    """A cell for the next overflow chest, or None once none can stand.
+
+    The main chest's cell is part of the network, so it is already taken out of the candidates.
+    """
+    return _chest_site(gs)
 
 
 def _near_cell(gs: GameState, cell: tuple[int, int, int],

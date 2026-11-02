@@ -359,6 +359,13 @@ CHEST_PLANKS = 8
 STORAGE_SITES = ((0, 3), (-1, 2), (1, 2), (-1, 1), (1, 1), (-2, 2), (2, 2),
                  (0, 4), (-2, 3), (2, 3), (-2, 1), (2, 1), (-1, 3), (1, 3),
                  (-2, 4), (2, 4))
+# The cell the layout wants for the base's first chest, ahead of every overflow candidate.
+CHEST_SITE_FIRST = (0, 1)
+# Blocks the movement policy will not break without an explicit removal request: the loop's own
+# furniture. `make_room` digs a cell to clear a placement, and a bed standing in it stays where it
+# is (live, run154: six `place_chest` ticks and two digs against the bed the gate sleep had laid
+# on the chest's own cell).
+UNDIGGABLE_BLOCKS = frozenset({"white_bed", "crafting_table"})
 # How close to a chest's centre the bot must stand for `use_container` to work the cell itself;
 # farther off, the storage label walks there under its own name first.
 STORAGE_REACH = 4.0

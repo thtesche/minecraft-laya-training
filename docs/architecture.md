@@ -1673,6 +1673,14 @@ lid and stalled on the latch that was supposed to say the haul was done.
   refused cell to `gs.blocked_cell`, and the unblock chooses exactly this cell: `make_room`
   digs it free, afterwards `place_chest` passes (it10 → it11 → it12). Before, the run ran into
   an endless retry on the same occupied cell.
+  **When the block in the cell cannot be dug (live, run154 it125-162):** the gate bed is laid by
+  the server on the footprint the bot is standing on, so it can land on the chest's own cell.
+  `make_room` cannot break a bed - the movement policy requires an explicit removal request for
+  interactive blocks - and six `place_chest` ticks and two digs went to the same cell. The chest
+  cell is now picked from the same candidate list as the overflow chests (`_chest_site`): the
+  layout's cell first, then the cells behind it, skipping beds, stations and any cell the ground
+  refused (`gs.placement_refused`, written by `_note_place` from a `[PLACE_TARGET_OCCUPIED]`
+  naming an undiggable block or from a `make_room` refusal that names the cell).
   `Agent._adopt_homebase` adopts at tick start an already **standing** bed in reach
   (`ADOPT_BED_RADIUS` = 12 m) as anchor and a **chest** near the anchor (`ADOPT_CHEST_RADIUS` = 4)
   as `chest_pos` — so a restart continues at the same homebase instead of building a second

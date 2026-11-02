@@ -18,6 +18,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       _overworld,
                       _has, _pick_tier, DIAMOND_PICK_TIER,
                       FLATTEN_BLOCKS, FLATTEN_RADIUS, FLATTEN_UP,
+                      UNDIGGABLE_BLOCKS,
                       _frame_complete_at_base, _frame_short_at_base,
                       BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
@@ -236,6 +237,11 @@ _NET_RE = re.compile(r"\*\*Distance from start:\*\*\s*([\d.]+)\s*blocks")
 # The block the server found where a container was asked for:
 # "[CONTAINER_NOT_PRESENT] The loaded target block is air, not a supported ...".
 _FOUND_BLOCK_RE = re.compile(r"target block is (?:minecraft:)?([a-z_]+)")
+# `[PLACE_TARGET_OCCUPIED] The target cell contains white_bed, ...` -- the block standing in the
+# cell a placement was refused at.
+_OCCUPIED_BLOCK_RE = re.compile(r"target cell contains (?:minecraft:)?([a-z_]+)")
+# `[BUILD_INCOMPLETE] 1 cell still wrong: 1 were refused (-31,71,172: ...)`, per cell.
+_REFUSED_CELL_RE = re.compile(r"\((-?\d+),(-?\d+),(-?\d+):")
 _CHEST_BLOCKS = frozenset({"chest", "trapped_chest", "barrel"})
 
 
@@ -407,6 +413,10 @@ class Agent:
         self._extra_chests: list[tuple[int, int, int]] = []
         self._chests_full: set[tuple[int, int, int]] = set()
         self._overflow_no_support: set[tuple[int, int, int]] = set()
+        # Candidate cells whose block the ground will not dig out (`Agent._note_place`): a bed the
+        # gate sleep laid on the chest's cell, or any cell `make_room` was refused at. Per-run
+        # state like `chest_pos`; naming such a cell again is the same refusal per tick.
+        self._placement_refused: set[tuple[int, int, int]] = set()
         # What each chest of the network last held, per cell, as `(cell, item, count)` triples --
         # the same read that aggregates `banked`, kept per chest (`_note_stocked_chest`) because
         # `take_stored_food` has to reach into the chest that actually holds the provisions.
@@ -773,6 +783,7 @@ class Agent:
         gs.extra_chests = tuple(self._extra_chests)
         gs.chests_full = frozenset(self._chests_full)
         gs.overflow_skip = frozenset(self._overflow_no_support)
+        gs.placement_refused = frozenset(self._placement_refused)
         gs.nether_travel = self._nether_travel
         gs.barter_attempts = self._barter_attempts
         gs.furnace_pos = self.furnace_pos
@@ -2607,11 +2618,12 @@ class Agent:
         if self.base is not None:
             bx, by, bz = self.base
             main = (bx, by + 1, bz + 1)
-        # A network cell is one candidate among many: refuse that one and pick the next, the
-        # chain stays open. Only the main cell -- or a placement whose cell the loop cannot name
-        # next to the base -- is the ground's verdict on chests in general, which is the old
-        # giving-up-the-chain the comment describes.
-        if main is None or self.chest_pos is None or cell == main:
+        # A candidate cell is one among many: refuse that one and pick the next, the chain stays
+        # open. Only the layout's own cell -- or a placement whose cell the loop cannot name next
+        # to the base -- is the ground's verdict on chests in general, which is the old
+        # giving-up-the-chain the comment describes. The first chest no longer has to sit on that
+        # cell (see `_chest_site`), so a refusal at a candidate counts even before it is up.
+        if main is None or cell == main or not all(isinstance(v, int) for v in cell):
             self._chest_blocked = True
             return
         self._overflow_no_support.add(cell)
@@ -2792,19 +2804,38 @@ class Agent:
             self._furnace_occupied = True
 
     def _note_place(self, action, ok: bool, text: str | None) -> None:
-        """Remember the cell a placement was refused at, so the unblock step can dig it clear.
+        """Remember the cell a placement was refused at, and the cells that cannot be cleared.
 
         `[PLACE_TARGET_OCCUPIED]` names that cell (`place_block` args): the block standing there
         is the whole cause, and only digging that exact cell lets the placement land. Live,
         from-zero run: the cell beside the base held `grass_block` and `place_chest` answered
         the code on every tick. `make_room` reads the cell back out of the GameState.
+
+        A block the movement policy will not break is a different answer: digging it is not on
+        offer, so the cell leaves the candidate list instead of being named again. Live, run154
+        it125-162: the gate bed lay on the chest's own cell, `place_chest` refused there six times
+        and `make_room` twice answered `movement policy prohibits breaking this block` - twelve
+        ticks on a bed the run needs where it stands.
         """
         args = getattr(action, "args", None) or {}
         cell = (args.get("x"), args.get("y"), args.get("z"))
         if not ok and "PLACE_TARGET_OCCUPIED" in (text or "") and all(
                 isinstance(v, int) for v in cell):
             self._blocked_cell = cell
-        elif ok and action.label == "make_room":
+            found = _OCCUPIED_BLOCK_RE.search(text or "")
+            if found and found.group(1) in UNDIGGABLE_BLOCKS:
+                # The block in the cell is one the dig cannot remove: the next chest goes to the
+                # next candidate, and `make_room` is not sent to dig what it cannot dig.
+                self._placement_refused.add(cell)
+                self._blocked_cell = None
+            return
+        if not ok and action.label == "make_room":
+            # The dig itself was refused at a named cell: that cell cannot be cleared, so the
+            # picker never names it again.
+            for x, y, z in _REFUSED_CELL_RE.findall(text or ""):
+                self._placement_refused.add((int(x), int(y), int(z)))
+            return
+        if ok and action.label == "make_room":
             # The pocket that dug that cell succeeded: the next tick the placement retries (see
             # `_unblock_done`), so the cell no longer needs digging.
             self._blocked_cell = None

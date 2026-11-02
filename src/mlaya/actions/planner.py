@@ -633,7 +633,8 @@ def candidates(gs: GameState) -> list[str]:
         out.append("collect_smelted")
 
     # --- Home base storage ---
-    if gs.base is not None and not _chest_ready(gs) and not gs.chest_blocked:
+    if (gs.base is not None and not _chest_ready(gs) and not gs.chest_blocked
+            and _chest_site(gs) is not None):
         if _has(inv, CHEST_ITEM) and _at_base(gs):
             out.append("place_chest")
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
@@ -1560,7 +1561,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # A placement the terrain refused at a named cell (`[PLACE_TARGET_OCCUPIED]`): dig that
         # exact cell. The block standing in it is the whole cause, and the pocket below would
         # not even touch it (the chest cell sits beside the base, not beside the bot).
-        if gs.blocked_cell is not None:
+        if gs.blocked_cell is not None and gs.blocked_cell not in gs.placement_refused:
             x, y, z = gs.blocked_cell
             cells = [{"x": x, "y": y, "z": z, "block_name": "air"}]
             return Action(label, "build_structure", {"blocks": cells},
@@ -1688,21 +1689,20 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "place_chest":
         if gs.base is None or gs.chest_blocked or not _has(inv, CHEST_ITEM):
             return None
-        bx, by, bz = gs.base
+        cell = _chest_site(gs)
+        if cell is None:
+            return None
+        cx, cy, cz = cell
         if not _chest_ready(gs):
             return Action(label, "place_block",
-                          {"block_name": CHEST_ITEM, "x": bx, "y": by + 1, "z": bz + 1},
+                          {"block_name": CHEST_ITEM, "x": cx, "y": cy, "z": cz},
                           "place the chest at the home base")
         if not _storage_full(gs):
             # The first chest is not even up yet, or one of them has room: an overflow chest
             # placed with nobody waiting for it is an item spent on furniture.
             return None
-        cell = _overflow_site(gs)
-        if cell is None:
-            return None
-        ox, oy, oz = cell
         return Action(label, "place_block",
-                      {"block_name": CHEST_ITEM, "x": ox, "y": oy, "z": oz},
+                      {"block_name": CHEST_ITEM, "x": cx, "y": cy, "z": cz},
                       "set up another chest beside the base: the storage network is full through")
     if label == "place_furnace":
         args = _furnace_args(gs)

@@ -955,6 +955,12 @@ class GameState:
     # `Agent._note_chest`): the next candidate is chosen instead, and the network stops growing
     # when the candidates run out.
     overflow_skip: frozenset = frozenset()
+    # Candidate cells whose block the ground will not clear: a `[PLACE_TARGET_OCCUPIED]` naming a
+    # block `make_room` cannot break, or a dig `make_room` was itself refused at with "movement
+    # policy prohibits breaking this block" (`Agent._note_place`). Unlike `overflow_skip`, which
+    # is about the support under a cell, this is about what stands in it: the same cell named
+    # again is the same refusal (live, run154: the gate bed on the chest's cell, six ticks).
+    placement_refused: frozenset = frozenset()
     # What each network chest last held, as `(cell, item, count)` triples off the server's
     # container database (`Agent._note_stocked_chest`). The aggregate `banked` stays the number
     # that stops hunts; the per-cell shape is what `take_stored_food` needs - a `withdraw` that
