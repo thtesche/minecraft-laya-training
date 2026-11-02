@@ -1479,6 +1479,21 @@ lid and stalled on the latch that was supposed to say the haul was done.
   `collect_smelted` shape: a refusal's empty delta is not progress). Tested in
   `tests/test_actions.py::FlattenHomeBaseTest`, `tests/test_graph.py::BaseTerrainScanTest`,
   `tests/test_verify.py::FlattenHomeBaseProgressTest`.
+- **The gate bed's pad (implemented, 2026-11-02):** leveling can only take ground away, so a bed
+  refused on a hole beside the frame stayed unfixed however often the ground around it was dug —
+  run159 answered `[BED_PLACEMENT_FAILED]` twice with nothing ever built under it. `prepare_bed_pad`
+  builds the bed's ground from the same `view_blocks box` read: `bed_pad_plan` takes the row of three
+  cells two blocks in front of the frame plane (`BED_PAD_ROWS`, feet level `by + 1`) — the stance the
+  bot stands on and the two cells the bed occupies — digs whatever sits in a cell and stands
+  cobblestone under a cell whose floor is missing. That row is the nearest one `_clear_of_gate`
+  leaves open: at `dz = 1` the cell beside the frame's own column sits one block from the opening,
+  short of `BED_PORTAL_CLEARANCE`. A cell holding something the dig whitelist will not touch (a
+  chest, the obsidian frame, the bed) makes the row unusable as a whole and the pad is planned on the
+  row behind the frame instead. Planned into `gs.bed_pad` by `Agent._scan_base_terrain`, offered by
+  `_bed_pad_wanted` (home, day, lit gate, a bed owed at the gate, and the cobblestone to fill with in
+  the pack) **ahead of `place_bed`**, so the ground is built before the bed is tried. Tested in
+  `tests/test_actions.py::BedPadTest`, `tests/test_graph.py::BaseTerrainScanTest`,
+  `tests/test_verify.py::BedPadProgressTest`.
 - **Water escape reflex (implemented):** `candidates` checks `gs.in_water and not gs.on_ground` as
   the very first thing (even before the M2d reactions) and then returns **only** `["escape_water"]` — here
   Laya does not choose, the state is a rescue. The loop tracks `gs.water_ticks` for this (`Agent._inject`)

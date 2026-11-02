@@ -460,6 +460,11 @@ def candidates(gs: GameState) -> list[str]:
     # footprint, and beside an unlit frame that is the open 2x3 opening, which `clear_portal`
     # cannot dig (a bed is protected from a route dig) and `light_portal` then fails on. Once the
     # gate burns the opening is solid and the bed falls on the ground beside the base.
+    # The bed's ground is built before the bed is laid: digging alone can never give the bed a
+    # floor, so a footprint with a hole under it stays refused however often the ground around it
+    # is cleared (`_bed_pad_wanted`, `gs.bed_pad`, planned from the same footprint scan).
+    if _bed_pad_wanted(gs):
+        out.append("prepare_bed_pad")
     if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_at_base(gs)
             and _overworld(gs)):
         # A bed already standing outside the base box is the one `sleep` will click: the server
@@ -703,7 +708,7 @@ def candidates(gs: GameState) -> list[str]:
     if _overworld(gs):
         out.extend(_nether_prep_steps(gs))
 
-    # Home-base leveling. Once the gate is lit, a daytime maintenance step digs away the stray
+    # Home-base ground work. Once the gate is lit, a daytime maintenance step digs away the stray
     # terrain and reflex-placed defence scaffold that pile up above ground level around the base, so
     # the home ground stays flat (`_base_leveling_wanted`, `gs.raised_cells`). Offered below the prep
     # and the gate chain but above `wait` (the empty-list fallback), so an idle bot at a lumpy base
@@ -1761,6 +1766,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "use_container",
                       {"operation": "deposit", "x": cx, "y": cy, "z": cz, "items": items[:12]},
                       "deposit the surplus blocks into the chest at the base")
+    if label == "prepare_bed_pad":
+        if not _bed_pad_wanted(gs):
+            return None
+        # At most six cells - three digs and three fills - so no batch cap: `build_structure` runs
+        # one route search per cell, and the row is re-read with the footprint scan every tick.
+        cells = [{"x": x, "y": y, "z": z, "block_name": name}
+                 for x, y, z, name in gs.bed_pad]
+        if not cells:
+            return None
+        return Action(label, "build_structure", {"blocks": cells},
+                      "build the pad the gate bed lies on: dig the blocks in its footprint, stand cobblestone under the cells with no floor")
     if label == "flatten_home_base":
         if not _base_leveling_wanted(gs):
             return None

@@ -75,6 +75,7 @@ CRITERIA: dict[str, str] = {
     "place_furnace": "place the furnace the bot carries at the home base, so cooking and smelting reuse it instead of setting up a temporary one every time",
     "stow_surplus": "deposit the surplus blocks of a full pack into the chest at the base",
     "flatten_home_base": "level the home base: dig away the stray terrain and the reflex-placed defence blocks that pile up above ground level around the lit gate, so the home ground stays flat",
+    "prepare_bed_pad": "build the ground the gate bed stands on: dig the blocks in the bed's footprint beside the frame and stand cobblestone under the cells whose floor is missing, so the bed has a flat pad to lie on",
     # Overworld -> Nether gate (the portal frame and the bed beside it).
     "craft_bucket": "craft a bucket from three iron ingots; a water bucket is how obsidian is made",
     "fill_bucket": "fill the carried bucket with water at a source, ready to pour onto lava",
@@ -404,6 +405,17 @@ SLEEP_BED_REACH = 32.0
 # supported 2-block flat ground found to place a bed" - the ground read there held exactly one
 # standable cell, the one the bot was standing on.
 BED_FOOTPRINT_REACH = 4
+# The gate bed's ground is built, not found. The frame plane runs along `z == bz` with its bottom
+# row on the floor `by`, so the first row the clearance rule leaves open is two cells in front of
+# it: at `dz = 1` the cell beside the frame's own column sits one block from the opening, and
+# `_clear_of_gate` asks `BED_PORTAL_CLEARANCE` of the stance *and* its four neighbours. The pad is
+# one row's three cells at feet level `by + 1`, running west from the anchor: the stance the bot
+# stands on and the two cells the bed lies on. The second row, two cells behind the frame, is the
+# fallback a chest or the furnace can push the bed onto. `prepare_bed_pad` digs what sits in those
+# cells and stands cobblestone under any whose floor is missing - `flatten_home_base` can only
+# take ground away, never give any back.
+BED_PAD_ROWS = (((0, 2), (-1, 2), (-2, 2)), ((0, -2), (-1, -2), (-2, -2)))
+BED_PAD_BLOCK = "cobblestone"
 # How close the body has to be for that search to end in a sleep. Minecraft accepts the bed click
 # only within two blocks of the bed's top centre (`distanceToSquared(x+0.5, y+1, z+0.5) > 4`
 # refuses it), and mineflayer's `sleep` reaches the same check before activating the block. Live,

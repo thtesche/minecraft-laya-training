@@ -1983,6 +1983,62 @@ def _base_leveling_wanted(gs: GameState) -> bool:
             and _portal_lit(gs) and gs.phase == "day" and bool(gs.raised_cells))
 
 
+# A pad cell that is already open enough for a bed: the air variants plus the thin plants a
+# placement replaces without a separate dig. Anything else in the cell is a block.
+_PAD_OPEN = frozenset({"air", "cave_air", "void_air", "short_grass", "tall_grass",
+                       "grass", "fern", "snow", "torch"})
+
+
+def bed_pad_plan(base: tuple[int, int, int],
+                 grid: dict[tuple[int, int, int], str]) -> list[tuple[int, int, int, str]]:
+    """The cells `prepare_bed_pad` builds under the gate bed; empty when the ground holds it already.
+
+    `grid` is the one `view_blocks box` read of the base footprint the leveling scan already makes
+    (`perception.scan_base_box`), so the pad costs no extra look. Each of the three pad cells is
+    read at feet level `by + 1`: open air over a solid block is a bed footprint and needs nothing;
+    a block in the cell is dug (`"air"`, the same dig `clear_portal` and `flatten_home_base` use);
+    an open cell with nothing under it is filled with cobblestone, the block the base is built from
+    and the one the pack always holds. A cell holding something the dig whitelist will not touch -
+    a chest, the obsidian frame, the bed itself - makes the whole row unusable and the next row is
+    tried, so the bed is never planned onto a block the run cannot remove.
+    """
+    if base is None or not grid:
+        return []
+    bx, by, bz = base
+    for row in BED_PAD_ROWS:
+        plan = []
+        for dx, dz in row:
+            x, y, z = bx + dx, by + 1, bz + dz
+            here = grid.get((x, y, z), "air")
+            if here in FLATTEN_BLOCKS:
+                plan.append((x, y, z, "air"))
+            elif here not in _PAD_OPEN:
+                break  # furniture or frame: this row cannot hold the bed
+            elif grid.get((x, y - 1, z), "air") in _PAD_OPEN:
+                plan.append((x, y - 1, z, BED_PAD_BLOCK))
+        else:
+            return plan
+    return []
+
+
+def _bed_pad_wanted(gs: GameState) -> bool:
+    """`prepare_bed_pad`: a bed is owed at the gate and its planned ground is not yet flat.
+
+    The same gate as the leveling step - home, daylight, lit gate - because the pad is built on the
+    footprint scan that scan reads, and the bed only goes down beside a burning gate. The plan is
+    empty when the three cells are already open over solid ground, so a base whose bed stands on
+    level ground never digs at it; a fill needs the cobblestone to be in the pack, and a plan that
+    cannot be carried out is not offered rather than refused every tick.
+    """
+    if not (gs.base is not None and _at_base(gs) and _overworld(gs)
+            and _portal_lit(gs) and gs.phase == "day"):
+        return False
+    if not gs.bed_pad or not (_has(gs.inventory, "white_bed") or _bed_at_base(gs)):
+        return False
+    fills = sum(1 for cell in gs.bed_pad if cell[3] != "air")
+    return fills <= gs.inventory.get("cobblestone", 0)
+
+
 def _idle_off_base(gs: GameState) -> bool:
     """A geared Overworld bot standing off its base - the state the empty-candidate fallback walks
     home from, rather than letting `explore` march it to the horizon.

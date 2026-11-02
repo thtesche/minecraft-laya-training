@@ -999,6 +999,12 @@ class GameState:
     # tower cells and nearest cells first. Empty means the ground is already flat, and the leveling
     # step drops out of the offer.
     raised_cells: list[tuple[int, int, int]] = field(default_factory=list)
+    # The cells `prepare_bed_pad` builds under the gate bed, as `(x, y, z, block_name)` with
+    # `"air"` meaning dig: the three cells of the bed's row beside the frame, dug where a block
+    # sits and cobblestone-stood where the floor is missing. Planned from the same box read as
+    # `raised_cells` (`Agent._scan_base_terrain`), so it is empty when the pad is already flat or
+    # the base chunks are unloaded, and the step drops out of the offer.
+    bed_pad: list[tuple[int, int, int, str]] = field(default_factory=list)
     # The loop learned from the server that the frame build has nothing left to place: a
     # `build_portal` answered `ok` while spending no obsidian or cobblestone (`Agent._note_build`).
     # That success resets `_track_stuck`, so the "resume a partial frame" clause would offer the

@@ -346,5 +346,29 @@ class FlattenHomeBaseProgressTest(unittest.TestCase):
         self.assertFalse(progressed("flatten_home_base", d, ok=False))
 
 
+class BedPadProgressTest(unittest.TestCase):
+    """Building the bed's pad is read in the pack it spends and the blocks it frees.
+
+    `prepare_bed_pad` both digs and places (`build_structure`): a dig either lands the block in
+    the pack or leaves nothing to collect, and a fill shows as cobblestone leaving it. A refusal
+    leaves the delta empty too, so it counts only when the call actually succeeded - the
+    `flatten_home_base` shape.
+    """
+
+    def test_a_dig_that_lands_in_the_pack_is_progress(self) -> None:
+        d = diff(gs(inventory={}), gs(inventory={"cobblestone": 2}))
+        self.assertTrue(progressed("prepare_bed_pad", d))
+
+    def test_a_fill_that_leaves_the_pack_is_progress(self) -> None:
+        d = diff(gs(inventory={"cobblestone": 64}), gs(inventory={"cobblestone": 61}))
+        self.assertTrue(progressed("prepare_bed_pad", d))
+
+    def test_a_build_that_dropped_nothing_is_progress_when_it_succeeded(self) -> None:
+        self.assertTrue(progressed("prepare_bed_pad", diff(gs(), gs()), ok=True))
+
+    def test_a_refusal_is_not_progress(self) -> None:
+        self.assertFalse(progressed("prepare_bed_pad", diff(gs(), gs()), ok=False))
+
+
 if __name__ == "__main__":
     unittest.main()

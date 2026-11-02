@@ -120,13 +120,20 @@ predicate: the prep steps done, the food reserve banked, **two diamond pickaxes*
 (`NETHER_PICKAXES = 2`, the spare rides on the lighting gate, not on the craft step), and a bed at
 hand. No hour: `place_bed` lays the carried bed the very next tick, by day as well as by night.
 
-The bed rule around the frame has three parts, all of them corrections from live runs:
+The bed rule around the frame has four parts, all of them corrections from live runs:
 
 - **Where the bed lands.** `_flat_ground_near` looks for a two-block footprint the server can hold
-  (`BED_FOOTPRINT_REACH = 4`); beside an *unlit* frame the nearest flat footprint is often the
+  (`BED_FOOTPRINT_REACH = 4`), at the body's own level — the search walks the ring around the feet
+  at heights 0, −1 and +1 only, so a flat pair up a neighbouring ledge is not a place a bed can go
+  (run159 it46/48). Beside an *unlit* frame the nearest flat footprint is often the
   frame's own 2×3 opening, which `clear_portal` cannot dig out (the movement policy protects a bed
   from a route dig), so a bed laid before the gate burns strands the lighting on
   `[PORTAL_NO_FRAME]`.
+- **The bed's ground is built, not found.** `prepare_bed_pad` plans the bed's row from the same
+  footprint read the leveling step uses: three cells two blocks in front of the frame plane at feet
+  level `by + 1` (`BED_PAD_ROWS`), dug where a block sits and cobblestone-stood where the floor is
+  missing. Digging alone can never give a bed a floor, and the row two cells out is the nearest one
+  that keeps `BED_PORTAL_CLEARANCE` from the opening.
 - **A bed is not footing.** Beds and portal blocks are in `NON_FOOTING_BLOCKS`, so `navigate` will
   not path across them; a bot standing next to its bed can still be several blocks away from the
   click range (`BED_SLEEP_CLICK = 2`, `SLEEP_BED_REACH = 32`), and `sleep` first navigates onto the

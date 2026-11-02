@@ -3633,7 +3633,8 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
 
 class BaseTerrainScanTest(unittest.IsolatedAsyncioTestCase):
     """The loop reads the home-base footprint while the gate is lit and the bot is home by day, so
-    `flatten_home_base` has exactly the cells piled above ground level to dig (`gs.raised_cells`).
+    `flatten_home_base` has exactly the cells piled above ground level to dig (`gs.raised_cells`)
+    and `prepare_bed_pad` has the bed's row planned in `gs.bed_pad`.
 
     What must be true: only cells above the floor `by` are listed (the ground the base stands on is
     never undercut), only removable blocks (`FLATTEN_BLOCKS`) are listed (furniture, the obsidian
@@ -3732,6 +3733,34 @@ class BaseTerrainScanTest(unittest.IsolatedAsyncioTestCase):
         away.pos = (bx + 40.0, by + 1.0, bz + 40.0)
         await agent._scan_base_terrain(away)
         self.assertEqual(agent.mcp.calls, [])
+
+    async def test_the_same_read_plans_the_bed_pad(self) -> None:
+        # One box answers both: the bed's row is dug where a block sits in it and stood
+        # cobblestone-under where the run dug the floor out.
+        bx, by, bz = self.BASE
+        box = self._box({(x, by, z): "stone"
+                         for x in range(bx - 4, bx + 5) for z in range(bz - 4, bz + 5)}
+                        | {(bx - 1, by, bz + 2): "air",    # a hole under the bed's cell
+                           (bx, by + 1, bz + 2): "dirt"})  # a bump in the stance cell
+        agent = self._agent(box)
+        g = self._lit_home()
+        await agent._scan_base_terrain(g)
+        self.assertEqual(g.bed_pad, [(bx, by + 1, bz + 2, "air"),
+                                     (bx - 1, by, bz + 2, "cobblestone")])
+
+    async def test_a_flat_bed_row_plans_nothing(self) -> None:
+        bx, by, bz = self.BASE
+        box = self._box({(x, by, z): "stone"
+                        for x in range(bx - 4, bx + 5) for z in range(bz - 4, bz + 5)})
+        g = self._lit_home()
+        await self._agent(box)._scan_base_terrain(g)
+        self.assertEqual(g.bed_pad, [])
+
+    async def test_no_pad_is_planned_before_the_gate_is_lit(self) -> None:
+        g = self._lit_home()
+        g.resources = {}
+        await self._agent(self._box({}))._scan_base_terrain(g)
+        self.assertEqual(g.bed_pad, [])
 
 
 class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):

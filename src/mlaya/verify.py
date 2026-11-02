@@ -222,6 +222,12 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         # a refusal leaves the delta empty too, so it counts only when the call succeeded (the
         # `collect_smelted` shape), and the stuck guard can retire a cell it keeps failing to break.
         return inv_up or (ok and not d["inventory_delta"])
+    if label == "prepare_bed_pad":
+        # The pad is built in the world, not in the pack: a dig lands its block in the pack or
+        # leaves nothing to collect, and a fill shows as cobblestone leaving it. A refusal leaves
+        # the delta empty too, so an empty one counts only when the call succeeded.
+        return (inv_up or d["inventory_delta"].get("cobblestone", 0) < 0
+                or (ok and not d["inventory_delta"]))
     if label == "take_stored_food":
         # The provisions reaching the pack is the step; walking to the chest of the network that
         # actually holds them is progress too, and until this a successful `withdraw` never was

@@ -19,6 +19,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       _has, _pick_tier, DIAMOND_PICK_TIER,
                       FLATTEN_BLOCKS, FLATTEN_RADIUS, FLATTEN_UP,
                       UNDIGGABLE_BLOCKS,
+                      bed_pad_plan,
                       _frame_complete_at_base, _frame_short_at_base,
                       BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
@@ -1377,6 +1378,10 @@ class Agent:
     async def _scan_base_terrain(self, gs) -> None:
         """List the blocks piled above ground level around the base, for `flatten_home_base`.
 
+        The same read plans the gate bed's pad (`bed_pad_plan`, `prepare_bed_pad`) into
+        `gs.bed_pad`: one box of the footprint answers both, so building the bed's ground costs
+        no extra look.
+
         The survival reflex stacks scaffold during fights and a buried-and-raised base leaves stray
         terrain; neither is ever cleared, so the home ground turns lumpy and sometimes hides a
         tunnel mouth. Once the gate is lit and the bot is home by day, one `view_blocks box` read of
@@ -1390,12 +1395,14 @@ class Agent:
                 or not _at_base(gs)
                 or gs.resource_nearest(perception.PORTAL_BLOCK) is None):
             self._raised = []
+            gs.bed_pad = []
             return
         bx, by, bz = self.base
         try:
             grid = perception.parse_box(await perception.scan_base_box(self.mcp, self.base))
         except Exception:
             self._raised = []
+            gs.bed_pad = []
             return
         raised = [cell for cell, name in grid.items()
                   if by < cell[1] <= by + FLATTEN_UP
@@ -1407,6 +1414,10 @@ class Agent:
         fx, _fy, fz = gs.pos
         raised.sort(key=lambda c: (-c[1], (c[0] - fx) ** 2 + (c[2] - fz) ** 2))
         self._raised = raised
+        # The same grid answers the bed's ground: `flatten_home_base` can only take blocks away,
+        # so a bed that fails on a hole beside the frame stays unfixed however often the ground is
+        # dug. `bed_pad_plan` reads the bed's row and names the digs and the fills.
+        gs.bed_pad = bed_pad_plan(self.base, grid)
 
     def _adopt_homebase(self, gs) -> None:
         """Re-adopt a home base and chest a previous run left standing in the world.

@@ -27,7 +27,9 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
-                         _base_leveling_wanted, FLATTEN_BATCH, FLATTEN_RADIUS, FLATTEN_UP,
+                         _base_leveling_wanted, bed_pad_plan, _bed_pad_wanted, BED_PAD_BLOCK,
+                         BED_PAD_ROWS, BED_PORTAL_CLEARANCE, _clear_of_gate, _gate_gap,
+                         FLATTEN_BATCH, FLATTEN_RADIUS, FLATTEN_UP,
                          BASE_RADIUS, BED_SLEEP_CLICK, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
                          BARTER_GOLD_BUDGET, BARTER_MAX_ATTEMPTS, BARTER_PEARL_BATCH,
@@ -7827,6 +7829,129 @@ class FlattenHomeBaseTest(unittest.TestCase):
         # refused on the same tick (`_base_leveling_wanted` is the single gate for both).
         g = self._lumpy(raised=[])
         self.assertIsNone(resolve("flatten_home_base", g))
+
+
+class BedPadTest(unittest.TestCase):
+    """`prepare_bed_pad`: the ground the gate bed lies on is built, not found.
+
+    `flatten_home_base` can only take ground away, so a bed refused on a hole beside the frame
+    stays unfixed however often the ground around it is dug. The pad is one row of three cells -
+    the stance the bot stands on and the two cells the bed occupies - two blocks in front of the
+    frame plane, read from the same `view_blocks box` the leveling scan already makes: dig what
+    sits in a cell, stand cobblestone under a cell whose floor is missing.
+    """
+
+    BASE = (-50, 70, 20)
+
+    def _grid(self, extra: dict | None = None) -> dict[tuple[int, int, int], str]:
+        """The base footprint as the box read returns it: solid ground at `by`, air above it."""
+        bx, by, bz = self.BASE
+        grid = {(x, y, z): "air"
+                for x in range(bx - 4, bx + 5)
+                for y in range(by, by + 5)
+                for z in range(bz - 4, bz + 5)}
+        for x in range(bx - 4, bx + 5):
+            for z in range(bz - 4, bz + 5):
+                grid[(x, by, z)] = "stone"
+        grid.update(extra or {})
+        return grid
+
+    def _home(self, pad: list | None = None, **inv) -> GameState:
+        """A geared bot home by day at a lit gate, bed in the pack, the pad as the scan planned it."""
+        bx, by, bz = self.BASE
+        pack = {"white_bed": 1, "cobblestone": 64}
+        pack.update(inv)
+        g = at_home(geared(**pack), self.BASE)
+        g.phase = "day"
+        g.resources = {"nether_portal": [
+            BlockHit("nether_portal", "nether_portal", x, y, bz, 2.0)
+            for x in (bx + 2, bx + 3) for y in (by + 1, by + 2)]}
+        g.bed_pad = pad if pad is not None else []
+        return g
+
+    def test_a_level_row_needs_no_pad(self) -> None:
+        self.assertEqual(bed_pad_plan(self.BASE, self._grid()), [])
+
+    def test_a_hole_under_a_bed_cell_is_filled(self) -> None:
+        bx, by, bz = self.BASE
+        plan = bed_pad_plan(self.BASE, self._grid({(bx - 1, by, bz + 2): "air"}))
+        self.assertEqual(plan, [(bx - 1, by, bz + 2, BED_PAD_BLOCK)])
+
+    def test_a_block_in_the_footprint_is_dug(self) -> None:
+        bx, by, bz = self.BASE
+        plan = bed_pad_plan(self.BASE, self._grid({(bx, by + 1, bz + 2): "dirt"}))
+        self.assertEqual(plan, [(bx, by + 1, bz + 2, "air")])
+
+    def test_the_row_stays_clear_of_the_lit_gate(self) -> None:
+        # Every pad cell is a bed cell or a stance cell, and a bed within `BED_PORTAL_CLEARANCE`
+        # of the gate puts the respawn inside the portal. The row two cells in front of the frame
+        # is the nearest one that keeps the margin; the row at `dz = 1` does not.
+        bx, by, bz = self.BASE
+        portal = [BlockHit("nether_portal", "nether_portal", x, y, bz, 2.0)
+                  for x in (bx + 2, bx + 3) for y in (by + 1, by + 2)]
+        for dx, dz in BED_PAD_ROWS[0]:
+            self.assertGreaterEqual(_gate_gap((bx + dx, by + 1, bz + dz), portal),
+                                    BED_PORTAL_CLEARANCE)
+        self.assertFalse(_clear_of_gate((bx, by + 1, bz + 1), portal))
+
+    def test_furniture_on_the_row_moves_the_pad_behind_the_frame(self) -> None:
+        # A chest standing on the bed's cell cannot be dug: the row is unusable as a whole and the
+        # pad is planned on the row behind the frame instead, which the layout never fills.
+        bx, by, bz = self.BASE
+        plan = bed_pad_plan(self.BASE, self._grid({(bx - 1, by + 1, bz + 2): "chest",
+                                                   (bx - 1, by, bz - 2): "air"}))
+        self.assertEqual(plan, [(bx - 1, by, bz - 2, BED_PAD_BLOCK)])
+
+    def test_the_step_is_offered_and_bound(self) -> None:
+        bx, by, bz = self.BASE
+        g = self._home(pad=[(bx - 1, by, bz + 2, BED_PAD_BLOCK)])
+        self.assertTrue(_bed_pad_wanted(g))
+        self.assertIn("prepare_bed_pad", candidates(g))
+        a = resolve("prepare_bed_pad", g)
+        self.assertEqual(a.tool, "build_structure")
+        self.assertEqual(a.args["blocks"],
+                         [{"x": bx - 1, "y": by, "z": bz + 2, "block_name": BED_PAD_BLOCK}])
+
+    def test_a_flat_pad_is_not_offered(self) -> None:
+        # The plan is empty the moment every cell is open over solid ground, and the step drops out
+        # of the offer rather than digging at a bed that already lies flat.
+        g = self._home(pad=[])
+        self.assertFalse(_bed_pad_wanted(g))
+        self.assertNotIn("prepare_bed_pad", candidates(g))
+        self.assertIsNone(resolve("prepare_bed_pad", g))
+
+    def test_a_fill_the_pack_cannot_carry_is_not_offered(self) -> None:
+        # Three holes to stand cobblestone in and two blocks in the pack: the build would be
+        # refused cell by cell, so the step stands down instead of owning the tick with refusals.
+        bx, by, bz = self.BASE
+        g = self._home(cobblestone=2,
+                       pad=[(bx + dx, by, bz + 2, BED_PAD_BLOCK) for dx in (0, -1, -2)])
+        self.assertFalse(_bed_pad_wanted(g))
+        self.assertNotIn("prepare_bed_pad", candidates(g))
+
+    def test_no_bed_at_the_gate_builds_no_pad(self) -> None:
+        # Nothing is owed at the gate, so the ground is not worth building yet.
+        bx, by, bz = self.BASE
+        g = self._home(pad=[(bx, by + 1, bz + 2, "air")])
+        g.inventory = {k: v for k, v in g.inventory.items() if k != "white_bed"}
+        self.assertFalse(_bed_pad_wanted(g))
+
+    def test_night_holds_it_back(self) -> None:
+        # The same gate as the leveling step: the pad is built on the footprint scan, which only
+        # reads while the bot is home by day.
+        bx, by, bz = self.BASE
+        g = self._home(pad=[(bx, by + 1, bz + 2, "air")])
+        g.phase = "night"
+        self.assertFalse(_bed_pad_wanted(g))
+
+    def test_the_pad_is_offered_before_the_bed_is_laid(self) -> None:
+        # The bed goes down beside the gate the tick after it is lit; the pad has to come first,
+        # or `place_bed` spends the tick on a footprint the ground cannot hold.
+        bx, by, bz = self.BASE
+        order = candidates(self._home(pad=[(bx - 1, by, bz + 2, BED_PAD_BLOCK)]))
+        self.assertIn("prepare_bed_pad", order)
+        self.assertIn("place_bed", order)
+        self.assertLess(order.index("prepare_bed_pad"), order.index("place_bed"))
 
 
 class NetherExitTest(unittest.TestCase):
