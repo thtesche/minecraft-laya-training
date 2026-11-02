@@ -2858,6 +2858,30 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.tool, "collect_block")
         self.assertEqual(a.args, {"block_name": "white_bed", "count": 1})
 
+    def test_a_stray_bed_is_taken_up_before_the_gate_bed_is_laid(self) -> None:
+        # The bot carries a bed and one from an earlier run stands twelve blocks outside the base
+        # box. `sleep` searches a 32-block radius for the nearest bed and walks to it, so
+        # `place_bed` reports success without ever laying the carried bed: live, run156 it214-600,
+        # 131 `place_bed` ticks alternating with `go_home`, the bed never consumed and the chain
+        # never closed. The stray is fetched first; only then can the bed go down at the stance.
+        g = self._at_home(self._geared(white_bed=1))
+        g.resources = {"nether_portal": self._blocks("nether_portal")["nether_portal"],
+                       "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -110, 12.0)]}
+        self.assertIn("take_bed", candidates(g))
+        self.assertIsNone(resolve("place_bed", g))
+        a = resolve("take_bed", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "white_bed", "count": 1})
+
+    def test_place_bed_lays_the_carried_bed_when_no_bed_stands_off_base(self) -> None:
+        # The other half of the same rule: with nothing standing nearby, `sleep` is the laying
+        # step, and `take_bed` has nothing to fetch.
+        g = self._at_home(self._geared(white_bed=1))
+        g.resources = {"nether_portal": self._blocks("nether_portal")["nether_portal"]}
+        self.assertIn("place_bed", candidates(g))
+        self.assertNotIn("take_bed", candidates(g))
+        self.assertEqual(resolve("place_bed", g).tool, "sleep")
+
     def test_take_bed_is_not_offered_when_the_bed_stands_at_the_base(self) -> None:
         g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -196, -46, -98, 2.0))
         self.assertNotIn("take_bed", candidates(g))
@@ -2929,13 +2953,22 @@ class NetherGateTest(unittest.TestCase):
         g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -64, 50, 58, 20.0)]}
         self.assertNotIn("sleep", candidates(g))
 
-    def test_take_bed_waits_for_a_carried_bed_to_be_laid(self) -> None:
-        # A bed already carried belongs at the base through `place_bed`; the standing leftover
-        # is not fetched on top of it, which would leave two beds and re-offer every tick.
+    def test_a_carried_bed_does_not_leave_a_stray_bed_unfetched(self) -> None:
+        # The old rule held that a carried bed makes the standing leftover someone else's job:
+        # fetching it "would leave two beds and re-offer every tick". It cannot re-offer, because
+        # the bed `place_bed` lays lands inside the base box - and it is not someone else's job,
+        # because `place_bed`'s `sleep` finds the standing bed in its 32-block search and walks to
+        # it rather than laying the carried one (live, run156 it214-600: 131 `place_bed` ticks,
+        # the bed never consumed and the chain never closed).
         g = self._lit_gate_with_bed(BlockHit("white_bed", "white_bed", -196, -57, -98, 11.0))
         g.inventory["white_bed"] = 1
+        self.assertIn("take_bed", candidates(g))
+        self.assertEqual(resolve("take_bed", g).tool, "collect_block")
+        # Once the bed stands at the base, neither step is offered: nothing to fetch, nothing to
+        # lay, and no tick left to trade the two against each other.
+        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed", -197, -46, -98, 1.5)]
         self.assertNotIn("take_bed", candidates(g))
-        self.assertIsNone(resolve("take_bed", g))
+        self.assertNotIn("place_bed", candidates(g))
 
 
 class HomeBaseTest(unittest.TestCase):

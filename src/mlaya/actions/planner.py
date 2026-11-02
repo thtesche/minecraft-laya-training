@@ -460,6 +460,14 @@ def candidates(gs: GameState) -> list[str]:
     # gate burns the opening is solid and the bed falls on the ground beside the base.
     if (_at_base(gs) and _portal_lit(gs) and _has_bed(inv) and not _bed_at_base(gs)
             and _overworld(gs)):
+        # A bed already standing outside the base box is the one `sleep` will click: the server
+        # searches a 32-block radius for the nearest bed and walks to it, so the carried bed is
+        # never laid where the bot stands (live, run156 it214-600: 131 `place_bed` ticks, each
+        # walking twelve blocks to the run155 bed at (-31,71,172) and `go_home` walking back).
+        # Taking the stray up first leaves the server nothing to find, and the next tick lays the
+        # carried bed at the stance.
+        if _bed_needs_moving(gs) and "take_bed" not in gs.stuck_labels:
+            out.append("take_bed")
         out.append("place_bed")
 
     # --- The Nether expedition (phase 3) ---
@@ -1118,9 +1126,16 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": tx, "y": ty, "z": tz, "dig": False, "scaffold": False},
                       "step out of the lit portal the body is standing in, before it teleports")
     if label == "take_bed":
-        if _has_bed(inv) or not _overworld(gs):
+        if not _overworld(gs):
             return None
-        if not _unsafe_beds(gs) and (not _nether_idle(gs) or not _bed_needs_moving(gs)):
+        # Two reasons to take a bed up: it stands too close to the lit gate to respawn on, or an
+        # earlier base left it outside the box. The second used to require carrying no bed, on the
+        # assumption `place_bed` could lay a fresh one; `sleep` disagrees, finding the standing bed
+        # within 32 blocks and walking to it, so a carried bed stays carried and the run trades
+        # `place_bed` and `go_home` for hundreds of ticks (live, run156 it214-600).
+        if not (_unsafe_beds(gs)
+                or (_bed_needs_moving(gs)
+                    and (_nether_idle(gs) or (_portal_lit(gs) and _at_base(gs))))):
             return None
         return Action(label, "collect_block",
                       {"block_name": "white_bed", "count": 1},
@@ -1130,6 +1145,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if (not _has_bed(inv) or not _portal_lit(gs) or _bed_at_base(gs)
                 or stance is None
                 or not _at_base(gs) or not _overworld(gs)):
+            return None
+        if _bed_needs_moving(gs) and "take_bed" not in gs.stuck_labels:
+            # `sleep` would walk to the bed already standing off base instead of laying the
+            # carried one at the stance; the take step runs first.
             return None
         if not _at_stance(gs, stance):
             # The `sleep` server lays the carried bed on the flat footprint beside the bot, so the
