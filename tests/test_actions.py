@@ -2810,6 +2810,42 @@ class NetherGateTest(unittest.TestCase):
         self.assertIn("sleep", candidates(g))
         self.assertEqual(resolve("sleep", g).tool, "sleep")
 
+    def test_a_base_bed_already_standing_is_slept_in_before_the_gate_burns(self) -> None:
+        # run158 it135-162: night at the base, the frame up but unlit, the gate bed already
+        # standing on the anchor and nothing in the pack. `_sleep_ready` lets the base bed be
+        # slept in only once the portal burns, and `_sleep_off_base` needs a bed to carry, so
+        # the night offered `wait` alone for fifteen ticks - the run's first stall anomaly.
+        # The rule guards against the server laying a *carried* bed into the open frame; a bed
+        # that is already down west of it is not laid again, `sleep` only clicks it.
+        g = self._at_home(self._geared(diamond_pickaxe=1, cobblestone=64, flint_and_steel=1,
+                                       stick=2, furnace=1))
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        bx, by, bz = g.base
+        g.bed_pos = (bx - 1, by + 1, bz)
+        g.furnace_pos = (bx, by + 1, bz - 1)
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", bx - 1, by + 1, bz, 1.5)]}
+        g.phase = "night"
+        self.assertIn("sleep", candidates(g))
+        self.assertNotIn("wait", candidates(g))
+        self.assertEqual(resolve("sleep", g).tool, "sleep")
+
+    def test_a_bed_inside_the_open_frame_is_not_slept_in_at_the_base(self) -> None:
+        # The same night, but the bed stands in the frame's own 2x3 opening: sleeping there
+        # pins the respawn point inside the gate, and once the frame burns the bot is teleported
+        # the moment it respawns. With nothing carried to lay elsewhere the night holds at the
+        # base instead of clicking that bed.
+        g = self._at_home(self._geared(diamond_pickaxe=1, cobblestone=64, flint_and_steel=1,
+                                       stick=2, furnace=1))
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        bx, by, bz = g.base
+        g.bed_pos = (bx + 2, by + 1, bz)
+        g.furnace_pos = (bx, by + 1, bz - 1)
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", bx + 2, by + 1, bz, 1.5)]}
+        g.phase = "night"
+        self.assertNotIn("sleep", candidates(g))
+        self.assertIsNone(resolve("sleep", g))
+        self.assertIn("wait", candidates(g))
+
     def test_sleep_at_the_base_waits_for_the_bed_to_stand_there(self) -> None:
         # With the portal lit the gate bed must *stand* at the base: a carried bed is `place_bed`'s
         # job first (the server lays the bed beside the bot, so the respawn point is set at the

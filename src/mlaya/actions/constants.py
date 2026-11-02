@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from ..perception import (AIR_NAMES, EAT_HUNGER, INVENTORY_NEAR_FULL, INVENTORY_SLOTS,
                           PORTAL_BLOCK, REGEN_HUNGER, GameState, _in_nether_dimension,
-                          frame_obsidian_cells, frame_wanted_blocks)
+                          frame_obsidian_cells, frame_wanted_blocks, portal_interior)
 from ..targets import (EXPLORE_FRONTIER_CHUNKS, EXPLORE_MIN_M, base_target,
                        frontier_heading, nearest_ground)
 

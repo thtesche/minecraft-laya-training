@@ -1264,6 +1264,24 @@ runtime-crash and the walk-back-and-forth classes. run125 never crossed at all -
 anchor to walk to - and its remaining stall was a chest lid rather than a fight; run126 crossed the
 lid and stalled on the latch that was supposed to say the haul was done.
 
+## Live findings run158 (2026-11-02): a night that could not sleep
+
+- **A base bed the rule would not let it sleep in.** run158 it135-162 and it297-310: night at the
+  base, the frame up but unlit (the spare pickaxe still owed), the gate bed already standing one
+  cell west of the anchor and nothing in the pack. `_sleep_ready` lets the base bed be slept in
+  only once the portal burns, and `_sleep_off_base` needs a bed to carry, so the night offered
+  `wait` alone - 23 ticks, the run's first stall anomaly. The rule guards against the server laying
+  a *carried* bed into the open 2x3 opening; a bed already down is not laid again, `sleep` only
+  clicks it. `_sleep_ready` now accepts a bed standing at the base as long as it is not inside
+  `perception.portal_interior` (`_bed_in_opening`), so a night at a bedded base costs one sleep
+  instead of a wait.
+- **A replayed tick could not be questioned.** `GameState.from_state` copied the logged cells as
+  JSON lists, and `_bed_reach_stance` puts them in a set - replaying run158's wait ticks raised
+  `TypeError: unhashable type: 'list'` on the very tool the state's own docstring promises for
+  "asking the predicate on the tick that was actually recorded". `from_state` now normalises the
+  base, chest, furnace, smoker, bed, arrival and gate cells to int tuples and `death_pos` to
+  floats.
+
 ## Next milestones
 
 - **Open after run86:** (1) the October fixes above are unit-tested but not yet seen live;

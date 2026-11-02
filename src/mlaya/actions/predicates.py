@@ -763,6 +763,22 @@ def _bed_bad_spot(gs: GameState) -> bool:
                for hit in gs.resources.get("white_bed") or [])
 
 
+def _bed_in_opening(gs: GameState) -> bool:
+    """A standing bed inside the gate frame's own 2x3 opening, lit or not.
+
+    `_bed_bad_spot` measures against *lit* portal blocks, so before the gate burns a bed in the
+    opening reads as clear: there is no portal block to be near. The cell is still the one the
+    respawn would put the body in the moment the frame lights, and `clear_portal` cannot dig a bed
+    out of it (the movement policy protects it), so nothing may sleep in it before the burn either.
+    """
+    if gs.base is None:
+        return False
+    opening = set(portal_interior(gs.base))
+    cells = [tuple(gs.bed_pos)] if gs.bed_pos is not None else []
+    cells += [hit.pos for hit in gs.resources.get("white_bed") or []]
+    return any(cell in opening for cell in cells)
+
+
 def _bed_needs_moving(gs: GameState) -> bool:
     """A standing bed that `take_bed` should pick up: a leftover away from the base, or one laid
     too close to the gate (`_bed_bad_spot`). Both leave a respawn point the gate bed must not be.
@@ -2581,10 +2597,20 @@ def _sleep_ready(gs: GameState) -> bool:
     it25: the bot stood at the base and slept in the bed nine blocks below). A carried bed is
     `place_bed`'s job first; `take_bed` brings a leftover one home. The switch is the *lit* gate
     (`_portal_lit`), not the bare frame: with the frame up but unlit the opening is still open
-    air, so a bed laid there blocks `light_portal`; only once it burns is a base bed safe.
+    air, so a bed *laid* there blocks `light_portal` - but a bed already standing at the base,
+    clear of that opening, is safe whatever the gate is doing.
     """
     if _portal_lit(gs):
         return _at_base(gs) and _bed_at_base(gs)
+    # A bed that already stands at the base, outside the open frame, is one the server can click.
+    # The hazard this rule guards against is a *carried* bed laid beside the bot inside the still
+    # open 2x3 opening; a bed already down west of the frame is not laid again, `sleep` only
+    # clicks it. Without this clause a night at a base whose bed is already placed, with nothing in
+    # the pack, offers neither `sleep` (the gate is unlit) nor `sleep` off base (`_sleep_off_base`
+    # needs a bed to carry), and the fallback holds the bot still (live, run158 it135-162: fifteen
+    # `wait` ticks at the anchor, the run's first stall anomaly, while mobs walked up to 26 m away).
+    if _at_base(gs) and _bed_at_base(gs) and not _bed_in_opening(gs):
+        return True
     return (not _at_base(gs) and not (gs.pos is not None and _underground(gs, gs.pos[1]))
             and _bed_in_sleep_reach(gs))
 
