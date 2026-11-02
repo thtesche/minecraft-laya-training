@@ -1338,8 +1338,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                     # A hop aims at the height the body is standing on, not at the height the gate
                     # came in at: live, run149 the 120 m hop aimed at y 66 while the bot stood at
                     # y 37-77, and the terrain refused the same cell sixteen times.
-                    tx = gs.pos[0] + dx / span * hop
-                    tz = gs.pos[2] + dz / span * hop
+                    # `dx`/`dz` point from the gate to the body, so the hop *subtracts* them:
+                    # adding walked the bot away from the exit (live, run151 it13-41: ten
+                    # "hops" from (189,299) to (859,1187), each ~100 blocks deeper into the
+                    # Nether, the gate at (1,74,16) behind it).
+                    tx = gs.pos[0] - dx / span * hop
+                    tz = gs.pos[2] - dz / span * hop
                     ty = math.floor(gs.pos[1])
                 else:
                     tx = ax + dx / span * NETHER_GATE_APPROACH

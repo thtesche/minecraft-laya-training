@@ -4712,9 +4712,23 @@ class NetherExpeditionTest(unittest.TestCase):
         a = resolve("leave_nether", g)
         self.assertEqual(a.tool, "navigate")
         self.assertNotEqual((a.args["x"], a.args["z"]), (self.EXIT[0], self.EXIT[2]))
-        # Target should be NETHER_EXIT_STAGING_DISTANCE (120m) closer to gate from current position
-        dist_to_target = math.dist((a.args["x"], a.args["z"]), g.pos[:2])
+        # Target should be NETHER_EXIT_STAGING_DISTANCE (120m) closer to gate from current
+        # position -- measured on the ground plane. `pos[:2]` is (x, y), so comparing the (x, z)
+        # target against it hides the walk behind the height difference (live, run151: the hop
+        # aimed 100 m *away* from the gate and this assertion still read 126 m).
+        dist_to_target = math.dist((a.args["x"], a.args["z"]), (g.pos[0], g.pos[2]))
         self.assertAlmostEqual(dist_to_target, NETHER_EXIT_STAGING_DISTANCE, delta=10.0)
+
+    def test_a_hop_walks_toward_the_gate_not_away_from_it(self) -> None:
+        # Live, run151 it13-41: the hop aimed `pos + (pos - gate)/span * hop` -- the body walked
+        # *away* from the exit, ten ~100 m "hops" from (189,299) to (859,1187) with the gate at
+        # (1,74,16) behind it. The distance checks above cannot see the sign: the target has to
+        # sit between the body and the gate.
+        g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] - 220.3, 37.0, self.EXIT[2] + 18.7)
+        a = resolve("leave_nether", g)
+        self.assertLess(math.dist((a.args["x"], a.args["z"]), (self.EXIT[0], self.EXIT[2])),
+                        math.dist((g.pos[0], g.pos[2]), (self.EXIT[0], self.EXIT[2])))
 
     def test_a_hop_aims_at_the_ground_the_bot_stands_on(self) -> None:
         # Live, run149 it156-161 and it318-320: the hop kept the height the gate came in at (y 66)
@@ -4732,11 +4746,11 @@ class NetherExpeditionTest(unittest.TestCase):
         g.pos = (self.EXIT[0] - 220.3, 37.0, self.EXIT[2] + 18.7)
         g.nether_hop_repeats = 1
         a = resolve("leave_nether", g)
-        self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), g.pos[:2]),
+        self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), (g.pos[0], g.pos[2])),
                                NETHER_EXIT_STAGING_DISTANCE / 2, delta=10.0)
         g.nether_hop_repeats = 4
         a = resolve("leave_nether", g)
-        self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), g.pos[:2]),
+        self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), (g.pos[0], g.pos[2])),
                                NETHER_EXIT_HOP_MIN, delta=10.0)
 
     def test_standing_on_the_arrival_cell_crosses_instead_of_walking(self) -> None:
