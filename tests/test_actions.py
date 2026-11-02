@@ -2847,6 +2847,25 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotIn("sleep", candidates(g))
         self.assertIsNone(resolve("sleep", g))
 
+    def test_a_carried_bed_needs_flat_ground_to_sleep_in(self) -> None:
+        # run156 it48-55: four `sleep` ticks on a slope at (54,67,187), each answered
+        # "[BED_PLACEMENT_FAILED] No nearby supported 2-block flat ground found to place a bed".
+        # The ground read there held one standable column - the one the bot stood on - and a bed
+        # needs two adjacent ones.
+        g = self._geared(white_bed=1)
+        g.base = (-197, -47, -98)
+        g.pos = (-196.5, 67.0, -98.5)
+        g.phase = "night"
+        g.resources = {"stone": [BlockHit("stone", "stone", -197, 66, -98, 1.0,
+                                          above="air", below="stone")]}
+        self.assertNotIn("sleep", candidates(g))
+        self.assertIsNone(resolve("sleep", g))
+        # A second standable column beside it is a footprint the server can lay a bed on.
+        g.resources["stone"].append(BlockHit("stone", "stone", -198, 66, -98, 2.0,
+                                            above="air", below="stone"))
+        self.assertIn("sleep", candidates(g))
+        self.assertEqual(resolve("sleep", g).tool, "sleep")
+
     def test_take_bed_when_it_stands_away_from_the_base(self) -> None:
         # A bed left below the base is a leftover from an earlier base: it is taken up so the
         # base can lay it beside the portal. Live, run18: the run17 bed sat at y=55 inside the

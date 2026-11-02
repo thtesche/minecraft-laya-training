@@ -803,6 +803,26 @@ def _known_footings(gs: GameState) -> set[tuple[int, int, int]]:
     return cells
 
 
+def _flat_ground_near(gs: GameState) -> bool:
+    """Whether a bed can be laid beside the bot: two adjacent cells with open space above and
+    solid ground below, within the reach the `sleep` server searches for a footprint.
+
+    A carried bed is only a bed once the server can put it down. Live, run156 it48-55: four
+    `sleep` ticks on a slope at (54,67,187) each answered `[BED_PLACEMENT_FAILED] No nearby
+    supported 2-block flat ground found to place a bed`, and the ground read there held exactly
+    one standable cell - the column the bot was standing on. An empty read is no information, not
+    a refusal, so it is trusted the way every other footing caller trusts it.
+    """
+    footings = _known_footings(gs)
+    if not footings or gs.pos is None:
+        return True
+    x, y, z = math.floor(gs.pos[0]), math.floor(gs.pos[1]), math.floor(gs.pos[2])
+    near = {c for c in footings if max(abs(c[0] - x), abs(c[2] - z)) <= BED_FOOTPRINT_REACH}
+    return any((cx + dx, cy, cz + dz) in near
+               for (cx, cy, cz) in near
+               for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+
+
 def _bed_stance(gs: GameState) -> tuple[int, int, int] | None:
     """The feet cell the bot must stand on for `place_bed`, clear of the gate, or None.
 
@@ -2703,10 +2723,13 @@ def _bed_in_sleep_reach(gs: GameState) -> bool:
         # The server sleeps in a standing bed before it lays the carried one, so a cave bed in
         # its search would take the sleep - and the respawn - back underground.
         return False
-    if _has_bed(gs.inventory):
-        return True
     distance = gs.resource_distance("white_bed")
-    return distance is not None and distance <= SLEEP_BED_REACH
+    if distance is not None and distance <= SLEEP_BED_REACH:
+        return True
+    # Nothing stands nearby to sleep in, so the carried bed has to be laid, and a bed needs a
+    # flat two-block footprint beside the body: run156 spent four `sleep` ticks on a slope
+    # before the stuck guard withheld the label (it48-55, `[BED_PLACEMENT_FAILED]`).
+    return _has_bed(gs.inventory) and _flat_ground_near(gs)
 
 
 def _at_base(gs: GameState) -> bool:

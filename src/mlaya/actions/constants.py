@@ -398,6 +398,12 @@ BED_PORTAL_CLEARANCE = 2
 # How far the `sleep` server looks for a standing bed: "[BED_NOT_FOUND] No unoccupied bed found
 # within 32 blocks". A bed the scan sees beyond it cannot be slept in from where the bot stands.
 SLEEP_BED_REACH = 32.0
+# How far the `sleep` server looks for a flat footprint when it has to lay a carried bed:
+# `placeCarriedBed` searches bed footprints within four blocks of the body. Live, run156 it48-55:
+# four `sleep` ticks on a slope at (54,67,187) each answered "[BED_PLACEMENT_FAILED] No nearby
+# supported 2-block flat ground found to place a bed" - the ground read there held exactly one
+# standable cell, the one the bot was standing on.
+BED_FOOTPRINT_REACH = 4
 # How close the body has to be for that search to end in a sleep. Minecraft accepts the bed click
 # only within two blocks of the bed's top centre (`distanceToSquared(x+0.5, y+1, z+0.5) > 4`
 # refuses it), and mineflayer's `sleep` reaches the same check before activating the block. Live,
