@@ -1261,6 +1261,18 @@ class GameState:
             value = data.get(field)
             if value is not None:
                 setattr(gs, field, value)
+        # A logged cell comes back from JSON as a list; the state keeps 3-tuples, and a cell that
+        # stays a list is unhashable wherever a predicate puts it in a set (`_bed_reach_stance`
+        # does `set(_bed_cells(gs))`, so a replayed tick raised where the live one never could).
+        for field in ("base", "chest_pos", "furnace_pos", "smoker_pos", "bed_pos",
+                      "nether_arrival", "nether_gate"):
+            value = getattr(gs, field)
+            if isinstance(value, (list, tuple)) and len(value) == 3:
+                setattr(gs, field, tuple(int(v) for v in value))
+        for field in ("death_pos",):
+            value = getattr(gs, field)
+            if isinstance(value, (list, tuple)) and len(value) == 3:
+                setattr(gs, field, tuple(float(v) for v in value))
         gs.powder_cells = tuple(tuple(cell) for cell in gs.powder_cells)
         gs.nether_landmarks = frozenset(tuple(cell) for cell in gs.nether_landmarks)
         gs.pos = data.get("position")
