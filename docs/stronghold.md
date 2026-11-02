@@ -2,7 +2,7 @@
 
 Status: **implemented and committed** — the `actions` package split landed first
 (behaviour-preserving, `f09edd4`), then the stronghold chain on top of it (`34079f5`); the suite
-is 1417 green (2026-11-02). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
+is 1420 green (2026-11-02). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
 The re-supply after shattered eyes is now demand-sized, and both robustness gaps are closed (see
 the section near the end).
 

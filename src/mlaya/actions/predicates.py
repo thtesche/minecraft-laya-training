@@ -2578,6 +2578,29 @@ def _stance_options(gs: GameState, target: BlockHit) -> list[tuple[int, int, int
             if (target.x + dx, target.y, target.z + dz) not in lava]
 
 
+def _at_pour_stance(gs: GameState, target: BlockHit) -> bool:
+    """Whether the bot's feet are on a cell the carried bucket can actually reach.
+
+    The server decides a pour with one ray (`pourAim`, `USE_RAY_REACH = 4.5`): it stops at the
+    first solid face in reach and the liquid lands in the cell in front of that face. Standing on
+    the block beside the target is the stance that answers it. The eye sits 1.62 above the feet,
+    so the ray from it to the top face of the block under the target leaves the neighbour's column
+    1.31 blocks above the target's floor -- clear of that block's ceiling -- and lands in the
+    target cell. One cell further out the same ray meets the neighbour's *top* face instead, and
+    the pour answers `[BUCKET_NO_FACE]`: live, run160 it7-14, the bot stood two cells short of
+    the stance and spent four ticks on that refusal while the frame still owed eight blocks.
+
+    The feet may also be at the target's own level, in the open pocket beside it: the ray then
+    descends 1.62 over one block and reaches the same floor face. That is the footing the run160
+    pour at (365, 36, 362) succeeded from.
+    """
+    if gs.pos is None:
+        return False
+    fx, fy, fz = _cell(gs.pos)
+    dx, dz = abs(fx - target.x), abs(fz - target.z)
+    return max(dx, dz) == 1 and fy in (target.y, target.y + 1)
+
+
 def _pour_stance(gs: GameState, target: BlockHit) -> tuple[int, int, int] | None:
     """The cell to stand in to pour into `target`: *on top of* a lateral neighbour.
 

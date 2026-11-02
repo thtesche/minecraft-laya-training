@@ -1417,8 +1417,19 @@ lid and stalled on the latch that was supposed to say the haul was done.
   **Obsidian is made, not mined:** `mine_obsidian` has three phases in `resolve`. If obsidian
   lies in reach (`OBSIDIAN_REACH` = 6 m — whatever the last pour formed), it is
   mined (`collect_block`, exactly the missing blocks up to 10). Otherwise the water bucket is poured onto the
-  next lava cell (`use_bucket pour` with `x,y,z`, from `POUR_REACH` = 4.5 m; otherwise first
-  navigate there — **without** `dig`/`scaffold`, so the pathfinder does not tunnel into the lava).
+  next lava cell (`use_bucket pour` with `x,y,z`) — but only from a footing the pour can use.
+  **Reach is not footing.** The server decides a pour with one ray (`pourAim`, `USE_RAY_REACH`
+  = 4.5): it stops at the first solid face and the liquid lands in the cell in front of it. From
+  the cell *on top of* a lateral neighbour the ray to the floor under the target clears that
+  neighbour's ceiling (the eye sits 1.62 above the feet, so it leaves the neighbour's column 1.31
+  blocks above the target's floor); one cell further out the same ray meets that neighbour's top
+  face instead and the answer is `[BUCKET_NO_FACE]` (live, run160 it7-14: the bot stood two cells
+  short of the stance, four pours refused, obsidian stuck at 2 of 10). `_at_pour_stance`
+  therefore accepts only a feet cell laterally adjacent to the target, at the target's level or
+  one above it; otherwise the step first navigates to that stance (`dig`, **no** `scaffold`, so
+  the pathfinder does not bridge over its own target). Only when every neighbour is written off
+  (`stance_skip`) and the bot is already inside the pool's open pocket does it pour from where it
+  stands.
   As "open" above the pour cell, besides `air`, `cave_air` also counts (`perception.AIR_NAMES`):
   underground lava lakes are covered by cave air instead of `air`, and the pour check discarded
   such cells first (fixed live in the from-zero run).

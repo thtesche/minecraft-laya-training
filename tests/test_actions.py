@@ -1741,10 +1741,10 @@ class NetherGateTest(unittest.TestCase):
         self.assertIn("build_portal", candidates(g))
 
     def test_mine_obsidian_pours_water_onto_lava(self) -> None:
-        # Obsidian is *made*, not dug: with the bucket full and a usable lava cell within
-        # pouring reach, the step empties the bucket into that cell.
+        # Obsidian is *made*, not dug: with the bucket full and the bot standing on the block
+        # beside a usable lava cell, the step empties the bucket into that cell.
         g = self._geared(water_bucket=1)
-        g.pos = (-270.0, 64.0, -56.0)
+        g.pos = (-269.5, 65.0, -56.5)  # on top of the neighbour of the target cell
         g.resources = self._lava()
         self.assertIn("mine_obsidian", candidates(g))
         a = resolve("mine_obsidian", g)
@@ -1799,6 +1799,42 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.args["range"], 1)
         self.assertTrue(a.args["dig"])
         self.assertFalse(a.args["scaffold"])
+
+    def test_mine_obsidian_walks_onto_the_stance_before_it_pours(self) -> None:
+        # Live, run160 it7-14: the bot stood two cells short of the pond, well inside the bucket's
+        # 4.5-block reach, and poured from there. The ray from that footing meets the *top* face
+        # of the rock between it and the target, so the water lands on the bot's own cell and the
+        # answer is `[BUCKET_NO_FACE]` -- four ticks of it, obsidian stuck at 2 of 10. Reach is
+        # not footing: the step walks onto the neighbour cell first.
+        g = self._geared(water_bucket=1)
+        g.pos = (-267.5, 65.0, -56.5)
+        g.resources = self._lava()
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-269, 65, -56))
+
+    def test_mine_obsidian_pours_from_the_pocket_at_the_lava_level(self) -> None:
+        # The feet in the open cell beside the lava, at the lava's own level: the eye sits 1.62
+        # above them, so the ray to the floor under the target clears nothing on the way. Live,
+        # run160 it67 -- the run's first obsidian came from exactly this footing.
+        g = self._geared(water_bucket=1)
+        g.pos = (-269.5, 64.0, -56.5)
+        g.resources = self._lava()
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "use_bucket")
+        self.assertEqual(a.args, {"action": "pour", "liquid": "water",
+                                  "x": -270, "y": 64, "z": -56})
+
+    def test_mine_obsidian_pours_where_it_stands_when_no_stance_is_left(self) -> None:
+        # Every neighbour of the cell is refused footing, yet the bot is already inside the pool's
+        # open pocket: the pour is worth the try from there rather than standing down with the
+        # frame still owed.
+        g = self._geared(water_bucket=1)
+        g.pos = (-270.5, 64.0, -58.5)
+        g.stance_skip = frozenset({(-269, 65, -56), (-271, 65, -56), (-270, 65, -55)})
+        g.resources = self._lava()
+        a = resolve("mine_obsidian", g)
+        self.assertEqual(a.tool, "use_bucket")
 
     def test_a_capped_pool_hands_the_cast_to_the_dig(self) -> None:
         # Live, run148: the only level-0 source in the scan sat at (-160, 21, -86) with `above=stone`.
@@ -1972,7 +2008,7 @@ class NetherGateTest(unittest.TestCase):
         # required exactly `"air"` above the target, so `mine_obsidian` was never offered at all
         # and the bot wandered the surface with `explore` alone until the iteration limit.
         g = self._geared(water_bucket=1)
-        g.pos = (-270.0, 64.0, -56.0)
+        g.pos = (-269.5, 65.0, -56.5)  # the stance beside the cell
         g.resources = {"lava": [
             BlockHit("lava", "lava", -270, 64, -56, 3.0,
                      above="cave_air", below="stone", level=2),

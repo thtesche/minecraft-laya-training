@@ -1033,13 +1033,23 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                                         OBSIDIAN_CAST_BATCH)},
                           "let the dig open the capped lava pool, pour the carried water into it "
                           "and mine the obsidian that forms")
-        if _within_reach(gs, lava, POUR_REACH):
+        if _at_pour_stance(gs, lava):
             return Action(label, "use_bucket",
                           {"action": "pour", "liquid": "water",
                            "x": lava.x, "y": lava.y, "z": lava.z},
                           "pour the carried water onto the lava source to form obsidian")
         stance = _pour_stance(gs, lava)
         if stance is None:
+            # Every neighbour of the cell is unusable footing, but the bot is already inside the
+            # pool's open pocket: the pour is worth one try from where it stands, which is where
+            # the server's own approach leaves it (live, run160 it67: a pour from three blocks off,
+            # at the target's own level, formed the run's first obsidian).
+            if _within_reach(gs, lava, POUR_REACH):
+                return Action(label, "use_bucket",
+                              {"action": "pour", "liquid": "water",
+                               "x": lava.x, "y": lava.y, "z": lava.z},
+                              "pour the carried water into the lava from the open pocket the bot "
+                              "already stands in")
             return None
         sx, sy, sz = stance
         return Action(label, "navigate",
