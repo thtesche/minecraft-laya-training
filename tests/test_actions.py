@@ -15,7 +15,8 @@ from types import SimpleNamespace
 from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pearls_wanted, _bed_at_base,
                           _bed_cells, _bed_reachable, _bed_reach_stance, _bed_stance,
                           _click_gap, _crowding_hostiles, _diamond_reason, _expedition_prepared,
-                          _eyes_owed, _frame_empty, _food_source_in_reach, _nether_haul_home,
+                          _eyes_owed, _flat_ground_near, _frame_empty, _food_source_in_reach,
+                          _nether_haul_home,
                            _nether_topup_wanted, _nether_food_secured,
                           _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_target, _rods_target,
                           _frame_needs_obsidian, _furnace_site, _gold_reserve_short, _known_footings,
@@ -2901,6 +2902,27 @@ class NetherGateTest(unittest.TestCase):
                                             above="air", below="stone"))
         self.assertIn("sleep", candidates(g))
         self.assertEqual(resolve("sleep", g).tool, "sleep")
+
+    def test_a_footprint_above_the_body_is_not_ground_the_bed_can_go_on(self) -> None:
+        # run159 it46/48: the bot stood on a cave floor at y=55, no base yet, bed in the pack, and
+        # the ground read named two adjacent standable cells at y=71 - sixteen blocks up the same
+        # columns, four cells off in plan. The server's footprint search walks the ring of radius 4
+        # around the feet at heights 0, -1 and +1 only (`placement-candidates.ts`), so that pair is
+        # nowhere a bed can go, and `sleep` answered `[BED_PLACEMENT_FAILED]` twice.
+        g = self._geared(white_bed=1)
+        g.pos = (-36.7, 55.0, 108.7)
+        g.phase = "night"
+        g.resources = {"grass_block": [BlockHit("grass_block", "grass_block", x, 70, z, 4.0,
+                                               above="air")
+                                       for x in (-38, -37) for z in (104, 105)]}
+        self.assertFalse(_flat_ground_near(g))
+        self.assertNotIn("sleep", candidates(g))
+        # The same pair at the body's own level is a footprint the search can reach.
+        g.resources = {"grass_block": [BlockHit("grass_block", "grass_block", x, 54, z, 4.0,
+                                               above="air")
+                                       for x in (-38, -37) for z in (104, 105)]}
+        self.assertTrue(_flat_ground_near(g))
+        self.assertIn("sleep", candidates(g))
 
     def test_take_bed_when_it_stands_away_from_the_base(self) -> None:
         # A bed left below the base is a leftover from an earlier base: it is taken up so the

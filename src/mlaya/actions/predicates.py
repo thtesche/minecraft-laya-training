@@ -828,12 +828,20 @@ def _flat_ground_near(gs: GameState) -> bool:
     supported 2-block flat ground found to place a bed`, and the ground read there held exactly
     one standable cell - the column the bot was standing on. An empty read is no information, not
     a refusal, so it is trusted the way every other footing caller trusts it.
+
+    The pair has to be at the body's own level. The server's search is a ring of radius 4 around
+    the feet, walked at heights 0, -1 and +1 only (`placement-candidates.ts`), so a flat pair
+    sixteen blocks up the neighbouring columns is nowhere a bed can go. Live, run159 it46/48: the
+    bot stood on a cave floor at y=55, the scan named standable grass at y=71 four cells off in
+    plan, the predicate read that as a footprint and `sleep` answered `[BED_PLACEMENT_FAILED]`
+    twice.
     """
     footings = _known_footings(gs)
     if not footings or gs.pos is None:
         return True
     x, y, z = math.floor(gs.pos[0]), math.floor(gs.pos[1]), math.floor(gs.pos[2])
-    near = {c for c in footings if max(abs(c[0] - x), abs(c[2] - z)) <= BED_FOOTPRINT_REACH}
+    near = {c for c in footings
+            if abs(c[1] - y) <= 1 and max(abs(c[0] - x), abs(c[2] - z)) <= BED_FOOTPRINT_REACH}
     return any((cx + dx, cy, cz + dz) in near
                for (cx, cy, cz) in near
                for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)))
