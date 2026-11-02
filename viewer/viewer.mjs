@@ -13,12 +13,14 @@
 //
 // Usage: node viewer.mjs [--host 127.0.0.1] [--port 25565] [--version 1.21.4]
 //          [--username LayaView] [--target MineAI] [--view-port 3006] [--view-distance 6]
-//          [--distance 2] [--height 1] [--first-person] [--no-commands]
+//          [--distance 2] [--height 1] [--first-person] [--no-commands] [--names]
 
 import mineflayer from 'mineflayer'
 import viewerPkg from 'prismarine-viewer'
+import viewerViewer from 'prismarine-viewer/viewer/index.js'
 
 const { mineflayer: mineflayerViewer } = viewerPkg
+const { WorldView } = viewerViewer
 
 const DEFAULTS = {
   host: '127.0.0.1',
@@ -31,7 +33,10 @@ const DEFAULTS = {
   'first-person': false,
   distance: 2,
   height: 1,
-  commands: true
+  commands: true,
+  // prismarine-viewer paints every entity's username as a sprite above its model. The label is
+  // the only thing in the picture that is not the world, so it stays off unless asked for.
+  names: false
 }
 
 // The chase camera stands `--distance` behind MineAI (horizontally) and `--height` above it,
@@ -65,6 +70,8 @@ function parseArgs (argv) {
     const arg = argv[i]
     if (arg === '--first-person') opts['first-person'] = true
     else if (arg === '--no-commands') opts.commands = false
+    else if (arg === '--names') opts.names = true
+    else if (arg === '--no-names') opts.names = false
     else if (arg.startsWith('--') && i + 1 < argv.length) opts[arg.slice(2)] = argv[++i]
   }
   for (const key of ['port', 'view-port', 'view-distance', 'distance', 'height']) opts[key] = Number(opts[key])
@@ -72,6 +79,22 @@ function parseArgs (argv) {
 }
 
 const opts = parseArgs(process.argv.slice(2))
+
+// The name above a player is a sprite the client builds from the `username` in the `entity`
+// payload. Stripping it at the source leaves the model - and everything else - exactly as it is.
+if (!opts.names) {
+  const listenToBot = WorldView.prototype.listenToBot
+  WorldView.prototype.listenToBot = function (bot) {
+    const emit = this.emitter.emit
+    this.emitter.emit = (type, data) => {
+      if (type === 'entity' && data && data.username !== undefined) {
+        data = { ...data, username: undefined }
+      }
+      return emit.call(this.emitter, type, data)
+    }
+    return listenToBot.call(this, bot)
+  }
+}
 
 function log (...parts) {
   console.log(new Date().toISOString(), ...parts)

@@ -16,7 +16,8 @@ node viewer.mjs > viewer.log 2>&1 &
 Options (defaults in brackets): `--host` [127.0.0.1], `--port` [25565, the LAN port of the
 world], `--version` [1.21.4], `--username` [LayaView], `--target` [MineAI], `--view-port` [3006],
 `--view-distance` [6], `--distance` [2] and `--height` [1] for the chase camera,
-`--first-person`, `--no-commands`.
+`--first-person`, `--no-commands`, `--names` (prismarine-viewer paints every player's username as
+a sprite above its model; the label is off by default and `--names` brings it back).
 
 Every 30 s the log reports where the camera is and how far MineAI is from it. The viewer
 reconnects by itself (5 s, doubling to 60 s) when the world closes or LayaView is
