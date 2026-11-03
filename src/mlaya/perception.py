@@ -1095,6 +1095,13 @@ class GameState:
     # so the same refusal repeats until the aim is shortened (live, run149: sixteen identical
     # `[NAVIGATION_TARGET_UNSUPPORTED]` on one 120 m hop).
     nether_hop_repeats: int = 0
+    # Marches (`explore_frontier`) in a row that got no route at all (Agent `_note_explore`).
+    # `[EXPLORATION_ROUTE_STOPPED]` leaves the body where it was, so the next tick asked for the
+    # same heading and hit the same wall (live, run164 it159-161: three identical eastward marches
+    # from (132, 41, 0) into the lava sea). The count turns the next bearing a quadrant
+    # (`_clear_march_heading`) so a blocked line is approached from another side, and a pearl wave
+    # that burns the whole turn budget goes home instead of marching in place.
+    explore_stalls: int = 0
     # Fortress landmark cells the bot has already walked onto and got nothing out of (Agent
     # `_note_landmark`): a cage whose `navigate` answered with 0 metres moved is a searched cage,
     # and offering it again next tick is the same 0-metre step (live, run104: 100+ ticks on one
@@ -1260,6 +1267,7 @@ class GameState:
             "frontier_heading": self.frontier_heading,
             "warped_forest": self.warped_forest,
             "nether_hop_repeats": self.nether_hop_repeats,
+            "explore_stalls": self.explore_stalls,
             "nether_ticks": self.nether_ticks,
             "nether_travel": self.nether_travel,
             "mobs": self.mobs,
@@ -1308,7 +1316,7 @@ class GameState:
                       "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
                       "stronghold_estimated", "end_portal_active", "powder_cells",
                       "powder_bank", "frame_eyes", "frontier_heading", "warped_forest",
-                      "nether_landmarks"):
+                      "explore_stalls", "nether_landmarks"):
             value = data.get(field)
             if value is not None:
                 setattr(gs, field, value)

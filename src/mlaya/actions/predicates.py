@@ -1124,6 +1124,27 @@ def _nether_search_heading(gs: GameState) -> float:
     return 270.0 if gs.pos[0] >= way_home[0] else 90.0
 
 
+def _clear_march_heading(gs: GameState, base: float) -> float:
+    """Turn a march's bearing once per `[EXPLORATION_ROUTE_STOPPED]` in a row.
+
+    `explore_frontier` answers `[EXPLORATION_ROUTE_STOPPED] ... no path or usable partial route
+    found` when the pathfinder cannot reach the frontier leg at all, and it leaves the body where
+    it was. The next tick therefore asked for the same bearing and hit the same wall: live, run164
+    it159-161 stood at (132, 41, 0) and marched east into the same lava sea three times, so
+    `nether_travel` never moved and no budget could end the loop. Each stall turns the bearing a
+    quadrant (`EXPLORE_STALL_TURN`), so a blocked line is approached from another side; the turn
+    count is reset by the first march that actually moves (`graph._note_explore`).
+
+    The turn is applied to whatever the caller aimed at, including a recorded warped forest: a
+    direct line that cannot be pathed is still a line to try from another side, and the forest row
+    is not lost - it wants the next approach, not the same one.
+    """
+    stalls = int(getattr(gs, "explore_stalls", 0) or 0)
+    if stalls <= 0:
+        return base
+    return round((base + EXPLORE_STALL_TURN * stalls) % 360.0, 1)
+
+
 def _in_nether(gs: GameState) -> bool:
     """Whether the bot stands in the Nether. The mirror of `_overworld`."""
     return "nether" in str(gs.dimension or "").lower()

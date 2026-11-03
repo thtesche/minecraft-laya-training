@@ -158,6 +158,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._water_ticks = 0
         agent._defer_quiet = 0
@@ -515,6 +516,7 @@ class PourSkipTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -627,6 +629,7 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -791,6 +794,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -946,6 +950,7 @@ class RescueSkipTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -1142,6 +1147,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent.furnace_pos = None
         agent.smoker_pos = None
@@ -1886,6 +1892,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent.base = None
         agent.surface = None
@@ -2110,6 +2117,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._water_ticks = 0
         agent._defer_quiet = 0
@@ -2224,6 +2232,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent.base = None
         agent.chest_pos = None
@@ -2567,6 +2576,7 @@ class DropHoleTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -2844,6 +2854,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -2961,6 +2972,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -3192,6 +3204,7 @@ class ChestLidTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._blocked_cell = None
         agent.build_site = None
@@ -3376,6 +3389,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._home_anchor = None
         agent._home_ticks = 0
@@ -3570,6 +3584,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
@@ -3915,6 +3930,7 @@ class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent.log = []
         agent.mcp = mcp
@@ -4466,6 +4482,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._portal_blocked = []
         agent._frame_complete = False
@@ -4888,6 +4905,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         self.assertTrue(agent._inject(gs()).base_adopted)
 
@@ -5164,6 +5182,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._water_ticks = 0
         agent._defer_quiet = 0
@@ -5227,6 +5246,46 @@ class NetherCrossingTest(unittest.TestCase):
                                     {"x": -195, "y": -46, "z": -98}, ""),
                              "[HOSTILE_CONTACT] a blaze is in contact")
         self.assertNotEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
+
+    def test_a_stopped_march_is_counted_and_a_partial_one_is_not(self) -> None:
+        # Live, run164 it159-161: three identical eastward marches from (132, 41, 0) answered
+        # "no path or usable partial route found" and the body never moved, so every tick aimed
+        # at the same air. A partial route that ran out of chunk columns did move, and turning
+        # away from ground that worked would be the wrong lesson.
+        agent = self._agent()
+        march = Action("search_enderman", "explore_frontier", {"heading": 90.0, "chunks": 8}, "")
+        agent._note_explore(march, False,
+                            "[EXPLORATION_ROUTE_STOPPED] Pathfinder stopped: search timed out "
+                            "after 2000 ms compute; no path or usable partial route found.")
+        self.assertEqual(agent._explore_stalls, 1)
+        agent._note_explore(march, False,
+                            "[EXPLORATION_INCOMPLETE] The bounded route expanded 1/8 requested "
+                            "frontier chunk columns.")
+        self.assertEqual(agent._explore_stalls, 1)
+        # Only marches are counted; an unrelated action's text cannot turn the next bearing.
+        agent._note_explore(Action("mine_stone", "collect_block", {}, ""), False,
+                            "[EXPLORATION_ROUTE_STOPPED] not this action")
+        self.assertEqual(agent._explore_stalls, 1)
+
+    def test_the_first_march_that_moves_clears_the_stall_count(self) -> None:
+        agent = self._agent()
+        march = Action("explore", "explore_frontier", {"heading": 90.0, "chunks": 8}, "")
+        agent._note_explore(march, False, "[EXPLORATION_NO_FORWARD_PROGRESS] no measurable progress")
+        agent._note_explore(march, False, "[EXPLORATION_ROUTE_STOPPED] search timed out")
+        self.assertEqual(agent._inject(gs()).explore_stalls, 2)
+        agent._note_explore(march, True, "")
+        self.assertEqual(agent._explore_stalls, 0)
+        self.assertEqual(agent._inject(gs()).explore_stalls, 0)
+
+    def test_leaving_the_nether_clears_the_stalls_for_the_next_trip(self) -> None:
+        # A stalled march is a fact about one trip's terrain. The next crossing starts at the gate
+        # in a new neighbourhood, so the turn budget is not spent by the last trip - and the pearl
+        # wave's stall cap cannot lock the hunt out across trips.
+        agent = self._agent()
+        agent._last_dimension = "minecraft:the_nether"
+        agent._explore_stalls = 3
+        agent._note_dimension(gs(dimension="minecraft:overworld"))
+        self.assertEqual(agent._explore_stalls, 0)
 
     def test_a_hop_the_ground_refused_is_counted_at_its_cell(self) -> None:
         # Live, run149 it156-161 and it318-320: sixteen identical `[NAVIGATION_TARGET_UNSUPPORTED]`
@@ -5738,6 +5797,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._powder_cells = []
         agent._powder_bank = 0
         agent._frame_eyes = 0
+        agent._explore_stalls = 0
         agent._portal_lit = False
         agent._water_ticks = 0
         agent._defer_quiet = 0

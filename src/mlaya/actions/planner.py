@@ -1901,7 +1901,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                 return Action(label, "navigate",
                               {"x": fx, "y": fy, "z": fz, "dig": True, "scaffold": True},
                               f"walk to the {fortress.name} at {fx},{fy},{fz}, where blazes spawn")
-            heading = _nether_search_heading(gs)
+            heading = _clear_march_heading(gs, _nether_search_heading(gs))
             return Action(label, "explore_frontier",
                           {"heading": heading, "chunks": EXPLORE_FRONTIER_CHUNKS},
                           "march east-west along the fortresses' axis, where blazes spawn")
@@ -1915,7 +1915,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # Extend the remembered frontier in a real heading instead, so the bot leaves terrain it
         # has already worked and can find what `explore` is out for (live: lava for the portal).
         return Action(label, "explore_frontier",
-                      {"heading": frontier_heading(gs), "chunks": EXPLORE_FRONTIER_CHUNKS},
+                      {"heading": _clear_march_heading(gs, frontier_heading(gs)),
+                       "chunks": EXPLORE_FRONTIER_CHUNKS},
                       "explore: no outward ground in reach, extend the frontier toward new terrain")
     return None
 

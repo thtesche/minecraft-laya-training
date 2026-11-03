@@ -631,6 +631,10 @@ class Agent:
         # same cell (`_note_nether_hop`): a refused hop leaves the body where it was, so the same
         # aim would be refused again until it is shortened.
         self._nether_hop: tuple[tuple[int, int] | None, int] = (None, 0)
+        # Marches that got no route at all, in a row (`_note_explore`): a stopped march leaves the
+        # body where it was, so the next bearing would be the same wall. Turned a quadrant per
+        # stall (`_clear_march_heading`) and capped for a pearl wave (`PEARL_MARCH_STALL_LIMIT`).
+        self._explore_stalls = 0
         self._nether_ticks = 0
         self._nether_travel = 0.0
         self._nether_last_pos: tuple[float, float] | None = None   # (x, z) of the last tick
@@ -855,6 +859,7 @@ class Agent:
         gs.nether_arrival = self._nether_arrival
         gs.nether_gate = self._nether_gate
         gs.nether_hop_repeats = self._nether_hop[1]
+        gs.explore_stalls = getattr(self, "_explore_stalls", 0)
         gs.nether_ticks = self._nether_ticks
         gs.powder_stowed = self._powder_stowed
         gs.end_portal_active = self._end_portal_active
@@ -1238,6 +1243,7 @@ class Agent:
         (`_note_nether_gate` is the cold start's real source).
         """
         dim = str(gs.dimension or "").lower()
+        previous = self._last_dimension
         crossed = "nether" in dim and self._last_dimension is not None \
             and "nether" not in self._last_dimension
         self._last_dimension = dim
@@ -1284,6 +1290,36 @@ class Agent:
             # Same for the cages already written off: a new trip searches a new stretch of the
             # world, and the fortress the last one stood in is not this one's target.
             self._nether_landmarks = []
+            # A stalled march is a fact about one trip's terrain; a new trip starts at the gate
+            # with a new neighbourhood, so the turn budget is not spent by the last one. Only the
+            # crossing clears it - an Overworld tick must keep its own count, or the roam there
+            # would turn a quadrant per tick and never hold a bearing.
+            if "nether" in (previous or ""):
+                self._explore_stalls = 0
+
+    def _note_explore(self, action, ok: bool, text: str | None) -> None:
+        """Count marches that brought the body nowhere, and clear the count when one moves.
+
+        `explore_frontier` leaves the bot standing when the pathfinder finds no route at all
+        (`[EXPLORATION_ROUTE_STOPPED] ... no path or usable partial route found`), so the next tick
+        asked for the same heading and hit the same wall: live, run164 it159-161 stood at
+        (132, 41, 0) and marched east into the same lava sea three times. `nether_travel` never
+        moved a block there, so no metre budget could end the loop.
+
+        Only a *route* failure counts. `[EXPLORATION_INCOMPLETE]` did move the body - it just ran
+        out of chunk columns - and treating it as a stall would turn away from ground that worked.
+        The count is reset by the first march that moves (success or partial).
+        """
+        if getattr(action, "tool", None) != "explore_frontier":
+            return
+        stalls = getattr(self, "_explore_stalls", 0)
+        if ok:
+            self._explore_stalls = 0
+            return
+        stopped = text or ""
+        if ("EXPLORATION_ROUTE_STOPPED" in stopped or "EXPLORATION_NO_FORWARD_PROGRESS" in stopped
+                or "EXPLORATION_FAILED" in stopped):
+            self._explore_stalls = stalls + 1
 
     def _note_landmark(self, action, delta: dict, after) -> None:
         """Write off a fortress landmark the search reached and found no blaze at.
@@ -3089,6 +3125,7 @@ class Agent:
         self._note_container_missing(action, _ok, _text)
         self._note_furnace(action, _ok, _text, res)
         self._note_nether_hop(action, _ok, _text)
+        self._note_explore(action, _ok, _text)
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
         self._note_bed(action, _ok, res)

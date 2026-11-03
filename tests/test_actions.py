@@ -35,6 +35,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          BARTER_GOLD_BUDGET, BARTER_MAX_ATTEMPTS, BARTER_PEARL_BATCH,
                          BARTER_PIGLIN_RANGE, GOLD_BARTER_RESERVE,
                          NETHER_PEARL_SEARCH_M, PEARL_WAVE_MAX_TRIPS,
+                         PEARL_MARCH_STALL_LIMIT, EXPLORE_STALL_TURN,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
@@ -4146,6 +4147,13 @@ class NetherFrontierHeadingTest(unittest.TestCase):
                                                  31, 64, -8, 16.0)]}
         self.assertEqual(resolve("explore", g).tool, "navigate")
 
+    def test_a_stopped_march_turns_the_fortress_search_too(self) -> None:
+        # The same stopped route that traps the pearl march traps the fortress march: the heading
+        # is turned a quadrant per stall, so the line is tried from another side.
+        g = self._down(10.0, heading=0.0)
+        g.explore_stalls = 1
+        self.assertEqual(resolve("explore", g).args["heading"], 90.0)
+
 
 class FrontierHeadingParseTest(unittest.TestCase):
     """`frontier_navigation` arrives as `query.rows`, a list of row lists of one number."""
@@ -4259,6 +4267,37 @@ class PearlMarchHeadingTest(unittest.TestCase):
         # (12.5 - -197, -3.5 - -98) -> away from the base, not the Nether landmarks.
         self.assertNotEqual(a.args["heading"], 48.5)
         self.assertNotEqual(a.args["heading"], 200.0)
+
+    def test_a_stopped_march_turns_the_bearing_a_quadrant(self) -> None:
+        # Live, run164 it159-161: the same eastward bearing from (132, 41, 0) answered
+        # `[EXPLORATION_ROUTE_STOPPED]` three times and the body never moved, so repeating it is
+        # the same wall. Each stall turns the bearing; four cover the compass.
+        g = self._wave(heading=200.0)
+        g.explore_stalls = 1
+        self.assertEqual(resolve("search_enderman", g).args["heading"], 290.0)
+        g.explore_stalls = 2
+        self.assertEqual(resolve("search_enderman", g).args["heading"], 20.0)
+        # Four stalls are one full turn, which is where the wave gives up rather than orbit.
+        g.explore_stalls = PEARL_MARCH_STALL_LIMIT
+        self.assertIsNone(resolve("search_enderman", g))
+
+    def test_the_warped_forest_aim_is_turned_too_when_its_line_is_blocked(self) -> None:
+        g = self._wave(heading=200.0, forest=(48.5, 90.0, -3, 2))
+        g.explore_stalls = 1
+        self.assertEqual(resolve("search_enderman", g).args["heading"], 138.5)
+
+    def test_a_wave_that_finds_no_route_at_all_comes_home(self) -> None:
+        # A stopped march covers no ground, so `nether_travel` never fills and no metre budget can
+        # end the wave. After one full turn of stalls the gate is the cheaper answer: the wave
+        # comes home to stow and relaunch instead of marching in place.
+        g = self._wave(heading=200.0)
+        g.explore_stalls = PEARL_MARCH_STALL_LIMIT
+        self.assertFalse(_search_enderman_wanted(g))
+        self.assertNotIn("search_enderman", candidates(g))
+        self.assertIn("leave_nether", candidates(g))
+
+    def test_the_turn_is_never_larger_than_a_quadrant_per_stall(self) -> None:
+        self.assertEqual(EXPLORE_STALL_TURN, 90.0)
 
 
 class NetherSearchHeadingTest(unittest.TestCase):

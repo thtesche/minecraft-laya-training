@@ -562,6 +562,18 @@ BARTER_PIGLIN_RANGE = 32
 # guaranteed region feature, so an empty stretch should send the bot home to stow and relaunch
 # rather than burn the whole trip wandering.
 NETHER_PEARL_SEARCH_M = 400.0
+# Marches in a row that brought the body nowhere (`[EXPLORATION_ROUTE_STOPPED]`) before the pearl
+# wave gives up on the spot and comes home. A stopped march leaves the bot standing where it was,
+# so the metre budget above cannot fill: live, run164 it159-161 asked for the same eastward bearing
+# from (132, 41, 0) three times and got "no path or usable partial route found" each time — the
+# body never moved a block, so `nether_travel` stayed put and the wave would have marched in place
+# to the run limit. The marches turn by a quadrant per stall (`EXPLORE_STALL_TURN`) so a blocked
+# line is tried from another side; after one full turn with no route at all, a relaunch from the
+# gate is the cheaper answer, the same shape as the metre budget.
+PEARL_MARCH_STALL_LIMIT = 4
+# Degrees the next march turns after one `[EXPLORATION_ROUTE_STOPPED]`: a quadrant, so the four
+# stalls the limit above allows sample all of them and the fifth cannot repeat the first.
+EXPLORE_STALL_TURN = 90.0
 # How many pearl trips the waves make before the Overworld enderman roam takes over as the
 # fallback. Each trip crosses, hunts, and comes home to stow whatever pearls it got, so the cap
 # bounds the round trips, not the time in any one of them (`_nether_must_return` already does

@@ -104,7 +104,10 @@ def _search_enderman_wanted(gs: GameState) -> bool:
             or (gs.health or 0) < ENDERMAN_HUNT_HEALTH):
         return False
     if _in_nether(gs):
-        return gs.nether_travel < NETHER_PEARL_SEARCH_M
+        # A stopped march leaves the body where it stood, so the metre budget cannot fill: the
+        # stall count is what ends a wave that can find no route at all (`PEARL_MARCH_STALL_LIMIT`).
+        return (gs.nether_travel < NETHER_PEARL_SEARCH_M
+                and int(getattr(gs, "explore_stalls", 0) or 0) < PEARL_MARCH_STALL_LIMIT)
     return gs.pearl_wave_trips >= PEARL_WAVE_MAX_TRIPS
 
 
@@ -244,10 +247,11 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         # which is the same compass line on every trip, because the base does not move: run164
         # walked three pearl waves down the same crimson corridor and came home with no pearl.
         if _in_nether(gs):
-            heading = (gs.warped_forest[0] if gs.warped_forest is not None
-                       else _nether_search_heading(gs))
+            base = (gs.warped_forest[0] if gs.warped_forest is not None
+                    else _nether_search_heading(gs))
+            heading = _clear_march_heading(gs, base)
         else:
-            heading = frontier_heading(gs)
+            heading = _clear_march_heading(gs, frontier_heading(gs))
         # No fortress-style landmark to steer by - endermen are just mobs that load in the dark -
         # so march the remembered frontier into new terrain, the same `explore_frontier` roam the
         # Overworld explore falls back to. Each march loads fresh ground; once an enderman comes
