@@ -148,6 +148,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._barter_attempts = 0
@@ -505,6 +506,7 @@ class PourSkipTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -616,6 +618,7 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -779,6 +782,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -933,6 +937,7 @@ class RescueSkipTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -1128,6 +1133,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -1871,6 +1877,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -2093,6 +2100,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._barter_attempts = 0
@@ -2207,6 +2215,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -2549,6 +2558,7 @@ class DropHoleTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -2825,6 +2835,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -2941,6 +2952,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -3171,6 +3183,7 @@ class ChestLidTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -3405,6 +3418,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         return agent
 
     def test_the_gate_is_offered_and_is_the_crossing(self) -> None:
@@ -3547,6 +3561,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -4442,6 +4457,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -4863,6 +4879,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False
@@ -5064,6 +5081,7 @@ class SearchIsPaidForInMetresTest(unittest.IsolatedAsyncioTestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         return agent
 
 
@@ -5136,6 +5154,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._nether_ticks = 0
         agent._powder_stowed = False
         agent._barter_attempts = 0
@@ -5522,8 +5541,17 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
             self.rows = rows
             self.calls: list = []
 
+        # A portal block the world still holds, for the scan the loop falls back to when the
+        # ledger has no crossing (a wiped database still leaves the gate standing).
+        blocks: list = []
+
         async def read(self, tool, args, why):
             self.calls.append((tool, args))
+            if tool == "view_blocks":
+                listed = [{"x": x, "y": y, "z": z} for x, y, z in self.blocks]
+                payload = {"response": {"data": {"result": {"blocks": {"find": [
+                    {"name": "nether_portal", "listed": listed}]}}}}}
+                return RememberedGateTest._Read(payload)
             payload = {"response": {"data": {"result": {"query": {
                 "columns": ["x", "y", "z"], "rows": self.rows}}}}}
             return RememberedGateTest._Read(payload)
@@ -5557,10 +5585,45 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_world_that_never_crossed_has_no_gate(self) -> None:
         agent = self._agent()
-        agent.mcp = self._Mcp([])
+        mcp = self._Mcp([])
+        agent.mcp = mcp
         await agent._note_nether_gate(gs(pos=(12.5, 65.0, -3.5),
                                          dimension="minecraft:the_nether"))
         self.assertIsNone(agent._nether_gate)
+        # The memory came back empty, so the loop looked for the block itself - once per
+        # position, not once per tick.
+        self.assertEqual([c[0] for c in mcp.calls], ["query_bot_data", "view_blocks"])
+        await agent._note_nether_gate(gs(pos=(12.9, 65.0, -3.2),
+                                         dimension="minecraft:the_nether"))
+        self.assertEqual(len(mcp.calls), 2)
+
+    async def test_the_scan_finds_a_gate_the_memory_lost(self) -> None:
+        # A ledger reset (`lab.sh up --fresh`, the bot-data wipe) takes the
+        # `player_dimension_change` rows with it while the portal block stays in the world.
+        # Live, run163: the run started in the Nether with no way home, offered `leave_nether`
+        # every tick and deferred three times. The unfiltered scan is what names the gate again.
+        agent = self._agent()
+        mcp = self._Mcp([])
+        mcp.blocks = [(33, 55, 34)]
+        agent.mcp = mcp
+        await agent._note_nether_gate(gs(pos=(12.5, 65.0, -3.5),
+                                         dimension="minecraft:the_nether"))
+        self.assertEqual(agent._nether_gate, (33, 55, 34))
+
+    async def test_the_scan_repeats_as_the_bot_walks(self) -> None:
+        # A gate whose chunk loads late is still found: the scan is repeated once the bot has
+        # moved, but not on every tick from the same ground.
+        agent = self._agent()
+        mcp = self._Mcp([])
+        agent.mcp = mcp
+        await agent._note_nether_gate(gs(pos=(12.5, 65.0, -3.5),
+                                         dimension="minecraft:the_nether"))
+        self.assertEqual(len(mcp.calls), 2)
+        mcp.blocks = [(80, 61, 90)]
+        await agent._note_nether_gate(gs(pos=(30.5, 65.0, 20.5),
+                                         dimension="minecraft:the_nether"))
+        self.assertEqual(len(mcp.calls), 3)
+        self.assertEqual(agent._nether_gate, (80, 61, 90))
 
     async def test_a_failed_read_leaves_the_run_its_own_sources(self) -> None:
         # Nothing is owed a gate: a scan the bot walks into, and the arrival of a crossing the
@@ -5646,6 +5709,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._last_dimension = None
         agent._nether_gate = None
         agent._gate_read = False
+        agent._gate_scanned = None
         agent._powder_stowed = False
         agent._barter_attempts = 0
         agent._end_portal_active = False

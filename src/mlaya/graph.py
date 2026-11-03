@@ -624,6 +624,9 @@ class Agent:
         self._last_dimension: str | None = None
         self._nether_gate: tuple[int, int, int] | None = None
         self._gate_read = False
+        # Where the last "is there a lit portal loaded?" read was taken (`_note_nether_gate`),
+        # so the fallback scan runs as the bot walks instead of on every Nether tick.
+        self._gate_scanned: tuple[float, float] | None = None
         # The hop toward the Nether exit the terrain refused, and how many times in a row at the
         # same cell (`_note_nether_hop`): a refused hop leaves the body where it was, so the same
         # aim would be refused again until it is shortened.
@@ -1026,15 +1029,39 @@ class Agent:
 
         The same read of memory `_walk_home_to_memory` makes, once per run and paid only when
         the bot stands where the answer is used: the overworld tick does not owe it.
+
+        A wiped database answers nothing - `lab.sh up --fresh` and a `--ledger` reset both take
+        the `player_dimension_change` rows with them - and then the run starts in the Nether with
+        no way home at all: `leave_nether` was offered every tick, resolved to None, and the tick
+        deferred (live, run163 it0-6, standing at y=125 under the bedrock ceiling). The portal
+        block itself is still in the world, so when the memory is silent the scan in
+        `scan_portal_corner` names it: unfiltered by `RESOURCE_RADIUS`, repeated as the bot walks
+        (`_gate_scanned`) so a gate whose chunk loads late is still found.
         """
-        if self._gate_read or "nether" not in str(gs.dimension or "").lower():
+        if "nether" not in str(gs.dimension or "").lower():
             return
-        self._gate_read = True
+        if self._nether_gate is not None:
+            return
+        if not self._gate_read:
+            self._gate_read = True
+            try:
+                gate = await perception.remembered_gate(self.mcp)
+            except Exception:
+                gate = None
+            if gate is not None:
+                self._nether_gate = gate
+                return
+        if gs.pos is None:
+            return
+        px, pz = gs.pos[0], gs.pos[2]
+        at = self._gate_scanned
+        if at is not None and abs(at[0] - px) + abs(at[1] - pz) < 8.0:
+            return
+        self._gate_scanned = (px, pz)
         try:
-            gate = await perception.remembered_gate(self.mcp)
+            self._nether_gate = await perception.scan_portal_corner(self.mcp)
         except Exception:
             return
-        self._nether_gate = gate
 
     async def _note_stocked_chest(self, gs) -> None:
         """Read what every Overworld chest the network owns last held; keep the edibles.

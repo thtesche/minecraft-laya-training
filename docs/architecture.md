@@ -1290,6 +1290,27 @@ lid and stalled on the latch that was supposed to say the haul was done.
   base, chest, furnace, smoker, bed, arrival and gate cells to int tuples and `death_pos` to
   floats.
 
+## Live findings run162–163 (2026-11-03): dead ends in the Nether
+
+- **An offer `resolve` refuses on the same tick.** run162 it164-194: the lull (`_nether_idle`)
+  holds in the Nether too, so the carried furnace's step named `go_home` there — and
+  `_go_home_wanted` answers "never in the Nether", so `resolve("go_home")` was `None` on every one
+  of those ticks. 31 ticks deferred, 38 went to System 2 to explain an offer the loop could never
+  run. `_furnace_worth_placing` is `_overworld` now: the furnace belongs at the base, and the base
+  is an Overworld place.
+- **A climb with no top.** run163 it0-6 started in the Nether with the ledger wiped and offered
+  `surface_up`: the probe answered `[NAVIGATION_HEIGHT_REQUIRED] ... highest block bedrock at
+  y=127`. The Nether has no surface to climb to; `surface_up` and the `establish_base` it leads to
+  are `_overworld` in both the offer and the resolve.
+- **A way home the run forgot.** Wiping `runs/.lab/bot-data` also takes the
+  `player_dimension_change` rows, so a bot left in the Nether starts with no `nether_arrival`, no
+  `nether_gate` and — if the gate is outside `RESOURCE_RADIUS` — no portal block either.
+  `leave_nether` was offered on every tick, resolved to `None`, and the tick deferred. All four
+  offers now ask `_way_home_known` (a portal cell or a remembered crossing) and fall back to
+  `explore` (the fortress march) when there is no answer, while `_note_nether_gate` falls back to
+  the unfiltered `perception.scan_portal_corner` read — repeated as the bot walks
+  (`_gate_scanned`), because a gate's chunk may load late.
+
 ## Next milestones
 
 - **Open after run158:** (1) the endgame has never been reached live — no run has banked the

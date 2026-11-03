@@ -344,11 +344,17 @@ def candidates(gs: GameState) -> list[str]:
     # the diamond kit is complete, and after that the base steps are only eligible while the
     # bot is there; `go_home` walks it back when base work is waiting.
     if _gear_ready(gs):
-        if gs.base is None:
+        if gs.base is None and _overworld(gs):
             # The base, the bed and the portal all belong under open sky. A bot that mined its
             # way down stands on a cave floor whose mined `air` reads exactly like sky, so it
             # climbs back out first: `surface_up` probes the surface and walks up to it, and only
             # then is `establish_base` offered.
+            #
+            # The Nether has no such climb. Its "surface" is the bedrock ceiling at y=127, so the
+            # probe answered `[NAVIGATION_HEIGHT_REQUIRED] ... highest block bedrock` and the
+            # climb never ran (live, run163 it0-1, and it6 again after the shutdown guard
+            # released it). The base is an Overworld anchor; a run that starts down there leaves
+            # through the gate (`leave_nether`) instead.
             out.append("establish_base" if _at_surface(gs) else "surface_up")
         elif not _at_base(gs) and _go_home_wanted(gs):
             # Three reasons to walk home: some base step is waiting, or the Nether gate is lit,
@@ -535,7 +541,7 @@ def candidates(gs: GameState) -> list[str]:
                 # `barter_pearls` moved here from the rod trip (it used to ride the rods-done tick,
                 # commit 584a51a): the user's waves keep the risky trades off the rod haul.
                 if _nether_must_return(gs) and not junk_full:
-                    out.append("leave_nether")
+                    out.append("leave_nether" if _way_home_known(gs) else "explore")
                 elif junk_full:
                     # A pack full of droppable junk reads as "out of room" and would send the bot
                     # home empty; shed it first so the next pearl has somewhere to land.
@@ -552,24 +558,27 @@ def candidates(gs: GameState) -> list[str]:
                 else:
                     # Pearls still owed but nothing to do for them here - none in reach, the budget
                     # spent, the trade closed: home with what pearls were got, stow, and (if trips
-                    # remain) the next wave relaunches from the base.
-                    out.append("leave_nether")
+                    # remain) the next wave relaunches from the base. Without a known exit the
+                    # march is the offer: standing still is not a way home (see `_way_home_known`).
+                    out.append("leave_nether" if _way_home_known(gs) else "explore")
             else:
                 # --- Rod wave (Welle 1) ---
                 rods = _blaze_rods(inv)
                 if rods >= _rods_target(gs):
                     # The rod haul is complete: walk back through the gate and stow it. The pearls
                     # are a later wave's job, not this trip's - a death with the rods in the pack
-                    # would lose the whole haul, so securing them at home comes first.
-                    out.append("leave_nether")
+                    # would lose the whole haul, so securing them at home comes first. With no
+                    # known exit the march is the offer (`_way_home_known`): a step that resolves
+                    # to None would only defer the tick.
+                    out.append("leave_nether" if _way_home_known(gs) else "explore")
                 elif _safe_blaze_hunt(gs):
                     out.append("hunt_blaze")
                 elif (_nether_must_return(gs) and not junk_full) or _nether_hopeless(gs):
                     # Out of health, out of room, or out of chances: come home with what was got
                     # rather than die down there. The rods in the pack are already worth the trip.
                     # "Out of room" is suppressed while the room is full of droppable junk: that is
-                    # `drop_junk`'s job, not a reason to abandon the trip.
-                    out.append("leave_nether")
+                    # `drop_junk`'s job, not a reason to abandon the trip. No known exit: march.
+                    out.append("leave_nether" if _way_home_known(gs) else "explore")
                 else:
                     # No blaze in reach, no reason to turn back: the fortress search. It is offered
                     # first-class here, the way `mine_diamond` is in the Overworld - not buried in
@@ -1642,7 +1651,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "build_structure", {"blocks": cells},
                       "dig a short tunnel out of the pocket the pathfinder cannot leave")
     if label == "surface_up":
-        if gs.base is not None or not _gear_ready(gs) or gs.pos is None or _at_surface(gs):
+        if (gs.base is not None or not _gear_ready(gs) or gs.pos is None or _at_surface(gs)
+                or _in_nether(gs)):
             return None
         # Don't try to build base from water - need to get to dry land first
         if gs.in_water:

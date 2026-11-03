@@ -1596,6 +1596,18 @@ def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
     return hits[0].pos if hits else None
 
 
+def _way_home_known(gs: GameState) -> bool:
+    """Whether `leave_nether` has a cell to walk to: a portal block or the remembered crossing.
+
+    The offer is gated on it, because an offered label that `resolve` turns into None is exactly
+    the dead end the loop reads as a stall. Live, run163 it0-6: the bot started in the Nether
+    with the ledger wiped, no `nether_arrival`, no `nether_gate` and no portal inside
+    `RESOURCE_RADIUS` - `leave_nether` was offered on every tick, resolved to None, and the run
+    deferred three times at (-50,125,80) under the bedrock ceiling.
+    """
+    return _exit_portal_cell(gs) is not None or _nether_way_home(gs) is not None
+
+
 def _nether_way_home(gs: GameState) -> tuple[int, int, int] | None:
     """The cell the way out of the Nether stands on, when no portal block is loaded.
 

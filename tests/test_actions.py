@@ -3203,6 +3203,18 @@ class HomeBaseTest(unittest.TestCase):
         self.assertIn("surface_up", candidates(g))
         self.assertNotIn("establish_base", candidates(g))
 
+    def test_no_surface_climb_in_the_nether(self) -> None:
+        # The Nether's "surface" is the bedrock ceiling: the probe answered
+        # `[NAVIGATION_HEIGHT_REQUIRED] ... highest block bedrock at y=127` and the climb never
+        # ran (live, run163 it0-1, and it6 again once the stuck guard released it). The base is an
+        # Overworld anchor, so a run that starts down there leaves through the gate instead.
+        g = self._geared()
+        g.dimension = "minecraft:the_nether"
+        g.pos = (-50.44, 125.0, 80.5)
+        self.assertNotIn("surface_up", candidates(g))
+        self.assertNotIn("establish_base", candidates(g))
+        self.assertIsNone(resolve("surface_up", g))
+
     def test_no_surface_anchor_under_a_different_column(self) -> None:
         # Live, run10: the surface cell is learned for the probed column. A bot that mined its way
         # under a *different* column must not read as "at the surface" just because that other
@@ -4909,6 +4921,17 @@ class NetherExpeditionTest(unittest.TestCase):
         g.mobs = [("blaze", "hostile", 1, 5.0)]
         self.assertIn("leave_nether", candidates(g))
         self.assertNotIn("hunt_blaze", candidates(g))
+
+    def test_no_way_home_without_a_known_gate(self) -> None:
+        # Live, run163 it0-6: the run started in the Nether with the ledger wiped, so neither a
+        # portal block in the scan nor a remembered crossing answered. `leave_nether` was offered
+        # on every tick, resolved to None and the tick deferred three times at (-50,125,80) under
+        # the bedrock ceiling. The march is the honest offer when the exit is not known yet.
+        g = self._down(blaze_rod=9)
+        g.nether_arrival = None
+        self.assertNotIn("leave_nether", candidates(g))
+        self.assertIn("explore", candidates(g))
+        self.assertIsNone(resolve("leave_nether", g))
 
     def test_the_exit_portal_is_the_way_home(self) -> None:
         g = self._with_exit(self._down(blaze_rod=9))
