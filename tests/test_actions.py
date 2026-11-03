@@ -4407,23 +4407,35 @@ class ScaffoldRestockTest(unittest.TestCase):
         self.assertNotIn("gather_scaffold", candidates(g))
         self.assertIn("hunt_enderman", candidates(g))
 
-    def test_a_wave_that_is_leaving_does_not_dig(self) -> None:
-        # Out of pearl budget the trip is over; mining for a fight that will not happen is a detour.
-        g = self._wave(cobblestone=5, netherrack=5)
-        g.nether_travel = NETHER_PEARL_SEARCH_M
-        self.assertFalse(_search_enderman_wanted(g))
-        self.assertFalse(_scaffold_short(g))
-        out = candidates(g)
-        self.assertIn("leave_nether", out)
-        self.assertNotIn("gather_scaffold", out)
-
     def test_a_loaded_enderman_is_armed_even_past_the_budget(self) -> None:
-        # The one exception: a loaded enderman is worth arming for even when the metre budget is
-        # spent - `_search_enderman_wanted` is where the budget lives, and the reach bypasses it.
+        # The budget only decides whether the wave *roams* for more endermen; a loaded one is
+        # still worth arming for, and while the pearls are owed the shortage is dug either way.
         g = self._wave(cobblestone=5, netherrack=5,
                        mobs=[("enderman", "hostile", 12, 18.0)])
         g.nether_travel = NETHER_PEARL_SEARCH_M
         self.assertTrue(_scaffold_short(g))
+
+    def test_a_wave_out_of_budget_arms_itself_for_the_walk_home(self) -> None:
+        # Travel spends the same stack as the roof: `navigate` and `explore_frontier` bridge with
+        # it. run169 it187 bridged with all 122 it carried and then stood nine ticks at the same
+        # cell with `[NAVIGATION_STOPPED] search timed out after 2000 m` - so a wave with no blocks
+        # digs before it marches, budget or no budget.
+        g = self._wave(cobblestone=5, netherrack=5)
+        g.nether_travel = NETHER_PEARL_SEARCH_M
+        self.assertFalse(_search_enderman_wanted(g))
+        self.assertTrue(_scaffold_short(g))
+        out = candidates(g)
+        self.assertIn("gather_scaffold", out)
+        self.assertNotIn("leave_nether", out)
+
+    def test_a_wave_with_its_pearls_in_hand_leaves_without_a_dig(self) -> None:
+        # The trip's purpose is met: no roof to build, no ground to win, so it walks to the gate
+        # with whatever it carries instead of spending a tick on a dig.
+        g = self._wave(cobblestone=5, netherrack=5, ender_pearl=16)
+        self.assertFalse(_scaffold_short(g))
+        out = candidates(g)
+        self.assertIn("leave_nether", out)
+        self.assertNotIn("gather_scaffold", out)
 
     def test_a_wounded_wave_heals_instead_of_digging(self) -> None:
         g = self._wave(cobblestone=5, netherrack=5, mobs=[("enderman", "hostile", 12, 18.0)],

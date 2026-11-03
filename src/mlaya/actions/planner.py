@@ -567,11 +567,13 @@ def candidates(gs: GameState) -> list[str]:
                 elif _barter_pearls_wanted(gs):
                     out.append("barter_pearls")
                 elif _scaffold_short(gs):
-                    # The fight's roof ran down to the floor `_safe_enderman_hunt` needs. The old
-                    # ladder answered that by walking the wave home to restock - ~300 m each way
-                    # with the pearls it had just won in the pack - and run169 came home after two
-                    # hunts had spent 128 scaffold blocks. Netherrack is the Nether's own floor, so
-                    # the restock is a dig: mine it here, then fight with a full complement.
+                    # The scaffold is spent twice over: the fight's roof runs down to the floor
+                    # `_safe_enderman_hunt` needs (run169 spent 128 blocks on two hunts), and
+                    # `navigate`/`explore_frontier` spend the same stack as bridging material.
+                    # run169 it187 bridged with all 122 it carried and then stood nine ticks at
+                    # the same cell with `[NAVIGATION_STOPPED] search timed out after 2000 m` - no
+                    # way home with 6 pearls in the pack. Netherrack is the Nether's own floor, so
+                    # the restock is a dig here instead of a ~300 m walk home for cobblestone.
                     out.append("gather_scaffold")
                 elif _search_enderman_wanted(gs):
                     # No enderman in reach but the pearl budget still has ground to cover: roam new

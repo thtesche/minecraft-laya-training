@@ -118,20 +118,23 @@ def _search_enderman_wanted(gs: GameState) -> bool:
 
 
 def _scaffold_short(gs: GameState) -> bool:
-    """Whether a pearl wave should mine its own roof blocks rather than walk home for them.
+    """Whether a pearl wave should mine its own scaffold blocks rather than walk home for them.
 
-    A hunt spends sixty-odd scaffold blocks: `collect_mob_drop` rebuilds the defensive roof every
-    time the enderman teleports (run169 it121-122 spent 68 and then 60 cobblestone on two hunts).
-    The wave crosses with `NETHER_COBBLE` (64) of it, so the second hunt is already on the floor
-    `_safe_enderman_hunt` needs and the old ladder answered by walking home - a ~300 m walk each
-    way, with the pearls it had just won in the pack the whole time. Netherrack is the Nether's
-    own floor: `collect_block` digs the closest reachable matches without a coordinate, and
-    netherrack roofs a fight as readily as cobblestone. So the restock happens where the wave
-    stands, and the walk home is for a pack that is full or a trip that is over.
+    Two things spend them. The fight does: `collect_mob_drop` rebuilds the defensive roof every
+    time the enderman teleports (run169 it121-122 spent 68 and then 60 cobblestone on two hunts),
+    and the wave crosses with `NETHER_COBBLE` (64), so the second hunt is already on the floor
+    `_safe_enderman_hunt` needs. Travel does too: `navigate` and `explore_frontier` place them as
+    `scaffold`, so a wave that spent the stack on a lava crossing cannot path anywhere - run169
+    it187 bridged with all 122 it carried, and it188-196 then stood nine ticks at the same cell
+    with `[NAVIGATION_STOPPED] search timed out after 2000 m`, 6 pearls in the pack and no way
+    home. Netherrack is the Nether's own floor: `collect_block` digs the closest reachable matches
+    without a coordinate, netherrack roofs a fight as readily as cobblestone and bridges as
+    readily again. So the restock happens where the wave stands.
 
-    Offered only while a dig has a purpose: an enderman already in reach (the fight is waiting on
-    the roof), or a roam the pearl budget still pays for. Without that the bot would dig for a
-    trip that is about to leave, and a wave that is out of budget goes home instead.
+    Every pearl-wave tick is travelling until the pearls are in hand - the roof's need and the
+    bridge's need are the same shortage, and a wave that comes home for cobblestone risks the
+    pearls it already won on a 300 m walk each way. Once the pearls are met the trip is over and
+    the wave leaves with whatever it has (an urgent exit already outranks this, see the ladder).
     """
     if not _in_nether(gs) or (gs.health or 0) < ENDERMAN_HUNT_HEALTH:
         return False
@@ -139,7 +142,7 @@ def _scaffold_short(gs: GameState) -> bool:
         return False
     if not _can_mine(gs, SCAFFOLD_BLOCK):
         return False
-    return _enderman_in_reach(gs) or _search_enderman_wanted(gs)
+    return _ender_pearls(gs.inventory) < _eyes_owed(gs)
 
 
 def _at_stronghold(gs: GameState) -> bool:
@@ -275,7 +278,7 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         carried = _combat_blocks_carried(inv)
         return Action(label, "collect_block",
                       {"block_name": SCAFFOLD_BLOCK, "count": SCAFFOLD_MINE_BATCH},
-                      f"mine {SCAFFOLD_BLOCK} for the fight's roof "
+                      f"mine {SCAFFOLD_BLOCK} for the roof and the bridge "
                       f"({carried} carried, {ENDERMAN_HUNT_BLOCKS} wanted)")
     if label == "search_enderman":
         if not _search_enderman_wanted(gs):
