@@ -236,12 +236,24 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         if not _search_enderman_wanted(gs):
             return None
         want = _eyes_owed(gs) - _ender_pearls(inv)
+        # Endermen fill the warped forest - it is the one Nether biome whose hostile spawn is the
+        # enderman itself - so a forest this world has already recorded is the place to walk to.
+        # Without one, the march heads for ground nobody has observed (`gs.frontier_heading`, the
+        # server's own bearing to the nearest frontier chunk), which sweeps a new sector as the
+        # frontier moves. It used to take `frontier_heading(gs)` - the away-from-base bearing -
+        # which is the same compass line on every trip, because the base does not move: run164
+        # walked three pearl waves down the same crimson corridor and came home with no pearl.
+        if _in_nether(gs):
+            heading = (gs.warped_forest[0] if gs.warped_forest is not None
+                       else _nether_search_heading(gs))
+        else:
+            heading = frontier_heading(gs)
         # No fortress-style landmark to steer by - endermen are just mobs that load in the dark -
         # so march the remembered frontier into new terrain, the same `explore_frontier` roam the
         # Overworld explore falls back to. Each march loads fresh ground; once an enderman comes
         # within reach `hunt_enderman` takes over on the next tick.
         return Action(label, "explore_frontier",
-                      {"heading": frontier_heading(gs), "chunks": EXPLORE_FRONTIER_CHUNKS},
+                      {"heading": heading, "chunks": EXPLORE_FRONTIER_CHUNKS},
                       f"roam new ground to find an enderman ({want} pearls still needed)")
     if label == "take_blaze_powder":
         if not _take_powder_wanted(gs):

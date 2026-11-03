@@ -2,7 +2,7 @@
 
 Status: **implemented and committed** — the `actions` package split landed first
 (behaviour-preserving, `f09edd4`), then the stronghold chain on top of it (`34079f5`); the suite
-is 1433 green (2026-11-03). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
+is 1442 green (2026-11-03). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
 The re-supply after shattered eyes is now demand-sized, and both robustness gaps are closed (see
 the section near the end).
 
@@ -95,6 +95,17 @@ ground covered. Endermen spawn in the Nether's warped forests, not at the fortre
 targeted, so an empty stretch has to send the bot home to stow and relaunch rather than burn the trip
 wandering.
 
+**Steering.** A pearl wave walks at a *warped forest*, not at a compass line: the biome is the one
+Nether place whose hostile spawn is the enderman itself (no piglins, no blazes, no magma cubes), so
+it is where the pearls are. `WARPED_FOREST_SQL` asks the server's `frontier_navigation` for the
+nearest recorded chunk whose dominant biome is `warped_forest` and hands `search_enderman` its bearing
+(`parse_warped_forest`). Without a recorded forest the march takes `gs.frontier_heading` — the
+server's own bearing to the nearest unobserved chunk (`FRONTIER_HEADING_SQL`) — which sweeps fresh
+ground as the frontier moves. The away-from-base bearing it used before is the same compass line on
+every trip, because the base does not move: live, run164 walked three pearl waves down the same
+crimson corridor and came home with no pearl. A tick with neither read keeps the axis fallback in
+`_nether_search_heading`.
+
 ### Why no second Nether trip by default
 
 The chain is rods → powder → pearls → eyes → frame, so the haul is sized on the eyes the frame still
@@ -115,12 +126,13 @@ expedition.
   diamond kit and shield are expected to carry a crowded pearl fight.
 - **No enderman in reach → `search_enderman`, not sleep.** `hunt_enderman` is reactive (it needs an
   enderman already loaded within range, the way `hunt_blaze` needs a loaded fortress). The dedicated
-  `search_enderman` roam (`explore_frontier` along the remembered frontier, same as the Overworld
-  `explore` fallback) sends a healthy bot out to load fresh ground until one comes into range, then
+  `search_enderman` roam (`explore_frontier`, steered at a recorded warped forest or the unexplored
+  frontier) sends a healthy bot out to load fresh ground until one comes into range, then
   the hunt takes the tick. Without it a bot that banked its powder sat on `wait` to the run limit
   (run109). A wounded bot (`< ENDERMAN_HUNT_HEALTH`) does neither and heals at the base first. The
-  roam is dimension-blind now, and the dimension decides its budget: in a pearl wave it is bounded by
-  `NETHER_PEARL_SEARCH_M`; in the Overworld it only runs once the waves are spent.
+  roam is dimension-blind now, and the dimension decides both its budget and its bearing: in a pearl
+  wave it is bounded by `NETHER_PEARL_SEARCH_M` and steered at the warped forest; in the Overworld it
+  only runs once the waves are spent and keeps `frontier_heading`.
 - **The respawn bed at the stronghold** — for the *later* End phase, `enter_end_portal` needs a bed
   within 128 blocks. When that phase lands, the chain lays and sleeps a bed at the stronghold before
   entering. This phase stops before that, so the bed is noted here only as the seam to the next one.
@@ -132,7 +144,8 @@ Offered only once the Overworld goal and the Nether haul stand (`tech_tree_compl
 
 1. **`hunt_enderman`** (`collect_mob_drop enderman → ender_pearl`) until `_pearls >= _eyes_goal`.
    Overworld, safe-hunt gated (health floor + range, crowding tolerated). When no enderman is in
-   reach it hands off to **`search_enderman`** (`explore_frontier`), which roams new ground until
+   reach it hands off to **`search_enderman`** (`explore_frontier` steered at the nearest recorded
+   warped forest, else the unexplored frontier), which roams new ground until
    one loads; the two never offer together (`_search_enderman_wanted` excludes the in-reach case).
 2. **`take_blaze_powder`** — withdraw the banked powder from the gate chest into the pack when the
    carried powder is short of the eyes the phase owes (the mirror of `stow_blaze_powder`).

@@ -43,7 +43,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            STEW_ITEM, STEW_BATCH,
                            tech_tree_complete, WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
-                              parse_frontier_heading, parse_resources)
+                              parse_frontier_heading, parse_resources, parse_warped_forest)
 
 
 def gs(**kw) -> GameState:
@@ -4172,6 +4172,93 @@ class FrontierHeadingParseTest(unittest.TestCase):
         self.assertIsNone(parse_frontier_heading({"response": {"data": {"result": {"error": "x"}}}}))
         self.assertIsNone(parse_frontier_heading({"response": {"data": {"result": {"query": {
             "rows": [["eastish"]]}}}}}))
+
+
+class WarpedForestParseTest(unittest.TestCase):
+    """`frontier_navigation` names a warped forest as heading, distance and its chunk."""
+
+    def _payload(self, rows: list) -> dict:
+        return {"response": {"data": {"result": {"query": {
+            "columns": ["heading_degrees", "distance_blocks", "chunk_x", "chunk_z"],
+            "rows": rows, "returnedRows": len(rows)}}}}}
+
+    def test_the_nearest_forest_reads_as_a_bearing_and_its_chunk(self) -> None:
+        self.assertEqual(parse_warped_forest(self._payload([[254.0, 118.4, -20, 7]])),
+                         (254.0, 118.4, -20, 7))
+
+    def test_a_heading_is_wrapped_into_the_compass_rose(self) -> None:
+        self.assertEqual(parse_warped_forest(self._payload([[361.5, 40.0, 2, 3]])),
+                         (1.5, 40.0, 2, 3))
+
+    def test_no_rows_is_no_forest_rather_than_a_guess(self) -> None:
+        # This world has never loaded one (run164 walked 935 crimson_forest chunks and no warped
+        # forest): the march must fall back to the frontier, not steer at a made-up bearing.
+        self.assertIsNone(parse_warped_forest(self._payload([])))
+
+    def test_a_short_or_unreadable_row_is_skipped_and_the_next_read(self) -> None:
+        payload = self._payload([["north", 12.0, 1, 2], [90.0, 12.0, 1], [12.0, 30.0, 4, 5]])
+        self.assertEqual(parse_warped_forest(payload), (12.0, 30.0, 4, 5))
+
+    def test_a_failed_or_shapeless_answer_is_no_forest(self) -> None:
+        self.assertIsNone(parse_warped_forest({}))
+        self.assertIsNone(parse_warped_forest({"response": {"data": {"result": {"error": "x"}}}}))
+
+
+class PearlMarchHeadingTest(unittest.TestCase):
+    """`search_enderman` steers at a recorded warped forest, else the unexplored frontier.
+
+    Endermen are the one hostile the warped forest fills on its own, so that biome is where a
+    pearl wave should walk. Without a recorded forest the march takes the server's frontier
+    bearing; it used to take the away-from-base bearing, which is the same compass line on every
+    trip because the base does not move - live, run164 walked three pearl waves down the same
+    crimson corridor and came home with no pearl at all.
+    """
+
+    NETHER = "minecraft:the_nether"
+
+    def _wave(self, heading=None, forest=None) -> GameState:
+        g = gs(pos=(12.5, 65.0, -3.5), dimension=self.NETHER,
+               inventory={"diamond_pickaxe": 2, "golden_helmet": 1, "cobblestone": 64},
+               tools={"pickaxe": "diamond", "sword": "diamond"},
+               armor={"helmet": {"item": "golden_helmet"},
+                      "chestplate": {"item": "diamond_chestplate"},
+                      "leggings": {"item": "diamond_leggings"},
+                      "boots": {"item": "diamond_boots"}},
+               offhand="shield", health=20.0, food=18.0, mobs=[])
+        g.base = (-197, -47, -98)
+        g.nether_entered = True
+        g.nether_arrival = (12, 65, -4)
+        g.powder_stowed = True
+        g.frontier_heading = heading
+        g.warped_forest = forest
+        return g
+
+    def test_a_recorded_warped_forest_is_the_bearing_the_march_walks(self) -> None:
+        g = self._wave(heading=200.0, forest=(48.5, 90.0, -3, 2))
+        self.assertTrue(_search_enderman_wanted(g))
+        a = resolve("search_enderman", g)
+        self.assertEqual(a.tool, "explore_frontier")
+        self.assertEqual(a.args["heading"], 48.5)
+
+    def test_without_a_forest_the_march_walks_the_unexplored_frontier(self) -> None:
+        g = self._wave(heading=200.0)
+        self.assertEqual(resolve("search_enderman", g).args["heading"], 200.0)
+
+    def test_without_a_forest_or_a_frontier_read_the_axis_march_remains(self) -> None:
+        # The old fallback is still there for a tick with neither read: east until level with the
+        # arrival cell, then west. This state stands east of it.
+        g = self._wave()
+        self.assertEqual(resolve("search_enderman", g).args["heading"], 270.0)
+
+    def test_the_overworld_roam_keeps_its_away_from_base_bearing(self) -> None:
+        g = self._wave(heading=200.0, forest=(48.5, 90.0, -3, 2))
+        g.dimension = "minecraft:overworld"
+        g.pearl_wave_trips = PEARL_WAVE_MAX_TRIPS
+        self.assertTrue(_search_enderman_wanted(g))
+        a = resolve("search_enderman", g)
+        # (12.5 - -197, -3.5 - -98) -> away from the base, not the Nether landmarks.
+        self.assertNotEqual(a.args["heading"], 48.5)
+        self.assertNotEqual(a.args["heading"], 200.0)
 
 
 class NetherSearchHeadingTest(unittest.TestCase):

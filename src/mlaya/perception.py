@@ -83,6 +83,16 @@ FORTRESS_RADIUS = 256.0
 # either way, because it never found a fortress to measure on.
 FRONTIER_HEADING_SQL = ("SELECT heading_degrees FROM frontier_navigation "
                         "WHERE is_frontier = 1 ORDER BY distance_blocks ASC LIMIT 1")
+# The pearl hunt's own landmark. Endermen are the one hostile the warped forest fills on its own -
+# every other Nether biome spawns them rarely, beside a pack that makes the hunt a fight - so the
+# biome is what a pearl march should steer at. The server sampled the biome palette of every chunk
+# it loaded (`frontier_chunk_biomes`, joined to a heading in `frontier_navigation`), so a warped
+# forest the run has already stood in can be named instead of betting on a compass line. No row
+# means this run has never loaded one; the march then falls back to the unexplored frontier.
+WARPED_FOREST_SQL = ("SELECT heading_degrees, distance_blocks, chunk_x, chunk_z "
+                     "FROM frontier_navigation WHERE dimension = 'the_nether' "
+                     "AND dominant_biome = 'warped_forest' "
+                     "ORDER BY distance_blocks ASC LIMIT 1")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava", "spawner", "nether_bricks", "nether_brick_fence", "nether_brick_stairs",
                                     "end_portal_frame", "red_mushroom", "brown_mushroom")
@@ -641,6 +651,31 @@ def parse_frontier_heading(payload: Any) -> float | None:
     return None
 
 
+def parse_warped_forest(payload: Any) -> tuple[float, float, int, int] | None:
+    """`WARPED_FOREST_SQL` -> (heading, distance, chunk_x, chunk_z) of the nearest recorded
+    warped forest, or None when this run has never loaded one.
+
+    The heading is the server's own compass bearing to that chunk, the same shape
+    `parse_frontier_heading` returns, so `explore_frontier` takes it unchanged. No row is not an
+    error: the biome has not been seen, and the march falls back to the unexplored frontier.
+    """
+    rows = get(payload, "response", "data", "result", "query", "rows")
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        cells = row if isinstance(row, list) else [row]
+        if len(cells) < 4:
+            continue
+        heading = _num(cells[0])
+        distance = _num(cells[1])
+        chunk_x = _num(cells[2])
+        chunk_z = _num(cells[3])
+        if None in (heading, distance, chunk_x, chunk_z):
+            continue
+        return (round(heading % 360.0, 1), float(distance), int(chunk_x), int(chunk_z))
+    return None
+
+
 def _iter_items(container: Any):
     """Yield (item_name, count) from inventory stacks / dicts."""
     if isinstance(container, list):
@@ -801,6 +836,10 @@ class GameState:
     # Nether only (see `FRONTIER_HEADING_SQL`). None means "no frontier read this tick": the
     # fortress search then falls back to its own axis march.
     frontier_heading: float | None = None
+    # The nearest recorded warped forest: (heading, distance, chunk_x, chunk_z). Endermen are what
+    # that biome fills on its own, so the pearl march steers at it when the run has loaded one
+    # (`WARPED_FOREST_SQL`, read in the Nether only).
+    warped_forest: tuple[float, float, int, int] | None = None
     events: list[str] = field(default_factory=list)
     unread: int = 0
     survivors: list[str] = field(default_factory=list)
@@ -1214,6 +1253,12 @@ class GameState:
             "portal_lit": self.portal_lit,
             "nether_arrival": self.nether_arrival,
             "nether_gate": self.nether_gate,
+            # The march's own bearings: the heading to the unexplored frontier and the warped
+            # forest the pearl hunt steers at. Logged so a recorded pearl tick can be replayed -
+            # the offer turned on both, and a tick that does not say what it saw cannot answer why
+            # it walked where it walked.
+            "frontier_heading": self.frontier_heading,
+            "warped_forest": self.warped_forest,
             "nether_hop_repeats": self.nether_hop_repeats,
             "nether_ticks": self.nether_ticks,
             "nether_travel": self.nether_travel,
@@ -1262,7 +1307,7 @@ class GameState:
                       "nether_entered", "portal_lit", "nether_arrival", "nether_gate", "nether_ticks",
                       "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
                       "stronghold_estimated", "end_portal_active", "powder_cells",
-                      "powder_bank", "frame_eyes",
+                      "powder_bank", "frame_eyes", "frontier_heading", "warped_forest",
                       "nether_landmarks"):
             value = data.get(field)
             if value is not None:
@@ -1275,6 +1320,11 @@ class GameState:
             value = getattr(gs, field)
             if isinstance(value, (list, tuple)) and len(value) == 3:
                 setattr(gs, field, tuple(int(v) for v in value))
+        if gs.warped_forest is not None:
+            # (heading, distance, chunk_x, chunk_z) as logged; the cells stay ints, the bearings
+            # floats, so a replayed tick reads the same as the live one.
+            heading, distance, chunk_x, chunk_z = gs.warped_forest
+            gs.warped_forest = (float(heading), float(distance), int(chunk_x), int(chunk_z))
         for field in ("death_pos",):
             value = getattr(gs, field)
             if isinstance(value, (list, tuple)) and len(value) == 3:
@@ -2136,6 +2186,18 @@ async def build(executor) -> GameState:
             gs.frontier_heading = parse_frontier_heading(coerce(frontier.data, frontier.text))
         except Exception:
             gs.frontier_heading = None
+        # The pearl hunt's landmark, read in the same breath: a warped forest is the one place
+        # endermen fill without the rest of the Nether's hostile pack, so `search_enderman` steers
+        # at it instead of walking a compass line. No row means this run has not loaded one yet.
+        try:
+            warped = await executor.read(
+                "query_bot_data",
+                {"sql": WARPED_FOREST_SQL},
+                "read where the nearest warped forest was recorded, the biome endermen fill",
+            )
+            gs.warped_forest = parse_warped_forest(coerce(warped.data, warped.text))
+        except Exception:
+            gs.warped_forest = None
     return gs
 
 

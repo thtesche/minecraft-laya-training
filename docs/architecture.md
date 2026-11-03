@@ -1322,6 +1322,18 @@ lid and stalled on the latch that was supposed to say the haul was done.
   the `_enter_intent_ticks` window that stands the rescue down. `_note_crossing` now closes the
   window again when the refusal names the gate, so the rescue steps the bot out on the next tick
   instead of waiting three.
+- **A pearl march down the same corridor.** run164's three pearl waves walked `search_enderman` at
+  `frontier_heading(gs)` — the bearing *away from the base* — which is the same compass line on
+  every trip because the base does not move. All three ran into the same crimson forest and the
+  waves came home with no pearl. The march now steers at a **warped forest**: the one Nether biome
+  whose natural hostile spawn is the enderman itself, so it is where the pearls are.
+  `WARPED_FOREST_SQL` reads the nearest recorded chunk with that dominant biome out of
+  `frontier_navigation` (`parse_warped_forest`, `GameState.warped_forest`, read in the Nether only);
+  without a row the march takes `gs.frontier_heading` — the server's bearing to the nearest
+  unobserved chunk — which sweeps new sectors as the frontier moves. A tick with neither read keeps
+  `_nether_search_heading`'s axis fallback, and the Overworld roam keeps its away-from-base bearing.
+  The lab world has loaded 935 `crimson_forest` chunks and no `warped_forest` yet, so on it the
+  frontier bearing is what has to find the first one.
 
 ## Next milestones
 
