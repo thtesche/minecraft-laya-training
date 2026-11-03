@@ -2,7 +2,7 @@
 
 Status: **implemented and committed** — the `actions` package split landed first
 (behaviour-preserving, `f09edd4`), then the stronghold chain on top of it (`34079f5`); the suite
-is 1451 green (2026-11-03). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
+is 1458 green (2026-11-03). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
 The re-supply after shattered eyes is now demand-sized, and both robustness gaps are closed (see
 the section near the end).
 
@@ -90,16 +90,24 @@ had put the barter inside the rods trip because "the bot is already down there")
   `PEARL_WAVE_MAX_TRIPS` (5) crossings the waves shut and the Overworld `search_enderman` roam
   becomes the fallback, so the goal is never stranded on an empty Nether.
 
-The roam is bounded in metres, not ticks, like the fortress hunt: `NETHER_PEARL_SEARCH_M` (400 m) of
-ground covered. Endermen spawn in the Nether's warped forests, not at the fortress the rod trip
-targeted, so an empty stretch has to send the bot home to stow and relaunch rather than burn the trip
-wandering.
+The roam is bounded in metres, not ticks, like the fortress hunt: `NETHER_PEARL_SEARCH_M` (900 m, was
+400) of ground covered. Endermen spawn in the Nether's warped forests, not at the fortress the rod
+trip targeted, so an empty stretch has to send the bot home to stow and relaunch rather than burn the
+trip wandering. The 400 m leash was too short once the way home worked: it is walked ground, about
+half that as the crow flies, and run168 turned home from the treeline on every trip (it161: 5.5 m
+from a warped chunk, an enderman at 28.1 m, budget already at 528 m). 900 m covers a round of the
+mapped forests and `PEARL_MARCH_STALL_LIMIT` still ends a trip whose route never opens.
 
 **Steering.** A pearl wave walks at a *warped forest*, not at a compass line: the biome is the one
 Nether place whose hostile spawn is the enderman itself (no piglins, no blazes, no magma cubes), so
 it is where the pearls are. `WARPED_FOREST_SQL` asks the server's `frontier_navigation` for the
 nearest recorded chunk whose dominant biome is `warped_forest` and hands `search_enderman` its bearing
-(`parse_warped_forest`). Without a recorded forest the march takes `gs.frontier_heading` — the
+(`parse_warped_forest`). The march then asks `explore_frontier` for that **biome**, over
+`PEARL_MARCH_CHUNKS` (6) columns: the tool succeeds only when `warped_forest` is observed at the
+grounded bot's feet, so the leg stops *in* the forest instead of walking a ray through it and out the
+far side. Within `WARPED_ARRIVAL_M` (32 m) the biome target would succeed on its own first check and
+re-offer without moving, so the march sweeps the forest underfoot with one-chunk legs on the same
+bearing. Without a recorded forest the march takes `gs.frontier_heading` — the
 server's own bearing to the nearest unobserved chunk (`FRONTIER_HEADING_SQL`) — which sweeps fresh
 ground as the frontier moves. The away-from-base bearing it used before is the same compass line on
 every trip, because the base does not move: live, run164 walked three pearl waves down the same

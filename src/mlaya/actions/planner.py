@@ -550,7 +550,14 @@ def candidates(gs: GameState) -> list[str]:
                 # a death down here would drop the whole wave, which is why the waves exist.
                 # `barter_pearls` moved here from the rod trip (it used to ride the rods-done tick,
                 # commit 584a51a): the user's waves keep the risky trades off the rod haul.
-                if _nether_must_return(gs) and not junk_full:
+                if _safe_enderman_hunt(gs) and gs.slots_used < INVENTORY_SLOTS:
+                    # An enderman in reach is the whole point of the trip, so it outranks the
+                    # near-full walk home. run168 it107-108 held one at 23.9 m with 63 netherrack
+                    # in the pack and `slots_used 33` - `_nether_must_return` fired first and sent
+                    # the wave home past it, three trips running. One free slot is all a pearl
+                    # needs; the near-full latch stays for the case where there is none.
+                    out.append("hunt_enderman")
+                elif _nether_must_return(gs) and not junk_full:
                     out.append("leave_nether" if _way_home_known(gs) else "explore")
                 elif junk_full:
                     # A pack full of droppable junk reads as "out of room" and would send the bot
@@ -558,8 +565,6 @@ def candidates(gs: GameState) -> list[str]:
                     out.append("drop_junk")
                 elif _barter_pearls_wanted(gs):
                     out.append("barter_pearls")
-                elif _safe_enderman_hunt(gs):
-                    out.append("hunt_enderman")
                 elif _search_enderman_wanted(gs):
                     # No enderman in reach but the pearl budget still has ground to cover: roam new
                     # terrain to load one, the `explore_frontier` march `search_enderman` resolves
@@ -1865,8 +1870,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         items += _hoard_surplus(gs, inv)
         if not items:
             return None
+        # Drop on open ground in the Nether. `in_a_hole` excavates a cell first, and the Nether's
+        # floor is netherrack - the very block the hoard surplus is about to shed - so the dig
+        # handed the pack back what the drop had just freed. Live, run168 it90-117: eight
+        # `drop_junk` calls, netherrack 54 -> 96 -> 65 -> 99 -> 67, slots pinned at 34/36, until a
+        # real home stop (craft + stow) freed the space. Dropping on the ground costs a
+        # `step_away_drops` at worst; it cannot undo itself.
         return Action(label, "drop_item",
-                      {"items": items[:12], "in_a_hole": not gs.drop_hole_blocked},
+                      {"items": items[:12],
+                       "in_a_hole": not gs.drop_hole_blocked and not _in_nether(gs)},
                       "drop low-value blocks so the full pack has room again")
     if label == "wait":
         # Hold at the base: navigate to the anchor, which is at most a step away, so the tick

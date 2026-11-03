@@ -558,10 +558,16 @@ BARTER_PIGLIN_RANGE = 32
 # warped forests rather than at the fortress the rod trip targeted - so a pearl trip may have to
 # roam to find one. This budget bounds that roam the way `NETHER_SEARCH_M` bounds the fortress
 # hunt: metres of ground covered, not decisions, so the reflex ticks the bot stood still being
-# shot at do not spend it. Shorter than the fortress budget on purpose - a warped forest is not a
-# guaranteed region feature, so an empty stretch should send the bot home to stow and relaunch
-# rather than burn the whole trip wandering.
-NETHER_PEARL_SEARCH_M = 400.0
+# shot at do not spend it. It used to be 400, shorter than the fortress budget on the theory that
+# a warped forest was not a guaranteed region feature - but 400 m of *walked* ground is only about
+# 200 m as the crow flies once the Nether's lava seas and ledges are pathed around, and the nearest
+# recorded warped forest sits 76-350 m out (run168: 192 warped chunks mapped, the bot stood in one
+# on 2 of ~120 Nether ticks). Every one of those trips turned home within sight of the treeline:
+# run168 it161 stood 5.5 m from a warped chunk with an enderman 28 m off and the only offer was
+# `collect_drops`, because travel had already passed 528 m. 900 m covers a round of the mapped
+# forests and still ends the trip on `PEARL_MARCH_STALL_LIMIT` if no route opens; the way home is
+# proven (five crossings in run168), so the longer leash no longer strands the wave.
+NETHER_PEARL_SEARCH_M = 900.0
 # Marches in a row that brought the body nowhere (`[EXPLORATION_ROUTE_STOPPED]`) before the pearl
 # wave gives up on the spot and comes home. A stopped march leaves the bot standing where it was,
 # so the metre budget above cannot fill: live, run164 it159-161 asked for the same eastward bearing
@@ -574,6 +580,18 @@ PEARL_MARCH_STALL_LIMIT = 4
 # Degrees the next march turns after one `[EXPLORATION_ROUTE_STOPPED]`: a quadrant, so the four
 # stalls the limit above allows sample all of them and the fifth cannot repeat the first.
 EXPLORE_STALL_TURN = 90.0
+# Chunk columns one pearl march extends the frontier by. The generic explore uses
+# `EXPLORE_FRONTIER_CHUNKS` (2), a real step out of worked ground; a pearl march has a destination
+# and aims to arrive, so a leg has to be long enough to cross the rest of a crimson corridor rather
+# than re-decide every 32 blocks. Six is 96 blocks - under the tool's own eight-chunk ceiling.
+PEARL_MARCH_CHUNKS = 6
+# How close the nearest recorded warped forest has to be before the march stops aiming *at* it and
+# starts sweeping *inside* it. `explore_frontier` with a `biome` target succeeds the moment the
+# bot's feet are in that biome (including at the start of the call), so asking for it from inside
+# the forest would be an instant no-op that re-offers on every tick. Inside `WARPED_ARRIVAL_M` the
+# march switches to short legs (one chunk column) on the same bearing, which keeps the body moving
+# through the forest instead.
+WARPED_ARRIVAL_M = 32.0
 # How many pearl trips the waves make before the Overworld enderman roam takes over as the
 # fallback. Each trip crosses, hunts, and comes home to stow whatever pearls it got, so the cap
 # bounds the round trips, not the time in any one of them (`_nether_must_return` already does

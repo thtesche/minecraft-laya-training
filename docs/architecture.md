@@ -1339,6 +1339,31 @@ lid and stalled on the latch that was supposed to say the haul was done.
   `_nether_search_heading`'s axis fallback, and the Overworld roam keeps its away-from-base bearing.
   The lab world has loaded 935 `crimson_forest` chunks and no `warped_forest` yet, so on it the
   frontier bearing is what has to find the first one.
+- **A march that walks *through* the forest, and one that ends at the treeline.** run168 mapped 192
+  `warped_forest` chunks and stood in one on 2 of ~120 Nether ticks. Two shapes did that, and both
+  are now answered. First, `explore_frontier` was given a bearing and a two-chunk leg and nothing
+  else, so the march was a ray: it passed the forest and came out the far side, and the next tick
+  re-aimed at whichever chunk was nearest *now*. The tool takes a `biome` and only succeeds once
+  that biome is observed at the grounded bot's feet, so a Nether `search_enderman` with a recorded
+  forest farther than `WARPED_ARRIVAL_M` now asks for `warped_forest` over
+  `PEARL_MARCH_CHUNKS` (six) columns. Inside that radius the biome target cannot be used — the call
+  would succeed on its own first check ("including at the start") and re-offer forever — so the
+  march sweeps the forest it stands in with one-chunk legs. Second, the trip budget was 400 m of
+  *walked* ground, about 200 m as the crow flies; run168 it161 stood 5.5 m from a warped chunk with
+  an enderman at 28.1 m and the only offer was `collect_drops`, because travel had already passed
+  528 m. `NETHER_PEARL_SEARCH_M` is 900 now, and `ENDERMAN_HUNT_RANGE` 32 (was 24), so an enderman
+  named in the scan at 24-32 m is a fight rather than scenery.
+- **A pack that reads full and a fight that is skipped.** run168 it107-108 held an enderman at
+  23.9 m with 63 netherrack in the pack, and `_nether_must_return` (`slots_used >= 33`) fired
+  before the hunt offered: three pearl trips walked home past a fightable mob. The pearl ladder now
+  puts `hunt_enderman` first when one is in reach and at least one slot is free — a pearl is one
+  item, and the near-full latch still owns the tick when the pack is at 36/36.
+- **Junk that sheds itself.** run168 it90-117 called `drop_junk` eight times with the slots pinned
+  at 34/36 and the netherrack count cycling 54 → 96 → 65 → 99 → 67. `drop_item` with
+  `in_a_hole` excavates a disposal pit first, and the Nether's floor is netherrack — the very block
+  the hoard surplus was shedding — so the dig handed the pack back ~31 blocks and the next tick
+  fired again. In the Nether the drop now goes on the open ground; the hole costs a dig and cannot
+  undo itself. A real home stop (craft + stow) had been the only thing that ever broke the cycle.
 - **A march that covers no ground can never spend its budget.** run164 it159-161 asked for the
   same eastward bearing from `(132, 41, 0)` three times and got
   `[EXPLORATION_ROUTE_STOPPED] ... no path or usable partial route found` each time. A stopped

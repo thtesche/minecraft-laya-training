@@ -21,7 +21,12 @@ END_PORTAL_FRAME = "end_portal_frame"
 # An enderman teleports and hits hard, and the hunt happens in the Overworld where the run would
 # otherwise sleep. Same safe-hunt shape as the blaze: one target in reach, the bot healthy, no
 # other hostile crowding the fight. The eyes are not worth the diamond kit.
-ENDERMAN_HUNT_RANGE = 24.0
+# 24 -> 32: the march's own `hostiles` read names endermen out to ~140 m, so the bot kept walking
+# past fightable ones. run168 it105-108 held an enderman at 24.5 and 23.9 m while the offer was
+# `drop_junk`/`leave_nether`, and it161 stood 5.5 m from a warped forest with one at 28.1 m - just
+# outside this gate - and turned home. Eight metres of extra reach is one second of walking, and
+# `collect_mob_drop` navigates to the mob itself, so the hunt starts from the same place either way.
+ENDERMAN_HUNT_RANGE = 32.0
 ENDERMAN_HUNT_HEALTH = 14.0
 
 # The labels this module owns; `planner.resolve` hands each of them to `resolve_stronghold`.
@@ -250,8 +255,28 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
             base = (gs.warped_forest[0] if gs.warped_forest is not None
                     else _nether_search_heading(gs))
             heading = _clear_march_heading(gs, base)
-        else:
-            heading = _clear_march_heading(gs, frontier_heading(gs))
+            # A recorded forest is a destination, not a bearing to pass by. `explore_frontier`
+            # takes an optional `biome` and only succeeds once that biome is observed at the
+            # grounded bot's feet, so the march stops *in* the forest instead of walking a ray
+            # through it and out the far side - which is what the plain heading did: run168 mapped
+            # 192 warped chunks, stood in one on 2 of ~120 Nether ticks, and came home from four
+            # trips with no pearl. The tool stops the leg early on the first entry, so a forest
+            # sighted 30 m off the line still counts.
+            #
+            # Inside `WARPED_ARRIVAL_M` the biome target cannot be used: the call would succeed on
+            # its own first check ("including at the start") and re-offer on the next tick without
+            # the body moving. There the march keeps short legs on the same bearing, sweeping the
+            # forest it already stands in.
+            if gs.warped_forest is not None and gs.warped_forest[1] > WARPED_ARRIVAL_M:
+                return Action(label, "explore_frontier",
+                              {"heading": heading, "chunks": PEARL_MARCH_CHUNKS,
+                               "biome": "warped_forest"},
+                              f"march into the recorded warped forest for endermen "
+                              f"({want} pearls still needed)")
+            return Action(label, "explore_frontier",
+                          {"heading": heading, "chunks": 1},
+                          f"sweep the warped forest already underfoot ({want} pearls needed)")
+        heading = _clear_march_heading(gs, frontier_heading(gs))
         # No fortress-style landmark to steer by - endermen are just mobs that load in the dark -
         # so march the remembered frontier into new terrain, the same `explore_frontier` roam the
         # Overworld explore falls back to. Each march loads fresh ground; once an enderman comes

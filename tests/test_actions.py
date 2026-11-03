@@ -30,12 +30,12 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          _base_leveling_wanted, bed_pad_plan, _bed_pad_wanted, BED_PAD_BLOCK,
                          BED_PAD_ROWS, BED_PORTAL_CLEARANCE, _clear_of_gate, _gate_gap,
                          FLATTEN_BATCH, FLATTEN_RADIUS, FLATTEN_UP,
-                         BASE_RADIUS, BED_SLEEP_CLICK, INVENTORY_NEAR_FULL, inventory_relief, SLEEP_OFF_BASE_STEP,
+                         BASE_RADIUS, BED_SLEEP_CLICK, INVENTORY_NEAR_FULL, INVENTORY_SLOTS, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
                          BARTER_GOLD_BUDGET, BARTER_MAX_ATTEMPTS, BARTER_PEARL_BATCH,
                          BARTER_PIGLIN_RANGE, GOLD_BARTER_RESERVE,
                          NETHER_PEARL_SEARCH_M, PEARL_WAVE_MAX_TRIPS,
-                         PEARL_MARCH_STALL_LIMIT, EXPLORE_STALL_TURN,
+                         PEARL_MARCH_STALL_LIMIT, PEARL_MARCH_CHUNKS, EXPLORE_STALL_TURN,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
@@ -3542,6 +3542,16 @@ class HomeBaseTest(unittest.TestCase):
         g.drop_hole_blocked = True
         self.assertFalse(resolve("drop_junk", g).args["in_a_hole"])
 
+    def test_dropping_junk_in_the_nether_never_digs_the_hole(self) -> None:
+        # run168 it90-117: the disposal pit is excavated out of netherrack - the very block the
+        # hoard surplus sheds - so every drop handed the pack back ~31 netherrack and `drop_junk`
+        # fired again on the next tick, eight times, with the slots pinned at 34/36. In the Nether
+        # the drop goes straight on the ground; the hole costs a dig and cannot undo itself.
+        g = self._home(self._geared(tuff=64))
+        g.dimension = "minecraft:the_nether"
+        g.slots_used = 34
+        self.assertFalse(resolve("drop_junk", g).args["in_a_hole"])
+
     def test_inventory_relief_stows_at_the_base_chest(self) -> None:
         g = self._home(self._geared(tuff=64))
         g.chest_pos = (-197, -46, -97)
@@ -4247,6 +4257,44 @@ class PearlMarchHeadingTest(unittest.TestCase):
         a = resolve("search_enderman", g)
         self.assertEqual(a.tool, "explore_frontier")
         self.assertEqual(a.args["heading"], 48.5)
+
+    def test_a_far_forest_is_a_destination_the_march_stops_in(self) -> None:
+        # The tool only succeeds once `warped_forest` is observed at the grounded bot's feet, so a
+        # march aimed at a recorded forest stops *in* it instead of walking a ray through and out
+        # the far side - the shape that left run168 with 192 mapped warped chunks and four empty
+        # pearl trips.
+        g = self._wave(heading=200.0, forest=(48.5, 90.0, -3, 2))
+        a = resolve("search_enderman", g)
+        self.assertEqual(a.args["biome"], "warped_forest")
+        self.assertEqual(a.args["chunks"], PEARL_MARCH_CHUNKS)
+
+    def test_a_forest_underfoot_is_swept_without_the_biome_stop(self) -> None:
+        # Inside the arrival radius the biome stop would succeed on its own first check ("including
+        # at the start") and re-offer every tick without moving the body, so the march keeps short
+        # legs on the same bearing instead.
+        g = self._wave(heading=200.0, forest=(297.7, 5.5, -31, -15))
+        a = resolve("search_enderman", g)
+        self.assertNotIn("biome", a.args)
+        self.assertEqual(a.args["chunks"], 1)
+        self.assertEqual(a.args["heading"], 297.7)
+
+    def test_the_pearl_budget_reaches_past_the_old_four_hundred_metres(self) -> None:
+        # run168 turned home at 400 m of travel on every trip - about 200 m as the crow flies once
+        # the lava seas are pathed around - while the nearest recorded forest sat 76-350 m out.
+        # The budget now covers a round of the mapped forests; the way home is proven, so the
+        # longer leash no longer strands the wave.
+        g = self._wave(heading=200.0)
+        g.nether_travel = 500.0
+        self.assertTrue(_search_enderman_wanted(g))
+        g.nether_travel = NETHER_PEARL_SEARCH_M
+        self.assertFalse(_search_enderman_wanted(g))
+
+    def test_the_hunt_reaches_a_mob_at_thirty_metres(self) -> None:
+        g = self._wave(heading=200.0)
+        g.mobs = [("enderman", "hostile", 1, 30.0)]
+        self.assertTrue(_safe_enderman_hunt(g))
+        g.mobs = [("enderman", "hostile", 1, 33.0)]
+        self.assertFalse(_safe_enderman_hunt(g))
 
     def test_without_a_forest_the_march_walks_the_unexplored_frontier(self) -> None:
         g = self._wave(heading=200.0)
@@ -5698,6 +5746,27 @@ class PiglinBarterTest(unittest.TestCase):
         g.powder_stowed = True
         self.assertFalse(_barter_pearls_wanted(g))
         self.assertIsNone(resolve("barter_pearls", g))
+
+    def test_an_enderman_in_reach_outranks_the_walk_home(self) -> None:
+        # run168 it107-108: the pack sat at 33/36 (netherrack), an enderman stood 23.9 m off, and
+        # `_nether_must_return` fired first - three pearl trips walked home past a fightable mob.
+        # One free slot is all a pearl needs, so the hunt takes the tick.
+        g = self._down(blaze_rod=9, netherrack=32)
+        g.powder_stowed = True
+        g.slots_used = INVENTORY_NEAR_FULL
+        g.mobs = [("enderman", "hostile", 1, 30.0)]
+        self.assertTrue(_safe_enderman_hunt(g))
+        self.assertEqual(candidates(g)[0], "hunt_enderman")
+        self.assertNotIn("leave_nether", candidates(g))
+
+    def test_a_completely_full_pack_still_walks_home(self) -> None:
+        # No slot at all: the kill would leave the pearl on the ground, so the near-full latch keeps
+        # its say until the junk is shed.
+        g = self._down(blaze_rod=9, netherrack=32)
+        g.powder_stowed = True
+        g.slots_used = INVENTORY_SLOTS
+        g.mobs = [("enderman", "hostile", 1, 30.0)]
+        self.assertNotIn("hunt_enderman", candidates(g))
 
     def test_the_rod_trip_never_stops_to_barter(self) -> None:
         # Welle 1 hauls rods and comes straight home: the barter that used to ride the rods-done
