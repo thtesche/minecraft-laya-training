@@ -47,6 +47,7 @@ CRITERIA: dict[str, str] = {
     "hunt_wool": "kill a nearby sheep to collect white wool for a bed",
     "hunt_string": "kill nearby spiders to collect string, which crafts into wool",
     "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the gate frame stands, stock the deeper Nether reserve - the chest at the base counts towards this, so a full chest means no hunt at all",
+    "craft_bowl": "craft the stew bowl from three planks at the base before crossing: the Nether has no wood, and every mushroom meal needs a bowl that comes back",
     "craft_stew": "no animal is in reach: brew mushroom stew instead - pick the red or brown mushroom still missing, or craft it from the bowl and both mushrooms, each meal returning its bowl",
     "take_stored_food": "take cooked food out of the chest at the base and put it in the pack, so the Nether trip is fed from what is already banked rather than hunted again",
     "cook_food": "cook carried raw meat in the furnace at the base (or the carried furnace, set up just for the batch) so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
@@ -623,6 +624,13 @@ NETHER_COBBLE_SLACK = 8
 # death above produced.
 FOOD_HUNT_RANGE_DAY = 64.0
 FOOD_HUNT_RANGE_NIGHT = 16.0
+# The lull's reserve walk. Live, run172 it35-168: 93 `wait` ticks at a lit gate while a herd
+# (8 chickens, 3 cows, 2 sheep) sat loaded at 105-108 m - animals present in 174 of 174
+# Overworld ticks, never inside the 64 m day reach. The walk is bounded rather than open
+# because the unbounded version is the run19b failure above: it carried the bot 150-200 m out
+# and stranded it in water for 76 ticks. `_food_reserve_walk_wanted` is what keeps it bounded
+# and starts it from the base.
+FOOD_HUNT_RANGE_RESERVE = 128.0
 # A zombie hunted for its rotten flesh has to be this close (shared with `_safe_zombie_hunt`,
 # which also uses it as the source test for the completion gate).
 ZOMBIE_HUNT_RANGE = 24.0

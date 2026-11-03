@@ -123,9 +123,34 @@ def _hunt_count(gs: GameState, mob: str) -> int:
     return min(want, max(1, _mob_in_reach(gs, mob, _hunt_reach(gs, mob))))
 
 
+def _food_reserve_walk_wanted(gs: GameState) -> bool:
+    """Whether the hunt may walk past the day reach to fill the Nether reserve.
+
+    Four conditions, each one a live failure: only in the lull (`_nether_idle`, so nothing on
+    the chain is waiting for the bot), only while the reserve is actually short, only by day
+    (the night reach is the hand's own 16 m), and only starting from the base. The last one is
+    the point: live, run172 it35-168 the bot sat 93 ticks at its own lit gate while a herd of
+    eight chickens, three cows and two sheep stood loaded at 105-108 m - animals present in 174
+    of 174 Overworld ticks, never inside the 64 m reach. A walk that starts at home has `go_home`
+    on the offer the moment the body leaves it; a walk that starts 150 m out does not, which is
+    how run19b stranded in water for 76 ticks.
+
+    Once the walk arrives, the herd is inside the ordinary day reach and the hunt resumes on the
+    normal bound, so the widening is a leg toward the food, not a licence to roam.
+    """
+    return (_nether_idle(gs) and _provisioned(gs) < _food_goal(gs)
+            and gs.phase != "night" and _at_base(gs))
+
+
 def _food_hunt_range(gs: GameState) -> float:
-    """How far a food hunt may walk: far in daylight, only at hand after dark."""
-    return FOOD_HUNT_RANGE_NIGHT if gs.phase == "night" else FOOD_HUNT_RANGE_DAY
+    """How far a food hunt may walk: far in daylight, only at hand after dark.
+
+    The far bound is the reserve walk above, not a general widening of the day reach: run19b
+    tried 128 m unconditionally and paid for it in a 76-tick water stranding.
+    """
+    if gs.phase == "night":
+        return FOOD_HUNT_RANGE_NIGHT
+    return FOOD_HUNT_RANGE_RESERVE if _food_reserve_walk_wanted(gs) else FOOD_HUNT_RANGE_DAY
 
 
 # The offer's own long walks, withheld while `_defenceless_at_night` holds (`candidates`). The
@@ -1005,7 +1030,8 @@ def _food_source_in_reach(gs: GameState) -> bool:
     `wait` ticks at the base, the reserve short of 64, one zombie at 20.3 m and no animal inside
     the daylight reach - the gate held the expedition on a hunt that was never offered.
     """
-    return (_nearest_food_mob(gs, FOOD_HUNT_RANGE_DAY) is not None
+    reach = FOOD_HUNT_RANGE_RESERVE if _food_reserve_walk_wanted(gs) else FOOD_HUNT_RANGE_DAY
+    return (_nearest_food_mob(gs, reach) is not None
             or (_eating_now(gs)
                 and (gs.mob_nearest("zombie") or float("inf")) <= ZOMBIE_HUNT_RANGE))
 
@@ -1912,6 +1938,12 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
     planks = _planks(inv)
     sticks = _can_sticks(inv, logs, planks)
     out: list[str] = []
+    # The stew bowl. The Nether has no wood at all, so the bowl a stew comes back from has to be
+    # carried in from the Overworld: a pack with both mushrooms and no bowl has a pantry it cannot
+    # open (run171 crossed with 2 red and 1 brown mushroom and never brewed a meal). One craft at
+    # the base, three planks, and it rides in the pack for the whole expedition.
+    if not _has(inv, BOWL_ITEM) and _plank_units(inv) >= 3 and table:
+        out.append("craft_bowl")
     # Gold helmet: mine the ore, smelt it, craft the piece (worn later, in the Nether).
     if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
         if inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS:
@@ -1999,8 +2031,11 @@ KEEP_MATERIALS = frozenset({
     # Verarbeitetes und Erze.
     "iron_ingot", "gold_ingot", "copper_ingot", "diamond", "emerald", "lapis_lazuli",
     "coal", "charcoal", "redstone",
-    # Nether-Vorbereitung.
+    # Nether-Vorbereitung. The bowl is the stew's container, and the Nether has no wood: a bowl
+    # filed as surplus into the base chest is a pantry the trip cannot open, and re-crafting it
+    # means walking back to a tree.
     "blaze_rod", "blaze_powder", "raw_gold", "raw_iron", "netherite_scrap", "ancient_debris",
+    BOWL_ITEM,
     # The stronghold currency. A pearl banked in the chest is a pearl the eye chain cannot spend:
     # `craft_ender_eye` reads the pack, and no step withdraws pearls. run124 it53 filed the wave's
     # four pearls as surplus, and by it54 the bot was hunting endermen again with none in hand.

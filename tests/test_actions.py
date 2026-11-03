@@ -43,7 +43,10 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
                            NETHER_EXIT_HOP_MIN,
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
-                           STEW_ITEM, STEW_BATCH,
+                           STEW_ITEM, STEW_BATCH, BOWL_ITEM,
+                            FOOD_HUNT_RANGE_DAY, FOOD_HUNT_RANGE_NIGHT, FOOD_HUNT_RANGE_RESERVE,
+                            _food_hunt_range, _food_reserve_walk_wanted,
+                            _surplus_besides_keep,
                            tech_tree_complete, WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources, parse_warped_forest)
@@ -689,7 +692,7 @@ class NetherLullWaitTest(unittest.TestCase):
         # longer such a tick: `place_bed` lays it by day as well.
         g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=64,
                                       iron_ingot=1, cooked_beef=24,
-                                      bow=1, arrow=16, diamond_pickaxe=2)))
+                                      bow=1, arrow=16, diamond_pickaxe=2, bowl=1)))
         g.resources["white_bed"] = [BlockHit("white_bed", "white_bed", -200, -47, -98, 3.0)]
         g.food = 20.0
         g.chest_pos = (-198, -47, -98)
@@ -4978,7 +4981,7 @@ class NetherExpeditionTest(unittest.TestCase):
         # recoverable there, so a bot holding one is still on its way to the gate, not through it.
         stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64,
                      golden_helmet=1, cooked_mutton=64, white_bed=1,
-                     diamond_pickaxe=2)
+                     diamond_pickaxe=2, bowl=1)
         stock.update(inv)
         g = at_home(geared(**stock), base=self.BASE)
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
@@ -5764,7 +5767,7 @@ class PiglinBarterTest(unittest.TestCase):
         """The bot at its base in the prep lull, a gold deposit loaded, the helmet banked."""
         base = {"flint_and_steel": 1, "white_bed": 1, "cooked_beef": 24, "furnace": 1,
                 "cobblestone": 64, "acacia_planks": 4, "coal": 4, "golden_helmet": 1,
-                "diamond_pickaxe": 2}
+                "diamond_pickaxe": 2, "bowl": 1}
         base.update(inv)
         g = at_home(lit_portal(geared(**base)))
         g.food = 20.0
@@ -8553,6 +8556,145 @@ class StewPantryTest(unittest.TestCase):
         # Nothing to pick, nothing to brew: the label resolves to None rather than a guess.
         g = self._pantry(bowl=1)
         self.assertIsNone(resolve("craft_stew", g))
+
+
+class StewBowlPrepTest(unittest.TestCase):
+    """The stew bowl is carried into the Nether, not planned on the spot.
+
+    The Nether has no wood at all, so the bowl a stew comes back from has to come in with the
+    pack. Live, run171 crossed with two red and one brown mushroom and never brewed a meal: the
+    recipe was there, the container was not. The bowl is therefore a prep step of the lull, next
+    to the gold helmet, and the wood it needs is chopped when the pack has none.
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _lull(self, **inv) -> GameState:
+        base = {"flint_and_steel": 1, "white_bed": 1, "cooked_beef": 24, "furnace": 1,
+                "cobblestone": 64, "golden_helmet": 1, "diamond_pickaxe": 2}
+        base.update(inv)
+        g = at_home(lit_portal(geared(**base)), base=self.BASE)
+        g.food = 20.0
+        g.phase = "day"
+        return g
+
+    def test_a_pack_with_planks_and_no_bowl_owes_one(self) -> None:
+        g = self._lull(oak_planks=6)
+        self.assertIn("craft_bowl", _all_nether_prep_steps(g))
+        self.assertIn("craft_bowl", candidates(g))
+
+    def test_the_bowl_is_crafted_at_a_table(self) -> None:
+        a = resolve("craft_bowl", self._lull(oak_planks=3))
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": BOWL_ITEM}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_a_carried_bowl_closes_the_step(self) -> None:
+        g = self._lull(oak_planks=6, bowl=1)
+        self.assertNotIn("craft_bowl", _all_nether_prep_steps(g))
+        self.assertNotIn("craft_bowl", candidates(g))
+
+    def test_a_carried_log_counts_as_planks(self) -> None:
+        # One log is four planks: the pack does not have to have them sawn already.
+        self.assertIn("craft_bowl", _all_nether_prep_steps(self._lull(oak_log=1)))
+
+    def test_a_pack_out_of_wood_chops_a_tree_instead_of_offering_an_impossible_craft(self) -> None:
+        g = self._lull()
+        self.assertNotIn("craft_bowl", candidates(g))
+        self.assertIn("get_wood", candidates(g))
+
+    def test_the_bowl_wood_is_not_chopped_at_night(self) -> None:
+        # Chopping is a walk, and the night's walks are the ones that have taken the kit.
+        g = self._lull()
+        g.phase = "night"
+        self.assertNotIn("get_wood", candidates(g))
+
+    def test_the_crossing_stays_shut_while_the_bowl_is_missing(self) -> None:
+        g = self._lull(oak_planks=6)
+        g.powder_stowed = True
+        self.assertFalse(_expedition_prepared(g))
+        g.inventory[BOWL_ITEM] = 1
+        self.assertTrue(_expedition_prepared(g))
+
+    def test_a_bowl_in_the_pack_is_not_shed_into_the_chest(self) -> None:
+        # `stow_surplus` files anything off the keep list as surplus. A bowl banked at the base is
+        # a pantry the trip cannot open, and re-crafting one means walking back to a tree.
+        g = self._lull(oak_planks=6, bowl=1)
+        g.chest_pos = (-196, -47, -98)
+        self.assertNotIn("stow_surplus", candidates(g))
+        self.assertNotIn(BOWL_ITEM, _surplus_besides_keep(g, g.inventory))
+
+
+class ReserveWalkRangeTest(unittest.TestCase):
+    """The lull walks to a herd the day reach cannot reach.
+
+    Live, run172 it35-168: 93 `wait` ticks at a lit gate while eight chickens, three cows and two
+    sheep stood loaded at 105-108 m - animals present in 174 of 174 Overworld ticks, never inside
+    the 64 m day reach. The walk is bounded at 128 m and starts from the base: the unbounded
+    version of the same idea is run19b, which carried the bot 150-200 m out and stranded it in
+    water for 76 ticks.
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _lull(self, distance: float = 105.0, phase: str = "day", provisions: int = 0) -> GameState:
+        g = lit_portal(at_home(geared(flint_and_steel=1, cobblestone=64, white_bed=1, bowl=1,
+                                      golden_helmet=1, diamond_pickaxe=2,
+                                      cooked_beef=provisions),
+                               base=self.BASE))
+        g.food = 15.0
+        g.phase = phase
+        g.mobs = [("chicken", "animal", 8, distance)]
+        return g
+
+    def test_the_far_herd_is_walked_to_in_the_lull(self) -> None:
+        g = self._lull()
+        self.assertTrue(_food_reserve_walk_wanted(g))
+        self.assertEqual(_food_hunt_range(g), FOOD_HUNT_RANGE_RESERVE)
+        self.assertIn("hunt_food", candidates(g))
+        a = resolve("hunt_food", g)
+        self.assertEqual(a.args["mob_name"], "chicken")
+
+    def test_the_walk_closes_at_night(self) -> None:
+        g = self._lull(phase="night")
+        self.assertFalse(_food_reserve_walk_wanted(g))
+        self.assertEqual(_food_hunt_range(g), FOOD_HUNT_RANGE_NIGHT)
+        self.assertNotIn("hunt_food", candidates(g))
+
+    def test_the_walk_ends_once_the_reserve_is_met(self) -> None:
+        g = self._lull(provisions=64)
+        self.assertFalse(_food_reserve_walk_wanted(g))
+        self.assertEqual(_food_hunt_range(g), FOOD_HUNT_RANGE_DAY)
+        self.assertNotIn("hunt_food", candidates(g))
+
+    def test_the_walk_does_not_start_off_the_base(self) -> None:
+        # A hunt that begins 120 m from home has no `go_home` on the offer the moment the body
+        # moves, which is how run19b ended up stranded.
+        g = self._lull()
+        g.pos = (self.BASE[0] + 120.5, float(self.BASE[1]), self.BASE[2] + 0.5)
+        self.assertFalse(_food_reserve_walk_wanted(g))
+        self.assertEqual(_food_hunt_range(g), FOOD_HUNT_RANGE_DAY)
+
+    def test_the_walk_is_bounded(self) -> None:
+        g = self._lull(distance=200.0)
+        self.assertNotIn("hunt_food", candidates(g))
+
+    def test_outside_the_lull_the_day_reach_is_unchanged(self) -> None:
+        # No frame standing: the chain is still running, and a far food walk is not its business.
+        g = at_home(geared(flint_and_steel=1, cobblestone=12, white_bed=1), base=self.BASE)
+        g.food = 15.0
+        g.phase = "day"
+        g.mobs = [("chicken", "animal", 8, 105.0)]
+        self.assertFalse(_food_reserve_walk_wanted(g))
+        self.assertNotIn("hunt_food", candidates(g))
+
+    def test_the_hunt_batch_is_capped_by_the_same_reach(self) -> None:
+        # Widening the reach widens the batch cap with it, so the server is never asked to walk
+        # past animals standing closer (`_hunt_count`'s own rule).
+        g = self._lull()
+        self.assertLessEqual(_hunt_count(g, "chicken"), 8)
+        g.mobs = [("chicken", "animal", 1, 105.0), ("chicken", "animal", 1, 300.0)]
+        self.assertEqual(_hunt_count(g, "chicken"), 1)
 
 
 class NetherFoodSecurityTest(unittest.TestCase):

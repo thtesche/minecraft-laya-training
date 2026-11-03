@@ -245,6 +245,15 @@ def candidates(gs: GameState) -> list[str]:
                         and _plank_units(inv) < SHIELD_PLANKS)
         if shield_short:
             need_planks = max(need_planks, SHIELD_PLANKS)
+        # The stew bowl is the last wood the lull owes: the Nether has no trees, so the bowl a
+        # stew comes back from has to be carried in. A pack out of planks cannot craft it, and
+        # without this the bowl step would simply drop out of `_all_nether_prep_steps` and the
+        # gate would light without one (run171 crossed with both mushrooms and no bowl, and
+        # never brewed a meal). Daylight only: chopping a tree is a walk, and the night's walks
+        # are the ones that have killed the kit.
+        if (gs.phase != "night" and _nether_idle(gs) and not _has(inv, BOWL_ITEM)
+                and _plank_units(inv) < 3):
+            need_planks = max(need_planks, 3)
         if _overworld(gs) and ((logs == 0 and planks < need_planks) or shield_short):
             # Overworld only, like `craft_bed` and `place_bed`: the Nether has no trees, so a chop-a-tree
             # step can never succeed there and burns every tick it is offered. The bed chain is what
@@ -1554,6 +1563,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"mob_name": mob, "drop_name": drop, "count": count,
                        "allow_without_shield": True},
                       f"hunt a {mob} for {drop}")
+    if label == "craft_bowl":
+        # The same test as the offer in `_all_nether_prep_steps`, so a forced label cannot craft
+        # a bowl out of planks the pack no longer has.
+        if _has(inv, BOWL_ITEM) or _plank_units(inv) < 3 or not _has(inv, "crafting_table"):
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": BOWL_ITEM}], "temporary_workstation": True},
+                      "craft the stew bowl at the base before crossing: the Nether has no wood, "
+                      "and every mushroom meal needs a bowl that comes back")
     if label == "craft_stew":
         # Two steps in one label: fetch the mushrooms the batch still lacks, or brew once the
         # pack covers it. The bowl is never fetched separately - `craft_item` plans the bowl from

@@ -337,7 +337,9 @@ a **food acquisition** that fits "actually survive".
 - **Eating** in `actions.py`: `hunt_food` acquires the **minimum stock** (`FOOD_RESERVE = 16`;
   nether goal 64, see lull) — next passive mob (`FOOD_MOBS = cow/pig/chicken/sheep/rabbit`) **within
   a daylight-dependent range** (`FOOD_HUNT_RANGE_DAY = 64` / `FOOD_HUNT_RANGE_NIGHT = 16`:
-  at night only what is already near) or, as a fallback, a **single zombie** (`rotten_flesh`,
+  at night only what is already near; in the lull, while the 64-deep reserve is still short and
+  the bot stands at its base, `FOOD_HUNT_RANGE_RESERVE = 128` (see *The bowl, and the walk to
+  the herd* in `docs/nether-prep.md`) or, as a fallback, a **single zombie** (`rotten_flesh`,
   gated: ≤2 hostiles ≤16 m and all zombies, health ≥18). `cook_food` fries raw meat
   (`smelt_item` in the carried furnace). `hunt_food` is offered as long as the stock is < `_food_goal`
   **and** not currently eating ("feed to 20 first, then bank"); the action is marked with

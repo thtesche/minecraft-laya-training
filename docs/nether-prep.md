@@ -117,6 +117,26 @@ Nether terrain is already provided for in the server reflex.
 - **Gold dig only during the day:** the deep dig for gold is not on offer at night (the run
   sleeps then), but stays open for the auto-stop — otherwise the night would end the run too early.
 
+## The bowl, and the walk to the herd
+
+Two things the mushroom pantry needs that the Nether cannot supply.
+
+- **The bowl is carried in.** `craft_bowl` is a prep step of the lull, next to the gold helmet:
+  three planks at a table. The Nether has no wood at all, so a pack that arrives with both
+  mushrooms and no bowl has a recipe it cannot open (run171 crossed with two red and one brown
+  mushroom and never brewed). When the pack has no planks, the lull's `get_wood` gate counts the
+  bowl among the crafts still owed, so the wood is chopped first — daylight only, because chopping
+  is a walk. A bowl in the pack is on `KEEP_MATERIALS`: `stow_surplus` would otherwise file it
+  into the base chest, and a bowl banked at home is a pantry the trip cannot reach.
+- **The reserve walk has a bound and a starting point.** `_food_reserve_walk_wanted` widens the
+  hunt reach from `FOOD_HUNT_RANGE_DAY = 64` to `FOOD_HUNT_RANGE_RESERVE = 128` only in the lull,
+  only while the reserve is short, only by day, and only while the bot is standing at its base.
+  Live, run172 it35-168: 93 `wait` ticks at a lit gate while eight chickens, three cows and two
+  sheep sat loaded at 105-108 m — animals present in 174 of 174 Overworld ticks, never inside the
+  64 m reach. The bound is not decoration: the unconditional 128 m version is run19b, which
+  carried the bot 150-200 m out and stranded it in water for 76 ticks. `_food_source_in_reach`
+  and `_hunt_count` read the same reach, so the offer, the walk and the batch never disagree.
+
 ## The crossing gate as it now stands
 
 `light_portal` fires only when `_expedition_ready` holds, and that is the whole preparation in one
