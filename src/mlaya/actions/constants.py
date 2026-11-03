@@ -102,6 +102,7 @@ CRITERIA: dict[str, str] = {
     # The stronghold phase (the step after the Nether haul); see docs/stronghold.md.
     "hunt_enderman": "kill an enderman and take its ender pearl, one of the two halves of an eye of ender",
     "search_enderman": "roam out to new ground to find an enderman, when pearls are still needed and none is in reach to hunt",
+    "gather_scaffold": "mine netherrack underfoot to refill the fight's roof, so a pearl wave restocks where it stands instead of walking home for cobblestone",
     "take_blaze_powder": "take the banked blaze powder back out of the chest at the portal, so eyes of ender can be crafted from it",
     "craft_ender_eye": "craft an eye of ender from one ender pearl and one blaze powder; twelve of them open the end portal",
     "locate_stronghold": "throw an eye of ender to find the stronghold, then travel to it and stand at the end portal frame",
@@ -140,6 +141,7 @@ DIAMOND_PICK_TIER = 4
 # bindings therefore ask for raw_iron, never for the ore block).
 ORE_MIN_TIER = {
     "stone": 1,                      # cobblestone: any pickaxe
+    "netherrack": 1,                 # netherrack: any pickaxe, and the Nether restock's block
     "coal_ore": 1,                   # coal: any pickaxe
     "iron_ore": STONE_PICK_TIER,     # wood breaks it; stone already yields raw iron
     "gold_ore": IRON_PICK_TIER,      # stone breaks it; iron or better yields raw gold
@@ -649,8 +651,19 @@ COMBAT_SCAFFOLD_BLOCKS = frozenset({
 # `NETHER_COBBLE` (64) stack the wave carries, so a normally stocked trip clears it and only a
 # depleted bot sits the hunt out (live, run112d it240-243: five netherrack left, the roof wanted
 # six, and `hunt_enderman` refused four ticks running until the stuck guard dropped it). Short of
-# the reserve with an enderman in reach, the pearl wave comes home to restock and relaunch.
+# the reserve with an enderman in reach, the pearl wave mines its own roof where it stands
+# (`gather_scaffold`) instead of walking home for it.
 ENDERMAN_HUNT_BLOCKS = 16
+# How many blocks one `gather_scaffold` call digs. 32 is `collect_block`'s own per-call maximum
+# (`MAX_COLLECT_BLOCKS` in the MCP server), so a single call refills a depleted wave to a full
+# complement; the label stays offered while the reserve is still short, so a wave that spent
+# everything digs as many calls as it needs.
+SCAFFOLD_MINE_BATCH = 32
+# The block the Nether restock digs. Netherrack is the Nether's own floor - `collect_block` digs
+# the closest reachable matches without a coordinate - it drops itself without a silk touch, and
+# it counts toward `COMBAT_SCAFFOLD_BLOCKS` as readily as cobblestone (run169 came home from a
+# warped forest with 7 netherrack and no cobblestone, after two hunts spent 128).
+SCAFFOLD_BLOCK = "netherrack"
 
 # --- Home-base leveling (`flatten_home_base`) ---
 # The survival reflex stacks scaffold blocks during a fight, and a buried-and-raised base leaves

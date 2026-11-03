@@ -25,6 +25,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt, _safe_blaze_hunt, _safe_zombie_hunt,
                           _safe_spider_hunt, _safe_string_hunt,
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
+                         ENDERMAN_HUNT_HEALTH,
+                         _scaffold_short, SCAFFOLD_MINE_BATCH,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          _base_leveling_wanted, bed_pad_plan, _bed_pad_wanted, BED_PAD_BLOCK,
@@ -4348,6 +4350,109 @@ class PearlMarchHeadingTest(unittest.TestCase):
         self.assertEqual(EXPLORE_STALL_TURN, 90.0)
 
 
+class ScaffoldRestockTest(unittest.TestCase):
+    """A pearl wave mines the roof it is short of instead of walking home for it.
+
+    A hunt spends sixty-odd scaffold blocks (`collect_mob_drop` rebuilds the roof every time the
+    enderman teleports). The wave crosses with `NETHER_COBBLE` of cobblestone, so run169 came home
+    after two hunts had spent 128 of them - with six pearls in a pack that had to survive ~300 m
+    each way. Netherrack is the Nether's own floor and roofs a fight as readily, so the restock is
+    a dig where the wave stands.
+    """
+
+    NETHER = "minecraft:the_nether"
+
+    def _wave(self, mobs=(), health: float = 20.0, **inv) -> GameState:
+        stock = dict(diamond_pickaxe=2, golden_helmet=1, cobblestone=NETHER_COBBLE,
+                     cooked_beef=24)
+        stock.update(inv)
+        g = gs(pos=(12.5, 65.0, -3.5), dimension=self.NETHER, inventory=stock,
+               tools={"pickaxe": "diamond", "sword": "diamond"},
+               armor={"helmet": {"item": "golden_helmet"},
+                      "chestplate": {"item": "diamond_chestplate"},
+                      "leggings": {"item": "diamond_leggings"},
+                      "boots": {"item": "diamond_boots"}},
+               offhand="shield", health=health, food=18.0, mobs=list(mobs))
+        g.base = (-197, -47, -98)
+        g.nether_entered = True
+        g.nether_arrival = (12, 65, -4)
+        g.powder_stowed = True
+        return g
+
+    def test_a_wave_short_of_roof_blocks_digs_where_it_stands(self) -> None:
+        g = self._wave(cobblestone=5, netherrack=5, mobs=[("enderman", "hostile", 12, 18.0)])
+        self.assertTrue(_scaffold_short(g))
+        self.assertIn("gather_scaffold", candidates(g))
+        a = resolve("gather_scaffold", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "netherrack", "count": SCAFFOLD_MINE_BATCH})
+        self.assertIn("roof", a.rationale)
+
+    def test_the_dig_is_offered_on_the_roam_too(self) -> None:
+        # No enderman loaded yet, but the pearl budget still pays for a march: the wave stocks the
+        # roof before it walks, so the enderman it finds can actually be fought.
+        g = self._wave(cobblestone=0, netherrack=7)
+        self.assertFalse(_enderman_in_reach(g))
+        self.assertTrue(_search_enderman_wanted(g))
+        self.assertTrue(_scaffold_short(g))
+        out = candidates(g)
+        self.assertIn("gather_scaffold", out)
+        self.assertNotIn("search_enderman", out)
+
+    def test_a_stocked_wave_does_not_dig(self) -> None:
+        # The normal crossing: `NETHER_COBBLE` (64) clears the floor, so the ladder goes straight
+        # to the hunt/roam it was already doing.
+        g = self._wave(mobs=[("enderman", "hostile", 12, 18.0)])
+        self.assertFalse(_scaffold_short(g))
+        self.assertNotIn("gather_scaffold", candidates(g))
+        self.assertIn("hunt_enderman", candidates(g))
+
+    def test_a_wave_that_is_leaving_does_not_dig(self) -> None:
+        # Out of pearl budget the trip is over; mining for a fight that will not happen is a detour.
+        g = self._wave(cobblestone=5, netherrack=5)
+        g.nether_travel = NETHER_PEARL_SEARCH_M
+        self.assertFalse(_search_enderman_wanted(g))
+        self.assertFalse(_scaffold_short(g))
+        out = candidates(g)
+        self.assertIn("leave_nether", out)
+        self.assertNotIn("gather_scaffold", out)
+
+    def test_a_loaded_enderman_is_armed_even_past_the_budget(self) -> None:
+        # The one exception: a loaded enderman is worth arming for even when the metre budget is
+        # spent - `_search_enderman_wanted` is where the budget lives, and the reach bypasses it.
+        g = self._wave(cobblestone=5, netherrack=5,
+                       mobs=[("enderman", "hostile", 12, 18.0)])
+        g.nether_travel = NETHER_PEARL_SEARCH_M
+        self.assertTrue(_scaffold_short(g))
+
+    def test_a_wounded_wave_heals_instead_of_digging(self) -> None:
+        g = self._wave(cobblestone=5, netherrack=5, mobs=[("enderman", "hostile", 12, 18.0)],
+                       health=ENDERMAN_HUNT_HEALTH - 1)
+        self.assertFalse(_scaffold_short(g))
+        self.assertNotIn("gather_scaffold", candidates(g))
+
+    def test_without_a_pickaxe_there_is_no_dig(self) -> None:
+        # Netherrack needs a pickaxe; a bot that lost it cannot mine its way out of the shortage.
+        g = self._wave(cobblestone=5, netherrack=5, mobs=[("enderman", "hostile", 12, 18.0)])
+        g.tools = {"sword": "diamond"}
+        g.inventory = {k: v for k, v in g.inventory.items() if not k.endswith("_pickaxe")}
+        self.assertFalse(_scaffold_short(g))
+
+    def test_the_overworld_hunt_does_not_dig_netherrack(self) -> None:
+        # Netherrack is a Nether answer; in the Overworld `mine_stone` is the cobble step, and the
+        # Overworld pearl roam is a different (last-resort) path.
+        g = self._wave(cobblestone=5,
+                       mobs=[("enderman", "hostile", 12, 18.0)])
+        g.dimension = "minecraft:overworld"
+        g.pearl_wave_trips = PEARL_WAVE_MAX_TRIPS
+        self.assertFalse(_scaffold_short(g))
+        self.assertNotIn("gather_scaffold", candidates(g))
+
+    def test_the_resolve_refuses_a_wave_that_is_not_short(self) -> None:
+        g = self._wave(mobs=[("enderman", "hostile", 12, 18.0)])
+        self.assertIsNone(resolve("gather_scaffold", g))
+
+
 class NetherSearchHeadingTest(unittest.TestCase):
     """The fortress search marches the east-west axis instead of wandering.
 
@@ -5789,8 +5894,9 @@ class PiglinBarterTest(unittest.TestCase):
 
     def test_a_piglin_out_of_range_sends_the_wave_roaming(self) -> None:
         # A piglin beyond reach is not worth the walk in a pearl wave: the wave roams the warped
-        # forest for endermen instead, and the next wave may find a piglin closer.
-        g = self._down(gold_ingot=GOLD_BARTER_RESERVE)
+        # forest for endermen instead, and the next wave may find a piglin closer. (The wave has
+        # its cobblestone stack, so `gather_scaffold` does not own the tick - see the scaffold test.)
+        g = self._down(gold_ingot=GOLD_BARTER_RESERVE, cobblestone=NETHER_COBBLE)
         g.powder_stowed = True
         g.piglins = [(412, BARTER_PIGLIN_RANGE + 20.0)]
         out = candidates(g)
@@ -5817,7 +5923,7 @@ class PiglinBarterTest(unittest.TestCase):
         self.assertIsNone(resolve("mine_gold_reserve", g))
 
     def test_the_barter_closes_after_its_tries(self) -> None:
-        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE)
+        g = self._down(blaze_rod=9, gold_ingot=GOLD_BARTER_RESERVE, cobblestone=NETHER_COBBLE)
         g.powder_stowed = True
         g.barter_attempts = BARTER_MAX_ATTEMPTS
         self.assertFalse(_barter_pearls_wanted(g))
@@ -5987,22 +6093,33 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertEqual(a.args["mob_name"], "enderman")
         self.assertEqual(a.args["drop_name"], "ender_pearl")
 
-    def test_a_pearl_wave_short_on_blocks_comes_home_to_restock(self) -> None:
+    def test_a_pearl_wave_short_on_blocks_mines_its_own_roof(self) -> None:
         # The fight roofs the bot over as the enderman teleports, and `collect_mob_drop` refuses
         # with `[COMBAT_BUILD_MATERIALS_MISSING]` when the scaffold runs short (run112d it240-243:
         # five netherrack left, roof wanted six, four refused ticks). Below the block floor the
-        # hunt sits out, and with the enderman still loaded the wave neither hunts nor roams past
-        # it - it leaves to restock and relaunch.
+        # hunt sits out, and the wave neither hunts nor roams past the enderman - it digs the roof
+        # it is short of where it stands. Netherrack is the Nether's own floor, so the restock is a
+        # dig, not the ~300 m walk home the ladder used to take with the pearls in the pack.
         g = self._home(mobs=[("enderman", "hostile", 12, 18.0)], cobblestone=5, netherrack=5)
         g.powder_stowed = True
         g.dimension = self.NETHER
         g.armor["helmet"] = {"item": "golden_helmet"}
         self.assertTrue(_enderman_in_reach(g))
         self.assertFalse(_safe_enderman_hunt(g))
+        self.assertTrue(_scaffold_short(g))
         out = candidates(g)
         self.assertNotIn("hunt_enderman", out)
         self.assertNotIn("search_enderman", out)
-        self.assertIn("leave_nether", out)
+        self.assertNotIn("leave_nether", out)
+        self.assertIn("gather_scaffold", out)
+        a = resolve("gather_scaffold", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "netherrack", "count": SCAFFOLD_MINE_BATCH})
+        # Topped up past the floor, the dig is over and the fight takes the tick again.
+        g.inventory["netherrack"] = ENDERMAN_HUNT_BLOCKS
+        self.assertFalse(_scaffold_short(g))
+        self.assertIn("hunt_enderman", candidates(g))
+        self.assertNotIn("gather_scaffold", candidates(g))
 
     def test_netherrack_counts_toward_the_hunt_block_floor(self) -> None:
         # Netherrack scaffolds the roof as readily as cobblestone, so the Nether stock and the

@@ -31,8 +31,8 @@ ENDERMAN_HUNT_HEALTH = 14.0
 
 # The labels this module owns; `planner.resolve` hands each of them to `resolve_stronghold`.
 STRONGHOLD_LABELS = frozenset({
-    "hunt_enderman", "search_enderman", "take_blaze_powder", "craft_ender_eye",
-    "locate_stronghold", "activate_end_portal",
+    "hunt_enderman", "search_enderman", "gather_scaffold", "take_blaze_powder",
+    "craft_ender_eye", "locate_stronghold", "activate_end_portal",
 })
 
 
@@ -71,7 +71,8 @@ def _safe_enderman_hunt(gs: GameState) -> bool:
     The block floor is the one piece that is not optional: `collect_mob_drop` roofs the bot over as
     the enderman teleports and refuses with `[COMBAT_BUILD_MATERIALS_MISSING]` when the scaffold
     runs short (run112d it240-243: five netherrack left, roof wanted six, four refused ticks). Short
-    of `ENDERMAN_HUNT_BLOCKS` the hunt sits out, and the pearl wave comes home to restock.
+    of `ENDERMAN_HUNT_BLOCKS` the hunt sits out, and the wave mines netherrack where it stands
+    (`gather_scaffold`) rather than walking home for cobblestone.
     """
     if not _enderman_in_reach(gs) or (gs.health or 0) < ENDERMAN_HUNT_HEALTH:
         return False
@@ -91,8 +92,8 @@ def _search_enderman_wanted(gs: GameState) -> bool:
 
     The in-reach exclusion reads `_enderman_in_reach`, not `_safe_enderman_hunt`: an enderman is
     already loaded, so roaming past it to cover more ground is wrong even when the fight cannot
-    start for want of building blocks. The planner then falls through to `leave_nether`, and the
-    bot comes home to restock rather than abandoning a mob it walked all this way to find.
+    start for want of building blocks. The planner then falls to `gather_scaffold` (`_scaffold_short`)
+    and the bot digs the roof it is short of rather than abandoning a mob it walked this way to find.
 
     The roam happens in two places, and the dimension picks which. In the *Nether*, during a pearl
     wave, it is the warped-forest search the waves depend on - endermen live there, not at the
@@ -114,6 +115,31 @@ def _search_enderman_wanted(gs: GameState) -> bool:
         return (gs.nether_travel < NETHER_PEARL_SEARCH_M
                 and int(getattr(gs, "explore_stalls", 0) or 0) < PEARL_MARCH_STALL_LIMIT)
     return gs.pearl_wave_trips >= PEARL_WAVE_MAX_TRIPS
+
+
+def _scaffold_short(gs: GameState) -> bool:
+    """Whether a pearl wave should mine its own roof blocks rather than walk home for them.
+
+    A hunt spends sixty-odd scaffold blocks: `collect_mob_drop` rebuilds the defensive roof every
+    time the enderman teleports (run169 it121-122 spent 68 and then 60 cobblestone on two hunts).
+    The wave crosses with `NETHER_COBBLE` (64) of it, so the second hunt is already on the floor
+    `_safe_enderman_hunt` needs and the old ladder answered by walking home - a ~300 m walk each
+    way, with the pearls it had just won in the pack the whole time. Netherrack is the Nether's
+    own floor: `collect_block` digs the closest reachable matches without a coordinate, and
+    netherrack roofs a fight as readily as cobblestone. So the restock happens where the wave
+    stands, and the walk home is for a pack that is full or a trip that is over.
+
+    Offered only while a dig has a purpose: an enderman already in reach (the fight is waiting on
+    the roof), or a roam the pearl budget still pays for. Without that the bot would dig for a
+    trip that is about to leave, and a wave that is out of budget goes home instead.
+    """
+    if not _in_nether(gs) or (gs.health or 0) < ENDERMAN_HUNT_HEALTH:
+        return False
+    if _combat_blocks_carried(gs.inventory) >= ENDERMAN_HUNT_BLOCKS:
+        return False
+    if not _can_mine(gs, SCAFFOLD_BLOCK):
+        return False
+    return _enderman_in_reach(gs) or _search_enderman_wanted(gs)
 
 
 def _at_stronghold(gs: GameState) -> bool:
@@ -240,6 +266,17 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
                       {"mob_name": ENDERMAN_MOB, "drop_name": ENDER_PEARL_ITEM,
                        "count": min(3, want), "allow_without_shield": True},
                       f"kill an enderman for its ender pearl ({want} still needed)")
+    if label == "gather_scaffold":
+        if not _scaffold_short(gs):
+            return None
+        # The wave's own restock: netherrack underfoot, no coordinate, one call's maximum. The
+        # label stays on offer while the reserve is still under `ENDERMAN_HUNT_BLOCKS`, so a wave
+        # that spent everything simply digs again; the hunt takes the next tick once it is stocked.
+        carried = _combat_blocks_carried(inv)
+        return Action(label, "collect_block",
+                      {"block_name": SCAFFOLD_BLOCK, "count": SCAFFOLD_MINE_BATCH},
+                      f"mine {SCAFFOLD_BLOCK} for the fight's roof "
+                      f"({carried} carried, {ENDERMAN_HUNT_BLOCKS} wanted)")
     if label == "search_enderman":
         if not _search_enderman_wanted(gs):
             return None

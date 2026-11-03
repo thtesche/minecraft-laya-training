@@ -82,9 +82,9 @@ had put the barter inside the rods trip because "the bot is already down there")
   taken again.
 - **Welle 2+ - gold, barter, endermen.** `_nether_pearl_wave_wanted` reopens `nether_expedition_open`
   the way `_nether_topup_wanted` does, and the Nether block in `planner.candidates` splits on
-  `_pearl_wave_trip`: the pearl ladder is `barter_pearls` → `hunt_enderman` → `search_enderman` →
-  `leave_nether`. The gold for the trade is dug in the lull *before that wave*, not banked ahead of
-  the rod trip (`_gold_reserve_short` is gated on `nether_expedition_complete`).
+  `_pearl_wave_trip`: the pearl ladder is `barter_pearls` → `hunt_enderman` → `gather_scaffold` →
+  `search_enderman` → `leave_nether`. The gold for the trade is dug in the lull *before that wave*,
+  not banked ahead of the rod trip (`_gold_reserve_short` is gated on `nether_expedition_complete`).
 - **The cap.** `graph._note_dimension` counts a crossing as a pearl trip only once the powder is
   stowed and the bank is not exhausted (a powder top-up is a rod trip, not a pearl trip). After
   `PEARL_WAVE_MAX_TRIPS` (5) crossings the waves shut and the Overworld `search_enderman` roam
@@ -97,6 +97,21 @@ trip wandering. The 400 m leash was too short once the way home worked: it is wa
 half that as the crow flies, and run168 turned home from the treeline on every trip (it161: 5.5 m
 from a warped chunk, an enderman at 28.1 m, budget already at 528 m). 900 m covers a round of the
 mapped forests and `PEARL_MARCH_STALL_LIMIT` still ends a trip whose route never opens.
+
+**The restock is a dig, not a walk home (`gather_scaffold`).** A hunt spends sixty-odd scaffold
+blocks: `collect_mob_drop` rebuilds the defensive roof every time the enderman teleports, and run169
+spent 68 then 60 cobblestone on two hunts. The wave crosses with `NETHER_COBBLE` (64), so the second
+hunt already sits on the `ENDERMAN_HUNT_BLOCKS` (16) floor `_safe_enderman_hunt` requires, and the
+old ladder answered that by walking home to restock - ~300 m each way, with the pearls it had just
+won in the pack the whole time (run169 came home that way with six). Netherrack is the Nether's own
+floor, drops itself without a silk touch, roofs a fight as readily as cobblestone, and
+`collect_block` digs the closest reachable matches without a coordinate. So `_scaffold_short` turns
+the shortage into a dig where the wave stands: below the block floor, on a healthy bot with a
+pickaxe, and only while a dig has a purpose (an enderman in reach, or a roam the pearl budget still
+pays for). Each call mines `SCAFFOLD_MINE_BATCH` (32, the server's per-call maximum) and the label
+stays offered while the reserve is still short, so a wave that spent everything digs as often as it
+needs; the hunt takes the next tick once it is stocked. A wave that is out of budget, out of health,
+packed full, or in the Overworld goes home instead.
 
 **Steering.** A pearl wave walks at a *warped forest*, not at a compass line: the biome is the one
 Nether place whose hostile spawn is the enderman itself (no piglins, no blazes, no magma cubes), so

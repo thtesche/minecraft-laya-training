@@ -457,5 +457,27 @@ class ArmorRemovalTest(unittest.TestCase):
         self.assertEqual(d["armor_removed"], ["diamond_helmet"])
 
 
+class ScaffoldRestockProgressTest(unittest.TestCase):
+    """`gather_scaffold` is proved by the block it digs, not by any gain.
+
+    A pearl wave short of roof blocks mines netherrack underfoot (`collect_block`), and the tick
+    pays in netherrack. Reading any inventory gain as progress would let a tick that picked up
+    something else reset the stuck guard on a dig that never happened.
+    """
+
+    def test_the_netherrack_landing_in_the_pack_is_progress(self) -> None:
+        d = diff(gs(inventory={"cobblestone": 5}), gs(inventory={"cobblestone": 5,
+                                                                  "netherrack": 32}))
+        self.assertTrue(progressed("gather_scaffold", d))
+
+    def test_another_gain_is_not_this_dig(self) -> None:
+        d = diff(gs(inventory={}), gs(inventory={"cobblestone": 5}))
+        self.assertFalse(progressed("gather_scaffold", d))
+
+    def test_walking_to_the_dig_is_not_the_dig(self) -> None:
+        d = diff(gs(pos=(0.5, 65.0, 0.5)), gs(pos=(8.5, 65.0, 0.5)))
+        self.assertFalse(progressed("gather_scaffold", d))
+
+
 if __name__ == "__main__":
     unittest.main()

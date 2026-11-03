@@ -545,7 +545,8 @@ def candidates(gs: GameState) -> list[str]:
                 # The rod haul is already home and stowed, so the blaze hunt and the fortress march
                 # are behind the bot: this trip is down here only for the pearls the eyes still
                 # owe. Barter the gold reserve with a piglin first (one reserve buys about a pearl),
-                # then kill an enderman in reach, then roam a warped forest to find one within the
+                # then kill an enderman in reach, then mine the roof that fight needs when the pack
+                # is down to the block floor, then roam a warped forest to find one within the
                 # pearl budget; out of budget, out of health, or forced back, come home and stow -
                 # a death down here would drop the whole wave, which is why the waves exist.
                 # `barter_pearls` moved here from the rod trip (it used to ride the rods-done tick,
@@ -565,6 +566,13 @@ def candidates(gs: GameState) -> list[str]:
                     out.append("drop_junk")
                 elif _barter_pearls_wanted(gs):
                     out.append("barter_pearls")
+                elif _scaffold_short(gs):
+                    # The fight's roof ran down to the floor `_safe_enderman_hunt` needs. The old
+                    # ladder answered that by walking the wave home to restock - ~300 m each way
+                    # with the pearls it had just won in the pack - and run169 came home after two
+                    # hunts had spent 128 scaffold blocks. Netherrack is the Nether's own floor, so
+                    # the restock is a dig: mine it here, then fight with a full complement.
+                    out.append("gather_scaffold")
                 elif _search_enderman_wanted(gs):
                     # No enderman in reach but the pearl budget still has ground to cover: roam new
                     # terrain to load one, the `explore_frontier` march `search_enderman` resolves

@@ -227,6 +227,10 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         return d["inventory_delta"].get("ender_pearl", 0) > 0
     if label == "search_enderman":
         return d["inventory_delta"].get("ender_pearl", 0) > 0 or moved(d)
+    if label == "gather_scaffold":
+        # The dig pays in the block the roof is built from, and `collect_block` digs only the name
+        # it was given (`netherrack`), so a gain of anything else would mean a different call.
+        return d["inventory_delta"].get("netherrack", 0) > 0
     if label == "take_blaze_powder":
         return d["inventory_delta"].get("blaze_powder", 0) > 0
     if label == "craft_ender_eye":
