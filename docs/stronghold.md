@@ -2,7 +2,7 @@
 
 Status: **implemented and committed** — the `actions` package split landed first
 (behaviour-preserving, `f09edd4`), then the stronghold chain on top of it (`34079f5`); the suite
-is 1442 green (2026-11-03). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
+is 1450 green (2026-11-03). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
 The re-supply after shattered eyes is now demand-sized, and both robustness gaps are closed (see
 the section near the end).
 
@@ -105,6 +105,12 @@ ground as the frontier moves. The away-from-base bearing it used before is the s
 every trip, because the base does not move: live, run164 walked three pearl waves down the same
 crimson corridor and came home with no pearl. A tick with neither read keeps the axis fallback in
 `_nether_search_heading`.
+
+A bearing that cannot be pathed at all is not repeated: `explore_frontier` answers
+`[EXPLORATION_ROUTE_STOPPED]` without moving the body, so the next tick would aim at the same wall
+(live, run164 it159-161 at `(132, 41, 0)`). `_note_explore` counts those stalls
+(`explore_stalls`, logged), `_clear_march_heading` turns the bearing a quadrant each, and after one
+full turn (`PEARL_MARCH_STALL_LIMIT`) the wave comes home to relaunch instead of marching in place.
 
 ### Why no second Nether trip by default
 

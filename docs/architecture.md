@@ -1334,6 +1334,16 @@ lid and stalled on the latch that was supposed to say the haul was done.
   `_nether_search_heading`'s axis fallback, and the Overworld roam keeps its away-from-base bearing.
   The lab world has loaded 935 `crimson_forest` chunks and no `warped_forest` yet, so on it the
   frontier bearing is what has to find the first one.
+- **A march that covers no ground can never spend its budget.** run164 it159-161 asked for the
+  same eastward bearing from `(132, 41, 0)` three times and got
+  `[EXPLORATION_ROUTE_STOPPED] ... no path or usable partial route found` each time. A stopped
+  march leaves the body where it stands, so `nether_travel` (the metre budget `NETHER_PEARL_SEARCH_M`
+  that ends an empty trip) never grew: the wave would have marched in place to the run limit.
+  `_note_explore` now counts a stopped march (`GameState.explore_stalls`, logged) and
+  `_clear_march_heading` turns the next bearing a quadrant per stall; the first march that moves
+  clears the count, and `PEARL_MARCH_STALL_LIMIT` (four, one full turn) sends the wave home to
+  stow and relaunch instead of orbiting. `[EXPLORATION_INCOMPLETE]` is not a stall: that route did
+  move, it just ran out of chunk columns.
 
 ## Next milestones
 
