@@ -32,6 +32,11 @@ def diff(before: GameState, after: GameState) -> dict:
     off_before = {before.offhand} if before.offhand else set()
     off_after = {after.offhand} if after.offhand else set()
 
+    portal_before = before.resource_distance("nether_portal") is not None
+    portal_after = after.resource_distance("nether_portal") is not None
+    bed_before = before.resource_distance("white_bed") is not None
+    bed_after = after.resource_distance("white_bed") is not None
+
     return {
         "pos_delta": pos_delta(),
         "swim_delta": swim_delta(),
@@ -41,7 +46,12 @@ def diff(before: GameState, after: GameState) -> dict:
         else round(after.food - before.food, 1),
         "inventory_delta": inv_delta,
         "armor_delta": sorted(worn_after - worn_before),
+        # The other direction. A swap strips the old piece before the new one goes on, and a piece
+        # that broke leaves no trace any other way; without this a tick that only removed gear
+        # reads as nothing happening, and the idle/orbit guards reset on a set that does not move.
+        "armor_removed": sorted(worn_before - worn_after),
         "offhand_delta": sorted(off_after - off_before),
+        "offhand_removed": sorted(off_before - off_after),
         "on_ground": after.on_ground,
         "in_water": after.in_water,
         "phase": after.phase,
@@ -54,13 +64,38 @@ def diff(before: GameState, after: GameState) -> dict:
         # placed bed leaves the pack but exists as a block. The portal frame itself is judged
         # by the obsidian leaving the pack (below), because natural obsidian may already be
         # loaded and would mask the frame in a resource-presence check.
-        "portal_lit": after.resource_distance("nether_portal") is not None,
-        "bed_placed": after.resource_distance("white_bed") is not None,
+        #
+        # `portal_lit`/`bed_placed` are *standing* facts -- a block of that kind within
+        # `RESOURCE_RADIUS` of the bot -- so at the base they are true on every tick: 11 755 of
+        # the 44 794 archived action ticks saw a gate and 14 775 saw a bed, against 27
+        # `light_portal` and 218 `place_bed` ticks that were about one. The `*_new` twins are the
+        # events a verifier needs: the block appeared during this tick.
+        "portal_lit": portal_after,
+        "portal_ignited": portal_after and not portal_before,
+        "bed_placed": bed_after,
+        "bed_placed_new": bed_after and not bed_before,
         # The portal crossing moves no stack and may move the body not at all: the only proof is
         # that the dimension is not the one the step started in. Kept as a boolean rather than the
         # two dimension strings so the log stays readable.
         "dimension_changed": before.dimension != after.dimension,
     }
+
+
+def moved(d: dict, minimum: float = 2.0) -> bool:
+    """Whether the body covered ground, rather than drifting up and down in place.
+
+    `pos_delta` counts the vertical component, and a body adrift in a flooded pocket climbs and
+    sinks the same column every tick (live, run115: 281 `escape_water` walks at (-0.5, 62, 281),
+    3.5 blocks each, never on ground). Reading the x/z plane settles that, but a scaffold climb is
+    vertical only and still travel, so the tick's own footing keeps it: the vertical read counts
+    everywhere except in water without ground. `escape_water` keeps its stricter rule below (a
+    swim across the water or footing, nothing else).
+    """
+    if (d.get("swim_delta") or 0) > minimum:
+        return True
+    if (d.get("pos_delta") or 0) <= minimum:
+        return False
+    return not d.get("in_water") or bool(d.get("on_ground"))
 
 
 # Labels whose progress shows up as a net inventory gain (a drop collected or a craft produced).
@@ -128,8 +163,14 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         # The night ending or the body asleep is the step's own proof. Since run121 the step can
         # also resolve to a walk onto the footing beside the gate bed (`_bed_reachable`), and
         # closing that last gap is the step working, not the step failing.
-        return (d.get("phase") != "night" or bool(d.get("sleeping"))
-                or (d["pos_delta"] or 0) > 0.5)
+        #
+        # `phase_changed` is required: `phase` is the *after* read, so `phase != "night"` alone
+        # calls any attempt that ended in daylight progress, including one that changed nothing,
+        # and `None != "night"` does the same for a tick whose clock could not be read. No
+        # archived tick happened to expose it (every daytime attempt there also ended a night),
+        # but the rule cannot tell "the night ended" from "it was already day".
+        return (bool(d.get("phase_changed")) and d.get("phase") != "night"
+                or bool(d.get("sleeping")) or moved(d, 0.5))
     # Overworld -> Nether gate. Each step's own item is the proof; the world-block steps use the
     # booleans above (lighting) or the obsidian leaving the pack (the frame).
     if label == "craft_bucket":
@@ -141,7 +182,7 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label == "approach_lava":
         # The walk is the whole job: closing the distance to the lava is what loads the source
         # the pour step needs, so movement is the proof, not an item.
-        return (d["pos_delta"] or 0) > 2
+        return moved(d)
     if label == "get_flint":
         return d["inventory_delta"].get("flint", 0) > 0
     if label == "craft_flint_and_steel":
@@ -149,17 +190,23 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label == "build_portal":
         return d["inventory_delta"].get("obsidian", 0) < 0
     if label == "light_portal":
-        return bool(d.get("portal_lit"))
+        # The block appearing, not a portal standing near it: `portal_lit` is true on every tick
+        # spent at a base whose gate already burns. Archived deltas predate `portal_ignited`, so
+        # they fall back to the standing read.
+        return bool(d.get("portal_ignited", d.get("portal_lit")))
     if label == "place_bed":
-        # The bed appears once `sleep` runs, but the step first walks the bot onto the stance
-        # clear of the gate (`place_bed` resolves a `navigate` until the feet are there), so
-        # movement is progress too.
-        return bool(d.get("bed_placed")) or (d["pos_delta"] or 0) > 2
+        # The bed appearing once `sleep` runs; the step first walks the bot onto the stance clear
+        # of the gate (`place_bed` resolves a `navigate` until the feet are there), so movement is
+        # progress too. A bed that merely stands within the scan radius is not a placement: five
+        # archived `place_bed` ticks (run156 it259-262, `pos_delta` 0.0, body held by the reflex)
+        # read as progress because the base bed was in range, and kept the stuck guard from ever
+        # withholding the label.
+        return bool(d.get("bed_placed_new", d.get("bed_placed"))) or moved(d)
     # The Nether expedition. A crossing is proved by the dimension it leaves behind (the walk back
     # to the arrival cell is progress until the exit portal is loaded), the helmet swap by the
     # armour slot that changed, and the haul by its own item.
     if label in ("enter_portal", "leave_nether"):
-        return d.get("dimension_changed") or (d["pos_delta"] or 0) > 2
+        return d.get("dimension_changed") or moved(d)
     if label in ("swap_to_gold_helmet", "swap_to_diamond_helmet"):
         return bool(d.get("armor_delta"))
     if label == "hunt_blaze":
@@ -179,7 +226,7 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label == "hunt_enderman":
         return d["inventory_delta"].get("ender_pearl", 0) > 0
     if label == "search_enderman":
-        return d["inventory_delta"].get("ender_pearl", 0) > 0 or (d["pos_delta"] or 0) > 2
+        return d["inventory_delta"].get("ender_pearl", 0) > 0 or moved(d)
     if label == "take_blaze_powder":
         return d["inventory_delta"].get("blaze_powder", 0) > 0
     if label == "craft_ender_eye":
@@ -192,11 +239,11 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label == "locate_stronghold":
         # The locate is a travel step: covering ground is the step working, and an estimate that
         # saved its bearing has nothing to move.
-        return (d["pos_delta"] or 0) > 2 or (ok and not d["inventory_delta"])
+        return moved(d) or (ok and not d["inventory_delta"])
     # Home base. Walking home (or up to the surface) shows as movement; the chest shows as the
     # item entering or leaving the pack; stowing/dropping shows as any carried item going down.
     if label in ("surface_up", "establish_base", "go_home"):
-        return (d["pos_delta"] or 0) > 2
+        return moved(d)
     if label == "escape_water":
         # The rescue worked if the body has footing again. A swim that covers ground counts too,
         # but measured across the water rather than up it: a body bobbing in a flooded pocket moves
@@ -213,7 +260,7 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         # The deposit shows as any carried item going down; the walk to the network chest that
         # still has room (the one the run79 deadlock never started, having no chest to walk to)
         # shows as movement -- the same shape as `place_bed`'s walk to its cell.
-        return any(v < 0 for v in d["inventory_delta"].values()) or (ok and (d["pos_delta"] or 0) > 2)
+        return any(v < 0 for v in d["inventory_delta"].values()) or (ok and moved(d))
     if label == "drop_junk":
         return any(v < 0 for v in d["inventory_delta"].values())
     if label == "flatten_home_base":
@@ -232,7 +279,7 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         # The provisions reaching the pack is the step; walking to the chest of the network that
         # actually holds them is progress too, and until this a successful `withdraw` never was
         # any (`progressed` had no rule for the label at all).
-        return any(v > 0 for v in d["inventory_delta"].values()) or (ok and (d["pos_delta"] or 0) > 2)
+        return any(v > 0 for v in d["inventory_delta"].values()) or (ok and moved(d))
     if label == "collect_smelted":
         # The drain itself is the items landing in the pack. The look before the reach-in has
         # nothing to show, and that empty delta is progress only when the call actually succeeded:
@@ -243,5 +290,5 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         return (any(v > 0 for v in d["inventory_delta"].values())
                 or (ok and not d["inventory_delta"]))
     if label == "explore":
-        return (d["pos_delta"] or 0) > 2
+        return moved(d)
     return False

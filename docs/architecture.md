@@ -483,11 +483,26 @@ a **food acquisition** that fits "actually survive".
    that state. run141 crafted an iron chestplate (`iron_ingot -8`, `iron_chestplate +1`) and the
    verifier called it wasted; the iron kit (`craft_iron_sword/chestplate/leggings/boots/helmet`)
    is now listed. The run report keeps its **own** parallel notion of a productive tick in
-   `analysis._wasted` (body *and* inventory: `pos_delta < MOVE_EPS and _gained == 0`), widened at
-   the same time so a furnace batch worked at a fixed spot — items gained, no step taken — is not
-   counted as standing (run141 read 8 smelt ticks as idle, putting `still_ratio` at 0.84 for a run
-   that worked the whole time). The two definitions live in different modules and are maintained
-   apart.
+   `analysis._wasted` (body *and* inventory: the same `verify.moved` test at `MOVE_EPS`, and no
+   item gained), widened at the same time so a furnace batch worked at a fixed spot — items
+   gained, no step taken — is not counted as standing (run141 read 8 smelt ticks as idle, putting
+   `still_ratio` at 0.84 for a run that worked the whole time). The two definitions live in
+   different modules and are maintained apart.
+- **The tick delta is a diff with snapshots in it (2026-11-03).** `verify.diff` is the only record
+  of what an action changed — the log stores the *before* state, not the after — so every field
+  has to mean what its name says. Three did not, and are now split. `portal_lit`/`bed_placed` are
+  *standing* reads (a block of that kind within `RESOURCE_RADIUS`), true on every tick spent at a
+  base with a gate and a bed: 11 755 of 44 794 archived action ticks saw a gate and 14 775 saw a
+  bed, against 27 `light_portal` and 218 `place_bed` ticks. Their event twins `portal_ignited` /
+  `bed_placed_new` (the block appeared during this tick) are what `progressed` and
+  `_note_gate_lit` read; archived deltas are completed from the record's own before-state in
+  `dataset.reverified_progress`. `phase`/`sleeping`/`on_ground`/`in_water` stay after-snapshots and
+  are used as such: `sleep` requires `phase_changed`, or any attempt that ends in daylight counts
+  as the night ending. `armor_delta`/`offhand_delta` gained their other direction
+  (`armor_removed`/`offhand_removed`), so a swap and a broken piece are visible. Movement rules
+  read `verify.moved`: `pos_delta`, except a vertical bob in water without ground — the run115
+  shape — while a scaffold climb stays travel; `escape_water` keeps its stricter swim/footing
+  rule. `analysis._wasted` uses the same helper, so `still_ratio` and the reward signal agree.
 - **Water is its own metric (run115, live):** the run report counts the ticks the state reports
   `in_water`, the longest streak, and the ticks that are **adrift** — in water with
   `swim_delta < MOVE_EPS`, a body drifting up and back down the same column while crossing no

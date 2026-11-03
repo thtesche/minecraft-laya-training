@@ -370,5 +370,92 @@ class BedPadProgressTest(unittest.TestCase):
         self.assertFalse(progressed("prepare_bed_pad", diff(gs(), gs()), ok=False))
 
 
+class StandingWorldFactsTest(unittest.TestCase):
+    """A block that stands there is not an event.
+
+    `portal_lit` and `bed_placed` are proximity reads (within `RESOURCE_RADIUS`) of the *after*
+    state, so at a base that already has a gate and a bed they are true on every tick: 11 755 of
+    44 794 archived action ticks saw a gate and 14 775 saw a bed, against 27 `light_portal` and
+    218 `place_bed` ticks. Read as events they made a refused `place_bed` progress beside the
+    base bed (run156 it259-262, `pos_delta` 0.0) and would re-latch a gate the inherited world
+    left burning. `portal_ignited` / `bed_placed_new` are the appearance.
+    """
+
+    def test_a_gate_that_already_burned_is_not_a_new_ignition(self) -> None:
+        lit = {"nether_portal": _hit("nether_portal")}
+        d = diff(gs(resources=lit), gs(resources=lit))
+        self.assertTrue(d["portal_lit"])
+        self.assertFalse(d["portal_ignited"])
+        self.assertFalse(progressed("light_portal", d))
+
+    def test_a_bed_already_standing_is_not_a_placement(self) -> None:
+        bed = {"white_bed": _hit("white_bed")}
+        d = diff(gs(resources=bed), gs(resources=bed))
+        self.assertTrue(d["bed_placed"])
+        self.assertFalse(d["bed_placed_new"])
+        self.assertFalse(progressed("place_bed", d, ok=True))
+
+    def test_the_new_block_is_the_event(self) -> None:
+        d = diff(gs(), gs(resources={"nether_portal": _hit("nether_portal")}))
+        self.assertTrue(d["portal_ignited"])
+        self.assertTrue(progressed("light_portal", d))
+
+
+class SleepDayTimeTest(unittest.TestCase):
+    """The night *ending* is progress; ending in daylight is not.
+
+    `phase` in the delta is the *after* read, so `phase != "night"` counts a daytime attempt as
+    progress whatever happened before it - and `None != "night"` likewise for a tick without a
+    clock. The three archived daytime failures all happened to also end a night, so the flaw never
+    fired there; the rule still cannot tell the two apart.
+    """
+
+    def test_a_failed_daytime_sleep_is_not_progress(self) -> None:
+        d = diff(gs(pos=(-9.5, 70.0, -51.5), phase="day"),
+                 gs(pos=(-9.5, 70.0, -51.5), phase="day"))
+        self.assertFalse(progressed("sleep", d, ok=False))
+
+    def test_a_night_that_ended_is_progress(self) -> None:
+        d = diff(gs(pos=(-9.5, 70.0, -51.5), phase="night"),
+                 gs(pos=(-9.5, 70.0, -51.5), phase="day"))
+        self.assertTrue(progressed("sleep", d))
+
+
+class MovementReadTest(unittest.TestCase):
+    """Travel is ground covered, not the vertical drift of a floating body.
+
+    The `escape_water` rule already knew this; every other movement rule read `pos_delta`, which
+    carries the up-and-down of a body in a flooded pocket (run115: 3.5 blocks a tick, 281 ticks).
+    A scaffold climb is vertical only and still travel, so it stays counted.
+    """
+
+    def test_bobbing_in_a_flooded_pocket_is_not_an_explore(self) -> None:
+        d = diff(gs(pos=(-0.5, 62.4, 281.5), in_water=True, on_ground=False),
+                 gs(pos=(-0.5, 59.4, 281.5), in_water=True, on_ground=False))
+        self.assertGreater(d["pos_delta"], 2)
+        self.assertEqual(d["swim_delta"], 0.0)
+        self.assertFalse(progressed("explore", d))
+
+    def test_a_scaffold_climb_is_travel(self) -> None:
+        d = diff(gs(pos=(0.5, 62.0, 0.5), in_water=False, on_ground=False),
+                 gs(pos=(0.5, 65.0, 0.5), in_water=False, on_ground=False))
+        self.assertTrue(progressed("explore", d))
+
+
+class ArmorRemovalTest(unittest.TestCase):
+    """Both directions of an armour change are recorded.
+
+    A swap strips the old piece before the new one goes on, and a broken piece leaves no other
+    trace; `armor_delta` holds only what was put on, so the removal was invisible to the idle
+    guard.
+    """
+
+    def test_a_swap_records_both_the_piece_on_and_the_piece_off(self) -> None:
+        d = diff(gs(armor={"helmet": {"item": "diamond_helmet"}}),
+                 gs(armor={"helmet": {"item": "golden_helmet"}}))
+        self.assertEqual(d["armor_delta"], ["golden_helmet"])
+        self.assertEqual(d["armor_removed"], ["diamond_helmet"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -275,6 +275,18 @@ class RenderNarrativeTest(unittest.TestCase):
         self.assertFalse(ds.reverified_progress({"label": "search_enderman", "progressed": False}))
         self.assertTrue(ds.reverified_progress({"label": "mine_stone", "progressed": True}))
 
+    def test_reverify_rebuilds_the_bed_event_from_the_before_state(self):
+        # A held `place_bed` tick beside a bed that already stood there: the old rule read the
+        # standing block as a placement (run156 it259-262, `pos_delta` 0.0). The archived record
+        # still carries the before-state's resources, so reverify can see the bed was there all
+        # along.
+        standing = {"label": "place_bed", "ok": False, "progressed": True,
+                    "delta": {"inventory_delta": {}, "pos_delta": 0.0, "bed_placed": True},
+                    "state": {"resources": {"white_bed": [{"x": 1, "y": 2, "z": 3}]}}}
+        self.assertFalse(ds.reverified_progress(standing))
+        fresh = dict(standing, state={"resources": {}})
+        self.assertTrue(ds.reverified_progress(fresh))
+
 
 class TeacherSourceTest(unittest.TestCase):
     """The teacher side-file fills no-progress ticks; the verifier always wins a collision (B4)."""

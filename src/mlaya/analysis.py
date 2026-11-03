@@ -21,6 +21,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .verify import moved as _moved
+
 # A bracketed all-caps token in a tool reply is the server's error code.
 CODE_RE = re.compile(r"\[([A-Z][A-Z_]{3,})\]")
 # Six ticks on one or two labels with no gain is the same window the dataset filter calls
@@ -92,8 +94,14 @@ def _gained(record: dict[str, Any]) -> int:
 def _wasted(record: dict[str, Any]) -> bool:
     """The report's definition of a wasted tick: neither the body nor the inventory moved.
     A tick that smelts iron in front of a furnace gains an item without walking; calling
-    that standing would make a productive run look idle."""
-    return _pos_delta(record) < MOVE_EPS and _gained(record) == 0
+    that standing would make a productive run look idle.
+
+    The body test is the verifier's own (`verify.moved`), so the report and the reward signal
+    agree on what travel is: a body bobbing in a flooded pocket moves three blocks up and back
+    down the same column every tick (run115: 281 rescue walks) and is standing still, while a
+    scaffold climb -- vertical only -- is not.
+    """
+    return (not _moved(record.get("delta") or {}, MOVE_EPS)) and _gained(record) == 0
 
 
 def _in_water(record: dict[str, Any]) -> bool:
@@ -291,6 +299,25 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
     foods = [r["state"]["food"] for r in actions
              if isinstance(r.get("state"), dict) and r["state"].get("food") is not None]
 
+    # Damage the run took, per label. `health_delta` was written into every tick and read by
+    # nothing; this is the read that makes it worth its line. A run that loses 40 HP to magma
+    # while "exploring" and a run that loses 40 HP to one creeper are the same total and a
+    # different defect, so the label is the point.
+    damage = 0.0
+    hurt_labels: Counter[str] = Counter()
+    hurt_ticks = 0
+    worst: dict[str, Any] | None = None
+    for r in actions:
+        h = (r.get("delta") or {}).get("health_delta")
+        if not isinstance(h, (int, float)) or h >= 0:
+            continue
+        hurt_ticks += 1
+        damage += -h
+        label = str(r.get("label"))
+        hurt_labels[label] += -h
+        if worst is None or -h > worst["health"]:
+            worst = {"label": label, "health": round(-h, 1), "iteration": r.get("iteration")}
+
     milestones: list[dict[str, Any]] = []
     seen_facts: set[str] = set()
     death_ticks: list[int] = []
@@ -418,6 +445,13 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
             "death_causes": death_causes,
             "water_deaths": sum(1 for d in death_causes if d["water_death"]),
         },
+        "damage": {
+            "total": round(damage, 1),
+            "ticks": hurt_ticks,
+            "worst": worst,
+            "by_label": [{"label": label, "health": round(value, 1)}
+                         for label, value in hurt_labels.most_common(8)],
+        },
         "milestones": milestones,
         "goal": {
             "reached": reached,
@@ -447,6 +481,7 @@ def compare(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
         "end.stop", "ticks.action", "progress.progress_rate",
         "movement.blocks_per_tick", "movement.still_ratio",
         "waits.wait_ticks", "waits.defer_ticks", "vitals.deaths", "vitals.water_deaths",
+        "damage.total",
         "water.ratio", "water.adrift_ticks", "loops.ticks", "system2.calls",
         "goal.ticks_to_stronghold",
     ]
@@ -481,6 +516,12 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
                  f"{report['movement']['blocks_per_tick']}/tick, "
                  f"{report['movement']['still_ratio']:.0%} of ticks standing still")
     lines.append(f"- waits: {report['waits']['wait_ticks']} · defers: {report['waits']['defer_ticks']} · deaths: {report['vitals']['deaths']}")
+    damage = report.get("damage") or {}
+    if damage.get("total"):
+        worst = damage.get("worst") or {}
+        tail = (f" (worst: {worst.get('label')} -{worst.get('health')} HP at it{worst.get('iteration')})"
+                if worst else "")
+        lines.append(f"- damage: {damage['total']} HP over {damage['ticks']} ticks{tail}")
     vitals = report.get("vitals") or {}
     if vitals.get("death_causes"):
         detail = "; ".join(

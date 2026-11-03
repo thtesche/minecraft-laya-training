@@ -89,6 +89,22 @@ def render_narrative(rec: dict) -> str | None:
     return narrative if isinstance(narrative, str) and narrative else None
 
 
+def _standing(rec: dict, name: str) -> bool:
+    """Whether the logged before-state already held a block with that name.
+
+    The before-state is in the same record as the delta (`state.resources`), so an archived tick
+    can still say whether a gate/bed was already standing there when `light_portal`/`place_bed`
+    ran. Old logs that never logged resources answer `False`, which keeps their behaviour.
+    """
+    state = rec.get("state")
+    if not isinstance(state, dict):
+        return False
+    resources = state.get("resources")
+    if not isinstance(resources, dict):
+        return False
+    return bool(resources.get(name))
+
+
 def reverified_progress(rec: dict) -> bool:
     """Whether a tick progressed, re-judged from its logged `delta` through today's `verify`.
 
@@ -99,11 +115,21 @@ def reverified_progress(rec: dict) -> bool:
     label can be recomputed offline - the reward-signal twin of `render_narrative` re-reading the
     narrative, and the same training = inference principle. A tick with no logged `delta` (an old
     log, a hand-written fixture) keeps its logged `progressed`.
+
+    Deltas that predate the `portal_ignited` / `bed_placed_new` event fields are completed from
+    the record's own before-state here: the standing read alone called a `place_bed` tick beside
+    the base bed progress even when nothing was placed, and re-judging it with today's rules must
+    not repeat that.
     """
     delta = rec.get("delta")
     label = rec.get("label")
     if not isinstance(delta, dict) or not isinstance(label, str):
         return bool(rec.get("progressed"))
+    delta = dict(delta)
+    if "portal_ignited" not in delta and "portal_lit" in delta:
+        delta["portal_ignited"] = (bool(delta["portal_lit"]) and not _standing(rec, "nether_portal"))
+    if "bed_placed_new" not in delta and "bed_placed" in delta:
+        delta["bed_placed_new"] = (bool(delta["bed_placed"]) and not _standing(rec, "white_bed"))
     try:
         return bool(_progressed(label, delta, bool(rec.get("ok", True))))
     except Exception:

@@ -2151,7 +2151,8 @@ class Agent:
         if label in self._stuck_off:
             return
         changed = (any(delta.get("inventory_delta") or {})
-                   or delta.get("armor_delta") or delta.get("offhand_delta")
+                   or delta.get("armor_delta") or delta.get("armor_removed")
+                   or delta.get("offhand_delta") or delta.get("offhand_removed")
                    or (delta.get("food_delta") or 0) != 0
                    or (delta.get("pos_delta") or 0) != 0
                    or delta.get("phase_changed")
@@ -2450,9 +2451,11 @@ class Agent:
         lights the gate and walks 270 m away, or crosses into the Nether, reads its own gate as
         unlit and the obsidian/bucket/flint chain comes back onto the offer (run124 it40-41). The
         ignite's own success is the latch, the same shape as `_note_stow`; the delta carries the
-        server's `portal_lit` read from the tick's after-observation.
+        server's `portal_ignited` read from the tick's after-observation -- the block *appearing*,
+        not a gate that already burns within the scan radius (an inherited world keeps the base
+        gate standing across runs).
         """
-        if action.label == "light_portal" and (ok or delta.get("portal_lit")):
+        if action.label == "light_portal" and (ok or delta.get("portal_ignited")):
             self._portal_lit = True
 
     def _note_frame_cells(self, action, ok: bool, text: str | None) -> None:
