@@ -9,9 +9,14 @@ from .predicates import *  # noqa: F401,F403
 # entering the End and the dragon fight are a later phase the server already carries the tools for.
 
 ENDERMAN_MOB = "enderman"
-# The frame block the perception scan finds once the locate phase has stood the bot at the
-# stronghold; `activate_portal` is given any one of its cells and fills the whole frame.
+# The frame block the perception scan finds once the bot is near the stronghold; `activate_portal`
+# is given any one of its cells and fills the whole frame.
 END_PORTAL_FRAME = "end_portal_frame"
+# How close `travel_to_stronghold` has to get before the fill can start. The frame is a solid block
+# the bot cannot stand in, so the navigate goal is a distance rather than a cell; three blocks puts
+# the body in the frame's neighbourhood - inside the 64 m scan, and inside the server's own approach
+# range for `activate_portal`.
+STRONGHOLD_ARRIVAL_RANGE = 3
 # The eye/pearl item names and the counts (`ENDER_EYES`, `END_PORTAL_SOCKETS`, `EYE_THROW_BUFFER`)
 # live in `constants`: the frame has twelve sockets, `activate_portal` needs a carried eye for
 # every one not already generated filled, and the extra four are the throw margin - the estimate
@@ -32,7 +37,7 @@ ENDERMAN_HUNT_HEALTH = 14.0
 # The labels this module owns; `planner.resolve` hands each of them to `resolve_stronghold`.
 STRONGHOLD_LABELS = frozenset({
     "hunt_enderman", "search_enderman", "gather_scaffold", "take_blaze_powder",
-    "craft_ender_eye", "locate_stronghold", "activate_end_portal",
+    "craft_ender_eye", "locate_stronghold", "travel_to_stronghold", "activate_end_portal",
 })
 
 
@@ -145,26 +150,46 @@ def _scaffold_short(gs: GameState) -> bool:
     return _ender_pearls(gs.inventory) < _eyes_owed(gs)
 
 
-def _at_stronghold(gs: GameState) -> bool:
-    """Whether the bot stands at the stronghold's end portal frame.
+def _frame_distance(gs: GameState) -> float | None:
+    """How far the end portal frame is, in blocks, or None when the loop has no address for it.
 
-    Read off the world, not a latch: the locate phase travels the bot to the frame and the frame
-    blocks load into the scan there (`end_portal_frame` is in the Overworld scan group). This is
-    what hands the tick from `locate_stronghold` to `activate_end_portal`, the same way a loaded
-    `nether_portal` hands `leave_nether` its target - so a cancelled locate that is re-run simply
-    resumes, and nothing has to be parsed out of the tool's prose.
+    The scan's own number first; outside `RESOURCE_RADIUS` the scan has no hit, and the coordinates
+    the locate phase confirmed are the only address the run holds. A locate "succeeds" the moment a
+    frame chunk loads (run173 it75: confirmed at (-269,-36,-1819) with the bot 108 m off, 98 blocks
+    above it), so the confirmed cell can be far from the body and still be the frame's position.
     """
-    return (gs.resource_distance(END_PORTAL_FRAME) is not None
-            or gs.resource_found.get(END_PORTAL_FRAME, 0) > 0)
+    distance = gs.resource_distance(END_PORTAL_FRAME)
+    if distance is not None:
+        return distance
+    if gs.pos is None or gs.stronghold_frame is None:
+        return None
+    x, y, z = gs.pos
+    fx, fy, fz = gs.stronghold_frame
+    return math.hypot(x - fx, y - fy, z - fz)
+
+
+def _at_stronghold(gs: GameState) -> bool:
+    """Whether the bot stands close enough to the frame to fill it.
+
+    Read off the world, not a latch: `end_portal_frame` is in the Overworld scan group, so the frame
+    appears in `gs.resources` the moment the body is within `RESOURCE_RADIUS` of it, and the
+    confirmed cell gives the same answer once the travel step has walked the bot in. The
+    `resource_found` half of this test used to be enough on its own, and it is what broke the hand
+    from `locate_stronghold` to `activate_end_portal`: a frame loads in a chunk a hundred metres
+    away, the label came onto the offer, resolved to nothing, and the tick went to `eat_food`
+    instead (run173 it72, it76).
+    """
+    distance = _frame_distance(gs)
+    return distance is not None and distance <= STRONGHOLD_ARRIVAL_RANGE
 
 
 def _frame_cell(gs: GameState) -> tuple[int, int, int] | None:
     """The nearest end portal frame block, the cell `activate_portal` is pointed at."""
     hits = gs.resources.get(END_PORTAL_FRAME) or []
-    if not hits:
-        return None
-    hit = hits[0]
-    return (int(hit.x), int(hit.y), int(hit.z))
+    if hits:
+        hit = hits[0]
+        return (int(hit.x), int(hit.y), int(hit.z))
+    return gs.stronghold_frame
 
 
 def _take_powder_wanted(gs: GameState) -> bool:
@@ -227,11 +252,18 @@ def stronghold_candidates(gs: GameState) -> list[str]:
         if _ender_eyes(inv) > 0:
             out.append("activate_end_portal")
             return out
-    # Not reached at the stronghold itself: the block above has already matched there (with eyes it
-    # returned, with none it fell through to procurement below), so `locate` is never re-offered on
-    # the frame it just arrived at.
+    # Not reached at the stronghold itself: the block above already matched there (with eyes it
+    # returned, with none it fell through to procurement below), so nothing is re-offered on the
+    # frame the bot is standing at.
     elif _ender_eyes(inv) >= locate_need:
-        # The eyes are crafted; go find the stronghold.
+        # The eyes are crafted. A frame the locate phase confirmed but the body never reached has to
+        # be walked to: the survey stops the moment a frame chunk loads, so re-sending `locate`
+        # answers in one tick and moves nobody (run173 it75 and it79: two identical successes, the
+        # bot 108 m from the frame and 98 blocks above it).
+        if _frame_distance(gs) is not None:
+            out.append("travel_to_stronghold")
+            return out
+        # No frame the loop knows the position of yet: throw the eyes and let the server find it.
         out.append("locate_stronghold")
         return out
     # Procurement, all offered together while any still has work; the order sets the priority. The
@@ -372,6 +404,17 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         return Action(label, "locate_stronghold",
                       {"phase": phase, "search_id": "stronghold",
                        "continue_without_recommended_items": True}, why)
+    if label == "travel_to_stronghold":
+        if gs.end_portal_active or _at_stronghold(gs):
+            return None
+        cell = gs.stronghold_frame
+        if cell is None:
+            return None
+        x, y, z = cell
+        return Action(label, "navigate", {"x": x, "y": y, "z": z,
+                                         "range": STRONGHOLD_ARRIVAL_RANGE},
+                      f"walk to the confirmed end portal frame at {x},{y},{z} "
+                      f"to fill its sockets")
     if label == "activate_end_portal":
         if not _at_stronghold(gs) or gs.end_portal_active:
             return None

@@ -429,6 +429,14 @@ BEARING_SQL = (
     "SELECT search_id, state, bearing_degrees FROM stronghold_throws "
     "WHERE search_id = 'stronghold' ORDER BY thrown_at DESC LIMIT 1")
 
+# The frame the locate phase confirmed, as the server wrote it down. This is the stronghold's only
+# durable address: the survey stops the moment a frame *loads*, so a confirmed locate leaves the bot
+# beside the estimate rather than beside the frame, and without this row the loop has nowhere to
+# walk to (run173: locate succeeded three times, `activate_end_portal` never once resolved).
+STRONGHOLD_FRAME_SQL = (
+    "SELECT payload_json FROM events WHERE event_type = 'stronghold_located' "
+    "ORDER BY event_id DESC LIMIT 1")
+
 # The checkpoint the loop writes itself (`graph.Agent._write_checkpoint`): the counters no ledger
 # can prove, such as how many pearl waves this run has already spent.
 CHECKPOINT_PREFIX = "mlaya checkpoint:"
@@ -531,6 +539,49 @@ def parse_bearing(payload: Any) -> bool:
         if len(cells) >= 2 and isinstance(cells[1], str) and cells[1] != "pending":
             return True
     return False
+
+
+def parse_frame_confirmation(payload: Any) -> tuple[int, int, int] | None:
+    """The end portal frame cell a locate confirmation carried, however it was nested.
+
+    Read from both the tool's own answer and the `stronghold_located` ledger row, which is the same
+    object the server writes. The frame is a block, so the cell is an integer triple; anything that
+    is not a full coordinate (an estimate, which has no y) is not a cell and returns None.
+    """
+    def cell(value: Any) -> tuple[int, int, int] | None:
+        if not isinstance(value, dict):
+            return None
+        position = value.get("position")
+        if not isinstance(position, dict):
+            return None
+        x, y, z = position.get("x"), position.get("y"), position.get("z")
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (x, y, z)):
+            return (int(x), int(y), int(z))
+        return None
+
+    def walk(cur: Any) -> tuple[int, int, int] | None:
+        found: tuple[int, int, int] | None = None
+        stack = [cur]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                if "confirmation" in node:
+                    confirmed = cell(node["confirmation"])
+                    if confirmed is not None:
+                        return confirmed
+                found = found or cell(node)
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+        return found
+
+    for row in _query_rows(payload):
+        cells = row if isinstance(row, list) else [row]
+        for raw in cells:
+            frame = walk(_json_cell(raw))
+            if frame is not None:
+                return frame
+    return walk(payload)
 
 
 def parse_portal_result(payload: Any) -> dict | None:
@@ -1119,6 +1170,11 @@ class GameState:
     # only be paid for by a second Nether trip; a fresh stow clears it again.
     end_portal_active: bool = False
     stronghold_estimated: bool = False
+    # The end portal frame the locate phase confirmed (`Agent._note_locate`, restored from the
+    # server's `stronghold_located` row). The address the bot has to walk to: a locate "succeeds"
+    # as soon as a frame chunk loads, so the confirmation can sit a hundred metres off the body and
+    # the frame never appears in the 64 m scan `activate_end_portal` aims at.
+    stronghold_frame: tuple[int, int, int] | None = None
     powder_exhausted: bool = False
     # Pearl trips the waves have made (Agent `_note_dimension`): a crossing counted once the rod
     # haul is already stowed (`powder_stowed`), so it never counts the rod trip itself. The waves
@@ -1279,6 +1335,7 @@ class GameState:
             "pearl_wave_trips": self.pearl_wave_trips,
             "stronghold_estimated": self.stronghold_estimated,
             "end_portal_active": self.end_portal_active,
+            "stronghold_frame": list(self.stronghold_frame) if self.stronghold_frame else None,
             "powder_cells": [list(cell) for cell in self.powder_cells],
             "powder_bank": self.powder_bank,
             "frame_eyes": self.frame_eyes,
@@ -1314,7 +1371,7 @@ class GameState:
                       "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
                       "nether_entered", "portal_lit", "nether_arrival", "nether_gate", "nether_ticks",
                       "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
-                      "stronghold_estimated", "end_portal_active", "powder_cells",
+                      "stronghold_estimated", "end_portal_active", "stronghold_frame", "powder_cells",
                       "powder_bank", "frame_eyes", "frontier_heading", "warped_forest",
                       "explore_stalls", "nether_landmarks"):
             value = data.get(field)
@@ -1324,7 +1381,7 @@ class GameState:
         # stays a list is unhashable wherever a predicate puts it in a set (`_bed_reach_stance`
         # does `set(_bed_cells(gs))`, so a replayed tick raised where the live one never could).
         for field in ("base", "chest_pos", "furnace_pos", "smoker_pos", "bed_pos",
-                      "nether_arrival", "nether_gate"):
+                      "nether_arrival", "nether_gate", "stronghold_frame"):
             value = getattr(gs, field)
             if isinstance(value, (list, tuple)) and len(value) == 3:
                 setattr(gs, field, tuple(int(v) for v in value))

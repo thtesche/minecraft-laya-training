@@ -671,6 +671,10 @@ class Agent:
         self._end_portal_active = False
         self._stronghold_estimated = False
         self._powder_exhausted = False
+        # The end portal frame the locate phase confirmed (`_note_locate`): the cell the bot has to
+        # walk to before `activate_end_portal` can aim at anything. A locate "succeeds" the moment a
+        # frame chunk loads, so this is the only record of where the frame actually is.
+        self._stronghold_frame: tuple[int, int, int] | None = None
         # Pearl trips the waves have made (`_note_dimension`), counted once the rod haul is
         # stowed so the rod trip itself never counts. After `PEARL_WAVE_MAX_TRIPS` the Overworld
         # enderman roam takes over; a per-run latch, reset on a cold start like `_barter_attempts`.
@@ -751,6 +755,9 @@ class Agent:
         if facts.stronghold_estimated and not self._stronghold_estimated:
             self._stronghold_estimated = True
             restored.append("stronghold_estimated")
+        if facts.stronghold_frame and not self._stronghold_frame:
+            self._stronghold_frame = facts.stronghold_frame
+            restored.append("stronghold_frame")
         if facts.nether_entered and not self._nether_entered:
             self._nether_entered = True
             restored.append("nether_entered")
@@ -776,6 +783,10 @@ class Agent:
             if isinstance(bank, int) and bank > self._powder_bank:
                 self._powder_bank = bank
                 restored.append("powder_bank")
+            frame = note.get("stronghold_frame")
+            if isinstance(frame, (list, tuple)) and len(frame) == 3 and not self._stronghold_frame:
+                self._stronghold_frame = tuple(int(v) for v in frame)
+                restored.append("stronghold_frame")
         if restored:
             self.log.append({"stage": "policy", "reason": "world_state_restored",
                              "facts": restored, "gate": facts.gate_cell})
@@ -888,6 +899,7 @@ class Agent:
         gs.powder_stowed = self._powder_stowed
         gs.end_portal_active = self._end_portal_active
         gs.stronghold_estimated = self._stronghold_estimated
+        gs.stronghold_frame = self._stronghold_frame
         gs.powder_exhausted = self._powder_exhausted
         gs.pearl_wave_trips = self._pearl_wave_trips
         gs.powder_cells = tuple(self._powder_cells)
@@ -1787,6 +1799,7 @@ class Agent:
         gs.powder_stowed = self._powder_stowed
         gs.end_portal_active = self._end_portal_active
         gs.stronghold_estimated = self._stronghold_estimated
+        gs.stronghold_frame = self._stronghold_frame
         gs.powder_exhausted = self._powder_exhausted
         gs.pearl_wave_trips = self._pearl_wave_trips
         gs.powder_cells = tuple(self._powder_cells)
@@ -1814,7 +1827,8 @@ class Agent:
         """
         p = self._milestones(gs)
         return (p.gate_lit, p.frame_complete, p.bed_at_base, p.powder_banked,
-                p.stronghold_estimated, p.end_portal_active, p.frame_eyes // 4)
+                p.stronghold_estimated, self._stronghold_frame is not None,
+                p.end_portal_active, p.frame_eyes // 4)
 
     async def _write_checkpoint(self, gs, reason: str) -> None:
         """Save the counters no ledger can prove, so a restart can pick the run up.
@@ -1841,6 +1855,7 @@ class Agent:
             "frame_eyes": self._frame_eyes,
             "end_portal_active": self._end_portal_active,
             "stronghold_estimated": self._stronghold_estimated,
+            "stronghold_frame": list(self._stronghold_frame) if self._stronghold_frame else None,
             "pearl_wave_trips": self._pearl_wave_trips,
             "barter_attempts": self._barter_attempts,
         }
@@ -2431,14 +2446,31 @@ class Agent:
         if action.label == "barter_pearls" and ok:
             self._barter_attempts += 1
 
-    def _note_locate(self, action, ok: bool) -> None:
-        """Remember that the eye-of-ender estimate is saved, so the next locate travels.
+    def _note_locate(self, action, ok: bool, res=None) -> None:
+        """Remember that the eye-of-ender estimate is saved, and where the frame stands.
 
         `locate_stronghold` keeps the bearing under the durable `search_id` on the server; the
         loop only needs to know the `estimate` phase succeeded once to send `locate` next.
+
+        The `locate` phase's confirmation is the frame's coordinates, and the loop has to keep them.
+        The survey stops the moment a frame *loads* (run173 it75: confirmed at (-269,-36,-1819)
+        while the bot stood 108 m away, 98 blocks above it), so the call reports success without
+        ever bringing the body to the frame, and `activate_end_portal` - which aims at a cell the
+        64 m scan has to see - has nothing to aim at. The confirmed cell is what the travel step
+        walks to.
         """
-        if action.label == "locate_stronghold" and ok and (action.args or {}).get("phase") == "estimate":
+        if action.label != "locate_stronghold":
+            return
+        if ok and (action.args or {}).get("phase") == "estimate":
             self._stronghold_estimated = True
+        frame = perception.parse_frame_confirmation(getattr(res, "data", None))
+        if frame is None:
+            match = re.search(r"end_portal_frame at (-?\d+),\s*(-?\d+),\s*(-?\d+)",
+                              getattr(res, "text", "") or "")
+            if match:
+                frame = tuple(int(v) for v in match.groups())
+        if frame is not None:
+            self._stronghold_frame = frame
 
     def _note_portal(self, action, ok: bool, delta: dict, res=None) -> None:
         """Remember that the end portal stands active (the stronghold goal), and how far the
@@ -3225,7 +3257,7 @@ class Agent:
         self._note_gate_lit(action, _ok, delta)
         self._note_stow(action, _ok, delta)
         self._note_take_powder(action, _ok, _text, delta)
-        self._note_locate(action, _ok)
+        self._note_locate(action, _ok, res)
         self._note_barter(action, _ok)
         self._note_portal(action, _ok, delta, res)
         self._note_landmark(action, delta, after)

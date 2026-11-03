@@ -186,11 +186,12 @@ Offered only once the Overworld goal and the Nether haul stand (`tech_tree_compl
 3. **`craft_ender_eye`** (`craft_item ender_eye`, pearl + powder, needs a crafting table) until
    `_ender_eyes >= _eyes_goal`.
 4. **`locate_stronghold`** — `phase: estimate` first (saves the throw, no travel), then
-   `phase: locate` with the same `search_id` (travels, refines, confirms the frame). One label; the
-   phase is chosen by a loop latch (`gs.stronghold_estimated`, `_note_locate`). The frame is read
-   straight off the scan (`_at_stronghold`; `end_portal_frame` is in `CHAIN_NAMES`/`NAMED_RESOURCES`)
-   and its cell comes from `_frame_cell`, so a cancelled locate simply resumes — no frame latch.
-5. **`activate_end_portal`** (`activate_portal` at `gs.stronghold_frame`) — fills the sockets from
+   `phase: locate` with the same `search_id` (refines and confirms the frame). One label; the
+   phase is chosen by a loop latch (`gs.stronghold_estimated`, `_note_locate`).
+5. **`travel_to_stronghold`** (`navigate` to `gs.stronghold_frame`, `range: 3`) — the leg the locate
+   phase never makes: its survey stops the moment a frame *loads*, so a confirmed locate leaves the
+   bot beside the estimate rather than beside the frame.
+6. **`activate_end_portal`** (`activate_portal` at `_frame_cell(gs)`) — fills the sockets from
    the carried eyes and confirms the active portal.
 
 ## Goal
@@ -292,6 +293,24 @@ eyes owed = (12 - sockets already filled) + throw buffer - eyes in the pack
   `blaze_rod` in the pack, no powder, sixteen eyes owed — the leftover rod kept the departure gate
   shut, `craft_blaze_powder` wanted nine rods before it would grind, and the bot spent ten `wait`
   ticks at the lit gate with a complete kit.
+
+## The confirmed frame is an address the loop can walk to (2026-11-03)
+
+`locate_stronghold`'s `locate` phase walks survey rings around the estimate and stops the moment an
+`end_portal_frame` *loads*. A chunk loads a full column, so a frame 98 blocks underground counts as
+found while the bot is still 108 m away. run173 is that tick: it75 confirmed the frame at
+(-269,-36,-1819), `resource_found` said 12, the 64 m scan said nothing, and `activate_end_portal`
+resolved to `None` on every tick the label came up — three locate successes, no portal.
+
+- **`gs.stronghold_frame`** is the confirmed cell: latched on the locate result's `confirmation`
+  (`Agent._note_locate`), restored at cold start from the server's `stronghold_located` row
+  (`perception.STRONGHOLD_FRAME_SQL`) and from the loop's own checkpoint note.
+- **`_frame_distance`** is the single read of "how far is the frame": the scan's own number, or the
+  straight-line distance to the recorded cell. `_at_stronghold` is that distance against
+  `STRONGHOLD_ARRIVAL_RANGE` (3 blocks), not "a frame exists in some loaded chunk".
+- **`travel_to_stronghold`** is the leg between the two: `navigate` to the confirmed cell, digging
+  allowed. It drops out the tick the body is at the frame, and `locate` is never re-offered while a
+  frame position is known.
 
 ## Out of reach / later (deliberately not in this phase)
 

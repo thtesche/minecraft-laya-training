@@ -107,6 +107,7 @@ CRITERIA: dict[str, str] = {
     "take_blaze_powder": "take the banked blaze powder back out of the chest at the portal, so eyes of ender can be crafted from it",
     "craft_ender_eye": "craft an eye of ender from one ender pearl and one blaze powder; twelve of them open the end portal",
     "locate_stronghold": "throw an eye of ender to find the stronghold, then travel to it and stand at the end portal frame",
+    "travel_to_stronghold": "walk to the end portal frame the stronghold search already confirmed, so the fill can start at it",
     "activate_end_portal": "fill the end portal frame's empty sockets with the carried eyes of ender until the portal opens",
 }
 

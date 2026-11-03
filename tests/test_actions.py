@@ -43,6 +43,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
                            NETHER_EXIT_HOP_MIN,
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
+                           STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                             FOOD_HUNT_RANGE_DAY, FOOD_HUNT_RANGE_NIGHT, FOOD_HUNT_RANGE_RESERVE,
                             _food_hunt_range, _food_reserve_walk_wanted,
@@ -6269,10 +6270,13 @@ class StrongholdPhaseTest(unittest.TestCase):
     def test_too_few_eyes_at_the_frame_re_supplies_instead_of_dead_ending(self) -> None:
         # The frame took more eyes than the bot carried in, so it now stands at the sockets with
         # none left. The old block re-offered an `activate` it could not complete; now it falls
-        # through to procurement - hunt more pearls here, craft eyes, and `locate` carries the bot
-        # back to finish the frame. No un-completable activate, and no locate on the frame itself.
+        # through to procurement - hunt more pearls here, craft eyes, and the travel step carries
+        # the bot back to finish the frame. No un-completable activate, and no locate on the frame
+        # itself.
         g = self._home(mobs=[("enderman", "hostile", 12, 18.0)])
         g.stronghold_estimated = True
+        g.resources["end_portal_frame"] = [BlockHit("end_portal_frame", "end_portal_frame",
+                                                    100, 60, 200, 3.0)]
         g.resource_found = {"end_portal_frame": 7}
         self.assertNotIn("activate_end_portal", candidates(g))
         self.assertNotIn("locate_stronghold", candidates(g))
@@ -6284,9 +6288,99 @@ class StrongholdPhaseTest(unittest.TestCase):
         # converges rather than waiting for a full set before placing anything.
         g = self._home(ender_eye=5)
         g.stronghold_estimated = True
+        g.resources["end_portal_frame"] = [BlockHit("end_portal_frame", "end_portal_frame",
+                                                    100, 60, 200, 3.0)]
         g.resource_found = {"end_portal_frame": 7}
         self.assertIn("activate_end_portal", candidates(g))
         self.assertNotIn("locate_stronghold", candidates(g))
+
+
+class StrongholdFrameAddressTest(unittest.TestCase):
+    """The confirmed frame is an address the loop can walk to.
+
+    `locate_stronghold` answers success the moment an `end_portal_frame` chunk loads, not when the
+    body gets there: run173 it75 confirmed the frame at (-269,-36,-1819) while the bot stood 108 m
+    away, 98 blocks above it. `activate_end_portal` aims at a cell the scan has to see, so the label
+    came onto the offer, resolved to nothing, and the tick went to `eat_food` - three locate
+    successes in that run, and never one fill.
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-196, -46, -98)
+    GATE = (-195, -46, -98)
+    FRAME = (-269, -36, -1819)
+
+    def _home(self, **inv) -> GameState:
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, golden_helmet=1,
+                     cooked_mutton=64, white_bed=1, diamond_pickaxe=2)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.chest_pos = self.CHEST
+        g.powder_stowed = True
+        g.powder_bank = 18
+        g.dimension = "minecraft:overworld"
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  *self.GATE, 2.0)]}
+        return g
+
+    def test_a_confirmed_frame_out_of_scan_reach_is_walked_to(self) -> None:
+        g = self._home(ender_eye=16)
+        g.stronghold_estimated = True
+        g.stronghold_frame = self.FRAME
+        self.assertIn("travel_to_stronghold", candidates(g))
+        self.assertNotIn("locate_stronghold", candidates(g))
+        a = resolve("travel_to_stronghold", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FRAME)
+        self.assertEqual(a.args["range"], STRONGHOLD_ARRIVAL_RANGE)
+
+    def test_a_frame_loaded_in_a_far_chunk_is_not_underfoot(self) -> None:
+        # The run173 tick: twelve frame blocks in loaded chunks, nothing within the scan, and no
+        # recorded cell. Neither `activate` (nothing to aim at) nor `travel` (no address) is on
+        # offer; the locate runs, and its confirmation is what makes the travel step possible.
+        g = self._home(ender_eye=16)
+        g.stronghold_estimated = True
+        g.resource_found = {"end_portal_frame": 12}
+        self.assertNotIn("activate_end_portal", candidates(g))
+        self.assertNotIn("travel_to_stronghold", candidates(g))
+        self.assertIn("locate_stronghold", candidates(g))
+
+    def test_the_travel_ends_once_the_body_is_at_the_frame(self) -> None:
+        g = self._home(ender_eye=16)
+        g.stronghold_estimated = True
+        g.stronghold_frame = self.FRAME
+        g.pos = (self.FRAME[0] + 1.5, self.FRAME[1] + 1.0, self.FRAME[2] + 1.5)
+        self.assertTrue(_at_stronghold(g))
+        self.assertIn("activate_end_portal", candidates(g))
+        self.assertNotIn("travel_to_stronghold", candidates(g))
+        a = resolve("activate_end_portal", g)
+        self.assertEqual(a.tool, "activate_portal")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FRAME)
+
+    def test_the_scan_hit_beats_the_recorded_cell(self) -> None:
+        # The world's own block is the target the server validates; the recorded confirmation is
+        # only the fallback for a frame the scan cannot see.
+        g = self._home(ender_eye=16)
+        g.stronghold_estimated = True
+        g.stronghold_frame = self.FRAME
+        g.resources["end_portal_frame"] = [BlockHit("end_portal_frame", "end_portal_frame",
+                                                    -270, -36, -1820, 2.0)]
+        self.assertEqual(_frame_cell(g), (-270, -36, -1820))
+
+    def test_no_travel_before_the_frame_has_a_position(self) -> None:
+        g = self._home(ender_eye=16)
+        self.assertIsNone(_frame_distance(g))
+        self.assertNotIn("travel_to_stronghold", candidates(g))
+        self.assertIn("locate_stronghold", candidates(g))
+
+    def test_the_phase_stays_open_until_the_portal_stands(self) -> None:
+        g = self._home(ender_eye=16)
+        g.stronghold_estimated = True
+        g.stronghold_frame = self.FRAME
+        self.assertFalse(stronghold_complete(g))
+        g.end_portal_active = True
+        self.assertTrue(stronghold_complete(g))
+        self.assertNotIn("travel_to_stronghold", candidates(g))
 
 
 class RodDemandSizedToTheFrameTest(unittest.TestCase):
@@ -7966,6 +8060,7 @@ class RefreshAfterTest(unittest.TestCase):
         agent._powder_stowed = False
         agent._end_portal_active = False
         agent._stronghold_estimated = False
+        agent._stronghold_frame = None
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0

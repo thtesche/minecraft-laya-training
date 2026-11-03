@@ -62,6 +62,10 @@ class DurableFacts:
     # The Overworld cell the last `activate_portal` was aimed at: the gate's own position, which
     # is what the powder milestone measures a chest's distance from.
     gate_cell: tuple[int, int, int] | None = None
+    # The end portal frame the locate phase confirmed in this world, from its `stronghold_located`
+    # row. A run restarted at the stronghold's doorstep otherwise has to re-run the locate to learn
+    # where the frame is.
+    stronghold_frame: tuple[int, int, int] | None = None
     # Counters only this run knows, restored from the loop's own checkpoint note.
     pearl_wave_trips: int = 0
     barter_attempts: int = 0
@@ -152,6 +156,15 @@ async def bootstrap_progress(executor) -> DurableFacts:
     try:
         facts.stronghold_estimated = perception.parse_bearing(await read(perception.BEARING_SQL,
                                                                    "read whether a stronghold bearing is saved"))
+    except Exception:
+        pass
+
+    # e2) The frame that bearing led to: the locate phase's own confirmation, so a restart at the
+    #     stronghold knows which cell to walk to instead of throwing the eyes again.
+    try:
+        facts.stronghold_frame = perception.parse_frame_confirmation(
+            await read(perception.STRONGHOLD_FRAME_SQL,
+                       "read the end portal frame this world's locate confirmed"))
     except Exception:
         pass
 
