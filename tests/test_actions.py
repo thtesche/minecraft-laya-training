@@ -532,6 +532,22 @@ class FoodChainTest(unittest.TestCase):
         self.assertIsNone(resolve("cook_food", g))
         self.assertNotIn("cook_food", candidates(g))
 
+    def test_wood_fuel_does_not_cook_a_full_reserve(self) -> None:
+        # Live, run164 it122-131: six raw porkchops beside 66 cooked meals, no coal, two acacia
+        # logs. Wood cooks one item per unit, so the run burned its last logs on meat it did not
+        # need, `[SMELT_FUEL_STARVED]` alternating with one-item successes, and the stall detector
+        # flagged `cook_food/leave_portal`. Coal stays unconditional (it is cheap and the batch is
+        # three); wood waits for a reserve that needs it.
+        full = lit_portal(at_home(geared(furnace=1, porkchop=6, cooked_porkchop=60,
+                                         acacia_planks=3)))
+        full.mobs = [("cow", "animal", 1, 10.0)]
+        self.assertNotIn("cook_food", candidates(full))
+        self.assertIsNone(resolve("cook_food", full))
+        # The same pack with coal still cooks: coal is not chain material.
+        coal = lit_portal(at_home(geared(furnace=1, porkchop=6, cooked_porkchop=60, coal=1)))
+        coal.mobs = [("cow", "animal", 1, 10.0)]
+        self.assertIn("cook_food", candidates(coal))
+
     def test_the_reserve_deepens_to_the_nether_target_in_the_lull(self) -> None:
         # 17 edibles is above the ordinary floor (16) but below the Nether target (64), so in the
         # lull the bot keeps stocking; outside it 17 is already enough (live: 17 edibles and no

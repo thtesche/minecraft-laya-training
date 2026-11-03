@@ -5208,6 +5208,26 @@ class NetherCrossingTest(unittest.TestCase):
                                     {"block_name": "stone", "count": 8}, ""))
         self.assertEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
 
+    def test_a_refused_crossing_returns_the_tick_to_the_rescue(self) -> None:
+        # Live, run164 it119-121: the bot stood in its own gate, `enter_portal` was offered,
+        # and the server answered `[PORTAL_ALREADY_INSIDE]` three times while `leave_portal` —
+        # the step that owns a body in the gate — could not take the tick until the intent
+        # window had run out. A refusal that names the gate closes the window on the spot.
+        agent = self._agent()
+        agent._note_crossing(Action("enter_portal", "enter_nether_portal",
+                                    {"x": -195, "y": -46, "z": -98}, ""),
+                             "[PORTAL_ALREADY_INSIDE] The bot already occupies this nether_portal")
+        self.assertEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
+
+    def test_a_refusal_that_names_something_else_keeps_the_window(self) -> None:
+        # The crossing is still owed: a mob holding the body or a low supply answer must not
+        # hand the gate to the rescue and walk the bot back out.
+        agent = self._agent()
+        agent._note_crossing(Action("enter_portal", "enter_nether_portal",
+                                    {"x": -195, "y": -46, "z": -98}, ""),
+                             "[HOSTILE_CONTACT] a blaze is in contact")
+        self.assertNotEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
+
     def test_a_hop_the_ground_refused_is_counted_at_its_cell(self) -> None:
         # Live, run149 it156-161 and it318-320: sixteen identical `[NAVIGATION_TARGET_UNSUPPORTED]`
         # on one 120 m hop. The body never moved, so every tick aimed at the same air.

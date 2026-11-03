@@ -1290,7 +1290,7 @@ lid and stalled on the latch that was supposed to say the haul was done.
   base, chest, furnace, smoker, bed, arrival and gate cells to int tuples and `death_pos` to
   floats.
 
-## Live findings run162–163 (2026-11-03): dead ends in the Nether
+## Live findings run162–164 (2026-11-03): dead ends in the Nether
 
 - **An offer `resolve` refuses on the same tick.** run162 it164-194: the lull (`_nether_idle`)
   holds in the Nether too, so the carried furnace's step named `go_home` there — and
@@ -1310,6 +1310,18 @@ lid and stalled on the latch that was supposed to say the haul was done.
   `explore` (the fortress march) when there is no answer, while `_note_nether_gate` falls back to
   the unfiltered `perception.scan_portal_corner` read — repeated as the bot walks
   (`_gate_scanned`), because a gate's chunk may load late.
+- **Cooking that spends the last wood on meat nobody needs.** run164 it122-131: six raw
+  porkchops beside 66 cooked meals, no coal, and two acacia logs. The lull branch of the
+  `cook_food` offer spends any carried fuel, so each tick burned one log for one item and the
+  rest answered `[SMELT_FUEL_STARVED]` — eight ticks the stall detector flagged
+  (`stalled: cook_food/leave_portal`). Coal stays unconditional (it is cheap and smelts eight);
+  wood now waits for `_provisioned < _food_goal`, in the offer and in the resolve.
+- **A crossing refused because the body stands in the gate.** run164 it119-121: three
+  `[PORTAL_ALREADY_INSIDE]` answers at the base gate while `leave_portal` — the only step that
+  owns a body inside a portal — could not take the tick, because the chosen crossing had opened
+  the `_enter_intent_ticks` window that stands the rescue down. `_note_crossing` now closes the
+  window again when the refusal names the gate, so the rescue steps the bot out on the next tick
+  instead of waiting three.
 
 ## Next milestones
 

@@ -131,8 +131,18 @@ def candidates(gs: GameState) -> list[str]:
         # thing it was actually short of (live, run34: a bow it could not rebuild, no spider
         # within 24 m, and `candidates: ['cook_food']` with nothing else on it).
         fuel = _furnace_fuel(inv)
-        if fuel is not None and _cooking_reach(gs) and (fuel[0] in ("coal", "charcoal") or _nether_idle(gs)):
-            out.append("cook_food")
+        if fuel is not None and _cooking_reach(gs):
+            if fuel[0] in ("coal", "charcoal"):
+                out.append("cook_food")
+            elif _nether_idle(gs) and _provisioned(gs) < _food_goal(gs):
+                # Wood is chain material and one unit cooks one item, so it is only worth
+                # spending while the reserve is actually short. The lull branch used to cook on
+                # any carried fuel regardless: live, run164 it122-131 spent its last two acacia
+                # logs on six raw porkchops beside 66 cooked meals, `[SMELT_FUEL_STARVED]`
+                # alternating with the one-item successes until the fuel ran out - eight ticks
+                # the stall detector flagged (`stalled: cook_food/leave_portal`). Coal is cheap
+                # and stays unconditional; wood waits for a reserve that needs it.
+                out.append("cook_food")
     # Food reserve: bank edible items. At full hunger the reflex cannot eat, so gathered drops
     # accumulate; when hunger drops it spends them. Never compete with eating: feed to 20 first,
     # bank after. The goal deepens to the Nether target once the gate frame stands.
@@ -1580,6 +1590,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         station = _cooking_station(gs)
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
         if fuel[0] not in ("coal", "charcoal") and not _nether_idle(gs):
+            return None
+        # Wood in the lull is spent only on a reserve that is actually short — the same gate the
+        # offer carries, so the two cannot drift (see the `cook_food` offer).
+        if (fuel[0] not in ("coal", "charcoal")
+                and _provisioned(gs) >= _food_goal(gs)):
             return None
         fuel_name, capacity = fuel
         return Action(label, "smelt_item",

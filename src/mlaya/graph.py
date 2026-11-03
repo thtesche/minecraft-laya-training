@@ -2234,7 +2234,7 @@ class Agent:
                 pass
             self.surface = (int(action.args["x"]), y, int(action.args["z"]))
 
-    def _note_crossing(self, action) -> None:
+    def _note_crossing(self, action, text: str = "") -> None:
         """Stand the `_in_portal` rescue down around a crossing the loop asked for.
 
         The rescue exists to step a body out of a gate it wandered into. The intended crossing is
@@ -2242,6 +2242,13 @@ class Agent:
         short window (`_enter_intent_ticks`) in which `_in_portal` stands down - long enough for
         the action to settle and the teleport to fire, short enough that the next accidental gate
         still gets rescued.
+
+        A crossing the server refuses because the body already stands in the gate closes the
+        window again on the spot: the intent is what keeps the rescue down, so leaving it open
+        only offers `enter_portal` again on the next tick. Live, run164 it119-121: three
+        `[PORTAL_ALREADY_INSIDE]` refusals at the base gate while `leave_portal` - the one step
+        that owns that body - was not on the offer, and the rescue could only take the tick three
+        ticks later, once the window had run out.
         """
         if action.label in ("enter_portal", "leave_nether"):
             self._enter_intent_ticks = PORTAL_INTENT_TICKS
@@ -2251,6 +2258,9 @@ class Agent:
             self._drop_open_pending = False
             self._drop_pos = None
             self._step_away_fails = 0
+        if action.label == "enter_portal" and "PORTAL_ALREADY_INSIDE" in (text or ""):
+            # The gate has the body: let `_in_portal` hand the tick to `leave_portal`.
+            self._enter_intent_ticks = 0
 
     def _note_stow(self, action, ok: bool, delta: dict) -> None:
         """Remember that the blaze powder reached the chest at the portal (the phase-3 goal).
@@ -3085,7 +3095,7 @@ class Agent:
         self._note_recover(before, action, _ok, _text)
         # Opened before the action runs: the rescue has to be down on the *next* tick, while the
         # crossing settles and the teleport fires.
-        self._note_crossing(action)
+        self._note_crossing(action, _text)
         self._note_stow_blocked(action, _ok, _text)
         self._note_result(action, _ok, res)
         await self._hold_wait(action, _ok)
