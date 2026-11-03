@@ -92,6 +92,11 @@ data/
 *.jsonl
 MEMORY.md
 
+# --- OpenChamber session state ---
+# Screenshots and captures from the chat's browser/render panels (e.g. the LayaView
+# checks): local review artifacts, not project sources.
+.openchamber/
+
 # --- Python venv ---
 .venv/
 
