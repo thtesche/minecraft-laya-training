@@ -16,7 +16,7 @@ from mlaya import analysis
 def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
            gained=0, health=20.0, food=20.0, progressed=None,
            water=False, swim=None, escalated=False, at=(0, 64, 0), args=None,
-           death=None) -> dict:
+           death=None, body_busy=None) -> dict:
     return {
         "ts": 1000 + iteration,
         "stage": "action",
@@ -37,6 +37,7 @@ def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
             "swim_delta": pos if swim is None else swim,
             "inventory_delta": {"cobblestone": gained} if gained else {},
         },
+        **({"body_busy": body_busy} if body_busy else {}),
     }
 
 
@@ -69,6 +70,24 @@ class TestSummarize(unittest.TestCase):
         self.assertEqual(refusals[0]["count"], 7)
         self.assertEqual(refusals[0]["first_iteration"], 0)
         self.assertEqual(refusals[0]["labels"], ["leave_nether"])
+
+    def test_body_busy_ticks_are_counted_and_named(self):
+        # run171 it25-47: `leave_nether` answered "No new action started; body owner:
+        # hostile_reflex" 23 ticks running while the bot burned to death. The text carries no
+        # bracketed code, so this is the only counter that sees it.
+        busy = [
+            {**action(25 + i, "leave_nether", text="No new action started; body owner: "
+                                                     "hostile_reflex.",
+                      body_busy="hostile_reflex")}
+            for i in range(3)
+        ] + [action(28, "leave_nether", text="", status="succeeded")]
+        rep = analysis.summarize(busy)
+        self.assertEqual(rep["body_busy"]["ticks"], 3)
+        self.assertEqual(rep["body_busy"]["longest_streak"], 3)
+        self.assertEqual(rep["body_busy"]["labels"], ["leave_nether"])
+        self.assertEqual(rep["body_busy"]["owners"], ["hostile_reflex"])
+        self.assertEqual(rep["body_busy"]["first_iteration"], 25)
+        self.assertIn("Body held by a reflex", analysis.to_markdown(rep))
 
     def test_stall_window_is_the_whole_ping_pong(self):
         stalls = self.report["stalls"]

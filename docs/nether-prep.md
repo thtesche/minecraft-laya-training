@@ -194,13 +194,18 @@ portal** for now. Getting back out is part of the goal, not a detail.
 - **`hunt_blaze`** (`collect_mob_drop` on `blaze` → `blaze_rod`): only a blaze within
   `BLAZE_HUNT_RANGE` of a healthy bot that is not already in a fight (`_safe_blaze_hunt`, the
   `_safe_spider_hunt` guard — blazes ignite themselves when struck and answer with fireballs).
+  "Healthy" is `BLAZE_HUNT_HEALTH = 18`, the regeneration line, not the base combat floor: run171
+  hunted at 15.6 health, took contact at 15.1 and burned to death at the spawner with nine rods and
+  six pearls aboard. Below that floor a rod wave with rods in the pack is over (`_nether_must_return`)
+  and goes home with what it has.
   Without a blaze in reach the bot walks the fortress bricks instead: the Nether scan group
   (`nether_bricks`, `nether_brick_fence`, `nether_brick_stairs`, `spawner`) is read **only** in the
   Nether and is what gives `explore` a heading rather than a random walk.
 - **`leave_nether`** (the way out): the exit portal when a `nether_portal` block is loaded, and
   otherwise a walk back to `gs.nether_arrival` — the cell the bot landed on, where the exit portal
   stands. Offered when the nine rods are in, **and also** when the bot cannot afford to stay
-  (`_nether_must_return`: badly hurt, starving, in lava, or so full the next drop has nowhere to go)
+  (`_nether_must_return`: badly hurt, starving, in lava, wounded below `BLAZE_HUNT_HEALTH` with rods
+  in the pack, or so full the next drop has nowhere to go)
   or when there is nothing left to find (`_nether_hopeless`: no blaze, no fortress anywhere).
   A short haul still becomes powder.
 - **Home:** `craft_blaze_powder` (9 rods → 18 powder, Overworld only — a temporary workstation in

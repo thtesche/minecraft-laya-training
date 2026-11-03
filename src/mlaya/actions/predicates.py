@@ -1382,10 +1382,18 @@ def _nether_must_return(gs: GameState) -> bool:
     A death down there drops the whole haul and the diamond kit, so the trip ends on the first
     sign that the bot cannot keep fighting: badly hurt, starving, in lava, or so full that the
     next blaze drop has nowhere to go. The rods already carried are worth the walk home.
+
+    A rod wave below the blaze floor is finished too, haul or no haul: `BLAZE_HUNT_HEALTH` sits
+    where it does because a wounded bot cannot win the next spawner fight, and the only steps left
+    down there are the walk back and another fight. Live, run171 it16 hunted at 15.6 health, took
+    contact at 15.1 and burned to death at the spawner with nine rods aboard; the return trip it
+    had already started (it17) was the right answer, offered one fight too late.
     """
     if gs.in_lava:
         return True
     if gs.health is not None and gs.health < NETHER_RETURN_HEALTH:
+        return True
+    if _blaze_rods(gs.inventory) > 0 and (gs.health or 0) < BLAZE_HUNT_HEALTH:
         return True
     if gs.food is not None and gs.food < NETHER_RETURN_FOOD:
         return True

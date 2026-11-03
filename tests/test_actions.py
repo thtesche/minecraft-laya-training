@@ -5206,6 +5206,24 @@ class NetherExpeditionTest(unittest.TestCase):
         g.health = 9.0
         self.assertNotIn("hunt_blaze", candidates(g))
 
+    def test_a_wounded_bot_with_rods_takes_them_home(self) -> None:
+        # run171 it16 hunted at 15.6 health, took contact at 15.1, and burned to death at the
+        # spawner at it48 with nine rods and six pearls in the pack. Below the blaze floor the
+        # only steps left down there are the next spawner fight and the walk back - the haul
+        # goes home instead.
+        g = self._down(blaze_rod=6)
+        g.mobs = [("blaze", "hostile", 1, 6.0)]
+        g.health = 15.6
+        self.assertNotIn("hunt_blaze", candidates(g))
+        self.assertIn("leave_nether", candidates(g))
+
+    def test_a_wounded_bot_with_nothing_yet_keeps_searching(self) -> None:
+        # No haul to secure: a trip that has not started earns the healing tick, not a walk home.
+        g = self._down()
+        g.mobs = []
+        g.health = 15.6
+        self.assertNotIn("leave_nether", candidates(g))
+
     def test_a_blaze_crowded_by_other_hostiles_is_left_alone(self) -> None:
         g = self._down()
         g.mobs = [("blaze", "hostile", 1, 6.0), ("wither_skeleton", "hostile", 2, 9.0)]

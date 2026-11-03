@@ -63,8 +63,10 @@ Manual start, only when the lab is not usable:
 Never patch code under a running run: a run keeps the code it started with, and a fix
 applies from the next run. A run that is stuck is stopped by the user, not by the tooling.
 When a run ends, the last line of `runs/runNN.log` is the end JSON (`iterations`, `stop`
-`goal`/`limit`/`body_held`, policy; `body_held` means the server's reflex kept the body through
-three `action_wait_ms` budgets in a row), and `runs/decisions.jsonl` holds one record per tick
+`goal`/`limit`/`body_held`/`body_busy`, policy; `body_held` means the server's reflex kept the
+body through two `action_wait_ms` budgets in a row, `body_busy` means it answered
+`No new action started; body owner: …` `BODY_BUSY_STOP` times running without ever handing the
+body over), and `runs/decisions.jsonl` holds one record per tick
 (`action`, `defer`, `policy` stages) with the state, the candidates, the chosen label, the result
 text and the delta.
 

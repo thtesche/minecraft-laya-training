@@ -104,6 +104,16 @@ def _wasted(record: dict[str, Any]) -> bool:
     return (not _moved(record.get("delta") or {}, MOVE_EPS)) and _gained(record) == 0
 
 
+def _body_busy_tick(record: dict[str, Any]) -> bool:
+    """A tick the server refused because one of its reflexes owned the body.
+
+    The refusal carries no bracketed code, so `refusals` cannot see it; the verifier records the
+    owner (`body_busy`) and the text says it either way. Both are read so an archived log written
+    before the field existed counts too.
+    """
+    return bool(record.get("body_busy")) or "body owner:" in str(record.get("text") or "")
+
+
 def _in_water(record: dict[str, Any]) -> bool:
     state = record.get("state") or {}
     return bool(state.get("in_water"))
@@ -256,6 +266,20 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
             longest_still = max(longest_still, streak)
         else:
             streak = 0
+
+    # Ticks the server refused because one of its own reflexes owned the body ("No new action
+    # started; body owner: hostile_reflex"). They carry no bracketed code, so the refusal counter
+    # does not see them and they read as ordinary ticks: live, run171 it25-47 spent 23 of them in
+    # 27 s on `leave_nether` while the bot burned to death.
+    busy = [r for r in actions if _body_busy_tick(r)]
+    longest_busy = 0
+    busy_streak = 0
+    for r in actions:
+        if _body_busy_tick(r):
+            busy_streak += 1
+            longest_busy = max(longest_busy, busy_streak)
+        else:
+            busy_streak = 0
 
     stalls: list[dict[str, Any]] = []
     i = 0
@@ -436,6 +460,13 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
              "labels": sorted(refusal_labels.get(code, set()))}
             for code, count in refusals.most_common()
         ],
+        "body_busy": {
+            "ticks": len(busy),
+            "longest_streak": longest_busy,
+            "labels": sorted({str(r.get("label")) for r in busy}),
+            "owners": sorted({str(r.get("body_busy") or "unknown") for r in busy}),
+            "first_iteration": busy[0].get("iteration") if busy else None,
+        },
         "stalls": stalls,
         "vitals": {
             "min_health": min(healths) if healths else None,
@@ -538,6 +569,14 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
         lines.append("\n## Refusals")
         for r in report["refusals"][:10]:
             lines.append(f"- `{r['code']}` ×{r['count']} (first at it{r['first_iteration']}, labels: {', '.join(r['labels'])})")
+
+    body_busy = report.get("body_busy") or {}
+    if body_busy.get("ticks"):
+        lines.append(f"\n## Body held by a reflex ({body_busy['ticks']} ticks, longest "
+                     f"{body_busy['longest_streak']} in a row)")
+        lines.append(f"- owners: {', '.join(body_busy['owners'])} · labels: "
+                     f"{', '.join(body_busy['labels'])} · first at it"
+                     f"{body_busy['first_iteration']}")
 
     if report["stalls"]:
         lines.append("\n## Stalls")

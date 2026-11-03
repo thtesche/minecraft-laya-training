@@ -208,8 +208,11 @@ BLAZE_POWDER_ITEM = "blaze_powder"
 # close that distance itself; past this the bot is better off walking the fortress bricks first.
 BLAZE_HUNT_RANGE = 24.0
 # Blazes set themselves on fire when struck and answer with fireballs, so a hunt only starts from a
-# healthy bot that is not already in a fight. This mirrors `_safe_spider_hunt`.
-BLAZE_HUNT_HEALTH = 14.0
+# healthy bot that is not already in a fight. This mirrors `_safe_spider_hunt`, but sits on the
+# regeneration line rather than at the base combat floor: live, run171 it16 hunted a blaze at 15.6
+# health, took contact at 15.1 (it17) and burned to death at it48 with nine rods and six pearls in
+# the pack. A wounded bot's next fight at a spawner is the reflex's to lose, not a step to offer.
+BLAZE_HUNT_HEALTH = 18.0
 # How far a fortress landmark has to be to be worth walking to. Live, run104: the bot stood on a
 # spawner at (94,39,86) for 100+ ticks, `navigate` answering `ok` with 0 metres moved, because the
 # landmark it was told to walk to was the block under its own feet.

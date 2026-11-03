@@ -208,6 +208,14 @@ BODY_HELD_STOP = 2
 # dig-scaffold walk it had started advanced the body 869 -> 1043 blocks. The guard ended that run
 # at it65 with the exit half walked because it only looked for heals, rods and thinning packs.
 HELD_MOVE_EPS = 0.5
+# A foreground call the server refuses because one of *its* reflexes owns the body ("No new action
+# started; body owner: hostile_reflex", `ACTION_BUSY` with nothing to retrieve). Unlike
+# `[BODY_HELD]` it answers at once, so the loop can submit again every second and believe it made a
+# tick: live, run171 it25-47 fired 23 `leave_nether` calls in 27 s while the reflex fought a blaze
+# spawner, health flat at 10.1, and the bot burned to death. The tick is a deferral - the body is
+# the reflex's and the model waits a poll interval - and a burst this long says the server will not
+# hand it back, so the run ends as `body_busy` instead of spending the iteration budget on refusals.
+BODY_BUSY_STOP = 20
 
 # A death first seen older than this was not this run's to answer (`Agent._rearm_policy`).
 DEATH_REAPPLY_AGE_S = 90.0
@@ -277,6 +285,20 @@ def _fail_code(text: str | None) -> str | None:
         return match.group(1)
     first = (text or "").strip().splitlines()
     return first[0][:80] if first and first[0] else None
+
+
+def _body_owner(text: str | None) -> str | None:
+    """The reflex that owns the body in a `No new action started; body owner: X` refusal.
+
+    The server answers `ACTION_BUSY` with that sentence when a foreground call is submitted while
+    one of its own reflexes holds the body; it is not a `[BODY_HELD]` wait (nothing is running that
+    the loop asked for, so there is no action id to retrieve) and it is not a failure code either,
+    so no guard saw it. Live, run171 it25-47: 23 `leave_nether` ticks in 27 s while the reactive
+    reflex fought a blaze spawner, 10.1 health flat, and the bot burned to death between the two
+    guards built for exactly this (`_note_held` wants a `held` status, `_track_stuck` a code).
+    """
+    match = re.search(r"body owner:\s*([A-Za-z_]+)", text or "")
+    return match.group(1) if match else None
 
 
 def blocked_by_surroundings(text: str | None) -> bool:
@@ -523,6 +545,8 @@ class Agent:
         self._defer_quiet = 0
         # Foreground calls in a row that ended `[BODY_HELD]` (`_note_held`).
         self._held_ticks = 0
+        # Foreground calls in a row the server refused with "body owner: <reflex>" (`_note_body_busy`).
+        self._body_busy = 0
         # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): while the
         # bot stays by that cell the relief drops the surplus on the open ground instead. That still
         # frees the slots it is for, and unlike the pit dig it cannot fail, so the loop cannot stall
@@ -1875,12 +1899,15 @@ class Agent:
 
     def _stop_state(self, gs, iteration: int) -> dict:
         """`done`/`stop` for the next state: the goal ends the run early, else the limit does -
-        or a body the server's reflexes will not hand back (`BODY_HELD_STOP`)."""
+        or a body the server's reflexes will not hand back (`BODY_HELD_STOP`, `BODY_BUSY_STOP`)."""
         goal = self._goal_reached(gs)
         limit = iteration >= self.settings.loop.max_iterations
         held = self._held_ticks >= BODY_HELD_STOP
-        return {"done": goal or limit or held,
-                "stop": "goal" if goal else ("body_held" if held else ("limit" if limit else ""))}
+        busy = getattr(self, "_body_busy", 0) >= BODY_BUSY_STOP
+        return {"done": goal or limit or held or busy,
+                "stop": "goal" if goal else ("body_held" if held else
+                                             ("body_busy" if busy else
+                                              ("limit" if limit else "")))}
 
     def _note_held(self, res, before, after) -> None:
         """Count the foreground calls in a row that ran out of wait budget with the body held.
@@ -1907,6 +1934,33 @@ class Agent:
         moved = (before.pos is not None and after.pos is not None
                  and math.dist(before.pos, after.pos) >= HELD_MOVE_EPS)
         self._held_ticks = 0 if (healed or rods or thinned or moved) else self._held_ticks + 1
+
+    def _note_body_busy(self, action, res) -> str | None:
+        """Count and log a tick the server refused because a reflex owns the body.
+
+        Returns the owner so the tick can say so in the record and wait a poll interval before
+        asking again. The count resets on the first result that came back, because that is the
+        reflex handing the body over.
+        """
+        owner = _body_owner(getattr(res, "text", "") or "")
+        if owner is None:
+            self._body_busy = 0
+            return None
+        self._body_busy = getattr(self, "_body_busy", 0) + 1
+        self.log.append({"stage": "policy", "reason": "body_busy", "label": action.label,
+                         "owner": owner, "ticks": self._body_busy})
+        return owner
+
+    async def _hold_body_busy(self) -> None:
+        """Give a body the server's reflex owns one poll interval before asking again.
+
+        The refusal is instant, so without a pause the loop submits a fresh call every second and
+        each one is another iteration spent on nothing (run171: 23 of them beside a blaze spawner).
+        The pause is the deferral this tick really is - the reflex is driving.
+        """
+        poll = float(self.settings.mcp.poll_ms or 0) / 1000.0
+        if poll > 0:
+            await asyncio.sleep(poll)
 
     def _note_block(self, label: str, ok: bool, text: str | None) -> None:
         """Update the surroundings-block bookkeeping from one action's result.
@@ -3162,6 +3216,9 @@ class Agent:
         await self._rearm_policy(after)
         delta = vmod.diff(before, after)
         self._note_held(res, before, after)
+        busy_owner = self._note_body_busy(action, res)
+        if busy_owner is not None:
+            await self._hold_body_busy()
         self._note_hurt(before, after)
         self._note_drop_undone(action, _ok, delta, after.pos)
         self._note_build(action, _ok, delta)
@@ -3200,6 +3257,11 @@ class Agent:
             "progressed": progressed,
             "answers": _chosen(getattr(state["decision"], "answers", {})),
         }
+        if busy_owner is not None:
+            # The tick the server refused because a reflex owns the body. Named in the record so
+            # the report can count them: the text carries no bracketed code, and `refusals` reads
+            # codes only (run171: 23 of these were invisible to every counter but the raw text).
+            record["body_busy"] = busy_owner
         if state["decision"].note:
             # The danger band rewriting a gate `yes` shows here, so the run log does not read as
             # "the gate said yes and the bot worked anyway" without a reason.

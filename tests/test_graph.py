@@ -21,7 +21,7 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
                           tech_tree_complete)
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, BODY_HELD_STOP, BOXED_REPEATS, DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
+from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_STOP, BOXED_REPEATS, DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
                          LAVA_WALK_COOLDOWN, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
                          ORBIT_WINDOW, PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS,
                          WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
@@ -5945,6 +5945,45 @@ class BodyHeldStopTest(unittest.TestCase):
         agent._note_held(SimpleNamespace(status="succeeded"), gs(**flat), gs(**flat))
         agent._note_held(SimpleNamespace(status="held"), gs(**flat), gs(**flat))
         self.assertFalse(agent._stop_state(gs(), 10)["done"])
+
+    def test_a_body_owner_refusal_counts_and_logs(self) -> None:
+        # run171 it25-47: `leave_nether` answered "No new action started; body owner:
+        # hostile_reflex" 23 ticks running. It has no bracketed code and no `held` status, so
+        # neither the stuck guard nor `_note_held` saw it - the tick looked like an ordinary one
+        # while the bot burned to death beside the spawner.
+        agent = self._agent()
+        agent._body_busy = 0
+        agent.log = []
+        busy = SimpleNamespace(status=None,
+                               text="No new action started; body owner: hostile_reflex. Wait for "
+                                    "physical ownership to become available.")
+        owner = agent._note_body_busy(SimpleNamespace(label="leave_nether"), busy)
+        self.assertEqual(owner, "hostile_reflex")
+        self.assertEqual(agent._body_busy, 1)
+        self.assertEqual(agent.log[-1]["reason"], "body_busy")
+        self.assertEqual(agent.log[-1]["owner"], "hostile_reflex")
+
+    def test_a_result_that_started_resets_the_body_busy_count(self) -> None:
+        agent = self._agent()
+        agent._body_busy = 0
+        agent.log = []
+        busy = SimpleNamespace(status=None, text="No new action started; body owner: hostile_reflex.")
+        started = SimpleNamespace(status="succeeded", text="")
+        agent._note_body_busy(SimpleNamespace(label="leave_nether"), busy)
+        agent._note_body_busy(SimpleNamespace(label="leave_nether"), busy)
+        self.assertIsNone(agent._note_body_busy(SimpleNamespace(label="leave_nether"), started))
+        self.assertEqual(agent._body_busy, 0)
+
+    def test_a_long_body_busy_burst_ends_the_run(self) -> None:
+        agent = self._agent()
+        agent._body_busy = 0
+        agent.log = []
+        busy = SimpleNamespace(status=None, text="No new action started; body owner: hostile_reflex.")
+        for _ in range(BODY_BUSY_STOP - 1):
+            agent._note_body_busy(SimpleNamespace(label="leave_nether"), busy)
+            self.assertFalse(agent._stop_state(gs(), 10)["done"])
+        agent._note_body_busy(SimpleNamespace(label="leave_nether"), busy)
+        self.assertEqual(agent._stop_state(gs(), 10), {"done": True, "stop": "body_busy"})
 
     def test_a_winning_hold_does_not_count_toward_the_stop(self) -> None:
         # Live, run106: the held ticks at the blaze spawner ran HP 7->13->20 while the fortress
