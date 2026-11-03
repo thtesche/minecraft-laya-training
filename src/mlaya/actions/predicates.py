@@ -285,8 +285,17 @@ def _furnace_fuel(inv: dict[str, int]) -> tuple[str, int] | None:
     return None
 
 
-def _wool(inv: dict[str, int]) -> int:
-    return sum(c for n, c in inv.items() if n.endswith("_wool"))
+def _white_wool(inv: dict[str, int]) -> int:
+    """White wool only. A coloured fleece cannot be dyed into white, so it is not a bed leaf."""
+    return inv.get("white_wool", 0)
+
+
+def _bed_leaves_ready(inv: dict[str, int]) -> bool:
+    """Whether the pack can actually pay for a bed: three white wool, or the twelve string the
+    server's plan turns into them. Counting every colour together is what made the loop offer a
+    craft the server then refused (live, run160: `gray_wool 1 + light_gray_wool 2` = "3 wool").
+    """
+    return _white_wool(inv) >= BED_WOOL or inv.get("string", 0) >= BED_STRING_COST
 
 
 def _has_bed(inv: dict[str, int]) -> bool:

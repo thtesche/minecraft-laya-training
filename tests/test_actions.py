@@ -260,6 +260,51 @@ class BedChainTest(unittest.TestCase):
         g = gs(inventory={"crafting_table": 1, "acacia_planks": 3})
         self.assertIsNone(resolve("craft_bed", g))
 
+    def test_coloured_fleeces_are_not_a_bed(self) -> None:
+        """run160 it108-345: three fleeces of two colours are not three bed leaves.
+
+        The server's plan for `white_bed` takes three white wool or the twelve string that
+        recipe turns into them; a fleece can only be dyed *from* white. The old gate counted
+        every colour together, so the craft was offered 22 times and refused 13 with
+        `[CRAFT_MATERIALS_MISSING] Missing leaf materials: string x4`, and the two hunts that
+        could have supplied the leaves stayed behind the `wool < 3` test.
+        """
+        pack = {"crafting_table": 1, "gray_wool": 1, "light_gray_wool": 2, "string": 9,
+                "oak_log": 2}
+        g = at_home(geared(**pack))
+        self.assertIsNone(resolve("craft_bed", g))
+        self.assertNotIn("craft_bed", candidates(g))
+
+    def test_twelve_string_pays_for_the_bed(self) -> None:
+        g = at_home(geared(crafting_table=1, string=12, gray_wool=5, oak_log=1))
+        cand = candidates(g)
+        self.assertIn("craft_bed", cand)
+        self.assertNotIn("get_wood", cand)   # the log already pays for the three planks
+        self.assertIsNotNone(resolve("craft_bed", g))
+
+    def test_string_without_wood_chops_first(self) -> None:
+        # The same boundary the wool path has: the leaves are there, the planks are not, so
+        # `get_wood` is offered and the craft waits for it.
+        g = at_home(geared(crafting_table=1, string=12, gray_wool=5))
+        cand = candidates(g)
+        self.assertIn("get_wood", cand)
+        self.assertNotIn("craft_bed", cand)
+
+    def test_a_short_bed_hunts_for_white_wool(self) -> None:
+        g = at_home(geared(crafting_table=1, gray_wool=1, light_gray_wool=2, string=9,
+                           oak_log=2))
+        g.mobs = [("sheep", "animal", 2, 8.0), ("zombie", "hostile", 3, 40.0)]
+        self.assertIn("hunt_wool", candidates(g))
+        self.assertEqual(resolve("hunt_wool", g).args["drop_name"], "white_wool")
+
+    def test_a_short_bed_hunts_for_string_when_no_sheep_is_near(self) -> None:
+        g = at_home(geared(crafting_table=1, gray_wool=1, light_gray_wool=2, string=9,
+                           oak_log=2))
+        g.mobs = [("spider", "hostile", 1, 6.0)]
+        g.health = 20.0
+        self.assertIn("hunt_string", candidates(g))
+        self.assertIsNotNone(resolve("hunt_string", g))
+
     def test_sleep_at_night_with_bed(self) -> None:
         g = gs(inventory={"white_bed": 1}, phase="night", sleeping=False)
         a = resolve("sleep", g)

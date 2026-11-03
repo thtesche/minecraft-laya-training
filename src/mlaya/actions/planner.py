@@ -160,9 +160,8 @@ def candidates(gs: GameState) -> list[str]:
             and "take_bed" not in gs.stuck_labels):
         return (["eat_food"] if eating else []) + ["take_bed"]
 
-    wool = _wool(inv)
-    string = inv.get("string", 0)
     bed = _bed_available(gs)
+    bed_ready = _bed_leaves_ready(inv)
     # Night + a bed: sleeping skips to morning and pins the respawn point. `_sleep_ready` owns
     # *where* it may run - away from the base before the gate is lit (the server lays the bed
     # "beside the bot", and at the base that spot is the portal's own interior, which the later
@@ -216,7 +215,7 @@ def candidates(gs: GameState) -> list[str]:
             need_planks = max(need_planks, 5)           # craft_pickaxe
         if not table:
             need_planks = max(need_planks, 4)           # craft_table
-        if not bed and (wool >= 3 or string >= 12):
+        if not bed and bed_ready:
             need_planks = max(need_planks, 3)           # craft_bed
         # The spare pickaxe's sticks, due either because the worn tool wants a same-tier backup
         # (`_pickaxe_due_for_spare`) or because the banked trip is still short of its second pickaxe
@@ -264,14 +263,23 @@ def candidates(gs: GameState) -> list[str]:
         # so crafting one down there spends wool and a slot on something the trip cannot use (live,
         # run37: `craft_bed` offered while hunting for blaze rods).
         if not bed and _overworld(gs):
-            if table and (wool >= 3 or string >= 12) and (logs >= 1 or planks >= 3):
+            if table and bed_ready and (logs >= 1 or planks >= 3):
                 out.append("craft_bed")
-            elif wool < 3 and string < 12:
+            elif not bed_ready:
                 # Wool is killed for, so the walk needs the weapon too - run83's it85 stood
                 # with `pickaxe: none` at hunger 20 and had only `hunt_food` and `hunt_wool`
                 # on offer, two deaths later. String keeps its own guard: the spider walk is
                 # how the bow's three strings are earned, and gate it and the expedition
                 # cannot arm itself anymore.
+                #
+                # The guard is the *white* fleece, not the wool total: run160 carried
+                # `gray_wool 1 + light_gray_wool 2` and no bed, which the old `wool >= 3` read
+                # as ready. The server's plan for `white_bed` needs three white wool or the
+                # twelve string that recipe makes them from, so the craft was offered 22 times
+                # and refused 13 (`[CRAFT_MATERIALS_MISSING] Missing leaf materials: string x4`)
+                # while the two hunts that could have supplied it stayed shut behind the
+                # `wool < 3` test - the candidate list narrowed to `craft_bed` alone and then
+                # to `wait` (it336-345).
                 if gs.mob_nearest("sheep") is not None and _hunt_ok(gs):
                     out.append("hunt_wool")
                 elif _safe_spider_hunt(gs):
@@ -1216,14 +1224,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if not _overworld(gs):
             # Nothing can lay a bed in the Nether, so there is no reason to make one there.
             return None
-        if not _has(inv, "crafting_table") or (_wool(inv) < 3 and inv.get("string", 0) < 12) \
+        if not _has(inv, "crafting_table") or not _bed_leaves_ready(inv) \
                 or (_logs(inv) < 1 and _planks(inv) < 3):
             return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": "white_bed"}], "temporary_workstation": True},
-                      "craft a bed from wool or string and planks")
+                      "craft a bed from white wool or string and planks")
     if label == "hunt_wool":
-        if _wool(inv) >= 3:
+        if _bed_leaves_ready(inv):
             return None
         if not _hunt_ok(gs):
             return None

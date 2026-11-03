@@ -272,7 +272,12 @@ respawn point), and actually read the unread notifications and lift them into th
   `white_wool` = 4 `string`). Where a bed may stand and be slept in is the part the live runs
   rewrote — see the run158 section below and [`nether-prep.md`](nether-prep.md).
 - **`white_wool` is craftable from `string`** — the server computes the chain recursively
-  (`craft_item white_bed` first makes wool from `string`, then the bed).
+  (`craft_item white_bed` first makes wool from `string`, then the bed). The offer gate reads the
+  same leaves the plan uses: three **white** wool or twelve string (`_bed_leaves_ready`), never the
+  wool total. A fleece of another colour is not a bed leaf — dye only works *from* white. Live,
+  run160 it108-345: `gray_wool 1 + light_gray_wool 2` satisfied the old `wool >= 3` test, the craft
+  was offered 22 times and refused 13 with `[CRAFT_MATERIALS_MISSING] Missing leaf materials:
+  string x4`, and the hunts that could have supplied the leaves stayed behind the `wool < 3` branch.
 - **Validation (live):** the full chain ran through: `craft_table` (during the day) → roamed during the day via
   `navigate` to a mob group, until a sheep was loaded within simulation range →
   `hunt_wool` (`collect_mob_drop sheep/white_wool ×3`, yielded **4 wool**) → `craft_bed` (`white_bed`)

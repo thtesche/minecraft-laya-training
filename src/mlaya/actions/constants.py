@@ -161,6 +161,16 @@ SHIELD_ITEM = "shield"
 SHIELD_PLANKS = 6
 SHIELD_IRON = 1
 
+# The bed's leaves, as the server's craft plan counts them: three *white* wool, or the twelve
+# string that recipe turns into them (the 2x2 string -> white_wool shape in the recipe data).
+# Wool of another colour is not a leaf: a fleece can only be dyed *from* white, so a pack of
+# `gray_wool 1 + light_gray_wool 2` reads as three wool to a total-count gate and as nothing to
+# the plan (live, run160 it108-345: `craft_bed` offered 22 times on three mixed-colour fleeces,
+# 13 refused `[CRAFT_MATERIALS_MISSING] Missing leaf materials: string x4`, the run ending on
+# `wait` with the bed never made).
+BED_WOOL = 3
+BED_STRING_COST = 12
+
 # Pre-diamond combat kit. The loop used to dive to y<16 for diamonds with only an iron pickaxe;
 # live (run12) that naked dive met a zombie and a creeper and died, and the recovery walk could
 # not outrun the dropped stack's despawn. Before the first dive the bot now carries an iron
