@@ -1518,17 +1518,65 @@ def _bowl_available(gs: GameState) -> bool:
     return inv.get(BOWL_ITEM, 0) > 0 or (_plank_units(inv) >= 3 and _has(inv, "crafting_table"))
 
 
-def _stew_missing(gs: GameState) -> str | None:
-    """The mushroom kind the pack still lacks for a meal, or None when it carries both."""
-    for name in STEW_MUSHROOMS:
-        if gs.inventory.get(name, 0) <= 0:
+def _stew_need(gs: GameState) -> int:
+    """How many stews the pack still needs to reach the renewable floor, capped at `STEW_BATCH`."""
+    return max(0, min(STEW_BATCH, NETHER_FOOD_RENEWABLE_RESERVE - _edible_count(gs.inventory)))
+
+
+def _stew_bowls(gs: GameState) -> int:
+    """How many stews the pack can bowl: carried bowls plus the planks that make more.
+
+    A bowl only comes back when a stew is *eaten*, so a batch of two needs two bowls. Three planks
+    and a carried table are one more bowl, which the server's own plan for the stew crafts.
+    """
+    inv = gs.inventory
+    bowls = int(inv.get(BOWL_ITEM, 0) or 0)
+    if _has(inv, "crafting_table"):
+        bowls += int(_plank_units(inv) // 3)
+    return bowls
+
+
+def _stew_brewable(gs: GameState) -> int:
+    """How many stews the pack can brew right now, without a single walk.
+
+    One bowl, one red and one brown mushroom per stew. The batch is capped by what the pack
+    really holds: live, run170 it32-35 asked for `STEW_BATCH` (two) with one red and one brown
+    carried, and the server answered `[CRAFT_MATERIALS_MISSING] Missing leaf materials:
+    brown_mushroom x1, red_mushroom x1` four ticks running until the stuck guard withheld the
+    label. A batch the pack cannot cover is not a craft, it is a dead end.
+    """
+    if not _bowl_available(gs):
+        return 0
+    inv = gs.inventory
+    need = _stew_need(gs) or 1
+    mushrooms = min(int(inv.get(n, 0) or 0) for n in STEW_MUSHROOMS)
+    return max(0, min(STEW_BATCH, need, _stew_bowls(gs), mushrooms))
+
+
+def _stew_missing(gs: GameState, need: int | None = None) -> str | None:
+    """The mushroom kind the pack is short of for `need` stews, or None when it can brew them.
+
+    A kind the pack carries none of comes first: that is the one a walk has to fetch before
+    anything can be brewed, while a kind merely short of the batch can wait for the next tick.
+    """
+    per_kind = max(1, need if need is not None else _stew_need(gs))
+    short = [n for n in STEW_MUSHROOMS
+             if int(gs.inventory.get(n, 0) or 0) < per_kind]
+    if not short:
+        return None
+    for name in short:
+        if int(gs.inventory.get(name, 0) or 0) <= 0:
             return name
-    return None
+    return short[0]
 
 
 def _stew_kit(gs: GameState) -> bool:
-    """A bowl and both mushrooms carried: meals that renew themselves out of the pack."""
-    return _bowl_available(gs) and _stew_missing(gs) is None
+    """A bowl and both mushrooms carried: meals that renew themselves out of the pack.
+
+    One of each is enough here, whatever the reserve still asks for: the kit is what lets a trip
+    cross on the renewable floor, and the batch is grown from the Nether's own mushrooms.
+    """
+    return _bowl_available(gs) and _stew_missing(gs, 1) is None
 
 
 def _stew_source_in_reach(gs: GameState) -> bool:
@@ -1538,10 +1586,15 @@ def _stew_source_in_reach(gs: GameState) -> bool:
     bowl are a meal, and the bowl comes back from every bite. The scan proves a mushroom is
     *loaded*, which is enough here for the same reason it is enough for a mine - the bot can walk
     to it, unlike an animal that has to still be there when the walk ends.
+
+    A pack that can already brew one counts, even when the batch it is short of is half a walk
+    too far: one stew is a meal, and refusing it would be the stall the fallback exists to end.
     """
     if not _bowl_available(gs):
         return False
-    missing = [n for n in STEW_MUSHROOMS if gs.inventory.get(n, 0) <= 0]
+    if _stew_brewable(gs) > 0:
+        return True
+    missing = [n for n in STEW_MUSHROOMS if int(gs.inventory.get(n, 0) or 0) <= 0]
     return all(gs.resource_nearest(n) is not None for n in missing)
 
 

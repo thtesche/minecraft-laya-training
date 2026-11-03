@@ -106,7 +106,11 @@ Nether terrain is already provided for in the server reflex.
   mushroom stew, a meal whose bowl comes back and whose mushrooms regrow in the Nether too, so it
   crosses on `NETHER_FOOD_RENEWABLE_RESERVE = 8`; and a reserve nothing in reach can fill (no animal
   the hunt can walk to, no mushroom in the scan) is not a reason to stand still - the same rule the
-  prep gate `_food_reserve_met` already follows.
+  prep gate `_food_reserve_met` already follows. `craft_stew` grows its own pantry: a short pack
+  picks the missing mushroom (`collect_block`) instead of asking the server for a batch it cannot
+  cover, and the brew is capped by the mushrooms *and* bowls carried - one bowl per stew, because the
+  bowl only comes back once the stew is eaten (run170 it32-35: `STEW_BATCH` asked with one red and
+  one brown carried, refused `[CRAFT_MATERIALS_MISSING]` four ticks running).
 - **Staged Nether exit** (when distance to gate > `NETHER_EXIT_STAGING_DISTANCE = 120.0` m): navigate in
   120 m hops toward the gate instead of one large walk. Pathfinder search times out on 450+ block walks
   through sparse/lava-heavy Nether terrain; ~120 m hops reload the world and reset the search budget per tick.

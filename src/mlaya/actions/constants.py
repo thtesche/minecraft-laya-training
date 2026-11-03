@@ -297,6 +297,9 @@ BOWL_ITEM = "bowl"
 STEW_MUSHROOMS = ("red_mushroom", "brown_mushroom")
 # How many stews one brew makes at most. Stews do not stack, so the bowl comes back and the
 # mushrooms are renewable but the slot budget is not - a couple of meals per trip is the idea.
+# The batch is a ceiling, never a request: `_stew_brewable` caps the count by the mushrooms and
+# bowls the pack actually holds (run170 it32-35 asked for two with one of each carried and was
+# refused four ticks running).
 STEW_BATCH = 2
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would

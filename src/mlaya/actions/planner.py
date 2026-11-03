@@ -1555,22 +1555,35 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                        "allow_without_shield": True},
                       f"hunt a {mob} for {drop}")
     if label == "craft_stew":
-        # Two steps in one label: fetch the mushroom the pack still lacks, or brew once both are
-        # in hand. The bowl is never fetched separately - `craft_item` plans the bowl from the
-        # carried planks on its way to the stew, and the server's own planner knows that recipe.
-        missing = _stew_missing(gs)
+        # Two steps in one label: fetch the mushrooms the batch still lacks, or brew once the
+        # pack covers it. The bowl is never fetched separately - `craft_item` plans the bowl from
+        # the carried planks on its way to the stew, and the server's own planner knows that
+        # recipe.
+        #
+        # The batch the pack is asked for is capped by what it holds. Asking for `STEW_BATCH`
+        # with one red and one brown carried is the dead end of run170 it32-35: four identical
+        # `[CRAFT_MATERIALS_MISSING] Missing leaf materials: brown_mushroom x1, red_mushroom x1`
+        # ticks until the stuck guard took `craft_stew` off the offer. A short pack picks the
+        # shortfall instead, so the pantry is grown rather than refused.
+        need = _stew_need(gs) or 1
+        missing = _stew_missing(gs, need)
         if missing is not None:
             hit = gs.resource_nearest(missing)
-            if hit is None:
+            brew = _stew_brewable(gs)
+            if hit is not None:
+                short = max(1, need - int(inv.get(missing, 0) or 0))
+                return Action(label, "collect_block",
+                              {"block_name": missing, "count": short},
+                              f"pick {short} {missing} for the stew batch; the bowl and the "
+                              "other mushroom are already in the pack")
+            if brew <= 0:
                 return None
-            return Action(label, "collect_block",
-                          {"block_name": missing, "count": 1},
-                          f"pick a {missing} for the stew; the bowl and the other mushroom are "
-                          "already in the pack")
-        need = NETHER_FOOD_RENEWABLE_RESERVE - _edible_count(inv)
+        else:
+            brew = _stew_brewable(gs)
+            if brew <= 0:
+                return None
         return Action(label, "craft_item",
-                      {"items": [{"item_name": STEW_ITEM,
-                                  "count": max(1, min(STEW_BATCH, need))}],
+                      {"items": [{"item_name": STEW_ITEM, "count": brew}],
                        "temporary_workstation": True},
                       "brew mushroom stew from the bowl and both mushrooms - the bowl comes back "
                       "from every meal, so this renews itself")

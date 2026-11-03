@@ -8499,6 +8499,38 @@ class StewPantryTest(unittest.TestCase):
         self.assertEqual(a.args["items"][0]["item_name"], STEW_ITEM)
         self.assertLessEqual(a.args["items"][0]["count"], STEW_BATCH)
 
+    def test_a_short_pantry_picks_the_shortfall_instead_of_asking_for_the_batch(self) -> None:
+        # run170 it32-35: one red and one brown carried, the offer asked for `STEW_BATCH` (two)
+        # and the server answered `[CRAFT_MATERIALS_MISSING] brown_mushroom x1, red_mushroom x1`
+        # four ticks running. The batch the pack cannot cover is grown first: the shortfall is
+        # picked, one short of the two the reserve asks for.
+        g = self._pantry(bowl=1, red_mushroom=1, brown_mushroom=1)
+        g.resources = {"red_mushroom": [BlockHit("red_mushroom", "red_mushroom",
+                                                 6, 64, 12, 9.0)],
+                       "brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom",
+                                                   7, 63, 14, 11.0)]}
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertIn(a.args["block_name"], ("red_mushroom", "brown_mushroom"))
+        self.assertEqual(a.args["count"], 1)
+
+    def test_a_one_stew_pantry_brews_one_rather_than_asking_for_two(self) -> None:
+        # Same shape with nothing left to pick: the brew is capped by the mushrooms carried, so
+        # the label makes the one stew it can instead of the refused batch of two.
+        g = self._pantry(bowl=1, red_mushroom=1, brown_mushroom=1)
+        self.assertIn("craft_stew", candidates(g))
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"][0]["count"], 1)
+
+    def test_a_batch_is_capped_by_the_bowls_carried(self) -> None:
+        # A bowl comes back when a stew is eaten, not when it is brewed: two stews need two
+        # bowls. Two mushrooms of each kind with one bowl and two planks is still one stew.
+        g = self._pantry(bowl=1, red_mushroom=2, brown_mushroom=2, oak_planks=2)
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"][0]["count"], 1)
+
     def test_no_pantry_is_no_step(self) -> None:
         # Nothing to pick, nothing to brew: the label resolves to None rather than a guess.
         g = self._pantry(bowl=1)
