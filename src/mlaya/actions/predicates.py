@@ -2402,9 +2402,16 @@ def _furnace_worth_placing(gs: GameState) -> bool:
     workstation, so cooking and smelting work anywhere with the carried furnace. That is why the
     window is the lull (`_nether_idle`) - before it the bot is busy with the chain - and why it
     needs no second gate: a walk home is owed exactly when the placement can follow it.
+
+    The walk home is an Overworld walk. `_nether_idle` holds down in the Nether too - the kit is
+    done and the frame stands - and there the away-from-base half of the offer named `go_home`,
+    which `resolve` refuses on the same tick (`_go_home_wanted`: "Never in the Nether"). Live,
+    run162 it164-194: every Nether tick carried the carried furnace's `go_home`, 31 ticks deferred
+    on it, and 38 went to System 2 to explain an offer that could not be resolved. The furnace
+    belongs at the base, so the whole step is `_overworld`.
     """
     inv = gs.inventory
-    return (_nether_idle(gs) and gs.base is not None and not _furnace_ready(gs)
+    return (_nether_idle(gs) and _overworld(gs) and gs.base is not None and not _furnace_ready(gs)
             and not gs.furnace_blocked and _has(inv, "furnace")
             and _furnace_args(gs) is not None)
 

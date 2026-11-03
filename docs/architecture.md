@@ -1779,7 +1779,10 @@ lid and stalled on the latch that was supposed to say the haul was done.
   the temporary workstation already makes. Only when that attempt is refused too does the chain
   drop away (`Agent._note_furnace` → `gs.furnace_blocked`) and cooking fall back to the temporary
   build. The cellless attempt waits for the gate to burn: while the frame stands unlit its six
-  interior cells are air, and a furnace in one of them closes the portal for good.
+  interior cells are air, and a furnace in one of them closes the portal for good. The whole step is
+  `_overworld`: `_nether_idle` also holds down in the Nether, and there the away-from-base half of
+  the offer named `go_home`, which `resolve` refuses on the same tick (`_go_home_wanted`: "Never in
+  the Nether") — live, run162 it164-194, 31 deferred ticks and 38 System 2 calls on one offer.
   Tested in `tests/test_actions.py::HomeBaseTest`, `tests/test_actions.py::BaseFurnaceTest`,
   `tests/test_targets.py::BaseTargetTest`,
   `tests/test_graph.py::GuardUnblockTest`, `tests/test_graph.py::PortalBaseAdoptTest`,

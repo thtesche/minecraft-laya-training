@@ -3811,6 +3811,18 @@ class BaseFurnaceTest(unittest.TestCase):
         self.assertEqual(a.tool, "navigate")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -98))
 
+    def test_the_furnace_never_walks_home_from_the_nether(self) -> None:
+        # Live, run162 it164-194: the lull holds in the Nether too, so the carried furnace offered
+        # `go_home` on every tick down there, `resolve` refused it on the same tick, and 31 ticks
+        # deferred with 38 System 2 calls spent explaining it. The furnace belongs at the base,
+        # and the base is an Overworld place.
+        g = self._lull(furnace=1, beef=2)
+        g.dimension = "minecraft:the_nether"
+        g.pos = (-120.5, 66.0, 40.5)
+        self.assertNotIn("place_furnace", candidates(g))
+        self.assertNotIn("go_home", candidates(g))
+        self.assertIsNone(resolve("go_home", g))
+
     def test_cook_food_reuses_the_base_furnace(self) -> None:
         g = self._lull(furnace=0, beef=3, coal=1)
         g.furnace_pos = (-197, -46, -99)
