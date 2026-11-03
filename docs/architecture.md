@@ -1321,7 +1321,12 @@ lid and stalled on the latch that was supposed to say the haul was done.
   owns a body inside a portal — could not take the tick, because the chosen crossing had opened
   the `_enter_intent_ticks` window that stands the rescue down. `_note_crossing` now closes the
   window again when the refusal names the gate, so the rescue steps the bot out on the next tick
-  instead of waiting three.
+  instead of waiting three. run167 it74-76 then showed the *way home* is the same call from the
+  other side: the bot crossed in with a full pack, `_nether_must_return` sent it straight back,
+  and every `leave_nether` re-armed the window on its own `[PORTAL_ALREADY_INSIDE]`. The rescue
+  never fired, the ladder fell to `explore`, and the march walked the bot ~300 blocks from its
+  own gate with no route home. The closing rule now covers `enter_portal` and `leave_nether`
+  alike, so the rescue fires for both directions of the crossing.
 - **A pearl march down the same corridor.** run164's three pearl waves walked `search_enderman` at
   `frontier_heading(gs)` — the bearing *away from the base* — which is the same compass line on
   every trip because the base does not move. All three ran into the same crimson forest and the

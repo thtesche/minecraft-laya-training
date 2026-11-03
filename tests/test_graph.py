@@ -5247,6 +5247,18 @@ class NetherCrossingTest(unittest.TestCase):
                              "[HOSTILE_CONTACT] a blaze is in contact")
         self.assertNotEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
 
+    def test_a_refused_way_home_returns_the_tick_to_the_rescue_too(self) -> None:
+        # Live, run167 it74-76: the bot crossed in with a full pack, `_nether_must_return` sent it
+        # straight back, and the server answered `[PORTAL_ALREADY_INSIDE]` three times because the
+        # body stood in the destination gate. Every retry re-armed the window, the rescue never
+        # fired, and the ladder fell to `explore` - 300 blocks away from its own gate. The same
+        # closing rule applies to the way home: step out, then call the crossing from outside.
+        agent = self._agent()
+        agent._note_crossing(Action("leave_nether", "enter_nether_portal",
+                                    {"x": -195, "y": -46, "z": -98}, ""),
+                             "[PORTAL_ALREADY_INSIDE] The bot already occupies this nether_portal")
+        self.assertEqual(candidates(agent._inject(self._in_gate())), ["leave_portal"])
+
     def test_a_stopped_march_is_counted_and_a_partial_one_is_not(self) -> None:
         # Live, run164 it159-161: three identical eastward marches from (132, 41, 0) answered
         # "no path or usable partial route found" and the body never moved, so every tick aimed

@@ -2281,10 +2281,18 @@ class Agent:
 
         A crossing the server refuses because the body already stands in the gate closes the
         window again on the spot: the intent is what keeps the rescue down, so leaving it open
-        only offers `enter_portal` again on the next tick. Live, run164 it119-121: three
+        only offers the crossing again on the next tick. Live, run164 it119-121: three
         `[PORTAL_ALREADY_INSIDE]` refusals at the base gate while `leave_portal` - the one step
         that owns that body - was not on the offer, and the rescue could only take the tick three
         ticks later, once the window had run out.
+
+        Both directions of the crossing are covered. `leave_nether` is the same tool call from the
+        other side (`enter_nether_portal`), and run167 it74-76 was the expensive case: the bot
+        crossed in, its pack was full, `_nether_must_return` sent it straight back, and the server
+        answered `[PORTAL_ALREADY_INSIDE]` three times because the body stood in the destination
+        gate. Each retry re-armed the window, so the rescue never fired; the ladder fell to
+        `explore` and walked the bot 300 blocks away from its own gate, where the wave was stranded
+        with no route home.
         """
         if action.label in ("enter_portal", "leave_nether"):
             self._enter_intent_ticks = PORTAL_INTENT_TICKS
@@ -2294,8 +2302,11 @@ class Agent:
             self._drop_open_pending = False
             self._drop_pos = None
             self._step_away_fails = 0
-        if action.label == "enter_portal" and "PORTAL_ALREADY_INSIDE" in (text or ""):
-            # The gate has the body: let `_in_portal` hand the tick to `leave_portal`.
+        if (action.label in ("enter_portal", "leave_nether")
+                and "PORTAL_ALREADY_INSIDE" in (text or "")):
+            # The gate has the body: let `_in_portal` hand the tick to `leave_portal`, which steps
+            # it out so the next crossing call starts from outside the portal (the server wants
+            # the body outside it before `enter_nether_portal` crosses).
             self._enter_intent_ticks = 0
 
     def _note_stow(self, action, ok: bool, delta: dict) -> None:
