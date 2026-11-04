@@ -6708,6 +6708,61 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         self.assertEqual(_bed_item_from_wool({"lime_wool": 5}), "lime_bed")
         self.assertIsNone(_bed_item_from_wool({"blue_wool": 2}))
 
+    # --- the return trek: a death to base after the fill (run184's loiter) ---
+
+    def test_a_death_to_base_reopens_the_trek_to_lay_the_bed(self) -> None:
+        # run184: the fill done, two deaths respawned the bot at base ~1300 blocks from the frame,
+        # carrying the bed but with no path back - it idled on base chores. The post-fill phase now
+        # walks it back to the frame before the precise bedside placement (whose stance only
+        # resolves within reach of the frame, so the trek has to close the distance first).
+        g = self._stranded(white_bed=1)
+        self.assertFalse(_bed_at_stronghold(g))
+        self.assertFalse(_at_stronghold(g))
+        self.assertEqual(stronghold_candidates(g), ["travel_to_stronghold"])
+        a = resolve("travel_to_stronghold", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FRAME)
+        self.assertEqual(a.args["range"], STRONGHOLD_ARRIVAL_RANGE)
+
+    def test_stranded_without_wool_gathers_it_before_the_trek(self) -> None:
+        # Neither a bed nor the wool for one: the return trek waits while a fresh bed's wool is
+        # gathered, the same gate the pre-fill phase keeps - the base bed is the old spawn being left.
+        g = self._stranded()
+        g.mobs = [("sheep", "passive", 6, 8.0)]
+        self.assertFalse(_has_bed(g.inventory))
+        self.assertFalse(_bed_materials_ready(g))
+        self.assertEqual(stronghold_candidates(g), ["hunt_wool"])
+
+    def test_stranded_with_loose_materials_treks_back(self) -> None:
+        # Wool and wood in hand is enough to carry the respawn to the frame; the trek proceeds and
+        # the bed is crafted there, not at base.
+        g = self._stranded(white_wool=3, oak_log=1)
+        self.assertFalse(_has_bed(g.inventory))
+        self.assertTrue(_bed_materials_ready(g))
+        self.assertEqual(stronghold_candidates(g), ["travel_to_stronghold"])
+
+    def test_the_return_trek_suppresses_the_home_walk(self) -> None:
+        # The suppression that held the pre-fill trek now holds the bed trek: off the base at night
+        # with the bed at base, `go_home` is the strongest reason there is, and it was exactly what
+        # pinned the bot to the base after the fill. The phase gate shuts it; the bot walks on.
+        g = self._stranded(white_bed=1, pos=(10.0, 64.0, 110.0))
+        g.phase = "night"
+        g.bed_pos = self.BASE_FAR
+        self.assertTrue(_go_home_wanted(g))
+        self.assertTrue(_stronghold_phase(g))
+        self.assertFalse(_at_stronghold(g))
+        cands = candidates(g)
+        self.assertIn("travel_to_stronghold", cands)
+        self.assertNotIn("go_home", cands)
+        self.assertIsNone(resolve("go_home", g))
+
+    def test_the_phase_closes_once_the_respawn_is_pinned(self) -> None:
+        # With the bed laid and the sleep latched the run's goal is met: the suppression lifts, so
+        # a finished run is an ordinary bot again (it will stop on the completion check, not idle).
+        g = self._with_placed_bed(self._after_portal())
+        g.slept_at_stronghold = True
+        self.assertFalse(_stronghold_phase(g))
+
 
 class RodDemandSizedToTheFrameTest(unittest.TestCase):
     """How many rods the Nether owes: the eyes the frame still needs, and nothing more.
