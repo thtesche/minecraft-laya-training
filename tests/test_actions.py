@@ -6380,14 +6380,20 @@ class StrongholdFrameAddressTest(unittest.TestCase):
         self.assertNotIn("travel_to_stronghold", candidates(g))
         self.assertIn("locate_stronghold", candidates(g))
 
-    def test_the_phase_stays_open_until_the_portal_stands(self) -> None:
+    def test_the_fill_trek_gives_way_to_the_bed_trek_once_the_portal_stands(self) -> None:
+        # Before the fill the eyes drive the trek to the frame; once the portal stands the fill is
+        # done, so `activate_end_portal` drops off the offer. But the run still owes the respawn bed
+        # beside the frame, and a bot carrying the bed (the `_home` stock) a long way from it - a
+        # death respawned it at base - walks back to lay it rather than idling (run184's loiter).
         g = self._home(ender_eye=16)
         g.stronghold_estimated = True
         g.stronghold_frame = self.FRAME
         self.assertFalse(stronghold_complete(g))
+        self.assertIn("travel_to_stronghold", candidates(g))
         g.end_portal_active = True
         self.assertTrue(stronghold_complete(g))
-        self.assertNotIn("travel_to_stronghold", candidates(g))
+        self.assertNotIn("activate_end_portal", candidates(g))
+        self.assertIn("travel_to_stronghold", candidates(g))
 
 
 class StrongholdMarchShedTest(unittest.TestCase):
@@ -6564,6 +6570,7 @@ class StrongholdBedPhaseTest(unittest.TestCase):
     """
 
     FRAME = (100, 60, 200)
+    BASE_FAR = (-80, 73, 28)  # the real run's base, ~250 blocks from the frame: well off it
     OVERWORLD = "minecraft:overworld"
 
     def _after_portal(self, pos=(101.0, 60.0, 200.0), **inv) -> GameState:
@@ -6575,6 +6582,20 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         g.health = 20.0
         g.food = 20.0
         g.pos = pos
+        return g
+
+    def _stranded(self, pos=None, **inv) -> GameState:
+        """Portal active, but a death respawned the bot at base, far from the frame (run184)."""
+        g = at_home(geared(**inv), base=self.BASE_FAR)
+        g.dimension = self.OVERWORLD
+        g.stronghold_frame = self.FRAME
+        g.end_portal_active = True
+        g.portal_lit = True             # the Nether gate burns: a crossing and back reached the end
+        g.powder_stowed = True          # the Nether haul is home: `nether_expedition_complete`
+        g.health = 20.0
+        g.food = 20.0
+        if pos is not None:
+            g.pos = pos
         return g
 
     def _with_placed_bed(self, g: GameState, dx=0, dz=1) -> GameState:

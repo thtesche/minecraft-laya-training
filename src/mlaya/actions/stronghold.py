@@ -227,29 +227,36 @@ def stronghold_complete(gs: GameState) -> bool:
 
 
 def _stronghold_phase(gs: GameState) -> bool:
-    """The run owns the stronghold: eyes in hand, the frame's address known, portal not yet active.
+    """The run owns the stronghold: a frame address is known and the only work left is at it.
 
-    From here to the fill nothing is worth walking back to base for. The frameless steps that leak
-    onto the offer in this window - `go_home` (night plus the bed at base), `mine_stone` for
-    cobblestone, `stow_surplus` back to a chest - are pure detours that pull the bot the wrong way
-    down a ~1300-block trek, and at night `go_home` outranks the travel step outright (live, run176:
-    the very first action was the home walk). It mirrors the travel branch of
-    `stronghold_candidates`: eyes in hand and a frame distance known, which is exactly when that
-    branch offers `travel_to_stronghold`.
+    Two windows wear the same suppression. Before the fill: eyes in hand, portal not yet active,
+    walking the ~1300 blocks out to fill the frame. After it fires: the run still owes a bed beside
+    the frame and the sleep that pins the respawn there, and a death that respawns the bot at base
+    strands it the same ~1300 blocks off (live, run184: two deaths after the 10:40 fill, then it
+    idled at base with no path back), so it must walk back rather than settle at the old base spawn.
+
+    From here to the goal nothing is worth walking home for. The frameless steps that leak onto the
+    offer in this window - `go_home` (night plus the bed at base), `mine_stone` for cobblestone,
+    `stow_surplus` back to a chest - are pure detours that pull the bot the wrong way down the trek,
+    and at night `go_home` outranks the travel step outright (live, run176: the very first action was
+    the home walk). It mirrors `stronghold_candidates`: a frame distance known and either eyes to
+    fill the frame or a bed still owed beside it, which is exactly when that function offers the trek.
     """
-    inv = gs.inventory
-    return (nether_expedition_complete(gs) and not stronghold_complete(gs)
-            and _overworld(gs) and _ender_eyes(inv) >= _eyes_in_hand(gs)
-            and _frame_distance(gs) is not None)
+    if not _overworld(gs) or _frame_distance(gs) is None:
+        return False
+    if stronghold_complete(gs):
+        # The portal stands; the goal is the bed beside the frame and the sleep that pins the spawn.
+        return not getattr(gs, "slept_at_stronghold", False)
+    return nether_expedition_complete(gs) and _ender_eyes(gs.inventory) >= _eyes_in_hand(gs)
 
 
 def _striding_to_stronghold(gs: GameState) -> bool:
     """The pure march to a confirmed frame: in the stronghold phase, body not yet at it.
 
-    In this window the run only walks and digs toward the frame, so a full pack drops its clutter
-    on the ground (`_march_shed`) instead of walking to a chest. `_stronghold_phase` carries the
-    rest of the suppression (the offer-level blocks in `planner`), which also covers standing at
-    the frame before the fill.
+    In this window the run only walks and digs toward the frame - to fill it, or, once the portal
+    is lit, to lay the respawn bed beside it - so a full pack drops its clutter on the ground
+    (`_march_shed`) instead of walking to a chest. `_stronghold_phase` carries the rest of the
+    suppression (the offer-level blocks in `planner`), which also covers standing at the frame.
     """
     return _stronghold_phase(gs) and not _at_stronghold(gs)
 
@@ -284,21 +291,43 @@ def stronghold_candidates(gs: GameState) -> list[str]:
     if not _overworld(gs):
         return out
 
-    # After the portal fires: craft a bed, lay it beside the stronghold frame, then sleep once
-    # to pin the respawn point there instead of the old base. That is the new end of the run.
-    # It owns the tick outright - no locate, no travel, no procurement competes with it.
-    #
-    # Ordered on "is the bed already down" first, not "is one carried": `place_bed_stronghold`
-    # lays the bed with the `sleep` tool, which spends it out of the pack, so a has-bed-first test
-    # would read the just-placed bed as gone and loop back to crafting a second one instead of
-    # reaching the sleep. Once a bed stands beside the frame the only thing left is the sleep (if
-    # the place did not already pin the spawn); with no bed down, lay the carried one, or craft one
-    # from the carried wool.
+    # After the portal fires: lay a bed beside the stronghold frame and sleep once to pin the
+    # respawn there instead of the old base. That is the new end of the run. On the happy path the
+    # bot still stands at the frame it just lit, but a death respawns it at base ~1300 blocks off
+    # (live, run184: two deaths after the 10:40 fill, then it idled at base with no path back). So
+    # this is a trek like the pre-fill one: secure a bed's wool, walk to the frame, lay it, sleep.
     if gs.end_portal_active:
+        # The bed already stands beside the frame: one sleep left to pin the respawn (a daytime
+        # place may have pinned it already, hence the `slept_at_stronghold` guard). Checked first,
+        # not "is a bed carried", because `place_bed_stronghold` spends the bed out of the pack as
+        # it lays it, so a has-bed-first test would read the just-placed bed as gone and craft a
+        # second one instead of reaching the sleep.
         if _bed_at_stronghold(gs):
             if not getattr(gs, "slept_at_stronghold", False):
                 out.append("sleep_stronghold")
-        elif _has_bed(inv):
+            return out
+        # No bed and no wool to make one: gather it before the trek, the same gate the pre-fill
+        # phase keeps ahead of travel - a bed at the base is the old spawn being left, so the
+        # carried-materials test, not `_bed_available`. With neither a sheep nor a spider in reach,
+        # an empty `out` falls through to `explore` to roam for one.
+        if not _has_bed(inv) and not _bed_materials_ready(gs):
+            if gs.mob_nearest("sheep") is not None and _hunt_ok(gs):
+                out.append("hunt_wool")
+            elif _safe_spider_hunt(gs):
+                out.append("hunt_string")
+            return out
+        # Bed or its materials in hand but the body is not at the frame (a death put it at base):
+        # walk back before the precise bedside navigate, dropping a full pack's march clutter first
+        # just as the pre-fill travel does. `place_bed_stronghold`'s stance only resolves within
+        # reach of the frame, so the trek has to close the distance first.
+        if not _at_stronghold(gs):
+            if _frame_distance(gs) is not None:
+                if gs.slots_used >= INVENTORY_NEAR_FULL and (_droppable(gs, inv) or _march_shed(gs)):
+                    out.append("drop_junk")
+                out.append("travel_to_stronghold")
+            return out
+        # Standing at the frame: lay the carried bed, or craft one from the carried wool.
+        if _has_bed(inv):
             out.append("place_bed_stronghold")
         elif _bed_materials_ready(gs):
             out.append("craft_bed_stronghold")
@@ -497,16 +526,20 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
                       {"phase": phase, "search_id": "stronghold",
                        "continue_without_recommended_items": True}, why)
     if label == "travel_to_stronghold":
-        if gs.end_portal_active or _at_stronghold(gs):
+        # Reopened after activation: the post-fill phase walks the bot back to the frame to lay the
+        # respawn bed when a death left it at base. `_at_stronghold` still closes the step - the
+        # frame reached, there is nothing left to walk to.
+        if _at_stronghold(gs):
             return None
         cell = gs.stronghold_frame
         if cell is None:
             return None
         x, y, z = cell
+        why = (f"walk back to the end portal frame at {x},{y},{z} to lay the respawn bed beside it"
+               if gs.end_portal_active
+               else f"walk to the confirmed end portal frame at {x},{y},{z} to fill its sockets")
         return Action(label, "navigate", {"x": x, "y": y, "z": z,
-                                         "range": STRONGHOLD_ARRIVAL_RANGE},
-                      f"walk to the confirmed end portal frame at {x},{y},{z} "
-                      f"to fill its sockets")
+                                         "range": STRONGHOLD_ARRIVAL_RANGE}, why)
     if label == "activate_end_portal":
         if not _at_stronghold(gs) or gs.end_portal_active:
             return None
