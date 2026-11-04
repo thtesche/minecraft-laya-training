@@ -48,6 +48,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            STRONGHOLD_MARCH_JUNK, _go_home_wanted, _cannot_heal,
                            _bed_materials_ready, _bed_item_from_wool, _bed_at_stronghold,
                            _bed_stronghold_stance, STRONGHOLD_BED_NEAR, _has_bed, _at_stance,
+                           _bed_needs_moving, _unsafe_beds,
                            stronghold_candidates,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                            MUSHROOM_CAP, MUSHROOM_BATCH,
@@ -6762,6 +6763,36 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         g = self._with_placed_bed(self._after_portal())
         g.slept_at_stronghold = True
         self.assertFalse(_stronghold_phase(g))
+
+    def test_a_taken_up_bed_keeps_the_phase_open(self) -> None:
+        # run186 it10-13: `take_bed` hauled the frame bed back into the pack after the sleep, and
+        # with the phase closed on the sleep latch alone `go_home` outranked the bed chain and the
+        # bot walked off with the respawn unpinned. The phase mirrors the goal: it stays open
+        # while the bed beside the frame is gone.
+        g = self._after_portal(white_bed=1)
+        g.base = self.BASE_FAR
+        g.powder_stowed = True          # the Nether haul stands: the stronghold block opens
+        g.slept_at_stronghold = True
+        self.assertFalse(_bed_at_stronghold(g))
+        self.assertTrue(_stronghold_phase(g))
+        g.phase = "night"
+        g.bed_pos = self.BASE_FAR
+        # At night the exclusive sleep rule owns the tick; the home walk is still off the offer.
+        self.assertNotIn("go_home", candidates(g))
+        g.phase = "day"
+        cands = candidates(g)
+        self.assertIn("place_bed_stronghold", cands)
+        self.assertNotIn("go_home", cands)
+
+    def test_the_frame_bed_is_not_hauled_home(self) -> None:
+        # The bed beside the frame is far from the base by design and underground like the frame
+        # itself; the general bed chain must not read it as a leftover cave bed (run186 it10/it12:
+        # `take_bed` twice, then the home walk).
+        g = self._with_placed_bed(self._after_portal())
+        g.base = self.BASE_FAR
+        self.assertTrue(_bed_at_stronghold(g))
+        self.assertFalse(_bed_needs_moving(g))
+        self.assertFalse(_unsafe_beds(g))
 
 
 class RodDemandSizedToTheFrameTest(unittest.TestCase):

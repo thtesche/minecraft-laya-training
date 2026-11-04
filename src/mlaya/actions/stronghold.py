@@ -245,8 +245,12 @@ def _stronghold_phase(gs: GameState) -> bool:
     if not _overworld(gs) or _frame_distance(gs) is None:
         return False
     if stronghold_complete(gs):
-        # The portal stands; the goal is the bed beside the frame and the sleep that pins the spawn.
-        return not getattr(gs, "slept_at_stronghold", False)
+        # The portal stands; the goal is the bed beside the frame and the sleep that pins the
+        # spawn - both, not the sleep alone. A bed taken up after the sleep leaves the respawn
+        # unpinned (live, run186 it10-13: `take_bed` hauled the frame bed into the pack and
+        # `go_home` followed), so the phase stays open until the bed stands again and is slept
+        # in, exactly as `_goal_reached` counts it.
+        return not (getattr(gs, "slept_at_stronghold", False) and _bed_at_stronghold(gs))
     return nether_expedition_complete(gs) and _ender_eyes(gs.inventory) >= _eyes_in_hand(gs)
 
 

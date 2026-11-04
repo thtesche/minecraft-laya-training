@@ -816,7 +816,13 @@ def _bed_in_opening(gs: GameState) -> bool:
 def _bed_needs_moving(gs: GameState) -> bool:
     """A standing bed that `take_bed` should pick up: a leftover away from the base, or one laid
     too close to the gate (`_bed_bad_spot`). Both leave a respawn point the gate bed must not be.
+
+    The bed beside the stronghold frame is neither: it is far from the base by design and it is
+    the run's new respawn point (live, run186: `take_bed` read it as a leftover, carried it home
+    and un-pinned the spawn the bed phase had just set).
     """
+    if _bed_at_stronghold(gs):
+        return False
     return _bed_off_base(gs) or _bed_bad_spot(gs)
 
 
@@ -3000,8 +3006,23 @@ def _sleep_safe(gs: GameState) -> bool:
 
 
 def _unsafe_beds(gs: GameState) -> list:
-    """Standing beds laid underground: each one may hold the respawn point inside a cave."""
-    return [hit for hit in gs.resources.get("white_bed") or [] if _underground(gs, hit.y)]
+    """Standing beds laid underground: each one may hold the respawn point inside a cave.
+
+    The bed beside the stronghold frame is the exception: the frame lies underground by nature,
+    and that bed is the run's pinned respawn, not a cave leftover (live, run186: the frame bed at
+    y=-38 read as a cave bed, `take_bed` became the tick's only step and the bot walked home).
+    """
+    frame = gs.stronghold_frame
+    out = []
+    for hit in gs.resources.get("white_bed") or []:
+        if not _underground(gs, hit.y):
+            continue
+        if frame is not None and (abs(hit.x - frame[0]) <= STRONGHOLD_BED_NEAR
+                                  and abs(hit.z - frame[2]) <= STRONGHOLD_BED_NEAR
+                                  and abs(hit.y - frame[1]) <= STRONGHOLD_BED_NEAR_Y):
+            continue
+        out.append(hit)
+    return out
 
 
 def _bed_cells(gs: GameState) -> list[tuple[int, int, int]]:
