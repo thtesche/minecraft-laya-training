@@ -110,7 +110,12 @@ def candidates(gs: GameState) -> list[str]:
     # temporary workstation down on every call. In the lull the carried furnace is stood at the
     # base once (walking home first if the bot is away), after which cooking reuses its cell.
     if _furnace_worth_placing(gs):
-        out.append("place_furnace" if _at_base(gs) else "go_home")
+        # The furnace is stood at the base once, and the walk home for it is the same ping-pong as
+        # `go_home` itself: never on the stronghold march (run176 started on exactly that walk).
+        if _at_base(gs):
+            out.append("place_furnace")
+        elif not _stronghold_phase(gs):
+            out.append("go_home")
     # The smoker is the same idea one step on: it does not replace the furnace (ore still needs
     # that one) but it doubles the rate for the only thing this run smelts in bulk. Offered at the
     # base only, because the whole point is cooking *at* the base rather than wherever the bot
@@ -387,7 +392,7 @@ def candidates(gs: GameState) -> list[str]:
             # released it). The base is an Overworld anchor; a run that starts down there leaves
             # through the gate (`leave_nether`) instead.
             out.append("establish_base" if _at_surface(gs) else "surface_up")
-        elif not _at_base(gs) and _go_home_wanted(gs):
+        elif not _at_base(gs) and _go_home_wanted(gs) and not _stronghold_phase(gs):
             # Three reasons to walk home: some base step is waiting, or the Nether gate is lit,
             # stocked and the bot's next job - which only it can do standing on the base - or it
             # is night and the bed is at the base.
@@ -765,7 +770,7 @@ def candidates(gs: GameState) -> list[str]:
     # tick and the `explore` fallback (the only thing that marched toward a fortress) never fired.
     # Withheld on the stronghold march: the trek to the frame spends no cobblestone, so the step is
     # pure noise that competes with `travel_to_stronghold` and pulls the bot off the line (run175).
-    if cobble < 12 and _can_mine(gs, "stone") and _overworld(gs) and not _striding_to_stronghold(gs):
+    if cobble < 12 and _can_mine(gs, "stone") and _overworld(gs) and not _stronghold_phase(gs):
         out.append("mine_stone")
 
     # --- Nether prep (the daytime lull once the gate frame stands) ---
@@ -775,7 +780,10 @@ def candidates(gs: GameState) -> list[str]:
     # completion gate, so the offered steps and `tech_tree_complete` never disagree.
     # Offered Overworld only: `_nether_idle` (its scope) is true down there too, and a prep step
     # that digs from the base has no base in the Nether to dig from.
-    if _overworld(gs):
+    # Not on the stronghold march: the lull's gold dig and base crafts are the same detour as
+    # `mine_stone` - the trek never spends them, and the frame is the only job left before the
+    # portal (run176). The crossing is already behind the run when the phase opens.
+    if _overworld(gs) and not _stronghold_phase(gs):
         out.extend(_nether_prep_steps(gs))
 
     # Home-base ground work. Once the gate is lit, a daytime maintenance step digs away the stray
@@ -828,7 +836,8 @@ def candidates(gs: GameState) -> list[str]:
     if not out:
         if still or (_at_base(gs) and _nether_idle(gs)):
             out.append("wait")
-        elif _idle_off_base(gs) and "go_home" not in gs.stuck_labels:
+        elif (_idle_off_base(gs) and "go_home" not in gs.stuck_labels
+              and not _stronghold_phase(gs)):
             out.append("go_home")
         else:
             out.append("explore")
@@ -1807,7 +1816,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"x": tx, "y": ty + 1, "z": tz, "dig": True, "scaffold": True},
                       f"walk up to the surface at {tx},{ty + 1},{tz} and set the base")
     if label == "go_home":
-        if gs.base is None or _at_base(gs) or _in_nether(gs):
+        if gs.base is None or _at_base(gs) or _in_nether(gs) or _stronghold_phase(gs):
+            # The stronghold phase never walks home: a night at a base with a bed is the strongest
+            # `go_home` reason there is, and it is exactly the ping-pong that keeps the trek from
+            # arriving (live, run176: the first action after the restart was the home walk).
             return None
         # Two reasons walk the bot home: base work waits (`_go_home_wanted`), or it is the idle
         # geared Overworld bot the empty-candidate fallback sends home (`_idle_off_base`). The

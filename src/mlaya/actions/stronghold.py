@@ -225,23 +225,32 @@ def stronghold_complete(gs: GameState) -> bool:
     return bool(gs.end_portal_active)
 
 
-def _striding_to_stronghold(gs: GameState) -> bool:
-    """The pure march to a confirmed frame: eyes crafted, the frame's address known, the body not
-    yet at it.
+def _stronghold_phase(gs: GameState) -> bool:
+    """The run owns the stronghold: eyes in hand, the frame's address known, portal not yet active.
 
-    In this window the run only walks and digs toward the frame - no hunt, no scaffold, nothing the
-    base supplies - so the tech-tree and home-storage steps that otherwise leak onto the offer
-    (`mine_stone` for cobblestone, `stow_surplus` back to base) are pure detours that pull the bot
-    the wrong way down a ~2000-block trek (run175). The same gate turns a full pack into a drop on
-    the ground (`_march_shed`) instead of a walk home. It mirrors the travel branch of
+    From here to the fill nothing is worth walking back to base for. The frameless steps that leak
+    onto the offer in this window - `go_home` (night plus the bed at base), `mine_stone` for
+    cobblestone, `stow_surplus` back to a chest - are pure detours that pull the bot the wrong way
+    down a ~1300-block trek, and at night `go_home` outranks the travel step outright (live, run176:
+    the very first action was the home walk). It mirrors the travel branch of
     `stronghold_candidates`: eyes in hand and a frame distance known, which is exactly when that
     branch offers `travel_to_stronghold`.
     """
     inv = gs.inventory
     return (nether_expedition_complete(gs) and not stronghold_complete(gs)
-            and _overworld(gs) and not _at_stronghold(gs)
-            and _ender_eyes(inv) >= _eyes_in_hand(gs)
+            and _overworld(gs) and _ender_eyes(inv) >= _eyes_in_hand(gs)
             and _frame_distance(gs) is not None)
+
+
+def _striding_to_stronghold(gs: GameState) -> bool:
+    """The pure march to a confirmed frame: in the stronghold phase, body not yet at it.
+
+    In this window the run only walks and digs toward the frame, so a full pack drops its clutter
+    on the ground (`_march_shed`) instead of walking to a chest. `_stronghold_phase` carries the
+    rest of the suppression (the offer-level blocks in `planner`), which also covers standing at
+    the frame before the fill.
+    """
+    return _stronghold_phase(gs) and not _at_stronghold(gs)
 
 
 def _march_junk(name: str) -> bool:

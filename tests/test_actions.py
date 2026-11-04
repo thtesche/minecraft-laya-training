@@ -44,8 +44,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_EXIT_HOP_MIN,
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
-                           _striding_to_stronghold, _march_shed, _march_junk,
-                           STRONGHOLD_MARCH_JUNK,
+                           _striding_to_stronghold, _stronghold_phase, _march_shed, _march_junk,
+                           STRONGHOLD_MARCH_JUNK, _go_home_wanted,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                            MUSHROOM_CAP, MUSHROOM_BATCH,
                            _mushroom_short, _mushroom_pantry_wanted,
@@ -6437,6 +6437,41 @@ class StrongholdMarchShedTest(unittest.TestCase):
         self.assertIn("travel_to_stronghold", cands)
         self.assertNotIn("mine_stone", cands)
         self.assertNotIn("stow_surplus", cands)
+
+    def test_go_home_is_gone_from_the_offer_at_night(self) -> None:
+        # The strongest home reason there is: night, with the bed standing at the base. Without the
+        # phase gate `_go_home_wanted` holds and the model took the walk home as the run's *first*
+        # action (live, run176); it must not even be on the list here.
+        g = self._march()
+        g.phase = "night"
+        g.bed_pos = self.BASE
+        self.assertTrue(_go_home_wanted(g))
+        cands = candidates(g)
+        self.assertIn("travel_to_stronghold", cands)
+        self.assertNotIn("go_home", cands)
+        self.assertIsNone(resolve("go_home", g))
+
+    def test_at_the_frame_the_offer_still_suppresses_home(self) -> None:
+        # The suppression covers the whole phase, not just the march leg: standing at the frame with
+        # the bed waiting at base, a home walk would undo the entire trek.
+        g = self._march()
+        g.pos = (self.FRAME[0] + 1.0, self.FRAME[1] + 1.0, self.FRAME[2] + 1.0)
+        g.phase = "night"
+        g.bed_pos = self.BASE
+        self.assertTrue(_at_stronghold(g))
+        self.assertFalse(_striding_to_stronghold(g))
+        cands = candidates(g)
+        self.assertIn("activate_end_portal", cands)
+        self.assertNotIn("go_home", cands)
+
+    def test_off_the_stronghold_phase_go_home_still_works(self) -> None:
+        # Before the eyes are in hand the base is the right place to walk to; the gate only owns
+        # the window from eyes-in-hand to the fill.
+        g = self._march(ender_eye=1)
+        g.phase = "night"
+        g.bed_pos = self.BASE
+        self.assertFalse(_stronghold_phase(g))
+        self.assertIn("go_home", candidates(g))
 
     def test_a_full_pack_sheds_on_the_way(self) -> None:
         self.assertIn("drop_junk", candidates(self._march()))
