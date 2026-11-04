@@ -59,7 +59,10 @@ CHAIN_NAMES = ("lava", "chest", "furnace", "smoker", "gold_ore", "end_portal_fra
 # Overworld soil. Its own `view_blocks find` group because the resource group already holds all
 # eight names one call accepts.
 MUSHROOM_NAMES = ("red_mushroom", "brown_mushroom")
-MUSHROOM_LIMIT = 4
+# Eight, not four: `gather_mushrooms` asks for a batch, and a scan that loads only four mushrooms
+# cannot tell the pantry whether the ground is worth a walk. The call accepts eight names, and
+# this group has two.
+MUSHROOM_LIMIT = 8
 # The Nether's own scan group, read *only* in the Nether: the bricks a fortress is built from are
 # the one landmark that tells the bot a blaze spawner is plausibly near, and `spawner` names the
 # cage itself. Blazes are hostile, so they only reach the state through `view_status` once one is

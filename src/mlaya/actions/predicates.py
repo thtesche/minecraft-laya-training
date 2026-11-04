@@ -1632,6 +1632,45 @@ def _stew_source_in_reach(gs: GameState) -> bool:
     return all(gs.resource_nearest(n) is not None for n in missing)
 
 
+def _mushroom_counts(gs: GameState) -> dict[str, int]:
+    """How many of each stew mushroom the pack carries."""
+    return {n: int(gs.inventory.get(n, 0) or 0) for n in STEW_MUSHROOMS}
+
+
+def _mushroom_short(gs: GameState) -> str | None:
+    """The mushroom kind whose stack is not yet full, or None when both stacks are at the cap.
+
+    The smaller stack first: a stew is one of each, so brewing stops at the shorter of the two and
+    filling the taller one first would buy nothing.
+    """
+    counts = _mushroom_counts(gs)
+    short = [n for n in STEW_MUSHROOMS if counts[n] < MUSHROOM_CAP]
+    if not short:
+        return None
+    return min(short, key=lambda n: counts[n])
+
+
+def _mushroom_pantry_wanted(gs: GameState) -> bool:
+    """Whether the pantry step has anything to do right now.
+
+    Three things have to hold, and each one is a failure the run has already paid for. A mushroom
+    must be loaded in the scan: unlike an animal, a mushroom does not run away or despawn, so a
+    loaded one is a meal the walk will still find - offering the step on an empty scan is how
+    run175 spent 44 action ticks with not one mushroom picked. The bowl is the other half of the
+    recipe: run171 crossed with two red and one brown mushroom and never brewed a meal, and
+    gathering a second stack behind a missing bowl is a walk for nothing. And a stack has to fit:
+    `collect_block` is refused outright when the pack has no slot for the item it digs.
+    """
+    kind = _mushroom_short(gs)
+    if kind is None or not _bowl_available(gs):
+        return False
+    if kind not in gs.inventory and gs.slots_used >= INVENTORY_NEAR_FULL:
+        # A stack needs a slot of its own: `collect_block` is refused outright when the pack has
+        # nowhere to put what it digs, so offering the walk to a full pack is a refused tick.
+        return False
+    return gs.resource_nearest(kind) is not None
+
+
 def _nether_food_secured(gs: GameState) -> bool:
     """Whether the pack can feed a Nether trip.
 
@@ -2036,6 +2075,10 @@ KEEP_MATERIALS = frozenset({
     # means walking back to a tree.
     "blaze_rod", "blaze_powder", "raw_gold", "raw_iron", "netherite_scrap", "ancient_debris",
     BOWL_ITEM,
+    # The stew pantry. Raw mushrooms are not `EDIBLE`: they feed only through a bowl, and a stack
+    # of each kind is two slots of food that regrows where it stands. Filed as surplus they end up
+    # in the base chest, and no step withdraws them - the Nether has neither trees nor herds.
+    "red_mushroom", "brown_mushroom",
     # The stronghold currency. A pearl banked in the chest is a pearl the eye chain cannot spend:
     # `craft_ender_eye` reads the pack, and no step withdraws pearls. run124 it53 filed the wave's
     # four pearls as surplus, and by it54 the bot was hunting endermen again with none in hand.

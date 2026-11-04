@@ -231,6 +231,11 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         # The dig pays in the block the roof is built from, and `collect_block` digs only the name
         # it was given (`netherrack`), so a gain of anything else would mean a different call.
         return d["inventory_delta"].get("netherrack", 0) > 0
+    if label == "gather_mushrooms":
+        # The pantry is stocked by the mushrooms entering the pack; a dig that picked none of them
+        # is a walk that found nothing, which is what the stuck guard needs to see.
+        return (d["inventory_delta"].get("red_mushroom", 0) > 0
+                or d["inventory_delta"].get("brown_mushroom", 0) > 0)
     if label == "take_blaze_powder":
         return d["inventory_delta"].get("blaze_powder", 0) > 0
     if label == "craft_ender_eye":

@@ -128,6 +128,15 @@ Two things the mushroom pantry needs that the Nether cannot supply.
   bowl among the crafts still owed, so the wood is chopped first — daylight only, because chopping
   is a walk. A bowl in the pack is on `KEEP_MATERIALS`: `stow_surplus` would otherwise file it
   into the base chest, and a bowl banked at home is a pantry the trip cannot reach.
+- **The pantry is stocked, not only brewed.** `craft_stew` fetches the one mushroom a single stew
+  is short of - all a stew needs, nothing a pantry is made of. Live, run175: 44 action ticks, not
+  one mushroom picked. `gather_mushrooms` digs a batch of up to `MUSHROOM_BATCH = 32` of the kind
+  whose stack is furthest from `MUSHROOM_CAP = 64`, offered only when the hunt has nothing to walk
+  to, the reserve is still short, a bowl is carried or craftable, and a mushroom is loaded in the
+  scan. The cap is a ceiling, not a request: the label stays on the offer while a stack is below
+  it, and Laya decides whether to take the tick. Both mushrooms are on `KEEP_MATERIALS` - raw
+  mushrooms are not `EDIBLE`, so `stow_surplus` would otherwise file the pantry into the base
+  chest, and no step withdraws it.
 - **The reserve walk has a bound and a starting point.** `_food_reserve_walk_wanted` widens the
   hunt reach from `FOOD_HUNT_RANGE_DAY = 64` to `FOOD_HUNT_RANGE_RESERVE = 128` only in the lull,
   only while the reserve is short, only by day, and only while the bot is standing at its base.

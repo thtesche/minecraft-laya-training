@@ -49,6 +49,7 @@ CRITERIA: dict[str, str] = {
     "hunt_food": "hunt an animal within walking range (far only in daylight), or a lone zombie, to bank food; once the gate frame stands, stock the deeper Nether reserve - the chest at the base counts towards this, so a full chest means no hunt at all",
     "craft_bowl": "craft the stew bowl from three planks at the base before crossing: the Nether has no wood, and every mushroom meal needs a bowl that comes back",
     "craft_stew": "no animal is in reach: brew mushroom stew instead - pick the red or brown mushroom still missing, or craft it from the bowl and both mushrooms, each meal returning its bowl",
+    "gather_mushrooms": "pick the red and brown mushrooms within reach to stock the stew pantry: both regrow where they stand, one stack of each is two slots, and a bowl plus one of each brews a meal whose bowl comes back",
     "take_stored_food": "take cooked food out of the chest at the base and put it in the pack, so the Nether trip is fed from what is already banked rather than hunted again",
     "cook_food": "cook carried raw meat in the furnace at the base (or the carried furnace, set up just for the batch) so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
     "collect_smelted": "take what a cook left sitting in the furnace at the base back into the pack, so the next cook can start",
@@ -306,6 +307,16 @@ STEW_MUSHROOMS = ("red_mushroom", "brown_mushroom")
 # bowls the pack actually holds (run170 it32-35 asked for two with one of each carried and was
 # refused four ticks running).
 STEW_BATCH = 2
+# --- The mushroom pantry (`gather_mushrooms`) ---
+# Both mushrooms regrow where they stand - on netherrack as much as on overworld soil - so the
+# pantry is stock rather than a hunt: one stack of each kind is two slots of food that comes back,
+# and the Nether has neither trees nor herds. The cap is a ceiling, never a request: the step stays
+# offered while a stack is below it, and Laya decides whether to take the tick. It stops on its own
+# once the larder is full, because the offer shares the hunt's reserve gate.
+MUSHROOM_CAP = 64
+# One `collect_block` call digs at most `MAX_COLLECT_BLOCKS` (32) in the MCP server, so a batch
+# larger than that is a call the server cannot answer.
+MUSHROOM_BATCH = 32
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
 # not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.

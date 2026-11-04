@@ -159,6 +159,18 @@ def candidates(gs: GameState) -> list[str]:
             and _edible_count(inv) < NETHER_FOOD_RENEWABLE_RESERVE
             and _stew_source_in_reach(gs)):
         out.append("craft_stew")
+    # The pantry is stocked before it is brewed. A mushroom walk is the cheapest food in the game:
+    # the mushroom does not run away, does not despawn, and regrows on the spot - in the Nether on
+    # netherrack, at home on soil. Live, run175: 44 action ticks, no mushroom picked, because
+    # `craft_stew` only ever asked for the one mushroom a single stew was short of. The step is
+    # offered beside the hunt only when the hunt has nothing to walk to (animals keep their
+    # priority) and only while the reserve is short, so it cannot become the tick's whole life;
+    # whether to take it is Laya's call.
+    if (not eating and not _food_source_in_reach(gs)
+            and _provisioned(gs) < _food_goal(gs)
+            and _mushroom_pantry_wanted(gs)
+            and "gather_mushrooms" not in gs.stuck_labels):
+        out.append("gather_mushrooms")
     if (_edible_count(inv) < _food_goal(gs) and _banked_provisions(gs)
             and not _in_nether(gs) and _at_base(gs) and _chest_ready(gs)):
         out.append("take_stored_food")
@@ -1605,6 +1617,21 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                        "temporary_workstation": True},
                       "brew mushroom stew from the bowl and both mushrooms - the bowl comes back "
                       "from every meal, so this renews itself")
+    if label == "gather_mushrooms":
+        kind = _mushroom_short(gs)
+        if kind is None or not _bowl_available(gs):
+            return None
+        if gs.resource_nearest(kind) is None:
+            return None
+        carried = int(inv.get(kind, 0) or 0)
+        # The batch is the most one call can dig and the most the stack can still take, never a
+        # demand for the cap: the server mines what the loaded ground actually holds and reports
+        # what came back, and the next tick decides whether to keep digging.
+        count = max(1, min(MUSHROOM_BATCH, MUSHROOM_CAP - carried))
+        return Action(label, "collect_block",
+                      {"block_name": kind, "count": count},
+                      f"pick up to {count} {kind} for the stew pantry; they regrow where they "
+                      "stand and every stew returns its bowl")
     if label == "collect_smelted":
         if not _furnace_needs_draining(gs) or not _at_base(gs) or not _furnace_room(gs):
             return None

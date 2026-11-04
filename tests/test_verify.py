@@ -479,5 +479,26 @@ class ScaffoldRestockProgressTest(unittest.TestCase):
         self.assertFalse(progressed("gather_scaffold", d))
 
 
+class MushroomPantryProgressTest(unittest.TestCase):
+    """`gather_mushrooms` is proved by the mushrooms, not by any gain.
+
+    The pantry is stocked by a `collect_block` dig on a mushroom name, so the tick pays in red or
+    brown mushrooms. Counting any inventory gain would let a tick that picked up something else
+    clear the stuck guard on a walk that found nothing.
+    """
+
+    def test_a_mushroom_landing_in_the_pack_is_progress(self) -> None:
+        d = diff(gs(inventory={"bowl": 1}), gs(inventory={"bowl": 1, "red_mushroom": 12}))
+        self.assertTrue(progressed("gather_mushrooms", d))
+
+    def test_another_gain_is_not_this_walk(self) -> None:
+        d = diff(gs(inventory={}), gs(inventory={"cobblestone": 5}))
+        self.assertFalse(progressed("gather_mushrooms", d))
+
+    def test_walking_to_the_patch_is_not_the_pick(self) -> None:
+        d = diff(gs(pos=(0.5, 65.0, 0.5)), gs(pos=(9.5, 65.0, 0.5)))
+        self.assertFalse(progressed("gather_mushrooms", d))
+
+
 if __name__ == "__main__":
     unittest.main()

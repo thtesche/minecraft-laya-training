@@ -45,6 +45,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
+                           MUSHROOM_CAP, MUSHROOM_BATCH,
+                           _mushroom_short, _mushroom_pantry_wanted,
                             FOOD_HUNT_RANGE_DAY, FOOD_HUNT_RANGE_NIGHT, FOOD_HUNT_RANGE_RESERVE,
                             _food_hunt_range, _food_reserve_walk_wanted,
                             _surplus_besides_keep,
@@ -8651,6 +8653,89 @@ class StewPantryTest(unittest.TestCase):
         # Nothing to pick, nothing to brew: the label resolves to None rather than a guess.
         g = self._pantry(bowl=1)
         self.assertIsNone(resolve("craft_stew", g))
+
+
+class MushroomPantryStockTest(unittest.TestCase):
+    """The pantry is stocked, not only brewed.
+
+    `craft_stew` fetches the one mushroom a single stew is short of, which is why run175 ran 44
+    action ticks without picking a mushroom. A stack of each kind is two slots of food that regrows
+    on the spot - the only food the Nether makes without a tree or a herd - so the pantry has its
+    own step, gated like the hunt: animals first, and only while a stack sits below the reserve.
+    """
+
+    BASE = (-43, 69, 89)
+    OVERWORLD = "minecraft:overworld"
+    PATCH = {"red_mushroom": [BlockHit("red_mushroom", "red_mushroom", 6, 64, 12, 9.0)],
+             "brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom", 7, 63, 14, 11.0)]}
+
+    def _stock(self, mobs=(), **inv) -> GameState:
+        stock = dict(cooked_beef=3, crafting_table=1, oak_planks=6, bowl=1)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.dimension = self.OVERWORLD
+        g.resources = dict(self.PATCH)
+        g.mobs = list(mobs)
+        return g
+
+    def test_an_empty_pantry_offers_the_walk(self) -> None:
+        self.assertIn("gather_mushrooms", candidates(self._stock()))
+
+    def test_a_herd_in_reach_keeps_the_hunt(self) -> None:
+        # The priority the user set: a herd is food on the hoof, the mushroom walk is the fallback.
+        self.assertNotIn("gather_mushrooms", candidates(self._stock(mobs=[("cow", "animal", 3, 12.0)])))
+
+    def test_a_pantry_at_the_cap_stops_the_walk(self) -> None:
+        g = self._stock(red_mushroom=MUSHROOM_CAP, brown_mushroom=MUSHROOM_CAP)
+        self.assertIsNone(_mushroom_short(g))
+        self.assertNotIn("gather_mushrooms", candidates(g))
+
+    def test_no_bowl_and_no_planks_stocks_nothing(self) -> None:
+        # Gathering a second stack behind a missing bowl is a walk for nothing: run171 crossed
+        # with two red and one brown mushroom and never brewed a meal.
+        g = self._stock(bowl=0, oak_planks=0)
+        self.assertFalse(_mushroom_pantry_wanted(g))
+        self.assertNotIn("gather_mushrooms", candidates(g))
+
+    def test_no_mushroom_in_the_scan_offers_nothing(self) -> None:
+        g = self._stock()
+        g.resources = {}
+        self.assertNotIn("gather_mushrooms", candidates(g))
+
+    def test_a_full_pack_without_a_mushroom_slot_stocks_nothing(self) -> None:
+        g = self._stock()
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertFalse(_mushroom_pantry_wanted(g))
+
+    def test_the_shorter_stack_is_the_one_picked(self) -> None:
+        # A stew is one of each, so brewing stops at the shorter stack.
+        g = self._stock(red_mushroom=1, brown_mushroom=15)
+        self.assertEqual(_mushroom_short(g), "red_mushroom")
+        a = resolve("gather_mushrooms", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "red_mushroom")
+
+    def test_the_batch_is_the_ceiling_of_one_call(self) -> None:
+        a = resolve("gather_mushrooms", self._stock())
+        self.assertEqual(a.args["count"], MUSHROOM_BATCH)
+
+    def test_a_near_full_stack_is_filled_to_the_cap_and_no_further(self) -> None:
+        g = self._stock(red_mushroom=MUSHROOM_CAP - 5, brown_mushroom=MUSHROOM_CAP)
+        a = resolve("gather_mushrooms", g)
+        self.assertEqual(a.args["count"], 5)
+
+    def test_a_mushroom_stack_is_not_shed_into_the_chest(self) -> None:
+        # `stow_surplus` files anything off the keep list as surplus, and no step withdraws it.
+        g = self._stock(red_mushroom=20, brown_mushroom=20)
+        g.chest_pos = (-42, 69, 90)
+        self.assertNotIn("red_mushroom", _surplus_besides_keep(g, g.inventory))
+        self.assertNotIn("brown_mushroom", _surplus_besides_keep(g, g.inventory))
+
+    def test_a_stocked_pantry_still_brews(self) -> None:
+        g = self._stock(red_mushroom=20, brown_mushroom=20)
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertLessEqual(a.args["items"][0]["count"], STEW_BATCH)
 
 
 class StewBowlPrepTest(unittest.TestCase):
