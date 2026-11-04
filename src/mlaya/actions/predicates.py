@@ -2006,8 +2006,8 @@ def _gold_reserve_steps(gs: GameState) -> list[str]:
     inv = gs.inventory
     if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
         return []
-    if (_has(inv, RAW_GOLD) and _smelting_reach(gs)
-            and _furnace_fuel(inv) is not None and _furnace_room(gs)):
+    if (_has(inv, RAW_GOLD) and _furnace_fuel(inv) is not None and _furnace_room(gs)
+            and (_smelting_reach(gs) or gs.furnace_pos is not None)):
         return ["smelt_gold"]
     if _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
         return ["mine_gold_reserve"]

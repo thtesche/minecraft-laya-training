@@ -1362,9 +1362,20 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       f"mine gold ore for the {want} ingots the piglin pearl barter needs")
     if label == "smelt_gold":
         fuel = _furnace_fuel(inv)
-        if (not _smelting_reach(gs) or inv.get(RAW_GOLD, 0) < 1 or fuel is None
-                or not _furnace_room(gs)
-                or inv.get(GOLD_INGOT, 0) + inv.get(RAW_GOLD, 0) >= _gold_ingots_wanted(gs)):
+        if inv.get(RAW_GOLD, 0) < 1 or fuel is None:
+            return None
+        if not _smelting_reach(gs):
+            # Not at the base furnace and carrying no portable furnace: walk to the base
+            # furnace so the smelt can run there. If no base furnace is known, there is
+            # nothing to do - return None and let the chain fall through.
+            if gs.furnace_pos is not None and not _at_base(gs):
+                fx, fy, fz = gs.furnace_pos
+                return Action(label, "navigate",
+                              {"x": fx, "y": fy, "z": fz, "range": 1,
+                               "dig": True, "scaffold": True},
+                              "walk to the base furnace to smelt gold")
+            return None
+        if not _furnace_room(gs) or inv.get(GOLD_INGOT, 0) + inv.get(RAW_GOLD, 0) >= _gold_ingots_wanted(gs):
             return None
         fuel_name, capacity = fuel
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
