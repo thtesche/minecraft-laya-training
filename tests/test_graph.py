@@ -135,6 +135,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -243,6 +244,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._blocked_cell = None
         agent._placement_refused = set()
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._pour_skip = set()
         agent._stance_skip = set()
         agent._rescue_skip = set()
@@ -522,6 +524,7 @@ class PourSkipTest(unittest.TestCase):
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -636,6 +639,7 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -775,6 +779,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -932,6 +937,7 @@ class RescueSkipTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -1130,6 +1136,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -1945,6 +1952,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         return agent
 
     def test_a_build_that_spends_nothing_latches_the_frame_complete(self) -> None:
@@ -2101,6 +2109,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -2218,6 +2227,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -2590,6 +2600,7 @@ class DropHoleTest(unittest.TestCase):
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -2869,6 +2880,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -2988,6 +3000,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent.build_site = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
@@ -3157,6 +3170,7 @@ class ChestLidTest(unittest.TestCase):
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent._chest_above = None
+        agent._chest_above_name = None
         return agent
 
     def test_remembers_the_block_on_the_lid(self) -> None:
@@ -3438,6 +3452,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._chest_blocked = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -3612,6 +3627,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._portal_lit = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._base_adopted = False
         agent._portal_base_scanned = None
         agent.surface = None
@@ -4510,6 +4526,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._heading = None
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._nether_travel = 0.0
         agent._nether_last_pos = None
         agent._nether_ticks = 0
@@ -4755,6 +4772,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent.surface = None
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent.mcp = self._Mcp(data)
         return agent
 
@@ -5205,6 +5223,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()
@@ -5874,6 +5893,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._furnace_occupied = False
         agent._blocked_cell = None
         agent._chest_above = None
+        agent._chest_above_name = None
         agent._portal_blocked = []
         agent._frame_complete = False
         agent._refused_frame = set()

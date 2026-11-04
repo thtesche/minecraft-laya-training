@@ -1018,6 +1018,7 @@ class GameState:
     # it the whole inventory relief) fails on every tick otherwise (live, run26: the buried base
     # put a cobblestone on the chest lid and the full pack could never be unloaded).
     chest_above: tuple[int, int, int] | None = None
+    chest_above_name: str | None = None
     # Whether a block kind exists anywhere in the loaded world, even beyond RESOURCE_RADIUS.
     # `view_blocks find` reports a per-name `found` count across every loaded chunk, so a deep
     # deposit the 64 m scan cannot list still proves the ore is there to dig for. This is what
@@ -1289,6 +1290,8 @@ class GameState:
             "drops": self.drops,
             "base": self.base,
             "chest_pos": self.chest_pos,
+            "chest_above": list(self.chest_above) if self.chest_above else None,
+            "chest_above_name": self.chest_above_name,
             "base_adopted": self.base_adopted,
             "furnace_pos": self.furnace_pos,
             "smoker_pos": self.smoker_pos,
@@ -2078,6 +2081,19 @@ def parse_block_above(text: str) -> tuple[int, int, int] | None:
     if not m:
         return None
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def parse_chest_blocker_name(text: str) -> str | None:
+    """The block name in a `[CHEST_BLOCKED]` refusal, or None.
+
+    `[CHEST_BLOCKED] The chest at (x, y, z) cannot open: crafting_table is directly above
+    it at (x, y+1, z).` The word before "is directly above it" names the blocker; that is the
+    block `collect_block` has to break, since `build_structure` refuses containers.
+    """
+    m = re.search(r":\s*(\w+)\s+is directly above it at", text or "")
+    if not m:
+        return None
+    return m.group(1)
 
 
 def parse_refused_cells(text: str) -> list[tuple[int, int, int]]:

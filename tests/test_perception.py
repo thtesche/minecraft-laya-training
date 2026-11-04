@@ -6,7 +6,7 @@ import unittest
 from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_LIMIT, GROUND_NAMES,
                               RESCUE_GROUND_LIMIT, RESCUE_GROUND_NAMES,
                               RESCUE_RADIUS, RESOURCE_LIMIT, BlockHit,
-                              frame_obsidian_cells, frame_volume, parse_block_above, parse_box,
+                              frame_obsidian_cells, frame_volume, parse_block_above, parse_chest_blocker_name, parse_box,
                               parse_cells, parse_furnace_contents, parse_ground_height,
                               parse_frontier_heading, parse_remembered_gate,
                               parse_remembered_stock, parse_remembered_stocks,
@@ -1439,6 +1439,16 @@ class ParseBlockAboveTest(unittest.TestCase):
     def test_negative_coordinates_read(self) -> None:
         text = "[CHEST_BLOCKED] The chest at (-3, 64, 7) cannot open: stone is directly above it at (-3, 65, 7)."
         self.assertEqual(parse_block_above(text), (-3, 65, 7))
+
+    def test_the_blocker_name_is_read(self) -> None:
+        text = ("[CHEST_BLOCKED] The chest at (229, 62, 224) cannot open: crafting_table is directly "
+                "above it at (229, 63, 224).")
+        self.assertEqual(parse_chest_blocker_name(text), "crafting_table")
+
+    def test_the_blocker_name_is_none_without_a_blocked_message(self) -> None:
+        self.assertIsNone(parse_chest_blocker_name("[INVENTORY_FULL] No free slot"))
+        self.assertIsNone(parse_chest_blocker_name(""))
+        self.assertIsNone(parse_chest_blocker_name(None))
 
     def test_any_other_failure_or_empty_text_is_none(self) -> None:
         self.assertIsNone(parse_block_above("[CHEST_CLEARANCE_UNLOADED] The cell above is not loaded."))

@@ -1909,9 +1909,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         # A block sitting on the chest stops its lid (`[CHEST_BLOCKED]`): dig that exact cell
         # first, then open the chest on the next tick. Reusing the label keeps the relief to one
-        # step; the deposit runs as soon as the cell above the chest is clear.
+        # step; the deposit runs as soon as the cell above the chest is clear. A container
+        # (crafting_table, furnace, chest) cannot be removed by `build_structure` (the server
+        # answers `[BUILD_INCOMPLETE]`), so it is broken with `collect_block` instead, the same
+        # tool `clear_frame` uses for a refused frame cell.
         if gs.chest_above is not None:
             ax, ay, az = gs.chest_above
+            name = getattr(gs, "chest_above_name", None)
+            if name:
+                return Action(label, "collect_block",
+                              {"block_name": name, "count": 1, "x": ax, "y": ay, "z": az},
+                              f"break the {name} at {ax},{ay},{az} that blocks the chest lid")
             return Action(label, "build_structure",
                           {"blocks": [{"x": ax, "y": ay, "z": az, "block_name": "air"}]},
                           f"dig the block at {ax},{ay},{az} that blocks the chest lid")

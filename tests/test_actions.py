@@ -3503,6 +3503,17 @@ class HomeBaseTest(unittest.TestCase):
         self.assertEqual(a.args["blocks"],
                          [{"x": -197, "y": -45, "z": -97, "block_name": "air"}])
 
+    def test_stow_surplus_collects_a_container_blocker(self) -> None:
+        g = self._home(self._geared(tuff=64))
+        g.chest_pos = (-197, -46, -97)
+        g.chest_above = (-197, -45, -97)
+        g.chest_above_name = "crafting_table"
+        g.slots_used = 34
+        a = resolve("stow_surplus", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args, {"block_name": "crafting_table", "count": 1,
+                                  "x": -197, "y": -45, "z": -97})
+
     def test_inventory_relief_digs_the_lid_before_depositing(self) -> None:
         g = self._home(self._geared(tuff=64))
         g.chest_pos = (-197, -46, -97)
