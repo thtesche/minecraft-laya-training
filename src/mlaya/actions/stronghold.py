@@ -225,6 +225,40 @@ def stronghold_complete(gs: GameState) -> bool:
     return bool(gs.end_portal_active)
 
 
+def _striding_to_stronghold(gs: GameState) -> bool:
+    """The pure march to a confirmed frame: eyes crafted, the frame's address known, the body not
+    yet at it.
+
+    In this window the run only walks and digs toward the frame - no hunt, no scaffold, nothing the
+    base supplies - so the tech-tree and home-storage steps that otherwise leak onto the offer
+    (`mine_stone` for cobblestone, `stow_surplus` back to base) are pure detours that pull the bot
+    the wrong way down a ~2000-block trek (run175). The same gate turns a full pack into a drop on
+    the ground (`_march_shed`) instead of a walk home. It mirrors the travel branch of
+    `stronghold_candidates`: eyes in hand and a frame distance known, which is exactly when that
+    branch offers `travel_to_stronghold`.
+    """
+    inv = gs.inventory
+    return (nether_expedition_complete(gs) and not stronghold_complete(gs)
+            and _overworld(gs) and not _at_stronghold(gs)
+            and _ender_eyes(inv) >= _eyes_in_hand(gs)
+            and _frame_distance(gs) is not None)
+
+
+def _march_junk(name: str) -> bool:
+    """Whether a block is clutter the stronghold march drops on the way (beyond `JUNK_ITEMS`)."""
+    return (name in STRONGHOLD_MARCH_JUNK
+            or any(name.endswith(suffix) for suffix in STRONGHOLD_MARCH_JUNK_SUFFIXES))
+
+
+def _march_shed(gs: GameState) -> list[str]:
+    """Carried march clutter to drop, in inventory order. Empty off the march, so the wider shed
+    list only ever applies while the bot is trekking to the frame and never returning to base."""
+    if not _striding_to_stronghold(gs):
+        return []
+    inv = gs.inventory
+    return [n for n, cnt in inv.items() if cnt and n not in JUNK_ITEMS and _march_junk(n)]
+
+
 def stronghold_candidates(gs: GameState) -> list[str]:
     """The stronghold steps whose preconditions hold, in the order the bot walks them.
 
@@ -261,6 +295,13 @@ def stronghold_candidates(gs: GameState) -> list[str]:
         # answers in one tick and moves nobody (run173 it75 and it79: two identical successes, the
         # bot 108 m from the frame and 98 blocks above it).
         if _frame_distance(gs) is not None:
+            # A full pack cannot pick up what the descent digs, and the march never doubles back to
+            # base, so the relief is a drop on the ground here rather than the `stow_surplus` the
+            # home-storage block would offer (suppressed for this phase in `planner`). Offered ahead
+            # of the walk so the pack clears first; the march block below sheds the wider clutter
+            # list, which is why the offer gate reads `_march_shed` as well as `_droppable`.
+            if gs.slots_used >= INVENTORY_NEAR_FULL and (_droppable(gs, inv) or _march_shed(gs)):
+                out.append("drop_junk")
             out.append("travel_to_stronghold")
             return out
         # No frame the loop knows the position of yet: throw the eyes and let the server find it.

@@ -364,6 +364,26 @@ JUNK_ITEMS = ("tuff", "calcite", "diorite", "andesite", "granite", "cobbled_deep
               "leather", "bone", "raw_copper", "glow_ink_sac",
               "egg", "mossy_stone_brick_slab", "sand", "dripstone_block")
 
+# Extra rubbish shed only on the stronghold march (`_striding_to_stronghold`). The descent to the
+# frame shovels up deepslate and biome clutter, and the pack still carries Nether leftovers from the
+# expedition - but the march never returns to base, so a full pack has to shed on the ground rather
+# than walk ~2000 blocks home (run175). These sit on top of `JUNK_ITEMS` and apply *only* in that
+# phase: `gravel` and `redstone` are on `KEEP_MATERIALS` for the ordinary run, where a drop would be
+# a mistake. Nothing with a recipe or a trade value is here, and no building block (cobblestone,
+# stone) or wood (warped/crimson stems and planks are the Nether's only lumber) - only the
+# decorative blocks Laya never spends. The user named these on run175's pack; the symmetric
+# categories (crimson beside warped, every terracotta/banner/sapling colour) are folded in so a
+# crimson forest sheds the same as a warped one and we do not revisit this for the next colour.
+STRONGHOLD_MARCH_JUNK = frozenset({
+    "bamboo", "spider_eye", "lead", "magma_block", "redstone", "gravel", "red_sand",
+    "warped_nylium", "crimson_nylium", "warped_fungus", "crimson_fungus",
+    "warped_roots", "crimson_roots", "nether_sprouts", "weeping_vines", "twisting_vines",
+    "warped_wart_block", "nether_wart_block", "shroomlight",
+    "soul_sand", "soul_soil", "basalt", "smooth_basalt", "blackstone",
+})
+# Whole families named by their suffix, so every colour variant is covered without listing each.
+STRONGHOLD_MARCH_JUNK_SUFFIXES = ("_sapling", "_terracotta", "_banner", "_glazed_terracotta")
+
 # Geometry of the gear the tech chain upgrades through, weakest material first. A carried tool
 # or armour piece of a lower tier than the best the bot already carries, wears or holds is dead
 # weight no recipe here wants, but `_junk_carried` cannot see it either (the name is a real tool),

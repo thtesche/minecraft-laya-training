@@ -44,6 +44,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_EXIT_HOP_MIN,
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
+                           _striding_to_stronghold, _march_shed, _march_junk,
+                           STRONGHOLD_MARCH_JUNK,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                            MUSHROOM_CAP, MUSHROOM_BATCH,
                            _mushroom_short, _mushroom_pantry_wanted,
@@ -6383,6 +6385,104 @@ class StrongholdFrameAddressTest(unittest.TestCase):
         g.end_portal_active = True
         self.assertTrue(stronghold_complete(g))
         self.assertNotIn("travel_to_stronghold", candidates(g))
+
+
+class StrongholdMarchShedTest(unittest.TestCase):
+    """On the trek to the frame the bot sheds clutter on the ground and never doubles back.
+
+    Live, run175's pack on a `travel_to_stronghold` tick offered `["equip_armor",
+    "travel_to_stronghold", "stow_surplus", "mine_stone"]`: `mine_stone` is tech-tree noise the trek
+    never spends, and `stow_surplus` would walk the bot ~2000 blocks home to a chest - the base
+    ping-pong that keeps the run from ever arriving. The march suppresses both and drops the biome
+    clutter and Nether leftovers (`warped_*`, `magma_block`, `red_terracotta`, `white_banner`,
+    `bamboo`, `lead`, `spider_eye`, saplings, and the ordinarily-kept `gravel`/`redstone`) where it
+    stands, since the trek never returns to base. Nothing with a recipe or a trade value goes.
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-196, -46, -98)
+    FRAME = (-269, -36, -1819)
+
+    # run175's pack, verbatim.
+    PACK = dict(furnace=1, bowl=4, stick=2, raw_gold=16, bamboo=9, string=4, cobbled_deepslate=4,
+                crafting_table=1, arrow=3, coal=1, diamond_helmet=1, black_wool=2, spider_eye=3,
+                lead=1, red_terracotta=1, warped_nylium=13, jungle_log=8, white_banner=1,
+                warped_fungus=1, white_wool=10, magma_block=15, redstone=4, ender_eye=14, gravel=6,
+                feather=8, red_sand=1, oak_sapling=1, leather=2, warped_roots=10, diamond_sword=1,
+                granite=10, diamond_pickaxe=2)
+
+    def _march(self, **over) -> GameState:
+        pack = dict(self.PACK)
+        pack.update(over)
+        g = at_home(geared(**pack), base=self.BASE)
+        g.chest_pos = self.CHEST
+        g.powder_stowed = True
+        g.powder_bank = 18
+        g.dimension = "minecraft:overworld"
+        g.stronghold_estimated = True
+        g.stronghold_frame = self.FRAME
+        # Halfway along the trek: off the base (so a chest is not underfoot) and nowhere near the
+        # frame, which is the state the base ping-pong bites in.
+        g.pos = (-230.0, 64.0, -950.0)
+        g.slots_used = INVENTORY_NEAR_FULL
+        return g
+
+    def test_the_march_is_recognised(self) -> None:
+        g = self._march()
+        self.assertTrue(_striding_to_stronghold(g))
+        self.assertFalse(_at_stronghold(g))
+
+    def test_mine_stone_and_stow_surplus_are_gone_from_the_offer(self) -> None:
+        cands = candidates(self._march())
+        self.assertIn("travel_to_stronghold", cands)
+        self.assertNotIn("mine_stone", cands)
+        self.assertNotIn("stow_surplus", cands)
+
+    def test_a_full_pack_sheds_on_the_way(self) -> None:
+        self.assertIn("drop_junk", candidates(self._march()))
+
+    # The clutter the march shovels up, beyond the names already on JUNK_ITEMS. gravel and redstone
+    # are KEEP_MATERIALS for the ordinary run; this phase overrides that.
+    CLUTTER = {"bamboo", "spider_eye", "lead", "red_terracotta", "warped_nylium", "white_banner",
+               "warped_fungus", "warped_roots", "magma_block", "redstone", "gravel", "red_sand",
+               "oak_sapling"}
+    # The kit, food and bed stock a drop must never name.
+    KEEP = {"ender_eye", "diamond_pickaxe", "diamond_sword", "diamond_helmet", "raw_gold", "bowl",
+            "white_wool", "black_wool", "crafting_table", "coal", "jungle_log", "furnace", "string",
+            "arrow", "feather", "stick"}
+
+    def test_the_shed_list_names_every_clutter_item(self) -> None:
+        # `_march_shed` is uncapped: it is the full set of march clutter the pack carries, and it
+        # excludes everything already on JUNK_ITEMS (those drop through the ordinary path).
+        shed = set(_march_shed(self._march()))
+        self.assertEqual(shed, self.CLUTTER)
+
+    def test_the_drop_is_a_capped_subset_and_keeps_the_kit(self) -> None:
+        # One call sheds up to twelve names (the next tick takes the rest); every one is clutter or
+        # ordinary junk, and never a piece of the kit.
+        g = self._march()
+        a = resolve("drop_junk", g)
+        self.assertEqual(a.tool, "drop_item")
+        dropped = {it["item_name"] for it in a.args["items"]}
+        self.assertLessEqual(len(dropped), 12)
+        allowed = self.CLUTTER | {"granite", "leather", "cobbled_deepslate"}
+        self.assertTrue(dropped <= allowed, dropped - allowed)
+        self.assertEqual(dropped & self.KEEP, set())
+
+    def test_off_the_march_gravel_and_redstone_stay(self) -> None:
+        # The wider shed is the march's alone: on an ordinary overworld tick the KEEP_MATERIALS
+        # rule still holds, so a drop never names gravel or redstone.
+        g = geared(redstone=4, gravel=6, cobbled_deepslate=4)
+        g.dimension = "minecraft:overworld"
+        self.assertFalse(_striding_to_stronghold(g))
+        self.assertEqual(_march_shed(g), [])
+
+    def test_the_suffix_families_match_every_colour(self) -> None:
+        for name in ("blue_terracotta", "birch_sapling", "red_banner", "lime_glazed_terracotta"):
+            self.assertTrue(_march_junk(name), name)
+        # Wood, building blocks and the kit never match.
+        for name in ("warped_planks", "crimson_stem", "cobblestone", "diamond_pickaxe", "ender_eye"):
+            self.assertFalse(_march_junk(name), name)
 
 
 class RodDemandSizedToTheFrameTest(unittest.TestCase):

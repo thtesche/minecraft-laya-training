@@ -735,7 +735,12 @@ def candidates(gs: GameState) -> list[str]:
     # chest was waiting for (run82's 481-tick ping-pong).
     at_chest = (gs.base is not None and _chest_ready(gs) and storage_target is not None
                 and (_at_base(gs) or _near_cell(gs, storage_target)))
-    if gs.slots_used >= INVENTORY_NEAR_FULL:
+    # The stronghold march owns its own relief (`stronghold_candidates` drops on the ground) and
+    # must never be sent home to a chest: a `stow_surplus` ~2000 blocks back is exactly the base
+    # ping-pong this phase has to avoid (run175). So the home-storage relief stands down there.
+    if _striding_to_stronghold(gs):
+        pass
+    elif gs.slots_used >= INVENTORY_NEAR_FULL:
         if at_chest:
             if _sheddable(gs, inv):
                 out.append("stow_surplus")
@@ -758,7 +763,9 @@ def candidates(gs: GameState) -> list[str]:
     # Overworld only: the cobble a tech tree spends belongs to the surface, and a pack full of
     # netherrack reads as short of it, so without this the Nether offered `mine_stone` on every
     # tick and the `explore` fallback (the only thing that marched toward a fortress) never fired.
-    if cobble < 12 and _can_mine(gs, "stone") and _overworld(gs):
+    # Withheld on the stronghold march: the trek to the frame spends no cobblestone, so the step is
+    # pure noise that competes with `travel_to_stronghold` and pulls the bot off the line (run175).
+    if cobble < 12 and _can_mine(gs, "stone") and _overworld(gs) and not _striding_to_stronghold(gs):
         out.append("mine_stone")
 
     # --- Nether prep (the daytime lull once the gate frame stands) ---
@@ -1934,7 +1941,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                        "scaffold": True},
                       "step away from the junk dropped on open ground, so it stays dropped")
     if label == "drop_junk":
-        items = [{"item_name": n} for n in _junk_carried(inv) + _spare_gear(gs, inv)]
+        # On the stronghold march the shed list widens to the biome clutter and Nether leftovers the
+        # descent cannot spend (`_march_shed`): the trek never returns to base, so this is the only
+        # way a full pack clears, and the extra names apply only while `_striding_to_stronghold`.
+        items = [{"item_name": n} for n in _junk_carried(inv) + _march_shed(gs) + _spare_gear(gs, inv)]
         items += _hoard_surplus(gs, inv)
         if not items:
             return None
