@@ -106,6 +106,14 @@ async def bootstrap_progress(executor) -> DurableFacts:
                                                    "find the chunks this world's lit portal was seen in"))
         if chunks:
             facts.gate_lit = True
+            # A lit nether_portal block can only exist in a chunk the server actually scanned, and
+            # a portal block is only ever placed into a frame that stands: `activate_portal` refuses
+            # `[PORTAL_NO_FRAME]` before it reaches the flint and steel. So a chunk that records a
+            # lit portal is also proof that the base frame is complete, even when the ledger has no
+            # `activate_portal` row for this gate (a gate lit in an earlier run, or a run whose
+            # ledger only kept the end-portal row). Without this, `frame_complete` stays False
+            # forever for such worlds and the obsidian chain reopens for a gate already built.
+            facts.frame_complete = True
     except Exception:
         pass
 
@@ -203,6 +211,11 @@ def progress_of(gs, durable: DurableFacts | None = None) -> Progress:
     #     own obsidian is the frame itself, a blank plane names nothing (see `_inject`). ---
     if _frame_short_at_base(gs):
         mark("frame_complete", False, "scan")
+    elif d.gate_lit:
+        # A lit gate proves the frame stands (the server refuses `[PORTAL_NO_FRAME]` before it
+        # ever lights one), so a ledger that only knows the gate also knows the frame - even when
+        # it has no `activate_portal` row of its own for this gate.
+        mark("frame_complete", True, "ledger")
     elif d.frame_complete:
         mark("frame_complete", True, "ledger")
     elif _frame_complete_at_base(gs):

@@ -94,6 +94,20 @@ class LedgerBootstrapTest(unittest.IsolatedAsyncioTestCase):
         self.by_sql[perception.BEARING_SQL] = [["stronghold", "pending", None]]
         self.assertFalse((await progress.bootstrap_progress(_Mcp(self.by_sql))).stronghold_estimated)
 
+    async def test_a_lit_gate_chunk_also_proves_the_frame(self) -> None:
+        by_sql = {
+            perception.GATE_CHUNK_SQL: [["overworld", -5, 1]],
+            perception.PORTAL_LEDGER_SQL: [],
+            perception.BED_LEDGER_SQL: [],
+            perception.DIMENSION_LEDGER_SQL: [],
+            perception.BEARING_SQL: [],
+            perception.STRONGHOLD_FRAME_SQL: [],
+            perception.CHECKPOINT_READ_SQL: [],
+        }
+        facts = await progress.bootstrap_progress(_Mcp(by_sql))
+        self.assertTrue(facts.gate_lit)
+        self.assertTrue(facts.frame_complete)
+
     async def test_a_world_with_no_ledger_still_boots(self) -> None:
         # Every read is guarded on its own: an absent table is an absent fact, not a dead run.
         facts = await progress.bootstrap_progress(_Mcp({}))
@@ -119,6 +133,14 @@ class PrecedenceTest(unittest.TestCase):
         p = progress.progress_of(perception.GameState(), facts)
         self.assertTrue(p.gate_lit)
         self.assertEqual(p.source["gate_lit"], "ledger")
+
+    def test_a_lit_gate_also_proves_the_frame(self) -> None:
+        # A ledger that only knows the gate (no `activate_portal` row of its own) still proves the
+        # frame: a lit portal cannot stand in a short frame, so `frame_complete` follows `gate_lit`.
+        facts = progress.DurableFacts(gate_lit=True, frame_complete=False)
+        p = progress.progress_of(perception.GameState(), facts)
+        self.assertTrue(p.frame_complete)
+        self.assertEqual(p.source["frame_complete"], "ledger")
 
     def test_a_scan_beats_a_latch_that_never_set(self) -> None:
         gs = perception.GameState(resource_found={"nether_portal": 6})

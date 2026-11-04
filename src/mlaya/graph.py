@@ -604,6 +604,7 @@ class Agent:
         # chest again, since the lid cannot swing under a full cube (live, run26: the buried base
         # put a cobblestone on the chest and the full pack could never be unloaded).
         self._chest_above: tuple[int, int, int] | None = None
+        self._chest_above_name: str | None = None
         # Cells of the portal opening (`perception.portal_interior`) that hold a stray block,
         # read while a frame build is pending. `clear_portal` digs them, so a block left above
         # the support layer cannot stall the gate (live: a bed in the opening left
@@ -746,7 +747,7 @@ class Agent:
         if facts.gate_lit and not self._portal_lit:
             self._portal_lit = True
             restored.append("gate_lit")
-        if facts.frame_complete and not self._frame_complete:
+        if (facts.frame_complete or facts.gate_lit) and not self._frame_complete:
             self._frame_complete = True
             restored.append("frame_complete")
         if facts.end_portal_active and not self._end_portal_active:
@@ -865,6 +866,7 @@ class Agent:
         gs.furnace_occupied = self._furnace_occupied
         gs.blocked_cell = self._blocked_cell
         gs.chest_above = self._chest_above
+        gs.chest_above_name = self._chest_above_name
         gs.portal_blocked = list(self._portal_blocked)
         gs.raised_cells = list(self._raised)
         gs.refused_frame = tuple(sorted(self._refused_frame))
@@ -883,7 +885,10 @@ class Agent:
             # names the frame's own obsidian is the frame talking about itself, so it may undo the
             # latch; a blank read names nothing and leaves it standing (run97).
             self._frame_complete = False
-        elif not self._frame_complete and _frame_complete_at_base(gs):
+        elif not self._frame_complete and (_frame_complete_at_base(gs) or _portal_lit_scan(gs)):
+            # A lit portal block in a loaded chunk is the frame standing: the server never places
+            # one into a short frame (`[PORTAL_NO_FRAME]`), so the latch can fire from the scan even
+            # when the frame plane itself is blank (base chunks unloaded after the build).
             self._frame_complete = True
         gs.frame_complete = self._frame_complete
         # The gate burns or it does not, and the scan only answers that while its chunk is loaded.
@@ -2931,10 +2936,14 @@ class Agent:
             return
         if ok:
             self._chest_above = None
+            self._chest_above_name = None
             return
         cell = perception.parse_block_above(text or "")
         if cell is not None:
             self._chest_above = cell
+            name = perception.parse_chest_blocker_name(text or "")
+            if name is not None:
+                self._chest_above_name = name
 
     def _note_nether_hop(self, action, ok: bool, text: str | None) -> None:
         """Count a hop toward the Nether exit that the terrain refused at the same cell.
