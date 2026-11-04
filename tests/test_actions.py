@@ -46,6 +46,9 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
                            _striding_to_stronghold, _stronghold_phase, _march_shed, _march_junk,
                            STRONGHOLD_MARCH_JUNK, _go_home_wanted, _cannot_heal,
+                           _bed_materials_ready, _bed_item_from_wool, _bed_at_stronghold,
+                           _bed_stronghold_stance, STRONGHOLD_BED_NEAR, _has_bed, _at_stance,
+                           stronghold_candidates,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                            MUSHROOM_CAP, MUSHROOM_BATCH,
                            _mushroom_short, _mushroom_pantry_wanted,
@@ -6542,6 +6545,136 @@ class StrongholdMarchShedTest(unittest.TestCase):
         # Wood, building blocks and the kit never match.
         for name in ("warped_planks", "crimson_stem", "cobblestone", "diamond_pickaxe", "ender_eye"):
             self.assertFalse(_march_junk(name), name)
+
+
+class StrongholdBedPhaseTest(unittest.TestCase):
+    """After the portal opens: craft a bed, lay it beside the frame, sleep once to pin the respawn.
+
+    This whole phase had never been exercised, and three defects hid in it, each of which a single
+    one of these tests would have caught:
+      * `place_bed_stronghold` called `_at_cell`, a name that is defined nowhere - a `NameError`
+        the instant the step resolved.
+      * `_bed_stronghold_stance` read `STRONGHOLD_BED_NEAR`, which lived in `stronghold` but is used
+        from `predicates` (imported first), so the name was not in that module's globals at call
+        time - a second `NameError` on the first call.
+      * `locate_stronghold` gated the ~1300-block trek on *loose* bed materials; a finished bed did
+        not satisfy it, and once a base bed shut the general bed chain nothing re-gathered wool, so
+        the phase could not start. The trek now takes a carried bed too, and gathers wool when it
+        has neither.
+    """
+
+    FRAME = (100, 60, 200)
+    OVERWORLD = "minecraft:overworld"
+
+    def _after_portal(self, pos=(101.0, 60.0, 200.0), **inv) -> GameState:
+        """A healthy, geared bot standing at a lit stronghold frame, portal already active."""
+        g = geared(**inv)
+        g.dimension = self.OVERWORLD
+        g.stronghold_frame = self.FRAME
+        g.end_portal_active = True
+        g.health = 20.0
+        g.food = 20.0
+        g.pos = pos
+        return g
+
+    def _with_placed_bed(self, g: GameState, dx=0, dz=1) -> GameState:
+        """Put a bed in the scan one step off the frame, as the server reports it after a sleep."""
+        fx, fy, fz = self.FRAME
+        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed", fx + dx, fy, fz + dz, 1.0)]
+        return g
+
+    # --- the two latent NameErrors ---
+
+    def test_place_bed_stronghold_resolves_without_a_nameerror(self) -> None:
+        # `_at_cell` was undefined; the walk-to-the-spot branch now reads `_at_stance`. Standing
+        # off the stance, the step walks there first.
+        g = self._after_portal(pos=(100.0, 60.0, 230.0), white_bed=1)
+        g.resources["stone"] = [BlockHit("stone", "stone", 100, 60, 201, 5.0)]
+        a = resolve("place_bed_stronghold", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (100, 60, 201))
+
+    def test_bed_stance_helper_resolves_without_a_nameerror(self) -> None:
+        # `_bed_stronghold_stance` reads `STRONGHOLD_BED_NEAR`; the constant now lives in
+        # `constants`, where `predicates` can see it. Standing beside the frame, the bot's own
+        # cell is the stance.
+        g = self._after_portal(white_bed=1)
+        self.assertEqual(_bed_stronghold_stance(g), (101, 60, 200))
+
+    # --- the bed chain, offered in order ---
+
+    def test_no_bed_but_materials_crafts_one(self) -> None:
+        g = self._after_portal(red_wool=3, oak_log=1)
+        self.assertFalse(_has_bed(g.inventory))
+        self.assertTrue(_bed_materials_ready(g))
+        self.assertEqual(stronghold_candidates(g), ["craft_bed_stronghold"])
+        a = resolve("craft_bed_stronghold", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "red_bed"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_a_carried_bed_is_laid_beside_the_frame(self) -> None:
+        g = self._after_portal(white_bed=1)
+        self.assertFalse(_bed_at_stronghold(g))
+        self.assertEqual(stronghold_candidates(g), ["place_bed_stronghold"])
+        # Standing on the stance, the step is the sleep that lays the bed and sets the spawn.
+        a = resolve("place_bed_stronghold", g)
+        self.assertEqual(a.tool, "sleep")
+
+    def test_a_laid_bed_is_slept_in_at_night(self) -> None:
+        g = self._with_placed_bed(self._after_portal())
+        self.assertTrue(_bed_at_stronghold(g))
+        self.assertFalse(getattr(g, "slept_at_stronghold", False))
+        self.assertEqual(stronghold_candidates(g), ["sleep_stronghold"])
+        # The sleep is night-gated like any other: no bed-click by day.
+        g.phase = "day"
+        self.assertIsNone(resolve("sleep_stronghold", g))
+        g.phase = "night"
+        a = resolve("sleep_stronghold", g)
+        self.assertEqual(a.tool, "sleep")
+
+    def test_the_chain_closes_once_the_bot_has_slept(self) -> None:
+        g = self._with_placed_bed(self._after_portal())
+        g.slept_at_stronghold = True
+        self.assertEqual(stronghold_candidates(g), [])
+
+    # --- the locate gate (the trek's bed requirement) ---
+
+    def test_the_trek_takes_a_carried_bed_without_loose_wool(self) -> None:
+        # The gate used to demand *loose* wool+wood; a finished bed now satisfies it, so the bot
+        # does not re-gather what it already made.
+        g = geared(ender_eye=16, white_bed=1)
+        g.dimension = self.OVERWORLD
+        g.stronghold_estimated = True
+        self.assertFalse(_bed_materials_ready(g))
+        self.assertTrue(_has_bed(g.inventory))
+        self.assertIsNotNone(resolve("locate_stronghold", g))
+
+    def test_without_a_bed_or_its_materials_the_trek_waits_and_gathers_wool(self) -> None:
+        # Neither a bed nor the wool to make one: the trek is refused and the phase gathers a
+        # fresh bed's wool itself, because the base bed keeps the general bed chain shut.
+        g = geared(ender_eye=16)
+        g.dimension = self.OVERWORLD
+        g.stronghold_estimated = True
+        g.mobs = [("sheep", "passive", 6, 8.0)]
+        self.assertFalse(_has_bed(g.inventory))
+        self.assertFalse(_bed_materials_ready(g))
+        self.assertIsNone(resolve("locate_stronghold", g))
+        self.assertEqual(stronghold_candidates(g), ["hunt_wool"])
+
+    def test_a_bed_within_reach_of_the_frame_counts(self) -> None:
+        g = self._after_portal()
+        self._with_placed_bed(g, dz=STRONGHOLD_BED_NEAR)
+        self.assertTrue(_bed_at_stronghold(g))
+        # A bed a long way off is not the stronghold's.
+        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed",
+                                             self.FRAME[0], self.FRAME[1], self.FRAME[2] + 40, 1.0)]
+        self.assertFalse(_bed_at_stronghold(g))
+
+    def test_the_bed_item_follows_the_wool_colour(self) -> None:
+        self.assertEqual(_bed_item_from_wool({"blue_wool": 3}), "blue_bed")
+        self.assertEqual(_bed_item_from_wool({"lime_wool": 5}), "lime_bed")
+        self.assertIsNone(_bed_item_from_wool({"blue_wool": 2}))
 
 
 class RodDemandSizedToTheFrameTest(unittest.TestCase):

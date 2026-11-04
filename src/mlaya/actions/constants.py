@@ -244,6 +244,15 @@ ENDER_PEARL_ITEM = "ender_pearl"
 ENDER_EYE_ITEM = "ender_eye"
 ENDER_EYES = END_PORTAL_SOCKETS + EYE_THROW_BUFFER
 ENDER_PEARLS = ENDER_EYES
+# How far a bed may stand from the stronghold frame and still count as "beside it". The bed is the
+# run's new respawn point, laid once the portal is lit; it only has to be within the chunk the
+# frame loads so a death in the End lands the bot back at the stronghold, not the old base. Lives
+# here (not in `stronghold`) because `predicates._bed_at_stronghold`/`_bed_stronghold_stance` read
+# it, and `predicates` is imported before `stronghold` - a name defined there is not in this
+# module's namespace when those functions run (it would raise `NameError` on the first call).
+STRONGHOLD_BED_NEAR = 8
+# The vertical slack for the same test: the frame sits in a floor the bot may stand a step above.
+STRONGHOLD_BED_NEAR_Y = 4
 # When the Nether trip has to end. Blazes hit hard, so the bot leaves at a quarter of its health
 # and well before it is hungry; both thresholds are checked on the state, never guessed at runtime.
 NETHER_RETURN_HEALTH = 8.0

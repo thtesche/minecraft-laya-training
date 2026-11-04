@@ -1019,7 +1019,7 @@ def _bed_at_stronghold(gs: GameState) -> bool:
     """Whether a bed of any colour stands within reach of the stronghold frame.
 
     Keyed on the remembered frame cell: once the bot has stood at the frame it knows where
-    "beside the stronghold" is, and any bed within 8 blocks counts.
+    "beside the stronghold" is, and any bed within STRONGHOLD_BED_NEAR blocks counts.
     """
     if gs.stronghold_frame is None:
         return False
@@ -1027,9 +1027,9 @@ def _bed_at_stronghold(gs: GameState) -> bool:
     for hits in gs.resources.values():
         for h in hits:
             if h.name.endswith("_bed"):
-                if (abs(h.x - fx) <= 8
-                        and abs(h.z - fz) <= 8
-                        and abs(h.y - fy) <= 4):
+                if (abs(h.x - fx) <= STRONGHOLD_BED_NEAR
+                        and abs(h.z - fz) <= STRONGHOLD_BED_NEAR
+                        and abs(h.y - fy) <= STRONGHOLD_BED_NEAR_Y):
                     return True
     return False
 

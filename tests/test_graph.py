@@ -6398,5 +6398,53 @@ class ShutInTest(unittest.TestCase):
         self.assertEqual(injected.dig_out_try, 2)
 
 
+class SleepStrongholdLatchTest(unittest.TestCase):
+    """The stronghold-respawn latch is pinned by an actual `sleep` call, never by the walk to it.
+
+    `place_bed_stronghold` and `sleep_stronghold` both resolve first to a `navigate` to the
+    bedside and only then to the `sleep` that lays or clicks the bed. The latch keys on
+    `action.tool == "sleep"` (mirroring `_note_bed`): the walk sets no spawn, and with the portal
+    lit and a bed at the frame this latch closes the whole run, so latching it on a bare walk would
+    end the run before any bed was ever laid.
+    """
+
+    class _Action:
+        def __init__(self, label: str, tool: str) -> None:
+            self.label = label
+            self.tool = tool
+            self.args = {}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        return agent
+
+    def test_the_walk_to_the_bed_does_not_latch(self) -> None:
+        agent = self._agent()
+        agent._note_sleep_stronghold(self._Action("place_bed_stronghold", "navigate"), True, {})
+        self.assertFalse(agent._slept_at_stronghold)
+
+    def test_an_unrelated_sleep_does_not_latch(self) -> None:
+        agent = self._agent()
+        agent._note_sleep_stronghold(self._Action("sleep", "sleep"), True, {})
+        agent._note_sleep_stronghold(self._Action("go_home", "navigate"), True, {})
+        self.assertFalse(agent._slept_at_stronghold)
+
+    def test_the_place_that_clicks_the_bed_latches(self) -> None:
+        agent = self._agent()
+        agent._note_sleep_stronghold(self._Action("place_bed_stronghold", "sleep"), True, {})
+        self.assertTrue(agent._slept_at_stronghold)
+
+    def test_the_night_sleep_latches(self) -> None:
+        agent = self._agent()
+        agent._note_sleep_stronghold(self._Action("sleep_stronghold", "sleep"), True, {})
+        self.assertTrue(agent._slept_at_stronghold)
+
+    def test_a_refused_sleep_leaves_the_goal_open(self) -> None:
+        agent = self._agent()
+        agent._note_sleep_stronghold(self._Action("sleep_stronghold", "sleep"), False, {})
+        self.assertFalse(agent._slept_at_stronghold)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -41,9 +41,6 @@ STRONGHOLD_LABELS = frozenset({
     "craft_bed_stronghold", "place_bed_stronghold", "sleep_stronghold",
 })
 
-# How far a bed may stand from the stronghold frame and still count as "beside it".
-STRONGHOLD_BED_NEAR = 8
-
 
 def _ender_pearls(inv: dict[str, int]) -> int:
     """Ender pearls carried in the pack."""
@@ -290,14 +287,21 @@ def stronghold_candidates(gs: GameState) -> list[str]:
     # After the portal fires: craft a bed, lay it beside the stronghold frame, then sleep once
     # to pin the respawn point there instead of the old base. That is the new end of the run.
     # It owns the tick outright - no locate, no travel, no procurement competes with it.
+    #
+    # Ordered on "is the bed already down" first, not "is one carried": `place_bed_stronghold`
+    # lays the bed with the `sleep` tool, which spends it out of the pack, so a has-bed-first test
+    # would read the just-placed bed as gone and loop back to crafting a second one instead of
+    # reaching the sleep. Once a bed stands beside the frame the only thing left is the sleep (if
+    # the place did not already pin the spawn); with no bed down, lay the carried one, or craft one
+    # from the carried wool.
     if gs.end_portal_active:
-        if not _has_bed(inv):
-            if _bed_materials_ready(gs):
-                out.append("craft_bed_stronghold")
-        elif not _bed_at_stronghold(gs):
+        if _bed_at_stronghold(gs):
+            if not getattr(gs, "slept_at_stronghold", False):
+                out.append("sleep_stronghold")
+        elif _has_bed(inv):
             out.append("place_bed_stronghold")
-        elif not getattr(gs, "slept_at_stronghold", False):
-            out.append("sleep_stronghold")
+        elif _bed_materials_ready(gs):
+            out.append("craft_bed_stronghold")
         return out
 
     # Before the first (estimate) throw the buffer is built on top of the frame's empty sockets;
@@ -317,10 +321,22 @@ def stronghold_candidates(gs: GameState) -> list[str]:
     # returned, with none it fell through to procurement below), so nothing is re-offered on the
     # frame the bot is standing at.
     elif _ender_eyes(inv) >= locate_need:
-        # The eyes are crafted. A frame the locate phase confirmed but the body never reached has to
-        # be walked to: the survey stops the moment a frame chunk loads, so re-sending `locate`
-        # answers in one tick and moves nobody (run173 it75 and it79: two identical successes, the
-        # bot 108 m from the frame and 98 blocks above it).
+        # The eyes are crafted, but the trek pins the run's new spawn with a bed beside the frame,
+        # so the means to set it has to ride along before walking ~1300 blocks out. A base bed is
+        # the old spawn the run is leaving, so the general bed chain (gated on *any* bed being
+        # available) stays shut here and this gathers a fresh bed's wool itself. Offered ahead of
+        # the locate/travel, which `resolve_stronghold` refuses until a bed or its materials are
+        # carried; with neither, roam (empty `out` -> `explore`) until a sheep or spider turns up.
+        if not _has_bed(inv) and not _bed_materials_ready(gs):
+            if gs.mob_nearest("sheep") is not None and _hunt_ok(gs):
+                out.append("hunt_wool")
+            elif _safe_spider_hunt(gs):
+                out.append("hunt_string")
+            return out
+        # A frame the locate phase confirmed but the body never reached has to be walked to: the
+        # survey stops the moment a frame chunk loads, so re-sending `locate` answers in one tick
+        # and moves nobody (run173 it75 and it79: two identical successes, the bot 108 m from the
+        # frame and 98 blocks above it).
         if _frame_distance(gs) is not None:
             # A full pack cannot pick up what the descent digs, and the march never doubles back to
             # base, so the relief is a drop on the ground here rather than the `stow_surplus` the
@@ -461,10 +477,13 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         need = _eyes_in_hand(gs)
         if not _overworld(gs) or _ender_eyes(inv) < need or _at_stronghold(gs):
             return None
-        # Before the stronghold trek, the bot must carry bed materials: three wool of one colour
-        # and enough wood. Without them there is no bed to set at the stronghold and the run
-        # cannot finish there.
-        if not _bed_materials_ready(gs):
+        # Before the stronghold trek, the bot must carry the means to set a fresh respawn at the
+        # frame: either a finished bed, or the wool and wood to craft one there. Without either
+        # there is nothing to pin the new spawn and the run cannot finish at the stronghold, so the
+        # trek waits while `stronghold_candidates` gathers the wool. A bed already standing at the
+        # base does not count - that is the old spawn the run is leaving - which is why the gate
+        # reads the carried bed, not `_bed_available`.
+        if not _has_bed(inv) and not _bed_materials_ready(gs):
             return None
         # Two phases, keyed by a loop latch: `estimate` saves the eye-of-ender triangulation
         # without travelling, then `locate` reuses the same durable `search_id` to travel there
@@ -515,7 +534,7 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         if cell is None:
             return None
         sx, sy, sz = cell
-        if not _at_cell(gs, cell):
+        if not _at_stance(gs, cell):
             return Action(label, "navigate",
                           {"x": sx, "y": sy, "z": sz, "range": 0,
                            "dig": True, "scaffold": True},

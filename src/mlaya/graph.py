@@ -2520,14 +2520,19 @@ class Agent:
             self._end_portal_active = True
 
     def _note_sleep_stronghold(self, action, ok: bool, delta: dict, res=None) -> None:
-        """Latch that the bot slept once at the stronghold to pin its respawn point there.
+        """Latch that the respawn point is pinned at the stronghold.
 
-        `sleep_stronghold` confirms the new spawn: once it reports ok, the run's end criterion
-        (portal active + bed at stronghold + slept once) can close. A refused sleep leaves the
-        goal open. `place_bed_stronghold` uses the same `sleep` tool (it lays the bed and sleeps
-        in one server call), so it sets the latch too.
+        `place_bed_stronghold` lays the bed and clicks it (one `sleep` call), and `sleep_stronghold`
+        sleeps in a bed already standing there - either one *clicked* bed sets the spawn, in daytime
+        too. Both carry their own label but the walk to the spot resolves under the same label with
+        the `navigate` tool, and that step sets nothing: it is the `sleep` call that pins the spawn.
+        So the latch keys on `action.tool == "sleep"`, mirroring `_note_bed` - without it a bare
+        walk to the bedside would close the run's end criterion (portal + bed at stronghold +
+        this latch) before any bed was ever laid. A refused `sleep` leaves the goal open.
         """
         if action.label not in ("sleep_stronghold", "place_bed_stronghold"):
+            return
+        if action.tool != "sleep":
             return
         if ok:
             self._slept_at_stronghold = True
