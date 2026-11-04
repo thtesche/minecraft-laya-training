@@ -110,6 +110,11 @@ CRITERIA: dict[str, str] = {
     "locate_stronghold": "throw an eye of ender to find the stronghold, then travel to it and stand at the end portal frame",
     "travel_to_stronghold": "walk to the end portal frame the stronghold search already confirmed, so the fill can start at it",
     "activate_end_portal": "fill the end portal frame's empty sockets with the carried eyes of ender until the portal opens",
+    # The stronghold bed phase: after the portal opens, a bed beside the stronghold resets the
+    # spawn point so a death in the End does not send the bot back to the old base.
+    "craft_bed_stronghold": "craft a bed from any three wool of one colour and enough wood, ready to set the stronghold spawn",
+    "place_bed_stronghold": "walk to a clear spot beside the stronghold frame and lay the bed there, pinning the respawn point at the stronghold",
+    "sleep_stronghold": "sleep once in the stronghold bed to confirm the new spawn point, after which the run is finished",
 }
 
 EDIBLE = {

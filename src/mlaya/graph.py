@@ -24,7 +24,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
                       FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS,
-                      _portal_lit_scan)
+                      _portal_lit_scan, _bed_at_stronghold)
 from .brain import Brain, escalate_to_system2
 from .mcp import _find
 from .memory import MemoryLog
@@ -671,6 +671,9 @@ class Agent:
         self._end_portal_active = False
         self._stronghold_estimated = False
         self._powder_exhausted = False
+        # The stronghold bed phase: set once `sleep_stronghold` reports success, so the run's
+        # new end criterion (portal active + bed at stronghold + slept once) can close.
+        self._slept_at_stronghold = False
         # The end portal frame the locate phase confirmed (`_note_locate`): the cell the bot has to
         # walk to before `activate_end_portal` can aim at anything. A locate "succeeds" the moment a
         # frame chunk loads, so this is the only record of where the frame actually is.
@@ -898,6 +901,7 @@ class Agent:
         gs.nether_ticks = self._nether_ticks
         gs.powder_stowed = self._powder_stowed
         gs.end_portal_active = self._end_portal_active
+        gs.slept_at_stronghold = getattr(self, "_slept_at_stronghold", False)
         gs.stronghold_estimated = self._stronghold_estimated
         gs.stronghold_frame = self._stronghold_frame
         gs.powder_exhausted = self._powder_exhausted
@@ -1798,6 +1802,7 @@ class Agent:
         gs.portal_lit = self._portal_lit
         gs.powder_stowed = self._powder_stowed
         gs.end_portal_active = self._end_portal_active
+        gs.slept_at_stronghold = getattr(self, "_slept_at_stronghold", False)
         gs.stronghold_estimated = self._stronghold_estimated
         gs.stronghold_frame = self._stronghold_frame
         gs.powder_exhausted = self._powder_exhausted
@@ -1910,7 +1915,8 @@ class Agent:
         """
         return (bool(self.settings.loop.stop_when_complete)
                 and tech_tree_complete(gs) and nether_expedition_complete(gs)
-                and stronghold_complete(gs))
+                and stronghold_complete(gs) and _bed_at_stronghold(gs)
+                and getattr(self, "_slept_at_stronghold", False))
 
     def _stop_state(self, gs, iteration: int) -> dict:
         """`done`/`stop` for the next state: the goal ends the run early, else the limit does -
@@ -2512,6 +2518,19 @@ class Agent:
                 self._frame_eyes = min(END_PORTAL_SOCKETS, self._frame_eyes + spent)
         if ok:
             self._end_portal_active = True
+
+    def _note_sleep_stronghold(self, action, ok: bool, delta: dict, res=None) -> None:
+        """Latch that the bot slept once at the stronghold to pin its respawn point there.
+
+        `sleep_stronghold` confirms the new spawn: once it reports ok, the run's end criterion
+        (portal active + bed at stronghold + slept once) can close. A refused sleep leaves the
+        goal open. `place_bed_stronghold` uses the same `sleep` tool (it lays the bed and sleeps
+        in one server call), so it sets the latch too.
+        """
+        if action.label not in ("sleep_stronghold", "place_bed_stronghold"):
+            return
+        if ok:
+            self._slept_at_stronghold = True
 
     def _note_build(self, action, ok: bool, delta: dict) -> None:
         """Remember that the frame build has nothing left to place.
@@ -3260,6 +3279,7 @@ class Agent:
         self._note_locate(action, _ok, res)
         self._note_barter(action, _ok)
         self._note_portal(action, _ok, delta, res)
+        self._note_sleep_stronghold(action, _ok, delta, res)
         self._note_landmark(action, delta, after)
         progressed = vmod.progressed(action.label, delta, _ok)
         self._track_stuck(action.label, _ok, _text, progressed)

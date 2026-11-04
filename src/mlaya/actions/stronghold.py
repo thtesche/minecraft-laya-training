@@ -38,7 +38,11 @@ ENDERMAN_HUNT_HEALTH = 14.0
 STRONGHOLD_LABELS = frozenset({
     "hunt_enderman", "search_enderman", "gather_scaffold", "take_blaze_powder",
     "craft_ender_eye", "locate_stronghold", "travel_to_stronghold", "activate_end_portal",
+    "craft_bed_stronghold", "place_bed_stronghold", "sleep_stronghold",
 })
+
+# How far a bed may stand from the stronghold frame and still count as "beside it".
+STRONGHOLD_BED_NEAR = 8
 
 
 def _ender_pearls(inv: dict[str, int]) -> int:
@@ -282,6 +286,20 @@ def stronghold_candidates(gs: GameState) -> list[str]:
     # `_nether_topup_wanted`, not this one.
     if not _overworld(gs):
         return out
+
+    # After the portal fires: craft a bed, lay it beside the stronghold frame, then sleep once
+    # to pin the respawn point there instead of the old base. That is the new end of the run.
+    # It owns the tick outright - no locate, no travel, no procurement competes with it.
+    if gs.end_portal_active:
+        if not _has_bed(inv):
+            if _bed_materials_ready(gs):
+                out.append("craft_bed_stronghold")
+        elif not _bed_at_stronghold(gs):
+            out.append("place_bed_stronghold")
+        elif not getattr(gs, "slept_at_stronghold", False):
+            out.append("sleep_stronghold")
+        return out
+
     # Before the first (estimate) throw the buffer is built on top of the frame's empty sockets;
     # once the estimate is saved, only the sockets are owed, so an eye shattered on that throw does
     # not send the bot back to re-craft - the locate travel proceeds on that floor.
@@ -443,6 +461,11 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         need = _eyes_in_hand(gs)
         if not _overworld(gs) or _ender_eyes(inv) < need or _at_stronghold(gs):
             return None
+        # Before the stronghold trek, the bot must carry bed materials: three wool of one colour
+        # and enough wood. Without them there is no bed to set at the stronghold and the run
+        # cannot finish there.
+        if not _bed_materials_ready(gs):
+            return None
         # Two phases, keyed by a loop latch: `estimate` saves the eye-of-ender triangulation
         # without travelling, then `locate` reuses the same durable `search_id` to travel there
         # and confirm the frame. `continue_without_recommended_items` waves off the dragon-fight
@@ -474,6 +497,38 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         x, y, z = cell
         return Action(label, "activate_portal", {"x": x, "y": y, "z": z},
                       "fill the end portal frame's empty sockets with the carried eyes of ender")
+    if label == "craft_bed_stronghold":
+        if not _overworld(gs):
+            return None
+        if not _has(inv, "crafting_table") or not _bed_materials_ready(gs):
+            return None
+        bed_item = _bed_item_from_wool(inv)
+        if bed_item is None:
+            return None
+        return Action(label, "craft_item",
+                      {"items": [{"item_name": bed_item}], "temporary_workstation": True},
+                      f"craft a {bed_item} for the stronghold respawn point")
+    if label == "place_bed_stronghold":
+        if not _overworld(gs) or not _has_bed(inv) or _bed_at_stronghold(gs):
+            return None
+        cell = _bed_stronghold_stance(gs)
+        if cell is None:
+            return None
+        sx, sy, sz = cell
+        if not _at_cell(gs, cell):
+            return Action(label, "navigate",
+                          {"x": sx, "y": sy, "z": sz, "range": 0,
+                           "dig": True, "scaffold": True},
+                          "walk to a clear spot beside the stronghold frame for the bed")
+        return Action(label, "sleep", {},
+                      "place the bed beside the stronghold frame and set the respawn point")
+    if label == "sleep_stronghold":
+        if gs.phase != "night" or gs.sleeping or not _overworld(gs) or not _sleep_safe(gs):
+            return None
+        if not _bed_at_stronghold(gs):
+            return None
+        return Action(label, "sleep", {},
+                      "sleep at the stronghold to pin the respawn point there")
     return None
 
 

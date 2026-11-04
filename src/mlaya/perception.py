@@ -1172,6 +1172,7 @@ class GameState:
     # `powder_exhausted`: a withdraw from the gate chest came up without powder, so the eyes can
     # only be paid for by a second Nether trip; a fresh stow clears it again.
     end_portal_active: bool = False
+    slept_at_stronghold: bool = False
     stronghold_estimated: bool = False
     # The end portal frame the locate phase confirmed (`Agent._note_locate`, restored from the
     # server's `stronghold_located` row). The address the bot has to walk to: a locate "succeeds"
@@ -1338,6 +1339,7 @@ class GameState:
             "pearl_wave_trips": self.pearl_wave_trips,
             "stronghold_estimated": self.stronghold_estimated,
             "end_portal_active": self.end_portal_active,
+            "slept_at_stronghold": self.slept_at_stronghold,
             "stronghold_frame": list(self.stronghold_frame) if self.stronghold_frame else None,
             "powder_cells": [list(cell) for cell in self.powder_cells],
             "powder_bank": self.powder_bank,
@@ -1374,7 +1376,8 @@ class GameState:
                       "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
                       "nether_entered", "portal_lit", "nether_arrival", "nether_gate", "nether_ticks",
                       "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
-                      "stronghold_estimated", "end_portal_active", "stronghold_frame", "powder_cells",
+                      "stronghold_estimated", "end_portal_active", "slept_at_stronghold",
+                      "stronghold_frame", "powder_cells",
                       "powder_bank", "frame_eyes", "frontier_heading", "warped_forest",
                       "explore_stalls", "nether_landmarks"):
             value = data.get(field)

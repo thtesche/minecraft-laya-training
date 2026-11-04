@@ -3294,7 +3294,12 @@ class GoalStopTest(unittest.TestCase):
         g = self._complete()
         g.powder_stowed = True          # the expedition is what the overworld goal was preparing
         g.end_portal_active = True      # and the stronghold is what the expedition was for
-        self.assertEqual(self._agent()._stop_state(g, 3),
+        g.slept_at_stronghold = True    # new end: bed set and slept at the stronghold
+        g.stronghold_frame = (-269, 63, -1819)
+        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed", -269, 63, -1818, 1.0)]
+        agent = self._agent()
+        agent._slept_at_stronghold = True
+        self.assertEqual(agent._stop_state(g, 3),
                          {"done": True, "stop": "goal"})
 
     def test_the_stowed_powder_alone_keeps_the_run_going(self) -> None:
@@ -3510,7 +3515,11 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent = self._agent()
         agent._powder_stowed = True
         agent._end_portal_active = True
+        agent._slept_at_stronghold = True
         g = agent._inject(self._standing())
+        g.slept_at_stronghold = True
+        g.stronghold_frame = (-269, 63, -1819)
+        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed", -269, 63, -1818, 1.0)]
         self.assertTrue(agent._goal_reached(g))
         self.assertEqual(agent._stop_state(g, 3), {"done": True, "stop": "goal"})
 

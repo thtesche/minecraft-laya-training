@@ -6191,7 +6191,7 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertIn("leave_nether", out)
 
     def test_sixteen_eyes_send_the_bot_to_the_stronghold(self) -> None:
-        g = self._home(ender_eye=16)
+        g = self._home(ender_eye=16, white_wool=3, oak_log=1)
         self.assertIn("locate_stronghold", candidates(g))
         a = resolve("locate_stronghold", g)
         self.assertEqual(a.tool, "locate_stronghold")
@@ -6248,7 +6248,7 @@ class StrongholdPhaseTest(unittest.TestCase):
         # The estimate throw costs an eye. Before the estimate the bot builds the full sixteen;
         # after it, the frame needs only twelve, so a shaved eye lets the locate travel proceed
         # instead of dragging the bot back to re-craft (and maybe back to the Nether) for one eye.
-        g = self._home(ender_eye=13)
+        g = self._home(ender_eye=13, white_wool=3, oak_log=1)
         self.assertNotIn("locate_stronghold", candidates(g))
         g.stronghold_estimated = True
         self.assertIn("locate_stronghold", candidates(g))
@@ -8255,6 +8255,7 @@ class RefreshAfterTest(unittest.TestCase):
         agent._powder_stowed = True
         agent._stuck_off = {"sleep": 15}
         agent._defer_quiet = 3
+        agent._slept_at_stronghold = False
         after = gs()
         agent._refresh_after(after)
         self.assertTrue(after.frame_complete)

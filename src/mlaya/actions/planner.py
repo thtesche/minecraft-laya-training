@@ -710,11 +710,12 @@ def candidates(gs: GameState) -> list[str]:
                     out.append("stow_blaze_powder")
 
     # --- The stronghold (the phase after the Nether haul) ---
-    # Offered once the Nether haul stands and the end portal is not yet active: gather pearls,
-    # bring the banked powder back out, craft the eyes, find and travel to the stronghold, fill
-    # the frame. The chain lives in `stronghold.stronghold_candidates`, Overworld-gated there, so
-    # it stays silent while a powder top-up runs the bot through the gate.
-    if nether_expedition_complete(gs) and not stronghold_complete(gs):
+    # Offered once the Nether haul stands: gather pearls, bring the banked powder back out,
+    # craft the eyes, find and travel to the stronghold, fill the frame. Once the portal is
+    # active the same function offers the bed chain instead (craft, place beside the frame,
+    # sleep to reset the spawn). The chain lives in `stronghold.stronghold_candidates`,
+    # Overworld-gated there, so it stays silent while a powder top-up runs the bot through the gate.
+    if nether_expedition_complete(gs):
         out.extend(stronghold_candidates(gs))
 
     # --- Home base storage ---

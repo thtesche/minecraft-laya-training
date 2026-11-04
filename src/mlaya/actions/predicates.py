@@ -991,6 +991,80 @@ def _bed_at_base(gs: GameState) -> bool:
     return _bed_placed(gs) and not _bed_off_base(gs) and not _bed_bad_spot(gs)
 
 
+def _bed_item_from_wool(inv: dict[str, int]) -> str | None:
+    """The bed item name for the colour of which at least BED_WOOL wool is carried.
+
+    Any colour serves: the stronghold bed does not have to be white. The first matching colour
+    wins, so a mixed pack picks one and crafts it.
+    """
+    for color in ("white", "red", "blue", "green", "yellow", "magenta", "light_blue",
+                  "orange", "pink", "gray", "light_gray", "cyan", "lime", "purple",
+                  "brown", "black"):
+        if inv.get(f"{color}_wool", 0) >= BED_WOOL:
+            return f"{color}_bed"
+    return None
+
+
+def _bed_materials_ready(gs: GameState) -> bool:
+    """Three wool of one colour and enough wood (one log or three planks) to craft a bed.
+
+    This is the gate the stronghold phase adds ahead of `locate_stronghold`: no bed materials,
+    no trek, because a run that cannot set a new spawn at the stronghold cannot finish there.
+    """
+    inv = gs.inventory
+    return _bed_item_from_wool(inv) is not None and (_logs(inv) >= 1 or _planks(inv) >= 3)
+
+
+def _bed_at_stronghold(gs: GameState) -> bool:
+    """Whether a bed of any colour stands within reach of the stronghold frame.
+
+    Keyed on the remembered frame cell: once the bot has stood at the frame it knows where
+    "beside the stronghold" is, and any bed within 8 blocks counts.
+    """
+    if gs.stronghold_frame is None:
+        return False
+    fx, fy, fz = gs.stronghold_frame
+    for hits in gs.resources.values():
+        for h in hits:
+            if h.name.endswith("_bed"):
+                if (abs(h.x - fx) <= 8
+                        and abs(h.z - fz) <= 8
+                        and abs(h.y - fy) <= 4):
+                    return True
+    return False
+
+
+def _bed_stronghold_stance(gs: GameState) -> tuple[int, int, int] | None:
+    """A clear cell beside the stronghold frame where a bed may be laid.
+
+    The bot's own cell is tried first (no walk needed), then the four orthogonal neighbours
+    of the frame. Returns None when nothing is known standable.
+    """
+    if gs.stronghold_frame is None or gs.pos is None:
+        return None
+    fx, fy, fz = gs.stronghold_frame
+    cell = (math.floor(gs.pos[0]), math.floor(gs.pos[1]), math.floor(gs.pos[2]))
+    if (abs(cell[0] - fx) <= STRONGHOLD_BED_NEAR
+            and abs(cell[2] - fz) <= STRONGHOLD_BED_NEAR
+            and abs(cell[1] - fy) <= 2):
+        return cell
+    for dx, dz in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+        cell = (fx + dx, fy, fz + dz)
+        if _standable_at(gs, cell):
+            return cell
+    return None
+
+
+def _standable_at(gs: GameState, cell: tuple[int, int, int]) -> bool:
+    """Whether the scan lists a standable block at `cell`."""
+    cx, cy, cz = cell
+    for hits in gs.resources.values():
+        for h in hits:
+            if h.x == cx and h.y == cy and h.z == cz:
+                return True
+    return False
+
+
 def _nether_idle(gs: GameState) -> bool:
     """The daytime lull once the gate frame stands: the kit is done, the frame is up and only
     the prep (bow, gold helmet, deep food and cobble) and the gate bed are left. The extra
