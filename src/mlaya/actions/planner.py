@@ -1364,18 +1364,9 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         fuel = _furnace_fuel(inv)
         if inv.get(RAW_GOLD, 0) < 1 or fuel is None:
             return None
-        if not _smelting_reach(gs):
-            # Not at the base furnace and carrying no portable furnace: walk to the base
-            # furnace so the smelt can run there. If no base furnace is known, there is
-            # nothing to do - return None and let the chain fall through.
-            if gs.furnace_pos is not None and not _at_base(gs):
-                fx, fy, fz = gs.furnace_pos
-                return Action(label, "navigate",
-                              {"x": fx, "y": fy, "z": fz, "range": 1,
-                               "dig": True, "scaffold": True},
-                              "walk to the base furnace to smelt gold")
+        if not _furnace_room(gs):
             return None
-        if not _furnace_room(gs) or inv.get(GOLD_INGOT, 0) + inv.get(RAW_GOLD, 0) >= _gold_ingots_wanted(gs):
+        if inv.get(GOLD_INGOT, 0) + inv.get(RAW_GOLD, 0) >= _gold_ingots_wanted(gs):
             return None
         fuel_name, capacity = fuel
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
@@ -1385,8 +1376,21 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                     max(0, _gold_ingots_wanted(gs) - inv.get(GOLD_INGOT, 0)))
         if count < 1:
             return None
-        return Action(label, "smelt_item", _smelt_args(gs, RAW_GOLD, count, fuel_name),
-                      f"smelt raw gold into ingots using {fuel_name}")
+        # A carried furnace (temporary workstation) always wins: no walking home, no waiting
+        # for a base furnace that may be hundreds of blocks away or not standing at all.
+        if _has(inv, "furnace"):
+            return Action(label, "smelt_item",
+                          _smelt_args(gs, RAW_GOLD, count, fuel_name),
+                          f"smelt raw gold with carried furnace using {fuel_name}")
+        # No portable furnace: at base, use the base furnace if its position is known.
+        if _at_base(gs) and gs.furnace_pos is not None:
+            fx, fy, fz = gs.furnace_pos
+            return Action(label, "smelt_item",
+                          {"item_name": RAW_GOLD, "count": count, "fuel_item_name": fuel_name,
+                           "x": fx, "y": fy, "z": fz},
+                          f"smelt raw gold at base furnace using {fuel_name}")
+        # Otherwise there is nothing to smelt at: craft a furnace first.
+        return resolve("craft_furnace", gs)
     if label == "craft_gold_helmet":
         if (inv.get(GOLD_INGOT, 0) < GOLD_HELMET_INGOTS or not _has(inv, "crafting_table")
                 or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
