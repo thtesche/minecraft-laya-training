@@ -88,6 +88,18 @@ def candidates(gs: GameState) -> list[str]:
     if _must_eat(gs) and "eat_food" not in gs.stuck_labels:
         return ["eat_food"]
     if _cannot_heal(gs):
+        if _stronghold_phase(gs):
+            # Wounded and starving on the stronghold trek: `_recovery_steps` would walk the bot
+            # ~1300 blocks home to a base that holds no food either, and the phase gate refuses
+            # that `go_home` - which is a dead end, escalated tick after tick (live, run177 it10-11).
+            # The only heal is food the trek can reach; with none, the march itself is the move.
+            out = ["eat_food"] if eating else []
+            if _hunt_ok(gs) and _food_target(gs) is not None:
+                out.append("hunt_food")
+            elif _mushroom_pantry_wanted(gs):
+                out.append("gather_mushrooms")
+            out.extend(stronghold_candidates(gs))
+            return out
         return _recovery_steps(gs)
 
     # --- event-driven reactions (M2d) ---

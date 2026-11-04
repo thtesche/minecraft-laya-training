@@ -45,7 +45,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
                            _striding_to_stronghold, _stronghold_phase, _march_shed, _march_junk,
-                           STRONGHOLD_MARCH_JUNK, _go_home_wanted,
+                           STRONGHOLD_MARCH_JUNK, _go_home_wanted, _cannot_heal,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                            MUSHROOM_CAP, MUSHROOM_BATCH,
                            _mushroom_short, _mushroom_pantry_wanted,
@@ -6463,6 +6463,30 @@ class StrongholdMarchShedTest(unittest.TestCase):
         cands = candidates(g)
         self.assertIn("activate_end_portal", cands)
         self.assertNotIn("go_home", cands)
+
+    def test_starving_on_the_march_does_not_fall_into_the_recovery_home_walk(self) -> None:
+        # Live, run177 it10-11: health 9.2, hunger 0, nothing edible -> `_cannot_heal` returned
+        # `_recovery_steps`, which offers `go_home`; the phase gate then refused that resolve, so
+        # the tick escalated `go_home` twice instead of marching. The recovery path must not offer
+        # the home walk at all here - with no food and an empty base behind it, the march is the move.
+        g = self._march()
+        g.health = 9.0
+        g.food = 0.0
+        self.assertTrue(_cannot_heal(g))
+        cands = candidates(g)
+        self.assertIn("travel_to_stronghold", cands)
+        self.assertNotIn("go_home", cands)
+        self.assertNotIn("hunt_food", cands)  # no animal in reach
+        self.assertIsNone(resolve("go_home", g))
+
+    def test_off_the_stronghold_phase_the_recovery_home_walk_stays(self) -> None:
+        # The recovery override is the stronghold phase's alone: a wounded, starving bot that has
+        # not got its eyes still walks home, because there the base is where the food is.
+        g = self._march(ender_eye=1)
+        g.health = 9.0
+        g.food = 0.0
+        self.assertTrue(_cannot_heal(g))
+        self.assertIn("go_home", candidates(g))
 
     def test_off_the_stronghold_phase_go_home_still_works(self) -> None:
         # Before the eyes are in hand the base is the right place to walk to; the gate only owns
