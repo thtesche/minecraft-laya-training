@@ -3532,11 +3532,25 @@ class HomeBaseTest(unittest.TestCase):
         a = resolve("place_chest", g)
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-198, -46, -96))
 
+    def test_every_refused_cell_closes_the_chain_without_the_flag(self) -> None:
+        # run188: the base anchor sat on a one-block shelf. The layout's own cell refused, the
+        # picker moved on, and the chain stays open until every site beside the base is refused -
+        # then no cell is named and the relief falls back to `drop_junk` on its own.
+        g = self._home(self._geared(chest=1))
+        bx, by, bz = g.base
+        g.overflow_skip = frozenset(
+            (bx + dx, by + 1, bz + dz)
+            for dx, dz in ((0, 1), (0, 3), (-1, 2), (1, 2), (-1, 1), (1, 1), (-2, 2), (2, 2),
+                           (0, 4), (-2, 3), (2, 3), (-2, 1), (2, 1), (-1, 3), (1, 3),
+                           (-2, 4), (2, 4)))
+        self.assertNotIn("place_chest", candidates(g))
+        self.assertIsNone(resolve("place_chest", g))
+
     def test_the_chest_chain_is_dropped_when_the_ground_cannot_hold_it(self) -> None:
-        # `[PLACE_NO_SUPPORT]` says no solid block touches the cell beside the base, so the
-        # chest cannot stand there (live: the run looped on it and never reached the portal).
-        # Once the loop knows, neither half of the chain is offered again, so the portal gets
-        # its turn and the relief falls back to `drop_junk`.
+        # A `[PLACE_NO_SUPPORT]` the loop cannot name a cell for means the ground will not hold a
+        # chest anywhere beside the base (live, Nether run: the run looped on it and never reached
+        # the portal). Once the loop knows, neither half of the chain is offered again, so the
+        # portal gets its turn and the relief falls back to `drop_junk`.
         g = self._home(self._geared(chest=1))
         g.chest_blocked = True
         self.assertNotIn("place_chest", candidates(g))

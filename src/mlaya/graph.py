@@ -2832,12 +2832,18 @@ class Agent:
             self._note_placed(action, res)
 
     def _note_chest(self, action, ok: bool, text: str | None) -> None:
-        """Remember that the base's ground cannot hold the chest, so the chain is dropped.
+        """Remember which cell beside the base cannot hold a chest.
 
-        `[PLACE_NO_SUPPORT]` says no solid block touches the cell beside the base: a property
-        of the base site, not of the attempt (live, Nether run: the run answered it on every
-        tick and never reached the portal). Giving the chest up lets the inventory relief fall
-        back to `drop_junk`, which still frees the slots it is for and cannot fail.
+        `[PLACE_NO_SUPPORT]` is a property of the cell, not of the attempt: the picker names the
+        next candidate and the chain stays open. Live, run188: the base anchor sat on a
+        one-block shelf, the layout's own cell answered `[PLACE_NO_SUPPORT]`, and that single
+        answer closed the whole chain -- no chest ever stood, the pack pinned at 36/36,
+        `mine_diamond` came back `[INVENTORY_FULL]` 42 times, and the run ended in a `wait`
+        stall at the base.
+        The chain is given up only when the refusal names no cell at all: the server chose the
+        spot itself, so the loop has no next candidate to answer with and every retry is another
+        refusal on the same tick. Once the picker has no cell left, `_chest_site` is None and the
+        chain closes by itself -- the flag is not needed for that.
         """
         if ok or action.label != "place_chest":
             return
@@ -2845,16 +2851,7 @@ class Agent:
             return
         args = getattr(action, "args", None) or {}
         cell = (args.get("x"), args.get("y"), args.get("z"))
-        main = None
-        if self.base is not None:
-            bx, by, bz = self.base
-            main = (bx, by + 1, bz + 1)
-        # A candidate cell is one among many: refuse that one and pick the next, the chain stays
-        # open. Only the layout's own cell -- or a placement whose cell the loop cannot name next
-        # to the base -- is the ground's verdict on chests in general, which is the old
-        # giving-up-the-chain the comment describes. The first chest no longer has to sit on that
-        # cell (see `_chest_site`), so a refusal at a candidate counts even before it is up.
-        if main is None or cell == main or not all(isinstance(v, int) for v in cell):
+        if not all(isinstance(v, int) for v in cell):
             self._chest_blocked = True
             return
         self._overflow_no_support.add(cell)

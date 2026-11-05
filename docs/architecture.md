@@ -743,6 +743,14 @@ deposit after it answered `[CONTAINER_BATCH_INCOMPLETE]`, the pack had nothing l
   the cell was remembered as (air, or a furnace where a chest was). A standing furnace the server
   merely cannot open (`... is furnace, not a supported container`, 119× in run49) is **kept**:
   forgetting it would re-adopt it with its occupied flag wiped.
+- **One refused cell does not close the chain (run188):** `[PLACE_NO_SUPPORT]` at the layout's
+  own cell was read as the ground's verdict on chests in general and set `chest_blocked`, so the
+  picker never got to the other 16 sites. run188's base anchor stood on a one-block shelf: the
+  chest was crafted (it147), the one placement attempt refused (it184), and the pack pinned at
+  36/36 for the rest of the run -- 42 `[INVENTORY_FULL]` refusals at `mine_diamond`, 23
+  `[DROP_HOLE_UNAVAILABLE]` at the ground relief, and a `wait` stall at the end. A named refusal
+  now marks that cell and the picker moves on; the chain is given up only when the answer names
+  no cell at all, and it closes by itself once `_chest_site` has nothing left to name.
 
 ## Stall guards
 
@@ -1400,7 +1408,7 @@ lid and stalled on the latch that was supposed to say the haul was done.
   stow and relaunch instead of orbiting. `[EXPLORATION_INCOMPLETE]` is not a stall: that route did
   move, it just ran out of chunk columns.
 
-## Live findings run184–187 (2026-11-04 … 05): the endgame's first closed links
+## Live findings run184–188 (2026-11-04 … 05): the endgame's first closed links
 
 - **The powder came home.** run187 lit the gate (it510), crossed (it511) and deposited the blaze
   powder in the chest at the gate (it540) — the first run where
@@ -1425,6 +1433,13 @@ lid and stalled on the latch that was supposed to say the haul was done.
   answered `[NAVIGATION_TARGET_UNSUPPORTED]` against it. Containers join `NON_FOOTING_BLOCKS`
   (chest, trapped chest, barrel, furnace, smoker, crafting table), the same rule the bed and the
   lit gate already had.
+- **run188 stopped at the pack, not at the gate.** Aborted at it428 (the lab ended it, the
+  iteration limit did not): no chest ever stood at the base, the pack stayed at 36/36 and the
+  last hundred ticks were `mine_diamond` → `[INVENTORY_FULL]` → `drop_junk` →
+  `[DROP_HOLE_UNAVAILABLE]` → `wait`. The cause is the chest chain closing on one cell, fixed
+  above; the run also showed the night-walk fix working (16 `sleep` refusals, all against the
+  same grid cell, none against a container) and no `mine_obsidian` stance walk with 0.0
+  movement, so `stance_noop_dropped` never had to fire.
 - **Still open: the home walk that walks out and back.** run187 booked 249 loop ticks, the largest
   share on `go_home` aimed at (-99,70,-75) — eleven-tick windows of 103 blocks walked to end 0.0
   from where it started, 116 of those ticks "succeeded". `_track_wander` (ratio 6, two repeats)

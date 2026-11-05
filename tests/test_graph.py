@@ -2880,12 +2880,13 @@ class DropUndoneTest(unittest.TestCase):
 
 
 class ChestSupportTest(unittest.TestCase):
-    """A chest the base's ground cannot hold is dropped from the chain, not retried forever.
+    """A refused chest cell is kept out; the chain closes only when no cell is left.
 
     Live, Nether run: the base stood on a narrow ledge, the cell beside it had no supporting
     block, and `place_chest` answered `[PLACE_NO_SUPPORT]` on every tick, so the run never
-    reached the portal. The answer is a property of the base site, so the loop remembers it and
-    the inventory relief falls back to `drop_junk`.
+    reached the portal. That answer is a property of one cell, not of the ground beside the
+    base: the picker names the next candidate, and only a refusal the loop cannot name a cell
+    for -- the server chose the spot itself -- gives the chain up.
     """
 
     class _Action:
@@ -2948,11 +2949,21 @@ class ChestSupportTest(unittest.TestCase):
         agent.surface = None
         return agent
 
-    def test_remembers_the_unsupported_cell(self) -> None:
+    def test_a_named_refused_cell_is_kept_out_and_the_chain_stays_open(self) -> None:
         agent = self._agent()
         agent._note_chest(self._Action("place_chest"), False,
                           "[PLACE_NO_SUPPORT] No adjacent solid block can support placement "
                           "into the target cell.")
+        self.assertFalse(agent._chest_blocked)
+        self.assertEqual(agent._overflow_no_support, {(1, 2, 3)})
+
+    def test_a_refusal_that_names_no_cell_gives_the_chain_up(self) -> None:
+        # The server picked the spot itself: the loop has no next candidate to answer with,
+        # so every retry is another refusal on the same tick.
+        agent = self._agent()
+        cellless = self._Action("place_chest")
+        cellless.args = {}
+        agent._note_chest(cellless, False, "[PLACE_NO_SUPPORT] No adjacent solid block")
         self.assertTrue(agent._chest_blocked)
 
     def test_ignores_success_and_other_labels(self) -> None:
@@ -4717,12 +4728,22 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(agent._chest_blocked)
         self.assertEqual(agent._overflow_no_support, {self.OVERFLOW})
 
-    def test_the_grounds_refusal_at_the_main_cell_ends_the_chain(self) -> None:
+    def test_the_grounds_refusal_at_the_main_cell_moves_the_picker_on(self) -> None:
+        # run188: the base anchor sat on a one-block shelf, the layout's own cell refused, and
+        # that one answer closed the whole chain -- no chest, a pack pinned at 36/36, and 200
+        # iterations of `mine_diamond` [INVENTORY_FULL] before the run stalled on `wait`.
         agent = self._agent()
         refused = self._Action("place_chest", "place_block",
                                {"block_name": "chest", "x": self.MAIN[0],
                                 "y": self.MAIN[1], "z": self.MAIN[2]})
         agent._note_chest(refused, False, "[PLACE_NO_SUPPORT] No adjacent solid block")
+        self.assertFalse(agent._chest_blocked)
+        self.assertEqual(agent._overflow_no_support, {self.MAIN})
+
+    def test_a_refusal_with_no_cell_ends_the_chain(self) -> None:
+        agent = self._agent()
+        cellless = self._Action("place_chest", "place_block", {"block_name": "chest"})
+        agent._note_chest(cellless, False, "[PLACE_NO_SUPPORT] No adjacent solid block")
         self.assertTrue(agent._chest_blocked)
         self.assertEqual(agent._overflow_no_support, set())
 
