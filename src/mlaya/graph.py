@@ -2073,6 +2073,12 @@ class Agent:
             walked, net = _walk_progress(res) if res is not None else (None, None)
             if walked == 0 and net == 0:
                 self._stance_skip.add(pos)
+                # A `success` with no movement carries no bracketed code, so the refusal counter
+                # and the orbit guard are both blind to it (run187 spent 73 such ticks unseen).
+                # Leave a mark so the next report can tell the stance was written off, not reached.
+                self.log.append({"stage": "policy", "reason": "stance_noop_dropped",
+                                 "label": action.label, "cell": list(pos),
+                                 "walked": walked, "net": net})
             return
         text = text or ""
         # `[NAVIGATION_STOPPED]` covers two different failures. "no path or usable partial route

@@ -880,6 +880,11 @@ class StanceSkipTest(unittest.TestCase):
             self._Action("mine_obsidian", "navigate", {"x": -130, "y": 67, "z": -30}),
             True, "", self._res(0.0, 0.0))
         self.assertEqual(agent._stance_skip, {(-130, 67, -30)})
+        # The write-off carries no bracketed code, so it leaves a policy mark the report can read
+        # (the refusal counter and the orbit guard never see a success with no movement).
+        self.assertEqual(agent.log, [{"stage": "policy", "reason": "stance_noop_dropped",
+                                      "label": "mine_obsidian", "cell": [-130, 67, -30],
+                                      "walked": 0.0, "net": 0.0}])
 
     def test_a_stance_walk_that_arrived_is_not_a_no_op(self) -> None:
         agent = self._agent()
