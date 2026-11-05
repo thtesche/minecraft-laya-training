@@ -1,9 +1,9 @@
 # Nether preparation (pre-gate step)
 
-Status: **all four phases implemented** (phase 0 reference kit, phase 1 bow + arrows + cobblestone
-reserve, phase 2 gold helmet, phase 3 the Nether visit itself: crossing, fortress, rod haul, walk
-home). What no run has yet done is the last link of the chain — the powder standing in the chest at
-the gate. Details below.
+Status: **all four phases implemented and closed live** (phase 0 reference kit, phase 1 bow +
+arrows + cobblestone reserve, phase 2 gold helmet, phase 3 the Nether visit itself: crossing,
+fortress, rod haul, walk home). The last link of the chain — the powder standing in the chest at
+the gate — has now been walked: run187 banked it at it540 (`powder_banked`). Details below.
 
 ## Idea
 
@@ -167,10 +167,15 @@ The bed rule around the frame has four parts, all of them corrections from live 
   level `by + 1` (`BED_PAD_ROWS`), dug where a block sits and cobblestone-stood where the floor is
   missing. Digging alone can never give a bed a floor, and the row two cells out is the nearest one
   that keeps `BED_PORTAL_CLEARANCE` from the opening.
-- **A bed is not footing.** Beds and portal blocks are in `NON_FOOTING_BLOCKS`, so `navigate` will
-  not path across them; a bot standing next to its bed can still be several blocks away from the
-  click range (`BED_SLEEP_CLICK = 2`, `SLEEP_BED_REACH = 32`), and `sleep` first navigates onto the
-  bed's own ground.
+- **A bed is not footing, and neither is a container.** Beds, portal blocks, chests, trapped
+  chests, barrels, furnaces, smokers and crafting tables are in `NON_FOOTING_BLOCKS`: the ground
+  scan reads open space above them, but the pathfinder will not stand on that column. Live, run153
+  it77-80 (a gate bed at (-43,70,89) read as a sleep stance, four refusals) and run187 it185-230
+  (the base chest at (-99,70,-74) became the sleep stance, 32 `sleep` ticks answered
+  `[NAVIGATION_TARGET_UNSUPPORTED]`). A bot standing next to its bed can still be several blocks
+  away from the click range (`BED_SLEEP_CLICK = 2`, `SLEEP_BED_REACH = 32`), and `sleep` first
+  navigates onto the bed's own ground — a cell the scan proved, never the cell above the bed or the
+  chest beside it.
 - **A standing base bed is sleepable.** `_sleep_ready` used to allow the base bed only after the
   gate burned, while `_sleep_off_base` needs a bed in the pack — run158 held at the anchor for 23
   night ticks on `wait`. Now a bed standing at the base counts, as long as it is not inside the
@@ -281,7 +286,9 @@ the bot or brought in a rod no longer ends the run (`38c4e8c`). run107 lost the 
 Nether death (it131) and then ping-ponged `explore`↔`go_home` at the base until it nearly starved,
 because the nearest animal sat past the day-hunt range cap; below `HUNT_STARVE` the cap now drops so
 recovery reaches the far animal (`e902b7e`). So the crossing, the fortress and the rod haul all run
-live, but no run has yet carried the powder back to the chest at the gate.
+live, and the deposit closed on **run187** (2026-11-04): gate lit it510, Nether entered it511,
+powder in the gate chest it540 — the run then ended on the 600-iteration limit before the trek to
+the fortress began.
 
 ## Decided: the gold helmet replaces the diamond helmet
 

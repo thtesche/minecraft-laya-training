@@ -1,16 +1,24 @@
 # Stronghold phase (the step after the Nether haul)
 
-Status: **implemented and committed** — the `actions` package split landed first
-(behaviour-preserving, `f09edd4`), then the stronghold chain on top of it (`34079f5`); the suite
-is 1458 green (2026-11-03). `PHASE_STRONGHOLD` now has its real trigger in `phase_persona` (see Perception).
-The re-supply after shattered eyes is now demand-sized, and both robustness gaps are closed (see
-the section near the end).
+Status: **implemented and live** — the `actions` package split landed first (behaviour-preserving,
+`f09edd4`), then the stronghold chain on top of it (`34079f5`); the suite is 1573 green
+(2026-11-05). `PHASE_STRONGHOLD` has its real trigger in `phase_persona` (see Perception), the
+re-supply after shattered eyes is demand-sized, and the phase now runs **past** the activation: the
+run ends with a respawn bed beside the frame and one sleep in it (see *The bed phase after the
+portal fires*).
 
 Scope of this phase, as the user set it: **gather eyes of ender, navigate to the stronghold and
-remember it, activate the end portal, and top up blaze rods from the Nether only if needed.** It
-stops at an *activated* end portal. Entering the End and the dragon fight are a later phase (the
-server already carries `enter_end_portal`, `shoot_dragon`, `attack_dragon_perch`,
-`destroy_end_crystal` for it).
+remember it, activate the end portal, and top up blaze rods from the Nether only if needed**, then
+pin the respawn at the frame. Entering the End and the dragon fight are a later phase (the server
+already carries `enter_end_portal`, `shoot_dragon`, `attack_dragon_perch`, `destroy_end_crystal`
+for it).
+
+Live status: the chain has been walked for real — runs 179–184 reached and filled the frame, run186
+laid and clicked the bed beside it (it9, it11) and then looped: `take_bed` collected the bed back
+into the pack (it10, it12) and `go_home` followed, with the goal already counted as reached
+(`1ed5b7a` closed that). run187 banked the powder (it540) but hit the 600-iteration limit before
+the trek to the fortress began. The bed phase is therefore implemented, exercised in a live world
+and covered by tests, but no run has yet finished it end to end from an empty world.
 
 ## What the mine-ai server already does for us
 
@@ -167,9 +175,10 @@ expedition.
   roam is dimension-blind now, and the dimension decides both its budget and its bearing: in a pearl
   wave it is bounded by `NETHER_PEARL_SEARCH_M` and steered at the warped forest; in the Overworld it
   only runs once the waves are spent and keeps `frontier_heading`.
-- **The respawn bed at the stronghold** — for the *later* End phase, `enter_end_portal` needs a bed
-  within 128 blocks. When that phase lands, the chain lays and sleeps a bed at the stronghold before
-  entering. This phase stops before that, so the bed is noted here only as the seam to the next one.
+- **The respawn bed at the stronghold is the phase's end, not a later seam.** Once the portal
+  stands, the chain lays a bed beside the frame and sleeps in it once, so a death in the End
+  respawns at the stronghold instead of the base ~1300 blocks away. `enter_end_portal` will later
+  require that bed within `respawn_within` (default 128) — this phase is what makes it exist.
 
 ## The chain, in the order the bot walks it
 
@@ -193,14 +202,48 @@ Offered only once the Overworld goal and the Nether haul stand (`tech_tree_compl
    bot beside the estimate rather than beside the frame.
 6. **`activate_end_portal`** (`activate_portal` at `_frame_cell(gs)`) — fills the sockets from
    the carried eyes and confirms the active portal.
+7. **`hunt_wool` / `hunt_string`** — the bed the trek needs is gathered *before* walking out: a
+   bed at the base is the old spawn the run is leaving, so the general bed chain stays shut in this
+   window and the phase hunts its own wool (with no sheep and no spider in reach the offer is empty
+   and `explore` roams for one).
+8. **`drop_junk` + `travel_to_stronghold`** — the same march as before the fill: a full pack sheds
+   `STRONGHOLD_MARCH_JUNK` on the ground rather than doubling back to a chest, then walks to the
+   confirmed frame. This leg is re-offered after the portal fires, because a death respawns the bot
+   at the base (live, run184: two deaths after the 10:40 fill, then it idled at base with no path
+   back).
+9. **`craft_bed_stronghold` → `place_bed_stronghold`** — the carried bed, or one from carried wool,
+   laid within `STRONGHOLD_BED_NEAR` (8 blocks, `STRONGHOLD_BED_NEAR_Y = 4` vertical) of the frame,
+   on a footing the ground scan proved.
+10. **`sleep_stronghold`** — one sleep in that bed pins the respawn. The branch is ordered on
+    "is the bed already down" rather than "is one carried": `place_bed_stronghold` lays the bed
+    *and* clicks it in a single `sleep` call, so a has-bed-first test reads the just-placed bed as
+    gone and crafts a second one. The latch (`Agent._note_sleep_stronghold`) keys on
+    `action.tool == "sleep"` — the walk to the bedside resolves under the same label with
+    `navigate` and sets nothing — and a refused sleep leaves the goal open.
 
 ## Goal
 
 `stronghold_complete(gs)` — the end portal is active, latched on `activate_portal`'s own success
 (`gs.end_portal_active`, `Agent._note_portal`, the same shape as `powder_stowed`); reading the
-world back would cost an inspection every tick. `_goal_reached` becomes a three-way AND:
-`tech_tree_complete ∧ nether_expedition_complete ∧ stronghold_complete`, keeping the existing rule
-that a playthrough stops only when *every* phase stands, never the first one that closes.
+world back would cost an inspection every tick. `_goal_reached` is an AND over every phase, keeping
+the existing rule that a playthrough stops only when *every* phase stands, never the first one that
+closes:
+
+```
+tech_tree_complete ∧ nether_expedition_complete ∧ stronghold_complete
+  ∧ _bed_at_stronghold ∧ _slept_at_stronghold
+```
+
+The last two are the bed phase: a lit portal alone is not a finished run while the respawn still
+points at the base. `slept_at_stronghold` is a **per-run latch only** — it is never read back from
+the ledger, so a cold start in a world whose frame is already lit re-walks the bed phase. That is
+deliberate: a run cannot prove it slept there, only that the bed stands.
+
+`_stronghold_phase` is the mirror of that goal. It is true while a frame address is known and
+either the eyes to fill it are in hand or the bed beside it is still owed, and it is exactly the
+window in which `go_home`, `mine_stone` and `stow_surplus` are suppressed from the offer — from
+here to the goal nothing is worth walking home for (live, run176: the very first action of the trek
+was the home walk, and run184 idled at base after two deaths with no path back).
 
 ## Perception
 
@@ -311,6 +354,38 @@ resolved to `None` on every tick the label came up — three locate successes, n
 - **`travel_to_stronghold`** is the leg between the two: `navigate` to the confirmed cell, digging
   allowed. It drops out the tick the body is at the frame, and `locate` is never re-offered while a
   frame position is known.
+
+## The bed phase after the portal fires (2026-11-04/05)
+
+The run's end moved from "the portal is lit" to "the respawn is pinned at the frame". Five defects
+hid in a phase no run had walked yet (`ea8b541`), and two more came from live runs:
+
+- **Two `NameError`s on the first call.** `place_bed_stronghold` called `_at_cell`, which is
+  defined nowhere (it is `_at_stance`), and `_bed_stronghold_stance` read `STRONGHOLD_BED_NEAR`
+  from `stronghold` while living in `predicates`, which is imported *before* `stronghold` — the
+  name is not in that module's globals when the function runs. The constant moved to
+  `actions/constants.py`.
+- **A walk could close the run.** The respawn latch fired on any `ok` `place_bed_stronghold`,
+  including the navigate onto the bedside, so the goal held before a bed ever stood. It keys on
+  `action.tool == "sleep"`, mirroring `_note_bed`.
+- **The trek could not start.** `locate_stronghold` gated the ~1300-block walk on loose bed
+  materials; a finished bed did not satisfy it, and once a base bed shut the general bed chain
+  nothing re-gathered wool. The trek now takes a carried bed too, and hunts its own wool when it
+  has neither.
+- **The craft loop.** The portal-active branch tested `_has_bed` first, so the bed the place step
+  just spent out of the pack read as gone and the bot crafted a second one instead of sleeping. The
+  branch is ordered on `_bed_at_stronghold` first.
+- **The return trek was missing** (`4aad50b`): after the fill the bot is usually still at the
+  frame, but a death respawns it at the base ~1300 blocks off with nothing offering the way back
+  (live, run184: two deaths after the 10:40 fill, then it idled at base). `_stronghold_phase`
+  mirrors `stronghold_candidates` so the suppression — and with it `travel_to_stronghold` — stays
+  open after the portal fires.
+- **A bed taken back out of the ground reopened nothing** (`1ed5b7a`): run186 it10-13, `take_bed`
+  hauled the frame bed into the pack and `go_home` followed, with the goal already counted as
+  reached. `_stronghold_phase` now closes on the same two facts `_goal_reached` reads — the bed
+  stands **and** it was slept in — instead of the sleep alone.
+
+`StrongholdBedPhaseTest` and `SleepStrongholdLatchTest` cover each of these.
 
 ## Out of reach / later (deliberately not in this phase)
 

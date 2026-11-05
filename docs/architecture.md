@@ -1393,17 +1393,50 @@ lid and stalled on the latch that was supposed to say the haul was done.
   stow and relaunch instead of orbiting. `[EXPLORATION_INCOMPLETE]` is not a stall: that route did
   move, it just ran out of chunk columns.
 
+## Live findings run184–187 (2026-11-04 … 05): the endgame's first closed links
+
+- **The powder came home.** run187 lit the gate (it510), crossed (it511) and deposited the blaze
+  powder in the chest at the gate (it540) — the first run where
+  `nether_expedition_complete` held in a live playthrough. It still ended on the 600-iteration
+  limit, 60 ticks later than the stronghold trek could begin, so the phase after the haul is
+  documented from tests and from runs 184/186, not from a full walk.
+- **The phase did not end where the portal fires.** run184 filled the frame at 10:40, died twice,
+  respawned at the base ~1300 blocks off and idled there with nothing offering the way back
+  (`4aad50b`): `_stronghold_phase` now mirrors `stronghold_candidates`, so the suppression and
+  `travel_to_stronghold` stay open after activation. run186 it10-13 then showed the other shape:
+  `take_bed` hauled the frame bed back out of the ground and `go_home` followed, while the goal
+  already counted the sleep as the end of the phase (`1ed5b7a`) — the phase closes on the bed
+  standing **and** being slept in, exactly as `_goal_reached` reads it.
+- **A navigate that "succeeds" without moving is a refusal in disguise.** run187 it98-160:
+  `mine_obsidian` aimed at the pour stance (-130,67,-30) with `range: 1`, the pathfinder called the
+  cell reached from one block off, `_at_pour_stance` disagreed, and 73 identical navigates answered
+  ok with `distanceTravelledBlocks` 0.0. `_track_stuck` cannot see it (no failure code) and the
+  position changes on the surrounding ticks, so nothing looked stuck. `Agent._note_stance` now
+  reads the walk's own numbers and writes such a stance into `stance_skip` like a refusal.
+- **A container is not a floor.** run187 it185-230: the base chest at (-99,70,-74) scanned with
+  `air` above it, `_known_footings` made the cell above it the sleep stance, and 32 `sleep` ticks
+  answered `[NAVIGATION_TARGET_UNSUPPORTED]` against it. Containers join `NON_FOOTING_BLOCKS`
+  (chest, trapped chest, barrel, furnace, smoker, crafting table), the same rule the bed and the
+  lit gate already had.
+- **Still open: the home walk that walks out and back.** run187 booked 249 loop ticks, the largest
+  share on `go_home` aimed at (-99,70,-75) — eleven-tick windows of 103 blocks walked to end 0.0
+  from where it started, 116 of those ticks "succeeded". `_track_wander` (ratio 6, two repeats)
+  withholds the label and it returns on its countdown, which caps each burst but does not stop the
+  pattern; why the base anchor keeps pulling the body off the chest is the goal-ordering question
+  the bed phase left deliberately unaddressed.
+
 ## Next milestones
 
-- **Open after run158:** (1) the endgame has never been reached live — no run has banked the
-  powder (`powder_banked`), estimated a stronghold (`stronghold_estimated`) or lit an end portal
-  (`end_portal_active`), so those links are unit-tested only; (2) the fine-tuned head has never
-  been served in a live run (`LAYA_EXTRA_MODELS` unset), and the corpus has no endgame rows to
-  train on; (3) the viewer's chunk window: LayaView loads at `--view-distance 6`, so a bot working
-  beyond it is not on screen — the patch in `viewer/viewer.mjs` is deferred; (4) steps that leave
-  the base (`mine_diamond`, `mine_gold`) are still not held back by `_shed_owed`, only
-  `mine_obsidian` is; (5) the server's `observed_containers` table is empty in the lab world
-  (checked 2026-11-02), so `_walk_home_to_memory` cannot fire there.
+- **Open after run187:** (1) the endgame's later links are live but unfinished — the powder is
+  banked (run187 it540), the frame is filled and the portal lit (runs 179–186), but no run has
+  completed the bed phase from an empty world, so `sleep_stronghold` and the return trek rest on
+  tests and on run186's partial walk; (2) the fine-tuned head has never been served in a live run
+  (`LAYA_EXTRA_MODELS` unset), and the corpus has no endgame rows to train on; (3) the viewer's
+  chunk window: LayaView loads at `--view-distance 6`, so a bot working beyond it is not on screen —
+  the patch in `viewer/viewer.mjs` is deferred; (4) steps that leave the base (`mine_diamond`,
+  `mine_gold`) are still not held back by `_shed_owed`, only `mine_obsidian` is; (5) the server's
+  `observed_containers` table is empty in the lab world (checked 2026-11-02), so
+  `_walk_home_to_memory` cannot fire there.
 
 - **M3+ (open):** The **out-of-distribution** held-out split is now built (full run
   `run7d`): the zero-shot accuracy there is **0.934**, the fine-tune improves loss/ECE/Brier,
@@ -1538,6 +1571,13 @@ lid and stalled on the latch that was supposed to say the haul was done.
   the pathfinder does not bridge over its own target). Only when every neighbour is written off
   (`stance_skip`) and the bot is already inside the pool's open pocket does it pour from where it
   stands.
+  **A stance is written off by a refusal *or* by a walk that never arrives.** `Agent._note_stance`
+  reads the refusals above, and since run187 also the walk's own numbers: the stance navigate
+  carries `range: 1`, so the pathfinder calls the cell reached from one block off, `_at_pour_stance`
+  disagrees, and the identical navigate repeats every tick (live, run187 it98-160: 73 successes to
+  (-130,67,-30) with `distanceTravelledBlocks` 0.0, 249 loop ticks in that run). A success whose
+  travelled and net distance are both zero joins `stance_skip`; a success without walk numbers does
+  not, because a guard that cannot see the walk has no evidence.
   As "open" above the pour cell, besides `air`, `cave_air` also counts (`perception.AIR_NAMES`):
   underground lava lakes are covered by cave air instead of `air`, and the pour check discarded
   such cells first (fixed live in the from-zero run).

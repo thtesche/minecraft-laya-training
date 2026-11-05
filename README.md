@@ -50,21 +50,23 @@ rationale and the zero-shot findings behind this split are in
 | Storage network — chests per cell, overflow chests, provisions fetched back | reached, validated live |
 | Stall guards — refusals, wandering, idle steps, quiet defers, `wait` hold | implemented (see [`docs/architecture.md`](docs/architecture.md#stall-guards)) |
 | Equipment durability audit and replacement crafting | implemented; worn-out armor (below 15%) triggers replacement craft from reserve — see [`docs/architecture.md`](docs/architecture.md#equipment-durability-audit-and-replacement-crafting) |
-| Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented; live through the fortress and the blaze hunt (run104–107, up to 12 rods carried out in run106), **no powder banked home yet** — see [`docs/nether-prep.md`](docs/nether-prep.md) |
-| Stronghold → End portal (phase 4) — eyes of ender, stronghold search, end-portal activation, demand-sized re-supply | implemented; not yet live (the Nether haul is not home yet) — see [`docs/stronghold.md`](docs/stronghold.md) |
+| Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented, **closed live**: run187 lit the gate (it510), crossed (it511) and banked the powder in the gate chest (it540) — see [`docs/nether-prep.md`](docs/nether-prep.md) |
+| Stronghold → End portal (phase 4) — eyes of ender, stronghold search, end-portal activation, demand-sized re-supply, respawn bed beside the frame | implemented, walked live (run184 filled the frame, run186 laid and slept in the frame bed); the bed phase is not yet validated in a run that reaches the fortress — see [`docs/stronghold.md`](docs/stronghold.md) |
 | M3, second round — run79–86 head on top of the 2026-10-14 checkpoint | trained (held-out accuracy 0.767 → 0.885), served live since run87 via `LAYA_EXTRA_MODELS` |
 | M5 — stronger training signal: relative narrative + offline teacher/judge labels | planned (see [`docs/architecture.md`](docs/architecture.md#next-milestones)) |
 
 The run **stops itself** once every phase stands (`Agent._goal_reached`): the overworld goal
 (`actions.tech_tree_complete` — full diamond kit **worn** + shield in the off-hand, a bed at the
-base, all Nether prep steps done, the food reserve banked and the gate lit) **and** the Nether
-trip (`actions.nether_expedition_complete` — the blaze powder deposited in the chest at the
-gate). The portal is lit **last** in the overworld: `light_portal` waits for the whole stocked
-trip, so the gate never burns through the prep window. The carried bed is laid the very next
-tick, by day or by night — the `sleep` server sets the respawn point at a bed used in daylight
-too — and that opens the crossing. The run then reports `"stop": "goal"`; a run that never gets
-the powder home ends with `"stop": "limit"`, and `--ignore-goal` (or
-`[loop] stop_when_complete = false`) always runs to the iteration limit.
+base, all Nether prep steps done, the food reserve banked and the gate lit) **and** the Nether trip
+(`actions.nether_expedition_complete` — the blaze powder deposited in the chest at the gate) **and**
+the stronghold phase (`stronghold_complete` — the end portal active — **plus** a bed standing beside
+the frame and one sleep in it, so the respawn is pinned at the stronghold). The portal is lit
+**last** in the overworld: `light_portal` waits for the whole stocked trip, so the gate never burns
+through the prep window. The carried bed is laid the very next tick, by day or by night — the
+`sleep` server sets the respawn point at a bed used in daylight too — and that opens the crossing.
+The run then reports `"stop": "goal"`; a run that never gets the powder home ends with `"stop":
+"limit"`, and `--ignore-goal` (or `[loop] stop_when_complete = false`) always runs to the iteration
+limit.
 
 ## Setup
 
@@ -84,6 +86,18 @@ via GitHub Actions (CI).
 
 ## Usage
 
+The lab is the everyday entry point — it starts the Docker world, the MCP host from the
+`bot-run` branch, the run, and writes the report when the run ends:
+
+```bash
+./scripts/lab.sh up --n 600 --fresh     # fresh world + ledger, then a run
+./scripts/lab.sh status                 # world, host, run, last tick as JSON
+./scripts/lab.sh report 187             # the finished run's report
+./scripts/lab.sh down                   # stop run, host, world
+```
+
+The bare CLI, for probing and single decisions against a host that is already up:
+
 ```bash
 .venv/bin/python -m mlaya.cli probe      # health + tools/list
 .venv/bin/python -m mlaya.cli decide     # read state + decide once (dry run)
@@ -96,9 +110,9 @@ via GitHub Actions (CI).
 
 Configuration: [`config/settings.toml`](config/settings.toml) — among others
 `[loop] wait_hold_s` (seconds a successful `wait` holds, default 30). Every decision is logged
-to `runs/decisions.jsonl`; move it to `runs/history/decisions-runNN.jsonl` before the next run.
-To read that log while a run is live: `tail -f runs/decisions.jsonl | scripts/dec.py`
-(one key per line at level 1, everything deeper compact — see
+to `runs/decisions.jsonl`; `lab.sh` archives it to `runs/history/decisions-runNN.jsonl` the moment
+a new run starts. To read that log while a run is live: `tail -f runs/decisions.jsonl |
+scripts/dec.py` (one key per line at level 1, everything deeper compact — see
 [`docs/operations.md`](docs/operations.md#reading-the-log-while-it-is-written)).
 
 ### M3: logs → dataset → fine-tuning
@@ -131,7 +145,7 @@ positive examples (`--include-failed` for pure imitation). Ticks inside a ping-p
 ticks repeating one label or alternating two with no item gained — teach no intent, and a
 `stow_surplus` counts only when an item left the pack (see `docs/architecture.md`, M3).
 
-Tests: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests`.
+Tests: `uv run pytest tests/ -q` (1573 tests) — the same command the pre-commit hook and CI run.
 
 ## Documentation
 

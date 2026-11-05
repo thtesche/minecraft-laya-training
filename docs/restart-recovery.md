@@ -1,6 +1,7 @@
 # Restart recovery — what survives a cold start, what the loop re-derives
 
-Reviewed 2026-10-30, re-checked against the code and run158 on 2026-11-02. The question this
+Reviewed 2026-10-30, re-checked against the code and run158 on 2026-11-02, and against the
+stronghold bed phase and run187 on 2026-11-05. The question this
 answers: the game is paused and the MCP server stopped;
 on a fresh start with the **old Minecraft world** and a **freshly launched MCP server**, does the
 whole decision logic still work?
@@ -91,6 +92,8 @@ inventory delta, in that order.
 | `powder_stowed` (= `nether_expedition_complete`) | `False` | ledger | **read back** from the powder chest (`_adopt_powder_stow`) | none — the chain resumes without a re-haul |
 | `stronghold_estimated` | `False` | ledger | **read back** from the durable `stronghold_throws` bearing | none |
 | `end_portal_active` (= `stronghold_complete`) | `False` | ledger | **read back** from `activate_portal`'s `portalAfter`/`activated` | none |
+| `stronghold_frame` (the confirmed cell) | restored | ledger + checkpoint note | read back from the `stronghold_located` row (`perception.STRONGHOLD_FRAME_SQL`) and the loop's own note | none — the trek has an address to walk to |
+| `slept_at_stronghold` | `False` | **run only** | not read back: no ledger row proves a sleep pinned the respawn | the bed phase is re-walked; once the frame bed stands, `sleep_stronghold` closes it in one tick |
 | `powder_exhausted` / `powder_cells` | `False` / `[]` | ledger + checkpoint | self-heals; the cells come from the checkpoint note | none |
 | `pearl_wave_trips`, `barter_attempts` | `0` | checkpoint note | **read back** from the loop's own note | none |
 

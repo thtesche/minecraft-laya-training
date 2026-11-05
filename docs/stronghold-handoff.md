@@ -136,10 +136,12 @@ label must search the **raw** stores for powder itself — mirror
 - Behavior-preserving discipline: the refactor was a pure move; this phase adds
   wiring only — the server owns all endgame mechanics (`locate_stronghold`,
   `activate_portal`, etc.). The agent never implements client-side mechanics.
-- No live runs or hot-patching; the user hosts the world and starts/stops runs.
+- No live runs or hot-patching; the lab (`./scripts/lab.sh up [--n 600] [--fresh]`) starts the
+  Docker world and the MCP host, and a run only begins on the user's word.
 - The phase is offered **only** once `tech_tree_complete` AND
-  `nether_expedition_complete` both hold. It stops at an **activated end portal**
-  — bed-at-stronghold, End entry, and the dragon fight are a later phase.
+  `nether_expedition_complete` both hold. It no longer stops at an **activated end portal**: since
+  2026-11-04 it runs on to the bed beside the frame and the sleep that pins the respawn there
+  (`place_bed_stronghold`, `sleep_stronghold`). End entry and the dragon fight are the next phase.
 
 ## Key file map
 
