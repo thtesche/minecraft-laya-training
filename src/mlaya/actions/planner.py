@@ -274,6 +274,20 @@ def candidates(gs: GameState) -> list[str]:
                         and _plank_units(inv) < SHIELD_PLANKS)
         if shield_short:
             need_planks = max(need_planks, SHIELD_PLANKS)
+        # A full pack at a chestless base is the moment to build one: the surplus has nowhere to
+        # rest, so it sheds on the ground (`drop_junk`) and, come the Nether chain, the blaze rods
+        # have no home either. The eight planks a chest costs are a *unit* need like the shield's,
+        # and run191 showed they are never in hand at a base: it settled at it45 and never carried
+        # more than six plank units after, so `craft_chest` could never fire and the pack shed on
+        # the ground seven times. Gated on exactly what makes `craft_chest` eligible, plus a pack
+        # full enough to shed -- so it rides alongside `drop_junk` as the build-instead-of-drop
+        # option, and stays out of the idle `wait`/`go_home`/`explore` fallbacks a light pack owns.
+        chest_short = (gs.base is not None and not _chest_ready(gs) and not gs.chest_blocked
+                       and _chest_site(gs) is not None and not _has(inv, CHEST_ITEM)
+                       and gs.slots_used >= INVENTORY_NEAR_FULL
+                       and _plank_units(inv) < CHEST_PLANKS)
+        if chest_short:
+            need_planks = max(need_planks, CHEST_PLANKS)
         # The stew bowl is the last wood the lull owes: the Nether has no trees, so the bowl a
         # stew comes back from has to be carried in. A pack out of planks cannot craft it, and
         # without this the bowl step would simply drop out of `_all_nether_prep_steps` and the
@@ -283,7 +297,7 @@ def candidates(gs: GameState) -> list[str]:
         if (gs.phase != "night" and _nether_idle(gs) and not _has(inv, BOWL_ITEM)
                 and _plank_units(inv) < 3):
             need_planks = max(need_planks, 3)
-        if _overworld(gs) and ((logs == 0 and planks < need_planks) or shield_short):
+        if _overworld(gs) and ((logs == 0 and planks < need_planks) or shield_short or chest_short):
             # Overworld only, like `craft_bed` and `place_bed`: the Nether has no trees, so a chop-a-tree
             # step can never succeed there and burns every tick it is offered. The bed chain is what
             # asks for wood most often (wool in the pack, no bed yet), which is why it kept winning the

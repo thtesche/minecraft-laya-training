@@ -3560,6 +3560,57 @@ class HomeBaseTest(unittest.TestCase):
         self.assertNotIn("craft_chest", candidates(g2))
         self.assertIsNone(resolve("craft_chest", g2))
 
+    def test_a_full_pack_without_a_chest_asks_for_its_planks(self) -> None:
+        # run191: the base settled at it45 and the pack never carried more than six plank units
+        # after, so `craft_chest` (eight) could never fire - the pack shed on the ground seven
+        # times with no chest ever up, and the Nether chain had nowhere to rest its rods. A full
+        # pack at a chestless base now re-arms the wood (`get_wood`) so the craft can run.
+        g = self._home(self._geared(oak_planks=2))
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertNotIn("craft_chest", candidates(g))
+        self.assertIn("get_wood", candidates(g))
+
+    def test_a_light_pack_does_not_chop_wood_for_a_chest(self) -> None:
+        # The chest wood rides with the pack's own overflow, not a standing errand: a light pack
+        # at the base must keep its idle `wait`/`go_home` fallbacks instead of wandering off to a
+        # tree (the run97 base-loss the fallbacks guard against).
+        g = self._home(self._geared(oak_planks=2))
+        g.slots_used = INVENTORY_NEAR_FULL - 4
+        self.assertNotIn("get_wood", candidates(g))
+
+    def test_one_log_is_short_of_the_chests_eight_planks(self) -> None:
+        # `logs == 0` is not the question: one log is four planks, the chest wants eight.
+        g = self._home(self._geared(oak_planks=0, oak_log=1))
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertNotIn("craft_chest", candidates(g))
+        self.assertIn("get_wood", candidates(g))
+
+    def test_two_logs_pay_for_the_chest_so_no_walk(self) -> None:
+        # Eight plank units in hand: the craft fires and the wood walk stands down.
+        g = self._home(self._geared(oak_planks=0, oak_log=2))
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertIn("craft_chest", candidates(g))
+        self.assertNotIn("get_wood", candidates(g))
+
+    def test_a_placed_chest_asks_for_no_more_wood(self) -> None:
+        g = self._home(self._geared(oak_planks=2))
+        g.slots_used = INVENTORY_NEAR_FULL
+        g.chest_pos = (-197, -46, -97)
+        self.assertNotIn("get_wood", candidates(g))
+
+    def test_a_chest_asks_for_no_wood_before_the_base_anchors(self) -> None:
+        # Before a base stands the chest chain is silent by design (no home to store at), so the
+        # one early window with plenty of wood must not be spent fetching more for a chest.
+        g = self._geared(oak_planks=2)
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertNotIn("get_wood", candidates(g))
+
+    def test_a_blocked_chest_asks_for_no_wood(self) -> None:
+        g = self._home(self._geared(oak_planks=2))
+        g.slots_used = INVENTORY_NEAR_FULL
+        g.chest_blocked = True
+        self.assertNotIn("get_wood", candidates(g))
+
     def test_a_blocked_chest_does_not_justify_going_home(self) -> None:
         g = self._geared(chest=1)
         g.base = (-197, -47, -98)
