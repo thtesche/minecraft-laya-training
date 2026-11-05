@@ -2975,6 +2975,62 @@ class NetherGateTest(unittest.TestCase):
         self.assertIn("sleep", candidates(g))
         self.assertEqual(resolve("sleep", g).tool, "sleep")
 
+    def _unlit_frame_at(self, base: tuple) -> GameState:
+        """A geared bot with a bed in the pack, at a base whose frame stands but is unlit and
+        whose spare pickaxe is still owed (otherwise `light_portal` owns the tick)."""
+        g = self._at_home(self._geared(white_bed=1, flint_and_steel=1, cobblestone=64,
+                                       diamond_pickaxe=1), base)
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian",
+                                            base[0] + 2, base[1] + 1, base[2], 3.0)]}
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        g.phase = "night"
+        return g
+
+    def test_the_night_walk_off_base_aims_at_ground_the_scan_proves(self) -> None:
+        # run188 it93-96: the anchor stood on a shelf at y=80, the column seven blocks west
+        # dropped to a floor at y=72, and four identical `sleep` navigates aimed at
+        # (-97, 81, 175) - nine blocks of air over that floor - and answered
+        # [NAVIGATION_TARGET_UNSUPPORTED] before the stall guard withheld the label.
+        base = (-90, 80, 175)
+        g = self._unlit_frame_at(base)
+        g.resources["stone"] = [BlockHit("stone", "stone", -97, 72, 175, 8.0,
+                                         above="air", below="stone")]
+        a = resolve("sleep", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-97, 73, 175))
+
+    def test_the_night_walk_off_base_keeps_the_grid_cell_when_no_ground_is_read(self) -> None:
+        # No footing information is not a refusal: with nothing scanned the anchor's level is all
+        # the loop has, and the walk stays where it always was.
+        base = (-197, -47, -98)
+        g = self._unlit_frame_at(base)
+        a = resolve("sleep", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]),
+                        (base[0] - SLEEP_OFF_BASE_STEP, base[1] + 1, base[2]))
+
+    def test_the_night_walk_off_base_does_not_walk_toward_the_frame(self) -> None:
+        # Footings only east of the anchor - the side the unlit frame stands on - are not the
+        # night's target: the bed must land away from the open 2x3 opening.
+        base = (-90, 80, 175)
+        g = self._unlit_frame_at(base)
+        g.resources["stone"] = [BlockHit("stone", "stone", -85, 80, 175, 5.0,
+                                         above="air", below="stone")]
+        a = resolve("sleep", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]),
+                        (base[0] - SLEEP_OFF_BASE_STEP, base[1] + 1, base[2]))
+
+    def test_the_night_walk_off_base_does_not_sleep_in_a_cave(self) -> None:
+        # A footing near the column but far below the anchor's floor is a cave bed: `_sleep_ready`
+        # would refuse it, so the walk aims at the grid cell instead of a step that sleeps nowhere.
+        base = (-90, 80, 175)
+        g = self._unlit_frame_at(base)
+        g.resources["stone"] = [BlockHit("stone", "stone", -97, 60, 175, 8.0,
+                                         above="air", below="stone")]
+        a = resolve("sleep", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]),
+                        (base[0] - SLEEP_OFF_BASE_STEP, base[1] + 1, base[2]))
+
     def test_a_base_bed_already_standing_is_slept_in_before_the_gate_burns(self) -> None:
         # run158 it135-162: night at the base, the frame up but unlit, the gate bed already
         # standing on the anchor and nothing in the pack. `_sleep_ready` lets the base bed be

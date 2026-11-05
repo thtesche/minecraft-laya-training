@@ -1280,9 +1280,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if gs.phase != "night" or gs.sleeping or not _overworld(gs) or not _sleep_safe(gs):
             return None
         if _sleep_off_base(gs):
-            bx, by, bz = gs.base
+            stance = _sleep_off_base_stance(gs)
+            if stance is None:
+                return None
+            sx, sy, sz = stance
             return Action(label, "navigate",
-                          {"x": bx - SLEEP_OFF_BASE_STEP, "y": by + 1, "z": bz, "range": 1,
+                          {"x": sx, "y": sy, "z": sz, "range": 1,
                            "dig": True, "scaffold": True},
                           "walk off the base, away from the unlit gate frame, to sleep there")
         if not _sleep_ready(gs):

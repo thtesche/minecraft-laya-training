@@ -2975,6 +2975,10 @@ def _sleep_ready(gs: GameState) -> bool:
 # x+1..x+4), so west leads away from it, and three blocks past `BASE_RADIUS` is off the base
 # box with the navigate's arrival tolerance to spare.
 SLEEP_OFF_BASE_STEP = int(BASE_RADIUS) + 3
+# How far from that column a proven footing may sit and still be the night's target: two cells
+# keeps the walk west of the anchor and outside the base box, and keeps it short enough that the
+# pathfinder has a route to it.
+SLEEP_OFF_BASE_REACH = 2
 
 
 def _sleep_off_base(gs: GameState) -> bool:
@@ -2992,6 +2996,36 @@ def _sleep_off_base(gs: GameState) -> bool:
     return (_overworld(gs) and not _portal_lit(gs) and _at_base(gs)
             and _has_bed(gs.inventory) and gs.base is not None
             and not _expedition_ready(gs))
+
+
+def _sleep_off_base_stance(gs: GameState) -> tuple[int, int, int] | None:
+    """The feet cell the night walk aims at: the column west of the anchor, on ground the scan
+    actually proves.
+
+    The grid cell `(bx - SLEEP_OFF_BASE_STEP, by + 1, bz)` sits at the *anchor's* level whatever
+    the terrain there is. Live, run188 it93-96: the anchor stood on a shelf at y=80, the column
+    seven blocks west dropped to a floor at y=72, and four identical `sleep` navigates to
+    (-97, 81, 175) answered `[NAVIGATION_TARGET_UNSUPPORTED] ... the ground in that column is at
+    y=72` before the stall guard withheld the label. `_bed_stance` reads the ground the same way
+    for the bed (run120); the night walk had no such read. A footing back inside the base box is
+    no help - `_sleep_ready` only lets the bed be slept in off the base - and one far below the
+    anchor's floor is a cave bed, which pins the respawn underground. Where the scan read no
+    ground at all, the grid cell is the only information there is, so it is used as before.
+    """
+    if gs.base is None:
+        return None
+    bx, by, bz = gs.base
+    tx, ty, tz = bx - SLEEP_OFF_BASE_STEP, by + 1, bz
+    footings = _known_footings(gs)
+    if not footings:
+        return (tx, ty, tz)
+    near = [c for c in footings
+            if abs(c[0] - tx) <= SLEEP_OFF_BASE_REACH and abs(c[2] - tz) <= SLEEP_OFF_BASE_REACH
+            and max(abs(c[0] - bx), abs(c[2] - bz)) > BASE_RADIUS
+            and not _underground(gs, c[1])]
+    if not near:
+        return (tx, ty, tz)
+    return min(near, key=lambda c: (abs(c[0] - tx) + abs(c[2] - tz), abs(c[1] - ty), c[0], c[2]))
 
 
 def _underground(gs: GameState, feet_y: float) -> bool:

@@ -855,7 +855,14 @@ Details of the run86 fixes:
   so the night offered `wait` alone for twelve ticks (it147–158). `_sleep_off_base` now offers
   `sleep` there: it walks `SLEEP_OFF_BASE_STEP` blocks west of the anchor, away from the frame,
   and sleeps off the base next tick; `take_bed` brings the bed home in the day. A gate that may be
-  lit now keeps the bot at the base.
+  lit now keeps the bot at the base. The target cell is the *ground* the scan proves in that
+  column, not the anchor's level: live, run188 it93–96, the anchor stood on a shelf at y=80 while
+  the column seven blocks west dropped to a floor at y=72, and four identical navigates to
+  (-97, 81, 175) — nine blocks of air over that floor — answered
+  `[NAVIGATION_TARGET_UNSUPPORTED]` before the stall guard withheld the label. `_bed_stance`
+  reads the ground the same way for the bed (run120); the night walk had no such read. With no
+  ground scanned at all the grid cell is still used, and a footing back inside the base box or far
+  below the anchor's floor (a cave bed) is written off.
 - **A night sleep in a zombie cave.** A night hunt left the bot at y=−1; the night offer laid the
   bed at (−64, −10, 58) and the game refused five sleeps for the zombies around it — but sets
   the respawn point before it checks for monsters, so the respawn stayed in the cave while the
