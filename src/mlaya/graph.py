@@ -2037,8 +2037,8 @@ class Agent:
         if all(isinstance(v, int) for v in pos):
             self._pour_skip.add(pos)
 
-    def _note_stance(self, action, ok: bool, text: str | None) -> None:
-        """Remember a pour stance the server refused, so it is never walked to again.
+    def _note_stance(self, action, ok: bool, text: str | None, res=None) -> None:
+        """Remember a pour stance the walk cannot actually stand on, so it is never walked to again.
 
         Two refusals on the `mine_obsidian` or `approach_lava` walk both say the same thing about
         the cell: it cannot be stood on.
@@ -2052,12 +2052,27 @@ class Agent:
             frame still owed obsidian). A cell the pathfinder cannot reach from the lava pocket
             it is standing in is not one the next tick will reach either.
 
+        A walk the server answered with *success* but that moved the body nowhere says the same
+        thing: `range: 1` lets the pathfinder call the stance reached from one block off, the
+        pour rule disagrees, and the identical navigate repeats every tick (live, run187
+        it98-160: 73 successes to (-130,67,-30) with 0.0 movement, the frame owing obsidian the
+        whole time). A stance the walk never arrives in is refused whatever the server calls it.
+
         It is a property of the stance cell, not of the attempt, so the step reads the set back
         out of the GameState (`stance_skip`), stands on another neighbour, and once every stance
         of that source is refused `_lava_pour_target` passes over the source itself -- the move
         `pour_skip` makes for a refused pour.
         """
-        if ok or action.label not in ("mine_obsidian", "approach_lava") or action.tool != "navigate":
+        if action.label not in ("mine_obsidian", "approach_lava") or action.tool != "navigate":
+            return
+        args = action.args or {}
+        pos = (args.get("x"), args.get("y"), args.get("z"))
+        if not all(isinstance(v, int) for v in pos):
+            return
+        if ok:
+            walked, net = _walk_progress(res) if res is not None else (None, None)
+            if walked == 0 and net == 0:
+                self._stance_skip.add(pos)
             return
         text = text or ""
         # `[NAVIGATION_STOPPED]` covers two different failures. "no path or usable partial route
@@ -2068,10 +2083,7 @@ class Agent:
                        and ("no path" in text or "no usable route" in text))
         if "NAVIGATION_TARGET_UNSUPPORTED" not in text and not unreachable:
             return
-        args = action.args or {}
-        pos = (args.get("x"), args.get("y"), args.get("z"))
-        if all(isinstance(v, int) for v in pos):
-            self._stance_skip.add(pos)
+        self._stance_skip.add(pos)
 
     def _note_rescue(self, action, ok: bool, text: str | None) -> None:
         """Remember a water-rescue foothold the pathfinder could not swim to.
@@ -3247,7 +3259,7 @@ class Agent:
         _text = getattr(res, "text", "")
         self._note_block(action.label, _ok, _text)
         self._note_pour(action, _ok, _text)
-        self._note_stance(action, _ok, _text)
+        self._note_stance(action, _ok, _text, res)
         self._note_rescue(action, _ok, _text)
         self._note_lava_walk(action, _ok)
         self._note_base(action, _ok, _text)

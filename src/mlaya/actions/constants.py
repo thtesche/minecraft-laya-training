@@ -494,8 +494,12 @@ BED_SLEEP_CLICK = 2.0
 # (-43,70,89) came back from the scan with `air` over it, `_known_footings` turned the cell above
 # it into the sleep stance, and four `sleep` ticks answered "[NAVIGATION_TARGET_UNSUPPORTED] No
 # usable footing was observed within 0 blocks of -43, 71, 89. No ground was found within 64 blocks
-# below it." A lit gate is not a floor either.
-NON_FOOTING_BLOCKS = ("white_bed", PORTAL_BLOCK)
+# below it." A lit gate is not a floor either. Containers are not floors either: live, run187
+# it185-230, the base chest at (-99,70,-74) scanned with `air` over it, the cell above it became
+# the sleep stance, and 32 `sleep` ticks answered the identical refusal against it. The ground
+# query counts a container's own column as empty, so the body walks beside it, never on it.
+NON_FOOTING_BLOCKS = ("white_bed", PORTAL_BLOCK, "chest", "trapped_chest", "barrel",
+                      "furnace", "smoker", "crafting_table")
 # A night sleep away from the base needs open ground and no monster at hand. Minecraft refuses a
 # sleep with hostiles near the bed but sets the respawn point first, so a refused sleep still
 # pins the respawn wherever the bed was laid: run87 slept at y=-10 in a zombie cave (it193-197,

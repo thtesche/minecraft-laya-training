@@ -864,6 +864,50 @@ class StanceSkipTest(unittest.TestCase):
                            False, "[NAVIGATION_STOPPED] Pathfinder stopped: repeated_movement_failure")
         self.assertEqual(agent._stance_skip, set())
 
+    def _res(self, travelled: float, from_start: float):
+        """A settled `navigate` answer carrying the server's own walk numbers."""
+        return SimpleNamespace(ok=True, text="", data={"terminal": {"output": {"progress": {
+            "distanceTravelledBlocks": travelled,
+            "distanceFromStartBlocks": from_start}}}})
+
+    def test_a_stance_walk_that_moves_nowhere_is_remembered(self) -> None:
+        # Live, run187 it98-160: `mine_obsidian` navigated to the pour stance (-130,67,-30) with
+        # `range: 1`, the pathfinder called the cell reached from one block off, and 73 identical
+        # successes reported 0.0 blocks travelled. A stance the walk never enters is refused
+        # whatever the server calls it.
+        agent = self._agent()
+        agent._note_stance(
+            self._Action("mine_obsidian", "navigate", {"x": -130, "y": 67, "z": -30}),
+            True, "", self._res(0.0, 0.0))
+        self.assertEqual(agent._stance_skip, {(-130, 67, -30)})
+
+    def test_a_stance_walk_that_arrived_is_not_a_no_op(self) -> None:
+        agent = self._agent()
+        agent._note_stance(
+            self._Action("mine_obsidian", "navigate", {"x": -130, "y": 67, "z": -30}),
+            True, "", self._res(54.26, 54.26))
+        agent._note_stance(
+            self._Action("approach_lava", "navigate", {"x": -130, "y": 67, "z": -30}),
+            True, "", self._res(3.0, 1.0))
+        self.assertEqual(agent._stance_skip, set())
+
+    def test_a_success_without_walk_numbers_is_not_a_no_op(self) -> None:
+        # No read of the walk is no evidence of a standstill: the guard withholds on numbers, not
+        # on a guess.
+        agent = self._agent()
+        agent._note_stance(self._Action("mine_obsidian", "navigate", {"x": -130, "y": 67, "z": -30}),
+                           True, "arrived at -130, 67, -30")
+        agent._note_stance(self._Action("mine_obsidian", "navigate", {"x": -130, "y": 67, "z": -30}),
+                           True, "", SimpleNamespace(ok=True, text="", data={}))
+        self.assertEqual(agent._stance_skip, set())
+
+    def test_a_no_op_stance_walk_of_another_label_is_not_a_stance(self) -> None:
+        # `go_home` standing still is not a pour stance; only the lava chain's walks are.
+        agent = self._agent()
+        agent._note_stance(self._Action("go_home", "navigate", {"x": -99, "y": 70, "z": -75}),
+                           True, "", self._res(0.0, 0.0))
+        self.assertEqual(agent._stance_skip, set())
+
     def test_inject_hands_the_set_to_the_state(self) -> None:
         agent = self._agent()
         agent._stance_skip = {(-187, -36, 18)}
@@ -876,6 +920,18 @@ class StanceSkipTest(unittest.TestCase):
         agent._note_stance(
             self._Action("mine_obsidian", "navigate", {"x": -269, "y": 65, "z": -56}),
             False, "[NAVIGATION_TARGET_UNSUPPORTED] no footing")
+        action = resolve("mine_obsidian", agent._inject(_pond_state()))
+        self.assertEqual(action.tool, "navigate")
+        self.assertEqual((action.args["x"], action.args["y"], action.args["z"]),
+                         (-270, 65, -55))
+
+    def test_a_no_op_walk_moves_the_offer_to_another_stance(self) -> None:
+        # The same chain for the run187 shape: the walk answers success without moving, the stance
+        # is written off, and the next tick aims at a different neighbour of the source.
+        agent = self._agent()
+        agent._note_stance(
+            self._Action("mine_obsidian", "navigate", {"x": -269, "y": 65, "z": -56}),
+            True, "", self._res(0.0, 0.0))
         action = resolve("mine_obsidian", agent._inject(_pond_state()))
         self.assertEqual(action.tool, "navigate")
         self.assertEqual((action.args["x"], action.args["y"], action.args["z"]),

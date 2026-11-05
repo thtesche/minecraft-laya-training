@@ -2805,6 +2805,56 @@ class NetherGateTest(unittest.TestCase):
         self.assertNotEqual(stance, (-10, 71, -50))
         self.assertEqual(stance[1], 70, "the stance sits at the bed's own level, beside it")
 
+    def _run187_base(self, pos: tuple = (-114.5, 62.0, -78.5)) -> GameState:
+        """The base run187 actually had, read live: the pantry chest standing at (-99,70,-74)
+        on the grass, the gate bed beside it at (-98,70,-74)/(-98,70,-73), and the bot 19 blocks
+        off it.
+        """
+        g = self._geared()
+        g.base = (-99, 69, -75)
+        g.pos = pos
+        g.phase = "night"
+        g.resources = {
+            "chest": [BlockHit("chest", "chest", -99, 70, -74, 18.6, above="air",
+                               below="grass_block")],
+            "white_bed": [BlockHit("white_bed", "white_bed", -98, 70, -74, 19.4, above="air",
+                                   below="grass_block"),
+                          BlockHit("white_bed", "white_bed", -98, 70, -73, 19.7, above="air",
+                                   below="grass_block")],
+        }
+        g.rescue_ground = {"grass_block": [
+            BlockHit("grass_block", "grass_block", x, 69, z, 1.0, above="air")
+            for x in (-100, -99, -98) for z in (-75, -74, -73)
+            if (x, z) != (-99, -74)]}
+        return g
+
+    def test_a_chest_is_not_a_footing(self) -> None:
+        # Live, run187 it185-230: the base chest at (-99,70,-74) came back from the ground scan
+        # with `air` over it, `_known_footings` read the cell above it as the sleep stance, and 32
+        # `sleep` ticks answered "[NAVIGATION_TARGET_UNSUPPORTED] No usable footing was observed
+        # within 0 blocks of -99, 71, -74. No ground was found within 64 blocks below it." A
+        # container is not a floor: the body stands beside it, never on it.
+        g = self._run187_base()
+        self.assertNotIn((-99, 71, -74), _known_footings(g),
+                        "the cell above a chest is not ground to stand on")
+        stance = _bed_reach_stance(g)
+        self.assertNotEqual(stance, (-99, 71, -74))
+        self.assertEqual(stance, (-98, 70, -75), "the stance is the grass beside the chest")
+        self.assertIn(stance, _known_footings(g))
+        self.assertTrue(_click_gap(_centre(stance), _bed_cells(g)) <= BED_SLEEP_CLICK ** 2)
+
+    def test_a_container_is_not_a_footing(self) -> None:
+        # Every container the ground scan can name, not just the chest: the server counts a
+        # container's own column as empty, so the cell above it is not a place to stand.
+        g = self._geared()
+        g.base = (0, 69, 0)
+        g.pos = (0.5, 70.0, 5.5)
+        g.resources = {}
+        g.rescue_ground = {name: [BlockHit(name, name, 0, 69, 0, 1.0, above="air")]
+                           for name in ("chest", "trapped_chest", "barrel", "furnace", "smoker",
+                                        "crafting_table")}
+        self.assertNotIn((0, 70, 0), _known_footings(g))
+
     def test_a_bed_out_of_scan_range_is_not_crafted_again(self) -> None:
         # run121 it80: the bot stood at (228,72,-336), 280 m from the base, and the base chunks
         # were unloaded, so the scan saw no bed and `craft_bed` made a second one. The remembered
