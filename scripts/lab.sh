@@ -11,7 +11,9 @@
 #
 # Rules the lab enforces: one run at a time (lock file), a run only starts when the world
 # and the host are both healthy, the previous decisions log is archived first, and a run that
-# ends writes its own report -- nobody has to ask for the analysis.
+# ends writes its own report -- nobody has to ask for the analysis. A watchdog monitors the
+# server log for freezes (Watchdog tick timeouts) and terminates the run if detected, preventing
+# multi-hour hangs when the server becomes unresponsive.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -297,6 +299,9 @@ cmd_up() {
   # for the analysis, and the next `up` can diff against it straight away.
   ( while kill -0 "$run_pid" 2>/dev/null; do sleep 5; done; report_run "$run_no" ) &
   echo $! > "$STATE/report.pid"
+  # Watchdog monitors the server log for freezes (Can't keep up) and aborts the run.
+  "$REPO/scripts/watchdog.sh" "$run_no" "$REPO/infra/world/logs/latest.log" "$STATE" &
+  echo $! > "$STATE/watchdog.pid"
   log "run $run_no started (${args[*]}) -> runs/run$run_no.log, report written on completion"
   return 0
 }
@@ -412,7 +417,8 @@ cmd_dataset() {
 cmd_down() {
   if run_up; then
     kill "$(cat "$STATE/run.pid")" 2>/dev/null
-    rm -f "$STATE/run.pid" "$STATE/report.pid" "$STATE/lock"
+    kill "$(cat "$STATE/watchdog.pid")" 2>/dev/null
+    rm -f "$STATE/run.pid" "$STATE/report.pid" "$STATE/watchdog.pid" "$STATE/lock"
     log "run stopped"
   fi
   if [[ ${1:-} != --run-only ]]; then

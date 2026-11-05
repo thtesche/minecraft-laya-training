@@ -57,6 +57,12 @@ Optional, only when a trained head is meant to run:
 `export LAYA_EXTRA_MODELS='{"english": "<repo>/runs/checkpoints/minecraft-<time>"}'` before `up`.
 Without it the loop runs the base `english` checkpoint.
 
+**Watchdog:** `scripts/watchdog.sh` runs during every `up` and monitors the server log for freezes.
+If the server fails to tick (detected via "Can't keep up" in the log), the watchdog terminates the
+run immediately, preventing the bot from waiting hours for a dead server. This guard is essential
+because the Java Watchdog does not fire until the process wakes — a frozen container or host sleep
+can leave the server stalled without crashing, and the agent blind.
+
 Manual start, only when the lab is not usable:
 `.venv/bin/python -m mlaya.cli run -n 600 > runs/runNN.log 2>&1 &`.
 
