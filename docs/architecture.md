@@ -1577,7 +1577,10 @@ lid and stalled on the latch that was supposed to say the haul was done.
   disagrees, and the identical navigate repeats every tick (live, run187 it98-160: 73 successes to
   (-130,67,-30) with `distanceTravelledBlocks` 0.0, 249 loop ticks in that run). A success whose
   travelled and net distance are both zero joins `stance_skip`; a success without walk numbers does
-  not, because a guard that cannot see the walk has no evidence.
+  not, because a guard that cannot see the walk has no evidence. A success carries no bracketed
+  code, so the write-off leaves its own policy mark in the log (`stance_noop_dropped`: label, cell,
+  walked, net) — otherwise the report reads 73 plain successes and cannot tell the stance was
+  written off rather than reached.
   As "open" above the pour cell, besides `air`, `cave_air` also counts (`perception.AIR_NAMES`):
   underground lava lakes are covered by cave air instead of `air`, and the pour check discarded
   such cells first (fixed live in the from-zero run).
