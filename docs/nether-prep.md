@@ -136,11 +136,16 @@ Two things the mushroom pantry needs that the Nether cannot supply.
   into the base chest, and a bowl banked at home is a pantry the trip cannot reach.
 - **The pantry is stocked, not only brewed.** `craft_stew` fetches the one mushroom a single stew
   is short of - all a stew needs, nothing a pantry is made of. Live, run175: 44 action ticks, not
-  one mushroom picked. `gather_mushrooms` digs a batch of up to `MUSHROOM_BATCH = 32` of the kind
+  one mushroom picked. `gather_mushrooms` digs a batch of the kind
   whose stack is furthest from `MUSHROOM_CAP = 64`, offered only when the hunt has nothing to walk
   to, the reserve is still short, a bowl is carried or craftable, and a mushroom is loaded in the
-  scan. The cap is a ceiling, not a request: the label stays on the offer while a stack is below
-  it, and Laya decides whether to take the tick. Both mushrooms are on `KEEP_MATERIALS` - raw
+  scan. Until the kit brews (a bowl and one of each kind), the batch is only
+  `MUSHROOM_SEED = 2`: a full stack dug before the second kind exists can fill the pack and
+  starve the slot the recipe needs (live, run193 it279: 32 red picked, the pack at 34/36, the
+  brown that appeared at it282 got no slot, and the kit stayed incomplete through the death). Once
+  both kinds are carried, the batch grows to `MUSHROOM_BATCH = 32`. The cap is a ceiling, not a
+  request: the label stays on the offer while a stack is below it, and Laya decides whether to
+  take the tick. Both mushrooms are on `KEEP_MATERIALS` - raw
   mushrooms are not `EDIBLE`, so `stow_surplus` would otherwise file the pantry into the base
   chest, and no step withdraws it.
 - **The reserve walk has a bound and a starting point.** `_food_reserve_walk_wanted` widens the

@@ -343,6 +343,12 @@ MUSHROOM_CAP = 64
 # One `collect_block` call digs at most `MAX_COLLECT_BLOCKS` (32) in the MCP server, so a batch
 # larger than that is a call the server cannot answer.
 MUSHROOM_BATCH = 32
+# The batch while the stew kit is still incomplete - a bowl and one of each kind. A full stack is
+# only worth digging once the kit brews, because the kit is what makes the pantry food at all.
+# Live, run193 it279: 32 red mushrooms picked while brown was not in the scan, the pack at 34/36,
+# and the brown that appeared at it282 could not get a slot - the kit stayed incomplete through the
+# death. Seeding one kind first and letting the next tick fetch the other keeps a slot free.
+MUSHROOM_SEED = 2
 # Cells `clear_frame` will not dig even when the build refused them: the frame's own block and the
 # fluids and bedrock a `collect_block` cannot safely break. A container the movement policy would
 # not dig unasked (a furnace, a chest) is exactly what the step is for, so it is not listed here.

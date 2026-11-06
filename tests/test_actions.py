@@ -52,7 +52,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            _bed_needs_moving, _unsafe_beds,
                            stronghold_candidates,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
-                           MUSHROOM_CAP, MUSHROOM_BATCH,
+                           MUSHROOM_CAP, MUSHROOM_BATCH, MUSHROOM_SEED,
                            _mushroom_short, _mushroom_pantry_wanted,
                             FOOD_HUNT_RANGE_DAY, FOOD_HUNT_RANGE_NIGHT, FOOD_HUNT_RANGE_RESERVE,
                             _food_hunt_range, _food_reserve_walk_wanted,
@@ -9338,7 +9338,27 @@ class MushroomPantryStockTest(unittest.TestCase):
         self.assertEqual(a.args["block_name"], "red_mushroom")
 
     def test_the_batch_is_the_ceiling_of_one_call(self) -> None:
-        a = resolve("gather_mushrooms", self._stock())
+        # The kit brews (bowl + one of each), so the pantry may now grow into stacks.
+        a = resolve("gather_mushrooms", self._stock(red_mushroom=1, brown_mushroom=1))
+        self.assertEqual(a.args["count"], MUSHROOM_BATCH)
+
+    def test_an_incomplete_kit_gathers_a_seed_not_a_stack(self) -> None:
+        # run193 it279: 32 red mushrooms went into the pack while brown was not in the scan, the
+        # pack sat at 34/36, and the brown that appeared at it282 never got a slot. Until both
+        # kinds are carried the batch is a seed, so a stack cannot eat the slot the kit needs.
+        g = self._stock()
+        a = resolve("gather_mushrooms", g)
+        self.assertEqual(a.args["block_name"], "red_mushroom")
+        self.assertEqual(a.args["count"], MUSHROOM_SEED)
+
+    def test_the_seed_completes_the_kit_over_two_ticks(self) -> None:
+        # One kind seeded, the other short: still a seed, and only the completed kit grows a stack.
+        g = self._stock(red_mushroom=MUSHROOM_SEED, brown_mushroom=0)
+        a = resolve("gather_mushrooms", g)
+        self.assertEqual(a.args["block_name"], "brown_mushroom")
+        self.assertEqual(a.args["count"], MUSHROOM_SEED)
+        g.inventory["brown_mushroom"] = MUSHROOM_SEED
+        a = resolve("gather_mushrooms", g)
         self.assertEqual(a.args["count"], MUSHROOM_BATCH)
 
     def test_a_near_full_stack_is_filled_to_the_cap_and_no_further(self) -> None:

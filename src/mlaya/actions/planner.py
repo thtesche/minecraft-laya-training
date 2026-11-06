@@ -1687,8 +1687,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         carried = int(inv.get(kind, 0) or 0)
         # The batch is the most one call can dig and the most the stack can still take, never a
         # demand for the cap: the server mines what the loaded ground actually holds and reports
-        # what came back, and the next tick decides whether to keep digging.
-        count = max(1, min(MUSHROOM_BATCH, MUSHROOM_CAP - carried))
+        # what came back, and the next tick decides whether to keep digging. Until the kit brews
+        # (a bowl and one of each kind) the batch is a seed, not a stack: filling one kind first
+        # is how run193 spent its last free slot on 32 red mushrooms while the brown that would
+        # have completed the recipe stood 41 m away.
+        batch = MUSHROOM_BATCH if _stew_kit(gs) else MUSHROOM_SEED
+        count = max(1, min(batch, MUSHROOM_CAP - carried))
         return Action(label, "collect_block",
                       {"block_name": kind, "count": count},
                       f"pick up to {count} {kind} for the stew pantry; they regrow where they "
