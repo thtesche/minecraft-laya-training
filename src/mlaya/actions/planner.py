@@ -1279,8 +1279,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # outright, the run froze on the spot (live, run35: `[Invalid arguments for tool navigate:
         # expected int, received number at x]`, 23 identical ticks with no other candidate).
         tx, ty, tz = (math.floor(v) for v in target)
+        # `build: true` is the part the rescue was missing. A step-out beside a Nether gate is
+        # often mid-air: the frame stands on the floor, and the cell two blocks off the body hangs
+        # above it. The server refuses a target with nothing under it unless the caller says the
+        # bot means to scaffold there on purpose (live, run198 it0-599: six hundred identical
+        # `[NAVIGATION_TARGET_UNSUPPORTED] ... The ground in that column is at y=71`, the body
+        # never leaving the obsidian it stood on). Digging stays off: the frame around the opening
+        # must not be broken.
         return Action(label, "navigate",
-                      {"x": tx, "y": ty, "z": tz, "dig": False, "scaffold": False},
+                      {"x": tx, "y": ty, "z": tz, "dig": False, "scaffold": True, "build": True},
                       "step out of the lit portal the body is standing in, before it teleports")
     if label == "take_bed":
         if not _overworld(gs):

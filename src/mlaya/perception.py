@@ -39,6 +39,14 @@ GROUND_NAMES = ("grass_block", "sand", "gravel", "dirt")
 # rocks a miner digs through.
 RESCUE_ROCK_NAMES = ("stone", "cobblestone", "deepslate", "andesite")
 RESCUE_GROUND_NAMES = GROUND_NAMES + RESCUE_ROCK_NAMES
+# The Nether's floor is in none of those names. Down there the ground is netherrack, crimson_nylium
+# and basalt, so `_known_footings` answered empty in every Nether run and every `navigate` target
+# beside a gate was picked blind: live, run198 it0-599, six hundred `leave_portal` ticks aimed at
+# (5,74,13) - two blocks above the floor the server named as y=71 - each answered
+# `[NAVIGATION_TARGET_UNSUPPORTED]`. Read as its own call, because the ground cast already sits at
+# the eight names one `view_blocks find` accepts.
+NETHER_GROUND_NAMES = ("netherrack", "crimson_nylium", "basalt")
+NETHER_GROUND_LIMIT = 24
 # The cell above a rescue foothold may be enclosed: a bot in a cave stands under `cave_air`,
 # not open sky. `BlockHit.standable` stays open-sky only.
 RESCUE_ABOVE = ("air", "cave_air")
@@ -2212,14 +2220,18 @@ async def build(executor) -> GameState:
     # just leaves its names out of the state.
     gs.resources = {}
     gs.rescue_ground = {}
-    for names, limit, why in ((RESOURCE_NAMES, RESOURCE_LIMIT,
-                               "scan nearby resources for the next step"),
-                              (RESCUE_GROUND_NAMES, RESCUE_GROUND_LIMIT,
-                               "scan standable ground for navigate targets"),
-                              (CHAIN_NAMES, CHAIN_LIMIT,
-                               "scan the lava to pour on and a chest at the base"),
-                              (MUSHROOM_NAMES, MUSHROOM_LIMIT,
-                               "scan the mushrooms that brew into stew when no animal is in reach")):
+    scan_groups = [(RESOURCE_NAMES, RESOURCE_LIMIT,
+                    "scan nearby resources for the next step"),
+                   (RESCUE_GROUND_NAMES, RESCUE_GROUND_LIMIT,
+                    "scan standable ground for navigate targets"),
+                   (CHAIN_NAMES, CHAIN_LIMIT,
+                    "scan the lava to pour on and a chest at the base"),
+                   (MUSHROOM_NAMES, MUSHROOM_LIMIT,
+                    "scan the mushrooms that brew into stew when no animal is in reach")]
+    if "nether" in str(gs.dimension or "").lower():
+        scan_groups.append((NETHER_GROUND_NAMES, NETHER_GROUND_LIMIT,
+                           "scan the Nether's own floor for standable footing"))
+    for names, limit, why in scan_groups:
         try:
             blocks = await executor.read(
                 "view_blocks",
@@ -2228,6 +2240,13 @@ async def build(executor) -> GameState:
             )
             payload = coerce(blocks.data, blocks.text)
             parsed = parse_resources(payload, limit)
+            if names == NETHER_GROUND_NAMES:
+                # The floor a Nether run stands on goes into the footing pool and nowhere else:
+                # netherrack fills every loaded chunk, so counting it in `resource_found` would
+                # turn every "found" reading into noise, and `explore`'s ground view is soil-only
+                # by construction.
+                gs.rescue_ground.update(parse_resources(payload, limit, RESOURCE_RADIUS))
+                continue
             if names == RESCUE_GROUND_NAMES:
                 # The water rescue is the one read that wants the ground past 64 m (live,
                 # run19b: the shore sat at 65.1 m and the 64 m scan left only a cave floor

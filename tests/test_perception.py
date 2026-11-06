@@ -4,6 +4,7 @@ import json
 import unittest
 
 from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_LIMIT, GROUND_NAMES,
+                              NETHER_GROUND_LIMIT, NETHER_GROUND_NAMES,
                               RESCUE_GROUND_LIMIT, RESCUE_GROUND_NAMES,
                               RESCUE_RADIUS, RESOURCE_LIMIT, BlockHit,
                               frame_obsidian_cells, frame_volume, parse_block_above, parse_chest_blocker_name, parse_box,
@@ -207,6 +208,53 @@ class RescueGroundScanDepthTest(unittest.IsolatedAsyncioTestCase):
         # The soil pool explore/base read stays capped at GROUND_LIMIT, so the shore is not in it.
         self.assertEqual(len(gs.resources["grass_block"]), GROUND_LIMIT)
         self.assertNotIn((40, 62, 10), [h.pos for h in gs.resources["grass_block"]])
+
+
+class NetherFloorScanTest(unittest.IsolatedAsyncioTestCase):
+    """The Nether's own floor is scanned as ground, or no footing is ever read down there.
+
+    Live, run198 it0-599: the bot stood inside its own Nether exit gate and `leave_portal` aimed at
+    (5,74,13) six hundred times, each answered `[NAVIGATION_TARGET_UNSUPPORTED] ... The ground in
+    that column is at y=71`. The ground cast names soil and overworld rock only, so in the Nether
+    `_known_footings` was empty and every step-out cell was picked blind.
+    """
+
+    class _Mcp:
+        def __init__(self, dimension: str):
+            self.dimension = dimension
+            self.floor_limit: int | None = None
+
+        async def read(self, tool, args, why):
+            class _R:
+                def __init__(self, data):
+                    self.data, self.text = data, None
+            if tool == "view_status":
+                return _R(_status({"position": {"x": 5.49, "y": 74.0, "z": 15.5},
+                                   "health": 20, "food": 20, "inventory": [], "mobs": [],
+                                   "dimension": self.dimension}))
+            if tool == "view_blocks":
+                if list(args["find"]["block_names"]) == list(NETHER_GROUND_NAMES):
+                    self.floor_limit = args["find"]["limit"]
+                    floor = {"name": "netherrack", "found": 7444926, "listed": [
+                        {"x": 3, "y": 73, "z": 15, "name": "netherrack", "distance": 2.2,
+                         "above": "air", "below": "netherrack"}]}
+                    return _R({"response": {"data": {"result": {"blocks": {"find": [floor]}}}}})
+            return _R({})
+
+    async def test_the_floor_a_nether_bot_stands_on_reaches_the_footings(self) -> None:
+        mcp = self._Mcp("minecraft:the_nether")
+        gs = await build(mcp)
+        self.assertEqual(mcp.floor_limit, NETHER_GROUND_LIMIT)
+        self.assertIn((3, 73, 15), [h.pos for h in gs.rescue_ground["netherrack"]])
+        # The floor is not a resource: netherrack fills every loaded chunk, and counting it would
+        # make every "found" reading noise for the steps that read `resources`.
+        self.assertNotIn("netherrack", gs.resources)
+        self.assertNotIn("netherrack", gs.resource_found)
+
+    async def test_the_overworld_costs_no_nether_floor_read(self) -> None:
+        mcp = self._Mcp("minecraft:overworld")
+        await build(mcp)
+        self.assertIsNone(mcp.floor_limit)
 
 
 class LoggedStateRoundTripTest(unittest.TestCase):

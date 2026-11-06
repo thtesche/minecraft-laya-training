@@ -4317,9 +4317,12 @@ class LeavePortalTest(unittest.TestCase):
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -98))
         for axis in ("x", "z"):
             self.assertIsInstance(a.args[axis], int)
-        # Never dig or scaffold: the rescue must not damage the frame around the opening.
+        # Never dig: the rescue must not break the frame around the opening. Scaffolding is allowed
+        # because a step-out beside a gate can hang in the air, and `build` is what lets the server
+        # reach it (see `test_the_rescue_builds_to_a_mid_air_step_out`).
         self.assertFalse(a.args["dig"])
-        self.assertFalse(a.args["scaffold"])
+        self.assertTrue(a.args["scaffold"])
+        self.assertTrue(a.args["build"])
 
     def test_leave_without_a_base_steps_to_a_neighbour(self) -> None:
         g = geared()
@@ -4331,6 +4334,33 @@ class LeavePortalTest(unittest.TestCase):
         # The target is a horizontal neighbour, never the portal cell itself.
         cell = (math.floor(a.args["x"]), math.floor(a.args["y"]), math.floor(a.args["z"]))
         self.assertNotEqual(cell, (-196, 64, -98))
+
+    def test_the_step_out_uses_ground_the_scan_read(self) -> None:
+        # run198 it0-599: the bot stood on the frame's bottom obsidian at y=74 inside its own
+        # Nether exit. The floor beside the frame is at y=73; two blocks south of the gate it is
+        # y=71, so the blind neighbour (5,74,13) hung in the air and the server refused it six
+        # hundred times. With the Nether floor in the ground cast, the supported cell west of the
+        # frame is the one the rescue aims at.
+        g = gs(pos=(5.49, 74.0, 15.5), dimension="minecraft:the_nether",
+              inventory={"netherrack": 53}, tools={"pickaxe": "diamond"})
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal", 5, 74, 15, 0.4),
+                                         BlockHit("nether_portal", "nether_portal", 6, 74, 15, 0.9)]}
+        g.rescue_ground = {"netherrack": [
+            BlockHit("netherrack", "netherrack", 3, 73, 15, 2.2, above="air", below="netherrack"),
+            BlockHit("netherrack", "netherrack", 5, 71, 13, 2.6, above="air", below="netherrack")]}
+        a = resolve("leave_portal", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (3, 74, 15))
+
+    def test_an_unsupported_step_out_is_built_to(self) -> None:
+        # No ground read at all: the rescue keeps aiming at the nearest open neighbour, and `build`
+        # is what lets the server scaffold there instead of refusing a cell with nothing under it.
+        g = gs(pos=(5.49, 74.0, 15.5), dimension="minecraft:the_nether",
+              inventory={"netherrack": 53}, tools={"pickaxe": "diamond"})
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal", 5, 74, 15, 0.4)]}
+        a = resolve("leave_portal", g)
+        self.assertFalse(a.args["dig"])
+        self.assertTrue(a.args["build"])
+        self.assertNotEqual((a.args["x"], a.args["y"], a.args["z"]), (5, 74, 15))
 
     def test_a_portal_beside_the_bot_is_not_the_rescue(self) -> None:
         # A lit gate a couple of blocks off is the normal case (the bot works at the base beside

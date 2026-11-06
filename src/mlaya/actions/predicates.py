@@ -726,7 +726,8 @@ def _leave_portal_target(gs: GameState) -> tuple[float, float, float] | None:
 
     The home base is the natural step-out (the frame plane sits two blocks east of it), so it wins
     when it is clear of the portal; otherwise the nearest horizontal neighbour that is not itself a
-    portal block. No digging: the frame around the opening must not be damaged by the rescue.
+    portal block - and, where the ground scan has read one, a neighbour the scan proves is
+    standable. No digging: the frame around the opening must not be damaged by the rescue.
 
     The base is only a step-out in the dimension it is in. `base` is one field for both worlds, so
     a bot standing in the Nether's own arrival portal was sent toward the *Overworld* base's
@@ -749,7 +750,25 @@ def _leave_portal_target(gs: GameState) -> tuple[float, float, float] | None:
     # all reporting ok, the body on the same obsidian inside the gate, the run a step from the
     # iteration limit. With the target two cells out the identical call walks - measured: the body
     # went from z 34.5 to z 33.66, clear of the portal blocks, which all sit on z 34.
-    for dx, dz in ((0, -2), (0, 2), (-2, 0), (2, 0), (0, -3), (0, 3), (-3, 0), (3, 0)):
+    offsets = ((0, -2), (0, 2), (-2, 0), (2, 0), (0, -3), (0, 3), (-3, 0), (3, 0))
+    footings = _known_footings(gs)
+    if footings:
+        # A cell the ground scan proves the bot can stand in, outside the opening and at least two
+        # cells off the body's own column. Live, run198: the bot stood on the frame's bottom
+        # obsidian at y=74 inside its own Nether exit, the floor beside the frame was at y=73 and
+        # two blocks south of it at y=71, and the first neighbour the blind list offered - (5,74,13)
+        # - hung in the air for six hundred ticks.
+        options = [c for c in footings
+                   if c not in portal
+                   and max(abs(c[0] - fx), abs(c[2] - fz)) >= 2
+                   and abs(c[1] - fy) <= 2]
+        if options:
+            cx, cy, cz = min(options, key=lambda c: math.dist(c, (fx, fy, fz)))
+            return (cx + 0.5, cy, cz + 0.5)
+    # Nothing beside the gate was read as ground: aim at the nearest open neighbour anyway, and the
+    # resolve sends it with `build: true` so the server scaffolds to the cell rather than refusing
+    # a target with nothing under it.
+    for dx, dz in offsets:
         if (fx + dx, fy, fz + dz) not in portal:
             return (fx + dx + 0.5, fy, fz + dz + 0.5)
     return None

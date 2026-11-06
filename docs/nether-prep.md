@@ -246,6 +246,13 @@ portal** for now. Getting back out is part of the goal, not a detail.
   Without a blaze in reach the bot walks the fortress bricks instead: the Nether scan group
   (`nether_bricks`, `nether_brick_fence`, `nether_brick_stairs`, `spawner`) is read **only** in the
   Nether and is what gives `explore` a heading rather than a random walk.
+- **The Nether's own floor is scanned as footing** (`NETHER_GROUND_NAMES`: `netherrack`,
+  `crimson_nylium`, `basalt`, read to `NETHER_GROUND_LIMIT = 24`, Nether only): the ground cast
+  names soil and overworld rock, so down there `_known_footings` was empty and every step-out cell
+  was picked blind — **live, run198 it0-599**, `leave_portal` aimed at (5,74,13), two blocks above
+  the floor the server named as y=71, six hundred times. The floor lands in `gs.rescue_ground` and
+  **not** in `gs.resources`: netherrack fills every loaded chunk, and counting it would make every
+  "found" reading noise for the steps that read the soil view.
 - **`leave_nether`** (the way out): the exit portal when a `nether_portal` block is loaded, and
   otherwise a walk back to `gs.nether_arrival` — the cell the bot landed on, where the exit portal
   stands. Offered when the nine rods are in, **and also** when the bot cannot afford to stay

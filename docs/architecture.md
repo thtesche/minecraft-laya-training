@@ -1724,9 +1724,14 @@ lid and stalled on the latch that was supposed to say the haul was done.
   `_in_portal` (the bot's own feet or head cell is a loaded `nether_portal` block) as the very first
   thing, ahead of the water rescue — the teleport is faster than drowning — and returns **only**
   `["leave_portal"]`, another rescue where Laya does not choose. `resolve("leave_portal")` navigates
-  one step out with **no** `dig`/`scaffold` (the frame must not be damaged by the rescue), preferring
-  the home base (the frame plane sits two blocks east of it) and otherwise the nearest horizontal
-  neighbour that is not itself a portal cell. Phase 3, the intended crossing, must bypass this.
+  one step out with **no** `dig` (the frame must not be damaged by the rescue), preferring the home
+  base (the frame plane sits two blocks east of it), then a cell the ground scan *proved*
+  standable, and otherwise the nearest horizontal neighbour that is not itself a portal cell. That
+  target is sent with **`build: true`**: beside a Nether gate the step-out often hangs in the air,
+  and the server refuses a cell with nothing under it unless the caller says the bot means to
+  scaffold there on purpose (live, run198 it0-599: six hundred identical
+  `[NAVIGATION_TARGET_UNSUPPORTED] ... The ground in that column is at y=71`, the body never
+  leaving the obsidian it stood on). Phase 3, the intended crossing, must bypass this.
   Tested in `tests/test_actions.py::LeavePortalTest`.
   **Stuck (`repeated_movement_failure`):** The server reports this stop when the body does **not**
   get anywhere on a re-issued route — the bot is physically enclosed.
