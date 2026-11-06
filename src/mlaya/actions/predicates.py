@@ -2396,8 +2396,16 @@ def _idle_off_base(gs: GameState) -> bool:
 
 
 def _junk_carried(inv: dict[str, int]) -> list[str]:
-    """Carried low-value blocks no recipe wants, in the fixed shedding order."""
-    return [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]
+    """Carried low-value blocks no recipe wants, in the fixed shedding order.
+
+    The named list first, then the families (`JUNK_SUFFIXES`) in inventory order: a sapling is
+    never planted and a banner never hung, so every colour of sapling, terracotta and banner is
+    clutter wherever the bot stands - not only on the march, where the wider list used to apply.
+    """
+    out = [n for n in JUNK_ITEMS if inv.get(n, 0) > 0]
+    out += [n for n in inv if inv.get(n, 0) > 0 and n.endswith(JUNK_SUFFIXES)
+            and n not in JUNK_ITEMS]
+    return out
 
 
 def _hoard_surplus(gs: GameState, inv: dict[str, int]) -> list[dict[str, int]]:

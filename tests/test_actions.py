@@ -3785,6 +3785,18 @@ class HomeBaseTest(unittest.TestCase):
         g.slots_used = 36
         self.assertNotIn("drop_junk", candidates(g))
 
+    def test_saplings_banners_and_terracotta_are_junk_off_the_march(self) -> None:
+        # The families used to be march-only clutter (run175). A base pack holding six saplings and
+        # a stack of terracotta had no name for them at all: `JUNK_ITEMS` is a list of exact names,
+        # and every colour variant of a family is a name of its own.
+        g = self._home(self._geared(oak_sapling=6, red_terracotta=12, white_banner=3,
+                                    cobblestone=20, jungle_sapling=2))
+        g.slots_used = 36
+        names = [i["item_name"] for i in resolve("drop_junk", g).args["items"]]
+        self.assertEqual(names, ["oak_sapling", "red_terracotta", "white_banner", "jungle_sapling"])
+        self.assertEqual(len(names), len(set(names)))
+        self.assertNotIn("cobblestone", names)
+
     def test_inventory_relief_stows_at_the_base_chest(self) -> None:
         g = self._home(self._geared(tuff=64))
         g.chest_pos = (-197, -46, -97)
@@ -7530,8 +7542,9 @@ class TheOfferAndTheResolveMustAgreeTest(unittest.TestCase):
         from mlaya.actions import _droppable, _surplus_besides_keep
         # A full pack, no chest in reach, and the only thing spare is an unnamed item.
         # Only an unnamed item is spare. `tuff` would not do: it is on `JUNK_ITEMS`, so it is
-        # legitimately droppable and the test would prove nothing.
-        g = at_home(geared(oak_sapling=3))
+        # legitimately droppable and the test would prove nothing. (A sapling would not either:
+        # `JUNK_SUFFIXES` makes every `_sapling` named junk now.)
+        g = at_home(geared(wheat=3))
         g.chest_pos = None
         g.slots_used = INVENTORY_NEAR_FULL
         self.assertTrue(_surplus_besides_keep(g, g.inventory))

@@ -2050,8 +2050,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # way a full pack clears, and the extra names apply only while `_striding_to_stronghold`.
         # `_pack_clutter` is the whole-stack half of the same idea: a slot opens only when a stack
         # is emptied, so the shed also names the stacks whose use the pack has already covered.
-        items = [{"item_name": n} for n in _junk_carried(inv) + _march_shed(gs) + _spare_gear(gs, inv)
-                 + _pack_clutter(gs, inv)]
+        # The march list and the family list can name the same block (a sapling is both), and a
+        # repeated name in one call is a `[NOT_CARRIED]` on the second entry.
+        names: list[str] = []
+        for n in _junk_carried(inv) + _march_shed(gs) + _spare_gear(gs, inv) + _pack_clutter(gs, inv):
+            if n not in names:
+                names.append(n)
+        items = [{"item_name": n} for n in names]
         items += _hoard_surplus(gs, inv)
         if not items:
             return None

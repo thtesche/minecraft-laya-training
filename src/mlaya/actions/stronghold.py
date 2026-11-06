@@ -266,9 +266,13 @@ def _striding_to_stronghold(gs: GameState) -> bool:
 
 
 def _march_junk(name: str) -> bool:
-    """Whether a block is clutter the stronghold march drops on the way (beyond `JUNK_ITEMS`)."""
+    """Whether a block is clutter the stronghold march drops on the way (beyond `JUNK_ITEMS`).
+
+    The families (`JUNK_SUFFIXES`) are junk everywhere now; they stay here so the march shed still
+    names them, and `resolve("drop_junk")` dedupes the two lists before the call.
+    """
     return (name in STRONGHOLD_MARCH_JUNK
-            or any(name.endswith(suffix) for suffix in STRONGHOLD_MARCH_JUNK_SUFFIXES))
+            or any(name.endswith(suffix) for suffix in JUNK_SUFFIXES))
 
 
 def _march_shed(gs: GameState) -> list[str]:

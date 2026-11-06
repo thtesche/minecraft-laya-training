@@ -409,6 +409,12 @@ JUNK_ITEMS = ("tuff", "calcite", "diorite", "andesite", "granite", "cobbled_deep
               "amethyst_block", "polished_tuff", "brick", "moss_carpet", "mossy_cobblestone",
               "stone_bricks", "glass", "wheat_seeds", "gold_nugget", "spider_eye")
 
+# Whole families that are rubbish wherever the bot stands, not only on the march: a sapling is
+# never planted (the chain grows no tree), a banner and terracotta are never crafted or placed.
+# They were march-only clutter (run175), which left a base pack holding six saplings and a stack
+# of terracotta that no step could name.
+JUNK_SUFFIXES = ("_sapling", "_terracotta", "_banner", "_glazed_terracotta")
+
 # Extra rubbish shed only on the stronghold march (`_striding_to_stronghold`). The descent to the
 # frame shovels up deepslate and biome clutter, and the pack still carries Nether leftovers from the
 # expedition - but the march never returns to base, so a full pack has to shed on the ground rather
@@ -426,8 +432,6 @@ STRONGHOLD_MARCH_JUNK = frozenset({
     "warped_wart_block", "nether_wart_block", "shroomlight",
     "soul_sand", "soul_soil", "basalt", "smooth_basalt", "blackstone",
 })
-# Whole families named by their suffix, so every colour variant is covered without listing each.
-STRONGHOLD_MARCH_JUNK_SUFFIXES = ("_sapling", "_terracotta", "_banner", "_glazed_terracotta")
 
 # Geometry of the gear the tech chain upgrades through, weakest material first. A carried tool
 # or armour piece of a lower tier than the best the bot already carries, wears or holds is dead
