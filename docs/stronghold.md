@@ -93,6 +93,17 @@ had put the barter inside the rods trip because "the bot is already down there")
   `_pearl_wave_trip`: the pearl ladder is `barter_pearls` → `hunt_enderman` → `gather_scaffold` →
   `search_enderman` → `leave_nether`. The gold for the trade is dug in the lull *before that wave*,
   not banked ahead of the rod trip (`_gold_reserve_short` is gated on `nether_expedition_complete`).
+  The split reads **whether a rod is still owed**, not only whether the latch fired:
+  `nether_expedition_complete` counts powder where it stands in a base chest, so a bot that crossed
+  with the powder already in its pack was still read as owing the haul - **live, run200 it0-169**,
+  sixteen crossings and sixteen returns, `leave_nether` the only label on every Nether tick, no
+  pearl hunted with sixteen eyes owed, because both base chests read full
+  (`CONTAINER_BATCH_INCOMPLETE`) and `powder_stowed` never latched. `_rods_target` sizes the haul on
+  the eyes the frame needs, so powder enough in hand or banked means no rod is owed and the only
+  reason to be down there is pearls. The `powder_exhausted` latch still keeps a top-up a rod trip.
+  The same run is why the chest relief owns its tick: with every lid full and the pack at the relief
+  threshold, `craft_chest`/`place_chest` is returned as the whole offer rather than sitting beside
+  `enter_portal` on it.
 - **The cap.** `graph._note_dimension` counts a crossing as a pearl trip only once the powder is
   stowed and the bank is not exhausted (a powder top-up is a rod trip, not a pearl trip). After
   `PEARL_WAVE_MAX_TRIPS` (5) crossings the waves shut and the Overworld `search_enderman` roam

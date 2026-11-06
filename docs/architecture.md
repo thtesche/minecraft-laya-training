@@ -1247,6 +1247,14 @@ overflow at `(-8,68,-54)` both came back full, `craft_chest` then `place_chest` 
 `(-11,70,-50)`, and `_storage_target` moved to it. A network that has run out of lids builds a new
 one rather than refusing the deposit.
 
+**A relief that is only on the list is not a relief.** run200 it0-169: every lid of the network read
+full, the pack sat at 32-33 of 36, and `craft_chest` sat on the offer beside `enter_portal` - the
+crossing took the tick, sixteen times, so the powder never got stowed, `powder_stowed` never latched,
+the pearl wave stayed shut and the run spent its iterations walking through its own gate. Once the
+server has called every chest full and the pack is at the relief threshold, the chest is not one
+option among several: `planner.candidates` returns it as the whole offer, with the stuck guard keeping
+a refused site from owning the run.
+
 **Powder the eyes can spend is not a haul to bank.** run125 it16-529: one pearl and two blaze
 powder in the pack, sixteen eyes owed. `stow_blaze_powder` (the haul block) and `take_blaze_powder`
 (the stronghold block) were both live on the same tick, and the model crossed the lid in one

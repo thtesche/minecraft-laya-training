@@ -3909,6 +3909,50 @@ class StorageNetworkTest(unittest.TestCase):
         self.assertEqual(a.tool, "craft_item")
         self.assertEqual(a.args["items"], [{"item_name": "chest"}])
 
+    def test_a_full_pack_with_no_lid_gives_the_tick_to_the_relief(self) -> None:
+        # run200 it8: `craft_chest` sat on the offer beside `enter_portal` and the crossing took the
+        # tick, sixteen times over. Every lid was full, so the powder could not be stowed,
+        # `powder_stowed` never latched, the pearl wave stayed shut and the run walked through its
+        # own gate. A pack at the relief threshold with nowhere to put its surplus is not choosing
+        # between a chest and the next step: the chest is the only step that can make the tick mean
+        # anything, so it owns the tick outright.
+        g = self._network(frozenset({StorageNetworkTest.MAIN, StorageNetworkTest.OVERFLOW,
+                                    StorageNetworkTest.SECOND}), spruce_planks=8)
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertEqual(candidates(g), ["craft_chest"])
+
+    def test_a_chest_in_hand_is_stood_before_the_run_moves_on(self) -> None:
+        # The other half of the relief: the chest is crafted, so the next tick stands it, and only
+        # then can the surplus go anywhere.
+        g = self._network(frozenset({StorageNetworkTest.MAIN, StorageNetworkTest.OVERFLOW,
+                                    StorageNetworkTest.SECOND}), chest=1)
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertEqual(candidates(g), ["place_chest"])
+        a = resolve("place_chest", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), StorageNetworkTest.OVERFLOW)
+
+    def test_a_refused_relief_does_not_own_the_run(self) -> None:
+        # The stuck guard: a relief the ground keeps refusing must not hold every tick of the run
+        # hostage, the way the refused helmet swap did in run124.
+        g = self._network(frozenset({StorageNetworkTest.MAIN, StorageNetworkTest.OVERFLOW,
+                                    StorageNetworkTest.SECOND}), spruce_planks=8)
+        g.slots_used = INVENTORY_NEAR_FULL
+        g.stuck_labels = frozenset({"craft_chest"})
+        out = candidates(g)
+        self.assertNotIn("craft_chest", out)
+        self.assertTrue(out)
+
+    def test_a_light_pack_leaves_the_relief_on_the_list_with_the_rest(self) -> None:
+        # The relief is offered whenever the network is full, but only a pack at the threshold makes
+        # it the whole answer: a pack with room still has its mining and its stowing to do, and the
+        # chest rides on the list beside them rather than replacing them.
+        g = self._network(frozenset({StorageNetworkTest.MAIN, StorageNetworkTest.OVERFLOW,
+                                    StorageNetworkTest.SECOND}), spruce_planks=8)
+        g.slots_used = INVENTORY_NEAR_FULL - 6
+        out = candidates(g)
+        self.assertIn("craft_chest", out)
+        self.assertGreater(len(out), 1)
+
     def test_powder_is_not_poured_into_a_full_network(self) -> None:
         # run124 it54: `[CONTAINER_BATCH_INCOMPLETE] Observed item transfers: blaze_powder 0/2`.
         # The deposit fell back to the main chest's coordinates even though the server had just
@@ -5459,6 +5503,45 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertIn("leave_nether", candidates(g))
         a = resolve("leave_nether", g)
         self.assertIn(a.tool, ("navigate", "enter_nether_portal"))
+
+    def test_powder_enough_for_the_eyes_makes_the_trip_a_pearl_trip(self) -> None:
+        # run200 it0-169: sixteen crossings, sixteen returns, `leave_nether` the only label on every
+        # Nether tick, no pearl ever hunted with sixteen eyes still owed. The pack carried the
+        # sixteen powder the sixteen owed eyes need, so no rod was owed - but
+        # `nether_expedition_complete` counts powder only where it stands in the base chest, and
+        # both chests read full (`CONTAINER_BATCH_INCOMPLETE`), so `powder_stowed` never latched and
+        # the pearl wave stayed shut below the gate. What the split asks is whether a rod is still
+        # owed, and `_rods_target` sizes that on the eyes the frame needs.
+        g = self._down(blaze_powder=16, cobblestone=64)
+        self.assertFalse(nether_expedition_complete(g))
+        self.assertEqual(_rods_target(g), 0)
+        self.assertTrue(_pearl_wave_trip(g))
+        out = candidates(g)
+        self.assertIn("search_enderman", out)
+        self.assertNotIn("leave_nether", out)
+
+    def test_an_enderman_in_reach_is_hunted_on_that_trip(self) -> None:
+        # The point of the wave: an enderman within range turns the roam into the hunt, and the
+        # pearls the eyes owe come from it.
+        g = self._down(blaze_powder=16, cobblestone=64)
+        g.mobs = [("enderman", "hostile", 12, 18.0)]
+        self.assertTrue(_safe_enderman_hunt(g))
+        self.assertIn("hunt_enderman", candidates(g))
+
+    def test_a_rod_still_owed_keeps_it_a_blaze_trip(self) -> None:
+        # The relaxation must not close the rod chain: powder short of the eyes means rods are still
+        # owed, and the trip below the gate is a blaze hunt, not a pearl hunt.
+        g = self._down(blaze_powder=2, cobblestone=64)
+        self.assertGreater(_rods_target(g), 0)
+        self.assertFalse(_pearl_wave_trip(g))
+        self.assertNotIn("hunt_enderman", candidates(g))
+
+    def test_spent_powder_does_not_turn_a_rod_trip_into_a_pearl_trip(self) -> None:
+        # `powder_exhausted` is the top-up latch: the eyes cannot be crafted without fresh powder,
+        # so the trip that reopened the gate hunts blazes even though `_rods_target` reads zero.
+        g = self._down(blaze_powder=16, cobblestone=64)
+        g.powder_exhausted = True
+        self.assertFalse(_pearl_wave_trip(g))
 
     def test_the_helmet_swap_is_the_only_choice_until_it_is_on(self) -> None:
         # Live, run104: the swap sat on the list beside `explore` and the model took `explore` on

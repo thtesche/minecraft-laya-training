@@ -774,10 +774,20 @@ def candidates(gs: GameState) -> list[str]:
         # another one is crafted and stood beside the base, and the relief deposits into it.
         # The ground's own refusal (`chest_blocked`) closes this too -- a base whose first
         # chest had to be given up on will not hold a second one somewhere nearby.
+        relief = None
         if _has(inv, CHEST_ITEM) and _overflow_site(gs) is not None:
-            out.append("place_chest")
+            relief = "place_chest"
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
-            out.append("craft_chest")
+            relief = "craft_chest"
+        # A pack at the relief threshold with nowhere to put its surplus is not a choice
+        # between the chest and the next step. Live, run200 it8: `craft_chest` sat on the offer
+        # beside `enter_portal` and the crossing took the tick sixteen times, so `powder_stowed`
+        # never latched, the pearl wave stayed shut and the run spent its iterations walking
+        # through its own gate. The stuck guard keeps a refused site from owning the run.
+        if relief and gs.slots_used >= INVENTORY_NEAR_FULL and relief not in gs.stuck_labels:
+            return [relief]
+        if relief:
+            out.append(relief)
     storage_target = _storage_target(gs)
     # The walk-over deposit works the chest where it stands: `at_chest` is the base or the
     # lid's reach, not only the base - a chest adopted outside the base radius was walked to

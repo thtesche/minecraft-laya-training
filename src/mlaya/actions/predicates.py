@@ -1402,8 +1402,18 @@ def _pearl_wave_trip(gs: GameState) -> bool:
     top-up is the exception that keeps the rod chain: `powder_stowed` is still latched there, so
     `nether_expedition_complete` reads done, but the eyes cannot be crafted without fresh powder,
     and the trip that reopened the gate is a blaze hunt, not a pearl hunt.
+
+    The latch alone cannot answer the question *below* the gate. `nether_expedition_complete`
+    counts powder only when it stands in the Overworld chest or the bot is home with it, so a
+    bot that crossed with the powder already in its pack was read as still owing the rod haul:
+    live, run200 it0-169, sixteen crossings and sixteen returns, `leave_nether` the only label on
+    every Nether tick, `hunt_enderman` never once on offer with sixteen eyes still owed and no
+    pearl in the pack. What the split actually asks is whether any rod is still owed - and
+    `_rods_target` sizes the haul on the eyes the frame needs, not on nine rods. Powder enough
+    in hand or banked means no rod is owed, and the only reason to be down there is pearls.
     """
-    return nether_expedition_complete(gs) and not gs.powder_exhausted
+    return ((nether_expedition_complete(gs) or _rods_target(gs) == 0)
+            and not gs.powder_exhausted)
 
 
 def _frame_eyes(gs: GameState) -> int:
