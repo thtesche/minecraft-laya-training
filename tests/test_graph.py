@@ -4658,6 +4658,24 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._note_container(withdraw, False, "[CONTAINER_BATCH_INCOMPLETE]")
         self.assertEqual(agent._chests_full, set())
 
+    def test_a_settled_transfer_refreshes_what_the_lid_is_believed_to_hold(self) -> None:
+        # run202 it97-231: `take_stored_food` withdrew three mutton from the main chest, the server
+        # wrote the emptied lid into its ledger, and the loop kept naming those three for 134
+        # ticks - 19 `[CONTAINER_BATCH_INCOMPLETE] cooked_mutton 0/3` and 108 `wait` ticks at the
+        # base, with the pearl wave waiting at a lit gate. The stock read is throttled by distance
+        # (the bot has to walk 16 blocks away), and a bot standing at the chest never does. Every
+        # settled transfer, either direction, refusal included, is the moment the ledger changes.
+        agent = self._agent()
+        agent._stock_read = (59.5, 73.0, 176.0)
+        withdraw = self._Action("take_stored_food", "use_container",
+                                {"operation": "withdraw", "x": self.MAIN[0],
+                                 "y": self.MAIN[1], "z": self.MAIN[2]})
+        agent._note_container(withdraw, True, "")
+        self.assertIsNone(agent._stock_read)
+        agent._stock_read = (59.5, 73.0, 176.0)
+        agent._note_container(self._deposit(self.MAIN), False, "[HOSTILE_CONTACT]")
+        self.assertIsNone(agent._stock_read)
+
     def test_only_the_full_message_blocks_the_stow_relief(self) -> None:
         # The old line blocked the deposit relief on any failure, combat included -- and the run
         # dropped what a chest standing right there could have stored.

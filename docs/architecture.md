@@ -1255,6 +1255,15 @@ server has called every chest full and the pack is at the relief threshold, the 
 option among several: `planner.candidates` returns it as the whole offer, with the stuck guard keeping
 a refused site from owning the run.
 
+**The chest's contents are read once and then trusted.** `Agent._note_stocked_chest` queries the
+server's container ledger and throttles the read by distance: the bot has to walk 16 blocks away
+before it asks again. A bot standing at the lid never does, so it keeps the contents from before its
+own transfer. run202 it97-231: `take_stored_food` withdrew three mutton from the main chest, the
+ledger wrote the emptied lid, and the loop named those same three for 134 ticks - 19
+`[CONTAINER_BATCH_INCOMPLETE] cooked_mutton 0/3` and 108 `wait` ticks at the base while the pearl
+wave waited at a lit gate. Every settled `use_container` transfer now clears the throttle, in either
+direction and whether it landed.
+
 **Powder the eyes can spend is not a haul to bank.** run125 it16-529: one pearl and two blaze
 powder in the pack, sixteen eyes owed. `stow_blaze_powder` (the haul block) and `take_blaze_powder`
 (the stronghold block) were both live on the same tick, and the model crossed the lid in one

@@ -2871,10 +2871,23 @@ class Agent:
         if action.tool != "use_container":
             return
         args = getattr(action, "args", None) or {}
-        if args.get("operation") != "deposit":
+        operation = args.get("operation")
+        if operation not in ("deposit", "withdraw"):
             return
         cell = (args.get("x"), args.get("y"), args.get("z"))
         if not all(isinstance(v, int) for v in cell):
+            return
+        # A transfer is the only write the network ever gets, and it is also the moment the
+        # server records what the lid now holds. The stock read is throttled by distance (the
+        # bot has to walk 16 blocks away before it re-reads), so a bot standing at the chest
+        # keeps the contents it believed before the transfer: live, run202 it97-231, `take_stored_food`
+        # withdrew three mutton, the ledger wrote the emptied chest, and the loop kept aiming at
+        # those three for 134 ticks - 19 `[CONTAINER_BATCH_INCOMPLETE] cooked_mutton 0/3` and 108
+        # `wait` ticks at its own base while the pearl wave waited at the lit gate. Any settled
+        # transfer, in either direction and whether it landed, makes the next tick read the world
+        # again.
+        self._stock_read = None
+        if operation != "deposit":
             return
         if not ok and "CONTAINER_BATCH_INCOMPLETE" in (text or ""):
             self._chests_full.add(cell)
