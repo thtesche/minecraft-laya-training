@@ -2437,6 +2437,28 @@ def _spare_gear(gs: GameState, inv: dict[str, int]) -> list[str]:
     return out
 
 
+def _pack_clutter(gs: GameState, inv: dict[str, int]) -> list[str]:
+    """Whole stacks whose only use the pack has already covered.
+
+    A slot opens only when a stack is emptied: 19 of 22 wool dropped leaves 3 wool in one slot, so
+    a keep count cannot clear a pack of thirty small stacks. Live, run195 it441-443: 36/36 slots,
+    nothing on `JUNK_ITEMS`, nothing above `HOARD_CAP`, nothing of a worse tier - `drop_junk` had
+    no name to give and every slot-needing action answered `[INVENTORY_FULL]`.
+    So the shed asks the other question: is the thing this stack is *for* already in the pack?
+    A bed laid makes every wool clutter; a built bow and a full arrow reserve make feathers,
+    string and the flint behind them clutter; a flint and steel in hand closes the gravel dig.
+    """
+    out: list[str] = []
+    bed_laid = gs.bed_pos is not None or any(n.endswith("_bed") for n in inv if inv.get(n, 0))
+    if bed_laid:
+        out += [n for n in inv if n.endswith("_wool") and inv.get(n, 0) > 0]
+    if _has(inv, BOW_ITEM) and inv.get(ARROW_ITEM, 0) >= NETHER_ARROWS:
+        out += [n for n in ("feather", "string", "flint") if inv.get(n, 0) > 0]
+    if _has(inv, "flint_and_steel") and inv.get("flint", 0) >= FLINT_GRAVEL:
+        out += [n for n in inv if n == "gravel" and inv.get(n, 0) > 0]
+    return out
+
+
 def _droppable(gs: GameState, inv: dict[str, int]) -> bool:
     """What may go on the ground: named junk, spare gear, a crossed cap. Never the whitelist.
 
@@ -2446,11 +2468,13 @@ def _droppable(gs: GameState, inv: dict[str, int]) -> bool:
     offers `drop_junk` has to name exactly the items its resolve will name, and the whitelist is
     not among them.
     """
-    return bool(_junk_carried(inv) or _spare_gear(gs, inv) or _hoard_surplus(gs, inv))
+    return bool(_junk_carried(inv) or _spare_gear(gs, inv) or _pack_clutter(gs, inv)
+                or _hoard_surplus(gs, inv))
 
 
 def _sheddable(gs: GameState, inv: dict[str, int]) -> bool:
     return bool(_junk_carried(inv) or _hoard_surplus(gs, inv) or _spare_gear(gs, inv)
+                or _pack_clutter(gs, inv)
                 or _surplus_besides_keep(gs, inv) or _bank_surplus_food(gs, inv))
 
 

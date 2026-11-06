@@ -394,7 +394,15 @@ WATER_RESCUE_AFTER = 2
 JUNK_ITEMS = ("tuff", "calcite", "diorite", "andesite", "granite", "cobbled_deepslate",
               "deepslate", "dirt", "coarse_dirt", "pointed_dripstone", "lapis_lazuli",
               "leather", "bone", "raw_copper", "glow_ink_sac",
-              "egg", "mossy_stone_brick_slab", "sand", "dripstone_block")
+              "egg", "mossy_stone_brick_slab", "sand", "dripstone_block",
+              # Decor and drops the chain never crafts, trades or places. Each of these was read
+              # in a full pack of a live run and named nowhere in the recipes: amethyst and
+              # polished tuff from the stronghold's own rooms, bricks and moss carpet from a
+              # leveled base, mossy cobblestone from the same dig, wheat seeds from every grass
+              # block the pathfinder walks over, gold nuggets from a piglin barter that only
+              # spends ingots, and spider eyes from a spider killed for its string.
+              "amethyst_block", "polished_tuff", "brick", "moss_carpet", "mossy_cobblestone",
+              "stone_bricks", "glass", "wheat_seeds", "gold_nugget", "spider_eye")
 
 # Extra rubbish shed only on the stronghold march (`_striding_to_stronghold`). The descent to the
 # frame shovels up deepslate and biome clutter, and the pack still carries Nether leftovers from the

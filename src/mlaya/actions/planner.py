@@ -2014,7 +2014,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # On the stronghold march the shed list widens to the biome clutter and Nether leftovers the
         # descent cannot spend (`_march_shed`): the trek never returns to base, so this is the only
         # way a full pack clears, and the extra names apply only while `_striding_to_stronghold`.
-        items = [{"item_name": n} for n in _junk_carried(inv) + _march_shed(gs) + _spare_gear(gs, inv)]
+        # `_pack_clutter` is the whole-stack half of the same idea: a slot opens only when a stack
+        # is emptied, so the shed also names the stacks whose use the pack has already covered.
+        items = [{"item_name": n} for n in _junk_carried(inv) + _march_shed(gs) + _spare_gear(gs, inv)
+                 + _pack_clutter(gs, inv)]
         items += _hoard_surplus(gs, inv)
         if not items:
             return None
@@ -2024,9 +2027,16 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # `drop_junk` calls, netherrack 54 -> 96 -> 65 -> 99 -> 67, slots pinned at 34/36, until a
         # real home stop (craft + stow) freed the space. Dropping on the ground costs a
         # `step_away_drops` at worst; it cannot undo itself.
+        # `allow_equipped` is what makes the list executable. The server refuses to toss the item
+        # in hand (`[DROP_HELD]`) unless it is told to, and the Nether's scaffold block is
+        # netherrack - so a bot walking with netherrack in hand answered
+        # `[DROP_INCOMPLETE] 1 of 1 item could not be dropped` on every shed (live, run195
+        # it441-443). Nothing in this list is gear the chain needs: `_spare_gear` only names a
+        # tier strictly below the best carried, and the rest are blocks.
         return Action(label, "drop_item",
                       {"items": items[:12],
-                       "in_a_hole": not gs.drop_hole_blocked and not _in_nether(gs)},
+                       "in_a_hole": not gs.drop_hole_blocked and not _in_nether(gs),
+                       "allow_equipped": True},
                       "drop low-value blocks so the full pack has room again")
     if label == "wait":
         # Hold at the base: navigate to the anchor, which is at most a step away, so the tick

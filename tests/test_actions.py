@@ -3749,6 +3749,42 @@ class HomeBaseTest(unittest.TestCase):
         g.slots_used = 34
         self.assertFalse(resolve("drop_junk", g).args["in_a_hole"])
 
+    def test_drop_junk_may_toss_the_block_in_hand(self) -> None:
+        # Live, run195 it441-443: the Nether's scaffold block is netherrack, so the bot walks with
+        # it in hand and the server refused the only item the shed named - `[DROP_HELD]` on every
+        # entry, `[DROP_INCOMPLETE] 1 of 1 item could not be dropped` as the answer. The toss of a
+        # held item is allowed only when the caller says so.
+        g = self._home(self._geared(netherrack=125))
+        g.slots_used = 36
+        g.dimension = "minecraft:the_nether"
+        a = resolve("drop_junk", g)
+        self.assertTrue(a.args["allow_equipped"])
+
+    def test_a_full_pack_of_small_stacks_sheds_the_need_already_met(self) -> None:
+        # 36/36 with nothing above `HOARD_CAP` and nothing of a worse tier: thirty small stacks,
+        # none of them named by `JUNK_ITEMS`, and `drop_junk` had no name to give at all. A slot
+        # opens only when a stack is emptied, so the shed asks whether the stack's use is already
+        # covered - the bed is laid, the bow is built, the arrow reserve is full.
+        g = self._home(self._geared(white_wool=22, black_wool=2, feather=13, string=10, flint=1,
+                                    bow=1, arrow=16, flint_and_steel=1, amethyst_block=9, brick=4,
+                                    polished_tuff=1, gold_nugget=3, white_bed=1, gravel=32))
+        g.slots_used = 36
+        self.assertIn("drop_junk", candidates(g))
+        names = [i["item_name"] for i in resolve("drop_junk", g).args["items"]]
+        for n in ("white_wool", "black_wool", "feather", "string", "amethyst_block", "brick",
+                  "polished_tuff", "gold_nugget"):
+            self.assertIn(n, names)
+        self.assertNotIn("gravel", names)      # the flint dig is still owed
+        self.assertNotIn("stick", names)
+        self.assertNotIn("diamond_pickaxe", names)
+
+    def test_pack_clutter_stands_down_while_the_bow_is_still_owed(self) -> None:
+        # Feathers and string are only clutter once the ammunition they feed is finished. A pack
+        # with no bow yet has to keep both: shedding them is a hunt the run then walks again.
+        g = self._home(self._geared(feather=13, string=10, flint=4, gravel=32))
+        g.slots_used = 36
+        self.assertNotIn("drop_junk", candidates(g))
+
     def test_inventory_relief_stows_at_the_base_chest(self) -> None:
         g = self._home(self._geared(tuff=64))
         g.chest_pos = (-197, -46, -97)
@@ -6694,8 +6730,9 @@ class StrongholdMarchShedTest(unittest.TestCase):
         self.assertIn("drop_junk", candidates(self._march()))
 
     # The clutter the march shovels up, beyond the names already on JUNK_ITEMS. gravel and redstone
-    # are KEEP_MATERIALS for the ordinary run; this phase overrides that.
-    CLUTTER = {"bamboo", "spider_eye", "lead", "red_terracotta", "warped_nylium", "white_banner",
+    # are KEEP_MATERIALS for the ordinary run; this phase overrides that. `spider_eye` is on
+    # JUNK_ITEMS now, so it sheds through the ordinary path on the march as well.
+    CLUTTER = {"bamboo", "lead", "red_terracotta", "warped_nylium", "white_banner",
                "warped_fungus", "warped_roots", "magma_block", "redstone", "gravel", "red_sand",
                "oak_sapling"}
     # The kit, food and bed stock a drop must never name.
@@ -6717,7 +6754,7 @@ class StrongholdMarchShedTest(unittest.TestCase):
         self.assertEqual(a.tool, "drop_item")
         dropped = {it["item_name"] for it in a.args["items"]}
         self.assertLessEqual(len(dropped), 12)
-        allowed = self.CLUTTER | {"granite", "leather", "cobbled_deepslate"}
+        allowed = self.CLUTTER | {"granite", "leather", "cobbled_deepslate", "spider_eye"}
         self.assertTrue(dropped <= allowed, dropped - allowed)
         self.assertEqual(dropped & self.KEEP, set())
 
