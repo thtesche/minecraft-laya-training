@@ -5495,6 +5495,67 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertEqual(a.tool, "enter_nether_portal")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.EXIT)
 
+    # --- the Nether side of the gate can go out ---
+    # `light_portal` was an Overworld step: `_at_base` and `_portal_lit` gate it, so a run down
+    # here had no step that could relight the frame it came through. Live, run195 it410-413: the
+    # bot stood at its own exit gate with two obsidian in the scan and no portal block, `leave_nether`
+    # answered `[PORTAL_TARGET] Expected active nether_portal at (6, 74, 15); observed air` four
+    # ticks in a row, and once the stuck guard dropped it `explore` marched 270 blocks away.
+
+    def _unlit_exit(self, **inv) -> GameState:
+        """The bot at its own Nether exit frame: obsidian in the scan, no portal block."""
+        g = self._down(**inv)
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", 12, 65, -2, 2.0)]}
+        return g
+
+    def test_an_unlit_nether_exit_is_relit(self) -> None:
+        g = self._unlit_exit(blaze_rod=9, flint_and_steel=1)
+        self.assertEqual(candidates(g), ["light_portal"])
+        a = resolve("light_portal", g)
+        self.assertEqual(a.tool, "activate_portal")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (12, 65, -2))
+
+    def test_a_lit_nether_exit_is_not_struck_again(self) -> None:
+        g = self._unlit_exit(blaze_rod=9, flint_and_steel=1)
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  *self.EXIT, 2.0)],
+                       "obsidian": [BlockHit("obsidian", "obsidian", 12, 65, -2, 2.0)]}
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
+
+    def test_an_obsidian_out_of_the_gate_is_not_a_frame(self) -> None:
+        # Obsidian is rare in the Nether, so a hit 48 blocks from the remembered crossing is a
+        # deposit, not the gate: striking it would be run74's walk to a frame nobody has seen.
+        g = self._down(blaze_rod=9, flint_and_steel=1)
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", 60, 65, -4, 48.0)]}
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
+        self.assertIn("leave_nether", candidates(g))
+
+    def test_the_relight_crafts_the_igniter_it_does_not_have(self) -> None:
+        # run195 it451: flint x1, three iron ingots, two crafting tables, no flint and steel, and
+        # 0 obsidian in the pack - the old resolve wanted ten, which only makes sense while the
+        # Overworld frame still has to be built.
+        g = self._unlit_exit(blaze_rod=9, flint=1, iron_ingot=3, crafting_table=2)
+        self.assertEqual(candidates(g), ["craft_flint_and_steel"])
+        a = resolve("craft_flint_and_steel", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "flint_and_steel"}])
+
+    def test_a_full_pack_sheds_before_the_igniter_is_crafted(self) -> None:
+        g = self._unlit_exit(blaze_rod=5, flint=1, iron_ingot=3, crafting_table=2, netherrack=128)
+        g.slots_used = INVENTORY_SLOTS
+        self.assertEqual(candidates(g), ["drop_junk"])
+        self.assertNotIn("craft_flint_and_steel", candidates(g))
+
+    def test_a_refused_relight_does_not_own_the_run(self) -> None:
+        # The offer returns early, so it skips the stuck filter at the end of `candidates`: a
+        # relight the server keeps refusing has to give the tick back to the chain.
+        g = self._unlit_exit(blaze_rod=9, flint_and_steel=1)
+        g.stuck_labels = {"light_portal"}
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIn("leave_nether", candidates(g))
+
     def test_wounded_and_foodless_the_recovery_flees_the_nether(self) -> None:
         # run93 it229-320: 9.4 health falling, hunger 7, nine rods already in the pack and nothing
         # edible. `_cannot_heal` routes the tick to `_recovery_steps`, which runs *before* the

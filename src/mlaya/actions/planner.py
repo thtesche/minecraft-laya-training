@@ -592,6 +592,24 @@ def candidates(gs: GameState) -> list[str]:
             # five of nine rods).
             junk_full = (gs.slots_used >= INVENTORY_NEAR_FULL and _droppable(gs, inv)
                          and "drop_junk" not in gs.stuck_labels)
+            # The gate the bot came through is the only way back, and the Nether side of it can go
+            # out while the run is still down there: a frame that stands but does not burn makes
+            # every `leave_nether` a `[PORTAL_TARGET]` refusal, and with nothing else on the offer
+            # the tick went to `explore` (live, run195 it410-413: four identical refusals at the
+            # bot's own exit frame, then 270 blocks of marching away from it). `light_portal` used
+            # to be an Overworld step only - `_at_base` and `_portal_lit` gate it - so down here
+            # there was no step that could relight it at all.
+            # Relighting is a precondition of the return, not a preference between two steps, so
+            # it owns the tick, and the stuck guard keeps a refused relight from owning the run.
+            if (_nether_exit_ignite_cell(gs) is not None
+                    and "light_portal" not in gs.stuck_labels):
+                if _has(inv, FLINT_STEEL_ITEM):
+                    return (["eat_food"] if eating else []) + ["light_portal"]
+                # No igniter: the craft needs a free slot, so a pack full of junk sheds first
+                # (run195 ended 36/36 with netherrack and no flint and steel), and the shed owns
+                # the tick while the ground still accepts it.
+                if not junk_full and _igniter_craftable(gs, inv):
+                    return (["eat_food"] if eating else []) + ["craft_flint_and_steel"]
             if _pearl_wave_trip(gs):
                 # --- Pearl wave (Welle 2+) ---
                 # The rod haul is already home and stowed, so the blaze hunt and the fortress march
@@ -1185,9 +1203,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "collect_block", {"block_name": "gravel", "count": FLINT_GRAVEL},
                       "dig gravel for flint to make flint and steel")
     if label == "craft_flint_and_steel":
+        # The obsidian floor is the Overworld gate's: an igniter is only worth making while the
+        # frame still has to be built. In the Nether the frame is already standing and the
+        # obsidian is spent, so the unlit exit read is the reason (live, run195 it451: 0 obsidian
+        # in the pack at its own unlit exit frame, no igniter to strike it with).
         if (not _has(inv, FLINT_ITEM) or inv.get("iron_ingot", 0) < FLINT_STEEL_IRON
                 or not _has(inv, "crafting_table") or _has(inv, FLINT_STEEL_ITEM)
-                or inv.get("obsidian", 0) < PORTAL_OBSIDIAN):
+                or (inv.get("obsidian", 0) < PORTAL_OBSIDIAN
+                    and _nether_exit_ignite_cell(gs) is None)):
             return None
         return Action(label, "craft_item", {"items": [{"item_name": FLINT_STEEL_ITEM}]},
                       "craft flint and steel from flint and an iron ingot")
@@ -1228,8 +1251,19 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"portal_frame": site, "remove_wrong_blocks": True},
                       "build the obsidian portal frame beside the bot")
     if label == "light_portal":
+        if not _has(inv, FLINT_STEEL_ITEM):
+            return None
+        if _in_nether(gs):
+            # The Nether side of the gate: the frame the bot came through, standing unlit. No base
+            # and no expedition check - down here the reason to strike it is the way home, and the
+            # obsidian is already in the frame, not in the pack.
+            cell = _nether_exit_ignite_cell(gs)
+            if cell is None:
+                return None
+            return Action(label, "activate_portal", {"x": cell[0], "y": cell[1], "z": cell[2]},
+                          "relight the Nether-side frame that went out, to open the way home")
         cell = _portal_ignite_cell(gs)
-        if (not _has(inv, FLINT_STEEL_ITEM) or _portal_lit(gs) or not _at_base(gs)
+        if (_portal_lit(gs) or not _at_base(gs)
                 or not _frame_complete_at_base(gs) or gs.portal_blocked
                 or cell is None or not _portal_frame_started(gs) or not _expedition_ready(gs)):
             return None

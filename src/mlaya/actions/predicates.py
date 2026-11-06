@@ -1886,6 +1886,45 @@ def _nether_way_home(gs: GameState) -> tuple[int, int, int] | None:
     return gs.nether_gate
 
 
+def _nether_exit_ignite_cell(gs: GameState) -> tuple[int, int, int] | None:
+    """The Nether-side frame that stands but does not burn, or None.
+
+    A crossing lights both sides, but the far side can go out while the run is still down there.
+    Live, run195 it410-413: the bot stood at its own exit gate with two obsidian in the scan and
+    no portal block anywhere, and `leave_nether` answered `[PORTAL_TARGET] Expected active
+    nether_portal at (6, 74, 15); observed air` seven times before the ladder fell to `explore`
+    and walked it 270 blocks away from the gate it came through.
+
+    The frame is only relightable where it is loaded. The remembered crossing names the cell the
+    bot was delivered at, and an obsidian within `NETHER_EXIT_FRAME_REACH` of it is the frame.
+    Obsidian is rare in the Nether, so a hit further out is a deposit rather than a gate, and
+    lighting that would be a walk to a frame nobody has seen - the run74 shape again.
+    """
+    if not _in_nether(gs) or _portal_lit_scan(gs):
+        return None
+    gate = _nether_way_home(gs)
+    if gate is None:
+        return None
+    hit = gs.resource_nearest("obsidian")
+    if hit is None:
+        return None
+    if math.dist((hit.x, hit.y, hit.z), gate) > NETHER_EXIT_FRAME_REACH:
+        return None
+    return hit.pos
+
+
+def _igniter_craftable(gs: GameState, inv: dict[str, int]) -> bool:
+    """Whether a flint and steel can be made right now: the materials and a free slot.
+
+    The slot is the part a Nether run forgets. Live, run195 it451: the pack held flint x1,
+    iron ingots x3 and two crafting tables, and 36 of 36 slots taken - the craft the relight
+    needs would have been refused with `[INVENTORY_FULL]` until the shed emptied the pack.
+    """
+    return (_has(inv, FLINT_ITEM) and inv.get("iron_ingot", 0) >= FLINT_STEEL_IRON
+            and _has(inv, "crafting_table") and not _has(inv, FLINT_STEEL_ITEM)
+            and gs.slots_used < INVENTORY_SLOTS)
+
+
 def _exit_hop(gs: GameState) -> float:
     """How far the next hop toward the Nether exit aims.
 

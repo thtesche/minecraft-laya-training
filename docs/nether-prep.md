@@ -253,6 +253,15 @@ portal** for now. Getting back out is part of the goal, not a detail.
   in the pack, or so full the next drop has nowhere to go)
   or when there is nothing left to find (`_nether_hopeless`: no blaze, no fortress anywhere).
   A short haul still becomes powder.
+- **`light_portal` on the Nether side**: a crossing lights both frames, but the far side can go out
+  while the run is still down there. `_nether_exit_ignite_cell` reads that: in the Nether, no portal
+  block in the loaded chunks, a remembered crossing (`nether_arrival` or `nether_gate`), and an
+  obsidian within `NETHER_EXIT_FRAME_REACH = 8.0` of it. The relight owns the tick ahead of the wave
+  logic, and without an igniter it first crafts one — `craft_flint_and_steel` no longer demands the
+  ten carried obsidian when the frame to light is the Nether one, and a full pack sheds first because
+  the craft needs a free slot. Live, run195 it410-413: seven `[PORTAL_TARGET] Expected active
+  nether_portal at (6, 74, 15); observed air` refusals at the bot's own exit frame, then 270 blocks
+  of marching away from it.
 - **Home:** `craft_blaze_powder` (9 rods → 18 powder, Overworld only — a temporary workstation in
   a fortress is a bad trade) and `stow_blaze_powder` (deposit into the chest at the gate).
 - **Goal:** `nether_expedition_complete` — the powder standing in the chest, latched by

@@ -298,6 +298,11 @@ NETHER_EXIT_STAGING_DISTANCE = 120.0
 # terrain the walk can start from.
 NETHER_EXIT_HOP_SHRINKS = 2
 NETHER_EXIT_HOP_MIN = 30.0
+# How close the frame of the Nether exit has to be for `light_portal` to strike it. The gate cell
+# is remembered from the crossing, so an obsidian within this reach of it is the frame itself; a
+# hit further out is a Nether deposit and striking it would be a walk to a gate the scan never
+# saw.
+NETHER_EXIT_FRAME_REACH = 8.0
 # Minimum food items (count >= 24) required in pack before any Nether trip. Without this,
 # pearl waves end in starvation (hunger reaching zero) far from home. Nether movement costs hunger
 # fast; 24 items give enough margin before NETHER_RETURN_FOOD (8.0) forces the exit.
