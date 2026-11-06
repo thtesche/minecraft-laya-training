@@ -1523,7 +1523,8 @@ def _nether_must_return(gs: GameState) -> bool:
 
     A death down there drops the whole haul and the diamond kit, so the trip ends on the first
     sign that the bot cannot keep fighting: badly hurt, starving, in lava, or so full that the
-    next blaze drop has nowhere to go. The rods already carried are worth the walk home.
+    next blaze drop has nowhere to go. The rods already carried are worth the walk home - a pack
+    that is only full, with no rod and no powder in it, is not.
 
     A rod wave below the blaze floor is finished too, haul or no haul: `BLAZE_HUNT_HEALTH` sits
     where it does because a wounded bot cannot win the next spawner fight, and the only steps left
@@ -1539,7 +1540,14 @@ def _nether_must_return(gs: GameState) -> bool:
         return True
     if gs.food is not None and gs.food < NETHER_RETURN_FOOD:
         return True
-    return gs.slots_used >= INVENTORY_NEAR_FULL
+    # Room for the next drop is a reason to come home only when a haul is already aboard. A pack
+    # at the threshold holding kit and scaffold and no rod has nothing to protect, and the walk
+    # back through the gate fixes nothing: the pack is emptied at the base chest, and the crossing
+    # that just happened is what made the tick count. Live, run199 it0-297: every arrival in the
+    # Nether ended on its own third tick on `slots_used 33`, 36 round trips, 461 ticks walking
+    # between the two gate cells, zero rods.
+    return (gs.slots_used >= INVENTORY_NEAR_FULL
+            and (_blaze_rods(gs.inventory) or _blaze_powder(gs.inventory)))
 
 
 def _nether_hopeless(gs: GameState) -> bool:
@@ -1830,6 +1838,20 @@ def _nether_food_secured(gs: GameState) -> bool:
     return not (_food_source_in_reach(gs) or _stew_source_in_reach(gs))
 
 
+def _pack_room_for_haul(gs: GameState) -> bool:
+    """Whether the pack can still take what the Nether trip is for.
+
+    The same threshold that ends a trip down there (`_nether_must_return`) is the one a crossing
+    has to be under: a bot that walks through the gate with no room left collects nothing, and the
+    first tick back in the Nether sends it straight home again. Live, run199 it0-297: 33 of 36
+    slots full of kit and Nether leftovers, both base chests read full, nothing in the pack
+    droppable - 36 crossings, 36 returns, 461 ticks of walking between (3,74,15) and (59,73,176)
+    and zero blaze rods. The gate is the place to say no, because the pack is emptied at the base
+    (`craft_chest`, `place_chest`, `stow_surplus`), not down there.
+    """
+    return gs.slots_used < INVENTORY_NEAR_FULL
+
+
 def _nether_departure_ready(gs: GameState) -> bool:
     """Whether the Overworld gate is the bot's next job and it has to be standing at the base.
 
@@ -1867,7 +1889,7 @@ def _nether_departure_ready(gs: GameState) -> bool:
     return (nether_expedition_open(gs) and not _nether_haul_home(gs)
             and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
             and (_has(gs.inventory, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM))
-            and _nether_food_secured(gs))
+            and _nether_food_secured(gs) and _pack_room_for_haul(gs))
 
 
 def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:

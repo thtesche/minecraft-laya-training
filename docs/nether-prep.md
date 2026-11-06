@@ -232,7 +232,10 @@ portal** for now. Getting back out is part of the goal, not a detail.
   `gs.enter_intent` — a **countdown** (`PORTAL_INTENT_TICKS`), not a latch: the crossing action
   blocks until it settles and the teleport needs a moment after, and a gate the bot merely walked
   into later must still be rescued. Offered only with the whole expedition stocked
-  (`_expedition_ready`) and never twice (`gs.nether_entered`).
+  (`_expedition_ready`), with **room in the pack for the haul** (`_pack_room_for_haul`: under
+  `INVENTORY_NEAR_FULL` slots used — live, run199 it0-297, 36 crossings and 36 returns with 33 of
+  36 slots full and nothing droppable, 461 ticks walking between the two gate cells and zero rods),
+  and never twice (`gs.nether_entered`).
 - **Armour swap on entry:** diamond helmet off, gold helmet on (`swap_to_gold_helmet`, one `equip`),
   so piglins stay neutral. The diamond helmet stays in the pack, and `swap_to_diamond_helmet` puts
   it back on once the bot is home.
@@ -257,7 +260,9 @@ portal** for now. Getting back out is part of the goal, not a detail.
   otherwise a walk back to `gs.nether_arrival` — the cell the bot landed on, where the exit portal
   stands. Offered when the nine rods are in, **and also** when the bot cannot afford to stay
   (`_nether_must_return`: badly hurt, starving, in lava, wounded below `BLAZE_HUNT_HEALTH` with rods
-  in the pack, or so full the next drop has nowhere to go)
+  in the pack, or so full the next drop has nowhere to go **and a haul already aboard** — a pack that
+  is merely full with no rod and no powder in it is not a trip to end, it is the pack the base has
+  to empty first)
   or when there is nothing left to find (`_nether_hopeless`: no blaze, no fortress anywhere).
   A short haul still becomes powder.
 - **`light_portal` on the Nether side**: a crossing lights both frames, but the far side can go out

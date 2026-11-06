@@ -5350,6 +5350,20 @@ class NetherExpeditionTest(unittest.TestCase):
         g.nether_entered = True
         self.assertIn("enter_portal", candidates(g))
 
+    def test_a_pack_with_no_room_keeps_the_gate_shut(self) -> None:
+        # run199 it0-297: 33 of 36 slots full, both base chests read full, nothing in the pack
+        # droppable. The bot crossed 36 times and every trip ended on its third tick down there on
+        # the same "pack full" clause - 461 ticks of walking between the two gate cells, zero rods.
+        # A crossing with no room left for the haul is not a trip, it is a round trip, and the pack
+        # is emptied at the base chest, not in the Nether.
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        g.nether_entered = True
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertIsNone(resolve("enter_portal", g))
+        g.slots_used = INVENTORY_NEAR_FULL - 1
+        self.assertIn("enter_portal", candidates(g))
+
     def test_an_intended_crossing_stands_the_rescue_down(self) -> None:
         # The rescue exists to step a body out of a gate it wandered into; it must not fight the
         # one crossing the loop asked for, or the trip can never happen.
@@ -5427,6 +5441,24 @@ class NetherExpeditionTest(unittest.TestCase):
         a = resolve("swap_to_gold_helmet", g)
         self.assertEqual(a.tool, "equip")
         self.assertEqual(a.args["items"], [{"item_name": "golden_helmet", "destination": "head"}])
+
+    def test_a_full_pack_with_no_haul_does_not_turn_round(self) -> None:
+        # run199 it0-297: the trip ended on the tick it arrived, 36 times, because the pack sat at
+        # the full threshold with nothing in it worth carrying home. A pack that is merely full is
+        # not a haul to protect; the bot keeps working until the hunt is actually out of chances.
+        g = self._down()
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertNotIn("leave_nether", candidates(g))
+        self.assertIn("explore", candidates(g))
+
+    def test_a_full_pack_with_rods_in_it_comes_home(self) -> None:
+        # The same threshold does end a trip that already holds the haul: a rod the pack cannot
+        # take is a rod left on the ground, and the walk back is the only step that can bank it.
+        g = self._down(blaze_rod=3)
+        g.slots_used = INVENTORY_NEAR_FULL
+        self.assertIn("leave_nether", candidates(g))
+        a = resolve("leave_nether", g)
+        self.assertIn(a.tool, ("navigate", "enter_nether_portal"))
 
     def test_the_helmet_swap_is_the_only_choice_until_it_is_on(self) -> None:
         # Live, run104: the swap sat on the list beside `explore` and the model took `explore` on
