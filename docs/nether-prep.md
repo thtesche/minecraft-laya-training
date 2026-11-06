@@ -27,8 +27,10 @@ soon as no animal and no zombie is in reach — so an unreachable item never blo
 
 The Nether is a different game from the overworld:
 
-- **Hunger falls faster** (sprinting, fights), and **death costs the whole inventory** —
-  hence the large food reserve.
+- **Hunger falls faster** (sprinting, fights), and **death costs the whole pack** — hence the
+  large food reserve. The deep part of that larder rides in the base chest (`stow_surplus` banks
+  provisions above `FOOD_BANK_KEEP = 24`), because a chest survives the death that empties the
+  pack: run193 it399 lost 28 edibles to one Enderman while its chest held none.
 - **Ghasts destroy blocks**, the portal frame too → flint and steel to relight, cobblestone
   as protection.
 - **Water evaporates**, **beds explode**, **clocks/compasses spin**.
@@ -106,7 +108,11 @@ Nether terrain is already provided for in the server reflex.
   mushroom stew, a meal whose bowl comes back and whose mushrooms regrow in the Nether too, so it
   crosses on `NETHER_FOOD_RENEWABLE_RESERVE = 8`; and a reserve nothing in reach can fill (no animal
   the hunt can walk to, no mushroom in the scan) is not a reason to stand still - the same rule the
-  prep gate `_food_reserve_met` already follows. `craft_stew` grows its own pantry: a short pack
+  prep gate `_food_reserve_met` already follows. That unreachable rule holds down to
+  `NETHER_FOOD_EMERGENCY_FLOOR = 4`; below it nothing crosses, however empty the world (run193
+  it505-599: six edibles and a cow at 156 m held the gate for 94 ticks). The gate reads the *pack*:
+  food banked in the chest is moved across by `take_stored_food` (which tops the pack up to
+  `FOOD_BANK_KEEP = 24`) rather than counted as if it were being carried. `craft_stew` grows its own pantry: a short pack
   picks the missing mushroom (`collect_block`) instead of asking the server for a batch it cannot
   cover, and the brew is capped by the mushrooms *and* bowls carried - one bowl per stew, because the
   bowl only comes back once the stew is eaten (run170 it32-35: `STEW_BATCH` asked with one red and

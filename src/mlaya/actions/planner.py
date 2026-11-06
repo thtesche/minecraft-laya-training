@@ -188,8 +188,8 @@ def candidates(gs: GameState) -> list[str]:
             and _mushroom_pantry_wanted(gs)
             and "gather_mushrooms" not in gs.stuck_labels):
         out.append("gather_mushrooms")
-    if (_edible_count(inv) < _food_goal(gs) and _banked_provisions(gs)
-            and not _in_nether(gs) and _at_base(gs) and _chest_ready(gs)):
+    if (_pack_food_short(gs) and not _in_nether(gs) and _at_base(gs)
+            and _chest_ready(gs)):
         out.append("take_stored_food")
 
     # A bed standing underground holds the respawn point in a cave (`_unsafe_beds`), so it is
@@ -783,7 +783,7 @@ def candidates(gs: GameState) -> list[str]:
             # resolve then refused to name, which is an escalation per tick.
             out.append("drop_junk")
     elif at_chest and (_junk_carried(inv) or _hoard_surplus(gs, inv)
-                        or _surplus_besides_keep(gs, inv)):
+                        or _surplus_besides_keep(gs, inv) or _bank_surplus_food(gs, inv)):
         # A stack that crossed its cap with room to spare, and a chest standing right there.
         # Live, cobblestone drifted 60, 65, 67, 68, 72 with `chest_pos` known and the bot on
         # the base the whole time, because `HOARD_KEEP` capped at 64 only ever fired *inside*
@@ -1578,7 +1578,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "take_stored_food":
         if _in_nether(gs) or not _at_base(gs) or not _chest_ready(gs):
             return None
-        want = _food_goal(gs) - _edible_count(inv)
+        want = FOOD_BANK_KEEP - _edible_count(inv)
         if want <= 0:
             return None
         # Named from what a chest last held, not from a wish list: a `withdraw` naming an item
@@ -1922,6 +1922,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                  for n in _junk_carried(inv) + _surplus_besides_keep(gs, inv)
                  + _spare_gear(gs, inv)]
         items += _hoard_surplus(gs, inv)
+        items += _bank_surplus_food(gs, inv)
         if not _chest_ready(gs) or not items:
             return None
         # A block sitting on the chest stops its lid (`[CHEST_BLOCKED]`): dig that exact cell

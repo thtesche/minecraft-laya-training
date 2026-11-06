@@ -307,10 +307,22 @@ NETHER_FOOD_MIN_RESERVE = 24
 # regrow, in the Nether as well (both grow on netherrack). So a bot that can brew does not need a
 # 24-item larder before it crosses, only enough to reach the first mushrooms.
 #
-# This is the floor as well: below it nothing crosses, whatever the pack can make. Live, run153:
-# 23 edible items, full hunger, no animal inside the daylight reach - `enter_portal` was withheld
-# by one item and `wait` held the base until the iteration limit.
+# This is the floor while the larder can still be filled: below it, `enter_portal` waits for the
+# hunt or the pantry. Live, run153: 23 edible items, full hunger, no animal inside the daylight
+# reach - `enter_portal` was withheld by one item and `wait` held the base until the iteration
+# limit.
 NETHER_FOOD_RENEWABLE_RESERVE = 8
+# The absolute floor once nothing is reachable at all. The prep gate already lets an unreachable
+# reserve drop out, so a burning gate must not wait on food no walk can bring; but crossing with
+# an empty pack starves. Live, run193 it505-599: six edibles, a cow at 156 m (past the 128 m
+# reserve walk) and no mushroom - `enter_portal` stayed shut for 94 ticks while the only offers
+# were `wait` and `sleep`. Below this floor the bot still holds, whatever is (not) in reach.
+NETHER_FOOD_EMERGENCY_FLOOR = 4
+# The carried floor a food bank leaves in the pack. `stow_surplus` deposits provisions above it
+# and `take_stored_food` tops the pack back up to it, so the two can never chase each other
+# (run77's pack-and-chest shuttle). It is the same number a crossing wants carried, so the deep
+# larder lives in the chest - where a death cannot take it - and this much rides along.
+FOOD_BANK_KEEP = NETHER_FOOD_MIN_RESERVE
 STEW_ITEM = "mushroom_stew"
 BOWL_ITEM = "bowl"
 # Both are needed: a stew is one bowl, one red and one brown mushroom.

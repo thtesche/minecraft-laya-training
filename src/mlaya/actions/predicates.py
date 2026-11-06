@@ -1129,8 +1129,9 @@ def _total_edible(gs: GameState) -> int:
     `_edible_count(inventory)` cannot see across the room from the pack into the chest.
 
     The two must not be folded into one. What stops a hunt is the total; what has to come along
-    into the Nether is the pack, and the chest is at the base - so `_food_reserve_met` still counts
-    carried food only, and `take_stored_food` is what refills the pack from the bank.
+    into the Nether is the pack, and the chest is at the base - so `_food_reserve_met` counts the
+    larder whole (this number) while `_nether_food_secured` reads the pack, and `take_stored_food`
+    is what moves the bank into the pack before a crossing.
     """
     return _edible_count(gs.inventory) + sum(gs.banked.values())
 
@@ -1160,8 +1161,18 @@ def _banked_provisions(gs: GameState) -> dict[str, int]:
     return {n: int(c) for n, c in (gs.banked or {}).items() if n in PROVISIONS and c > 0}
 
 
+def _pack_food_short(gs: GameState) -> bool:
+    """The pack carries under the crossing floor and the chest can top it up.
+
+    The gate and `take_stored_food`'s resolve read this one function, so the step is never
+    offered for a pack the withdraw would leave alone, and never refused for one it would fill.
+    """
+    return (_edible_count(gs.inventory) < FOOD_BANK_KEEP
+            and bool(_banked_provisions(gs)))
+
+
 def _food_reserve_met(gs: GameState) -> bool:
-    """Whether the banked food reserve is met, or out of reach.
+    """Whether the food larder is met, or out of reach.
 
     The gate holds the run for `_food_goal` - the deep `NETHER_FOOD_RESERVE` in the lull once the
     gate frame stands - but lets the requirement drop out once no source is in reach, the same "unreachable
@@ -1169,8 +1180,14 @@ def _food_reserve_met(gs: GameState) -> bool:
     overworld is done": if the gate holds, a hunt is offered in the same reach (or the night's
     `sleep` is), so it never stalls; and a world with no animal near can never leave the run
     unable to end.
+
+    The larder is counted whole (`_total_edible`: pack plus the chest's bank). `stow_surplus`
+    banks provisions above `FOOD_BANK_KEEP`, so food parked in the chest is food the run still
+    owns - a death takes the pack, not the chest. What it does *not* do is feed a crossing on its
+    own: `_nether_food_secured` reads the pack, and `take_stored_food` tops it up to that same
+    floor first.
     """
-    return (_edible_count(gs.inventory) >= _food_goal(gs)
+    return (_total_edible(gs) >= _food_goal(gs)
             or not _food_source_in_reach(gs))
 
 
@@ -1757,24 +1774,41 @@ def _nether_food_secured(gs: GameState) -> bool:
     Without food carried down, pearl waves end in starvation far from home. Every Nether trip
     (blaze hunt, pearl wave, or powder top-up) must start with `NETHER_FOOD_MIN_RESERVE` edible
     items to survive a long search or emergency return. Banked rotten flesh counts toward the
-    reserve.
+    reserve: it is in the pack and it is edible, whatever it is worth as a provision.
 
-    Two ways to fall short of that larder without being stuck at the gate. A pack carrying a
+    Off the pack, not the chest. The deep larder may sit in the bank (`FOOD_BANK_KEEP` is what
+    `stow_surplus` leaves carried), but what crosses has to be carried, so a full chest does not
+    stand in for it here - `take_stored_food` is the step that moves it across.
+
+    Three ways to fall short of that larder without being stuck at the gate. A pack carrying a
     bowl and both mushrooms brews its own meals - the bowl returns from every bite and the
     mushrooms regrow, in the Nether as much as at home - so it crosses on
-    `NETHER_FOOD_RENEWABLE_RESERVE`, the floor below which nothing crosses. And when no animal
-    is in reach and no mushroom can be walked to, the reserve is simply not fillable from here:
-    the same unreachable rule the prep gate (`_food_reserve_met`) already follows, because the
-    opposite behaviour is a run that waits out its iteration limit at a burning gate (live,
-    run153: 23 edibles, full hunger, no animal inside the daylight reach, and `enter_portal`
-    withheld by one item while `wait` held the base).
+    `NETHER_FOOD_RENEWABLE_RESERVE`, the floor below which a larder that can still be filled
+    waits. Then, when no animal is in reach and no mushroom can be walked to, the reserve is
+    simply not fillable from here: the same unreachable rule the prep gate (`_food_reserve_met`)
+    already follows, because the opposite behaviour is a run that waits out its iteration limit
+    at a burning gate (live, run153: 23 edibles, full hunger, no animal inside the daylight
+    reach, and `enter_portal` withheld by one item while `wait` held the base; live again, run193
+    it505-599: six edibles, a cow at 156 m and no mushroom, 94 ticks shut).
+
+    A bank that can top the pack up is a *reachable* source, so it holds the crossing anyway, and
+    the withdraw it waits for is a step the planner offers. Below `NETHER_FOOD_EMERGENCY_FLOOR`
+    nothing crosses whatever is (not) in reach: a Nether trip on three items starves at the
+    fortress, not at the gate.
     """
-    packed = _edible_count(gs.inventory) + gs.banked.get("rotten_flesh", 0)
+    carried = _edible_count(gs.inventory)
+    packed = carried + gs.banked.get("rotten_flesh", 0)
     if packed >= NETHER_FOOD_MIN_RESERVE:
         return True
-    if packed < NETHER_FOOD_RENEWABLE_RESERVE:
+    if carried < FOOD_BANK_KEEP and _banked_provisions(gs):
+        # The chest already holds the rest of the larder: wait for `take_stored_food` instead of
+        # crossing with a pack the base could have filled.
         return False
-    return _stew_kit(gs) or not (_food_source_in_reach(gs) or _stew_source_in_reach(gs))
+    if packed < NETHER_FOOD_EMERGENCY_FLOOR:
+        return False
+    if packed >= NETHER_FOOD_RENEWABLE_RESERVE and _stew_kit(gs):
+        return True
+    return not (_food_source_in_reach(gs) or _stew_source_in_reach(gs))
 
 
 def _nether_departure_ready(gs: GameState) -> bool:
@@ -2349,6 +2383,35 @@ def _hoard_surplus(gs: GameState, inv: dict[str, int]) -> list[dict[str, int]]:
     return out
 
 
+def _bank_surplus_food(gs: GameState, inv: dict[str, int]) -> list[dict[str, int]]:
+    """Provisions the pack carries above `FOOD_BANK_KEEP`, for the chest.
+
+    Food is the one surplus a death makes unrecoverable: the pack goes on the ground, the chest
+    does not. `_keep_in_pack` names every edible, so `_surplus_besides_keep` never offers one and
+    `drop_junk` can never shed food - this is the chest-only counterpart, and it is bounded by a
+    *total* count: two kinds of meat do not keep `FOOD_BANK_KEEP` of each, which is what a
+    name-based keep set would otherwise do.
+
+    Raw cuts go first. They cook into the better meal, so the pack eats what is already cooked
+    before the chest has to give a portion back; the count is what the reserve measures, so the
+    split changes nothing about the gate.
+    """
+    surplus = _provision_count(inv) - FOOD_BANK_KEEP
+    if surplus <= 0:
+        return []
+    out: list[dict[str, int]] = []
+    left = surplus
+    for name in sorted((n for n in inv if n in PROVISIONS and inv.get(n, 0) > 0),
+                       key=lambda n: (n not in COOKED, -int(inv[n]), n)):
+        if left <= 0:
+            break
+        take = min(int(inv[name]), left)
+        if take > 0:
+            out.append({"item_name": name, "count": take})
+            left -= take
+    return out
+
+
 def _spare_gear(gs: GameState, inv: dict[str, int]) -> list[str]:
     """Carried tools and armour below the best the bot already carries, wears or holds.
 
@@ -2388,7 +2451,7 @@ def _droppable(gs: GameState, inv: dict[str, int]) -> bool:
 
 def _sheddable(gs: GameState, inv: dict[str, int]) -> bool:
     return bool(_junk_carried(inv) or _hoard_surplus(gs, inv) or _spare_gear(gs, inv)
-                or _surplus_besides_keep(gs, inv))
+                or _surplus_besides_keep(gs, inv) or _bank_surplus_food(gs, inv))
 
 
 def _combat_blocks_carried(inv: dict[str, int]) -> int:

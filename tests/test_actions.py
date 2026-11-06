@@ -42,7 +42,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
                            NETHER_EXIT_HOP_MIN,
-                           NETHER_FOOD_MIN_RESERVE, resolve, stronghold_complete,
+                           NETHER_FOOD_MIN_RESERVE, NETHER_FOOD_EMERGENCY_FLOOR,
+                           FOOD_BANK_KEEP, resolve, stronghold_complete,
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
                            _striding_to_stronghold, _stronghold_phase, _march_shed, _march_junk,
                            STRONGHOLD_MARCH_JUNK, _go_home_wanted, _cannot_heal,
@@ -8143,11 +8144,32 @@ class PackDisciplineTest(unittest.TestCase):
 
     def test_the_whitelist_never_names_what_the_run_still_needs(self) -> None:
         # Every one of these has cost the run a step when it went missing: the obsidian for the
-        # frame, the bow kit for the Nether, the food for the crossing, the bed, the fuel.
+        # frame, the bow kit for the Nether, the food for the crossing, the bed, the fuel. Food is
+        # held at the carried floor (`FOOD_BANK_KEEP`); only what stands above it is banked, and
+        # that is a count rule in `_bank_surplus_food`, not a whitelist entry.
         g = self._at_chest(obsidian=10, string=2, feather=12, flint=1, stick=6, iron_ingot=2,
-                           cooked_mutton=30, oak_log=9, gravel=14, diamond=2, white_wool=6,
-                           white_bed=1, crafting_table=1, bucket=1, flint_and_steel=1)
+                           cooked_mutton=FOOD_BANK_KEEP, oak_log=9, gravel=14, diamond=2,
+                           white_wool=6, white_bed=1, crafting_table=1, bucket=1,
+                           flint_and_steel=1)
         self.assertNotIn("stow_surplus", candidates(g))
+
+    def test_food_above_the_carried_floor_is_banked(self) -> None:
+        # run193 it399-400: 28 edibles were carried, the Enderman killed the bot, and the chest
+        # that survived held none of them - food is the one surplus a death makes unrecoverable.
+        # The pack keeps the crossing floor and the rest rides in the chest, raw cuts first so
+        # the better meal stays carried.
+        g = self._at_chest(cooked_mutton=20, beef=10)
+        self.assertIn("stow_surplus", candidates(g))
+        a = resolve("stow_surplus", g)
+        self.assertIn({"item_name": "beef", "count": 6}, a.args["items"])
+        self.assertNotIn({"item_name": "cooked_mutton", "count": 6}, a.args["items"])
+
+    def test_the_carried_floor_stays_in_the_pack(self) -> None:
+        g = self._at_chest(cooked_mutton=FOOD_BANK_KEEP)
+        self.assertNotIn("stow_surplus", candidates(g))
+        g.inventory["beef"] = 1
+        a = resolve("stow_surplus", g)
+        self.assertIn({"item_name": "beef", "count": 1}, a.args["items"])
 
     def test_the_pickaxe_is_kept_even_before_the_inventory_is_parsed(self) -> None:
         # `tool_meta` is empty until the inventory is parsed, and a whitelist that filed the
@@ -8280,14 +8302,32 @@ class BankedFoodEndsTheHuntTest(unittest.TestCase):
         self.assertEqual(set(EDIBLE) - set(PROVISIONS),
                          {"rotten_flesh", "dried_kelp", "mushroom_stew"})
 
-    def test_the_reserve_the_crossing_needs_is_still_counted_in_the_pack(self) -> None:
-        # 64 banked and an empty pack must NOT count as a stocked expedition.
-        from mlaya.actions import _food_reserve_met
+    def test_a_banked_larder_meets_the_prep_but_not_the_crossing(self) -> None:
+        # 64 banked and an empty pack IS a stocked larder now that food can be banked: the prep
+        # gate counts the whole store, so the hunt stops. What it is not is a fed *pack* - the
+        # crossing reads what is carried, and `take_stored_food` is the step that moves the bank
+        # across. Folding the two into one number either hunts forever beside a full chest or
+        # crosses with an empty pack.
+        from mlaya.actions import _food_reserve_met, _nether_food_secured
         g = self._hungry_at_base(carried=0, banked=64)
         g.nether_idle = True
-        self.assertFalse(_food_reserve_met(g))
-        g.inventory["cooked_mutton"] = 64
         self.assertTrue(_food_reserve_met(g))
+        self.assertIn("take_stored_food", candidates(g))
+        self.assertFalse(_nether_food_secured(g))
+        g.inventory["cooked_mutton"] = FOOD_BANK_KEEP
+        self.assertTrue(_nether_food_secured(g))
+
+    def test_the_withdraw_tops_the_pack_to_the_crossing_floor(self) -> None:
+        # Topping the pack to `_food_goal` (64) would empty the bank again on the next tick -
+        # run77's stow/withdraw shuttle. The floor is what a crossing needs carried.
+        g = self._hungry_at_base(carried=20, banked=40)
+        a = resolve("take_stored_food", g)
+        self.assertEqual(a.args["items"], [{"item_name": "cooked_mutton", "count": 4}])
+
+    def test_nothing_is_banked_back_the_tick_after_the_withdraw(self) -> None:
+        g = self._hungry_at_base(carried=FOOD_BANK_KEEP, banked=40)
+        self.assertNotIn("take_stored_food", candidates(g))
+        self.assertNotIn("stow_surplus", candidates(g))
 
 
 class LeavePortalDimensionTest(unittest.TestCase):
@@ -9510,9 +9550,32 @@ class NetherFoodSecurityTest(unittest.TestCase):
         self.assertTrue(_nether_food_secured(g),
                         "a hunt nothing can walk to is not a reason to stand at the gate")
 
-        # Below the renewable floor nothing crosses, whatever is (not) in reach.
+        # Below the renewable floor a larder that can still be filled waits; once nothing is in
+        # reach the emergency floor is what holds, not the renewable one.
         g.inventory = {"cooked_beef": 7}
+        self.assertTrue(_nether_food_secured(g),
+                        "nothing can fill 7, so the renewable floor does not hold the gate")
+        g.inventory = {"cooked_beef": NETHER_FOOD_EMERGENCY_FLOOR - 1}
+        self.assertFalse(_nether_food_secured(g),
+                         "below the emergency floor nothing crosses, however empty the world")
+
+    def test_a_bank_that_can_top_the_pack_up_holds_the_crossing(self) -> None:
+        # Food in the chest is a *reachable* source: the crossing waits for `take_stored_food`
+        # instead of leaving with a pack the base could have filled.
+        g = gs(inventory={"cooked_beef": 6}, chest_pos=(1, 64, 1))
+        g.banked = {"cooked_mutton": 40}
         self.assertFalse(_nether_food_secured(g))
+        g.inventory = {"cooked_beef": FOOD_BANK_KEEP}
+        self.assertTrue(_nether_food_secured(g))
+
+    def test_run193_six_items_and_no_reachable_source_still_crosses(self) -> None:
+        # The live deadlock: 5 beef + 1 cooked beef, a cow at 156 m (past the 128 m reserve
+        # walk), a donkey (no drop) and no mushroom. The prep gate read "done" while the crossing
+        # stayed shut for 94 ticks - the asymmetry this pair of gates no longer has.
+        g = gs(inventory={"beef": 5, "cooked_beef": 1},
+               mobs=[("donkey", "animal", 1, 88.0), ("cow", "animal", 1, 156.0)])
+        self.assertFalse(_food_source_in_reach(g))
+        self.assertTrue(_nether_food_secured(g))
 
     def test_a_stew_pantry_carries_a_trip_on_the_renewable_floor(self) -> None:
         # A bowl and both mushrooms renew themselves - the bowl comes back from every meal - so
