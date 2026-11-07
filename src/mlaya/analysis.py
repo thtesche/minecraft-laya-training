@@ -395,6 +395,23 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
     esc_trigger = Counter(str(e.get("label")) for e in escalations)
     esc_chosen = Counter(str(e.get("chosen")) for e in escalations)
 
+    # Quality of the escalations, not just their count. `resolve_rate` is how often the model's
+    # plan produced an action the loop could run at all; `recurrence_rate` how often the same
+    # unresolved label came back for another call (a plan that did not break the impasse);
+    # `error_rate` the calls that never reached a plan (no key, empty or bad response). The
+    # `kind` field counts the newer `stall_loop` trigger apart from the original `unresolved_label`.
+    esc_calls = len(escalations)
+    esc_resolved = sum(1 for e in escalations if e.get("chosen"))
+    esc_errors = sum(1 for e in escalations if (e.get("plan") or {}).get("error"))
+    seen_unresolved: set[str] = set()
+    esc_recurrences = 0
+    for e in escalations:
+        lbl = str(e.get("label"))
+        if lbl in seen_unresolved:
+            esc_recurrences += 1
+        seen_unresolved.add(lbl)
+    esc_by_trigger = Counter(str(e.get("trigger") or "unresolved_label") for e in escalations)
+
     waste = sorted(
         (r for r in actions if not r.get("progressed")),
         key=lambda r: tuple(-refusals.get(c, 0) for c in CODE_RE.findall(str(r.get("text") or ""))),
@@ -435,13 +452,20 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
             "detail": loops,
         },
         "system2": {
-            "calls": len(escalations),
+            "calls": esc_calls,
             "ticks": len(esc_actions),
             "progressed": sum(1 for r in esc_actions if r.get("progressed")),
             "progress_rate": round(sum(1 for r in esc_actions if r.get("progressed"))
                                    / len(esc_actions), 3) if esc_actions else None,
+            "resolved": esc_resolved,
+            "resolve_rate": round(esc_resolved / esc_calls, 3) if esc_calls else None,
+            "recurrences": esc_recurrences,
+            "recurrence_rate": round(esc_recurrences / esc_calls, 3) if esc_calls else None,
             "fallbacks": sum(1 for e in escalations if not e.get("chosen")),
-            "errors": sum(1 for e in escalations if (e.get("plan") or {}).get("error")),
+            "errors": esc_errors,
+            "error_rate": round(esc_errors / esc_calls, 3) if esc_calls else None,
+            "by_trigger": [{"kind": kind, "count": count}
+                           for kind, count in esc_by_trigger.most_common()],
             "triggers": [{"label": label, "count": count}
                          for label, count in esc_trigger.most_common()],
             "chosen": [{"label": label, "count": count}
@@ -598,8 +622,13 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
     s2 = report.get("system2") or {}
     if s2.get("calls"):
         lines.append(f"\n## System 2 escalations ({s2['calls']})")
+        lines.append(f"- resolve rate {s2['resolve_rate']} · recurrence {s2['recurrence_rate']} · "
+                     f"errors {s2['errors']} · {s2['fallbacks']} fell back to the default")
         lines.append(f"- {s2['ticks']} ticks ran on an escalated action, progress rate "
-                     f"{s2['progress_rate']} · {s2['fallbacks']} fell back to the default")
+                     f"{s2['progress_rate']}")
+        if s2.get("by_trigger"):
+            kinds = ", ".join(f"{t['kind']} {t['count']}" for t in s2["by_trigger"])
+            lines.append(f"- by trigger: {kinds}")
         for d in s2["calls_detail"]:
             lines.append(f"- it{d['iteration']}: `{d['unresolved']}` had no action -> "
                          f"`{d['chosen']}` — {d['goal']}")

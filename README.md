@@ -114,6 +114,10 @@ to `runs/decisions.jsonl`; `lab.sh` archives it to `runs/history/decisions-runNN
 a new run starts. To read that log while a run is live: `tail -f runs/decisions.jsonl |
 scripts/dec.py` (one key per line at level 1, everything deeper compact — see
 [`docs/operations.md`](docs/operations.md#reading-the-log-while-it-is-written)).
+Every System-2 escalation also writes a record to its own side-file `runs/system2.jsonl` (the full
+brief that was sent, the plan that came back, and whether it resolved), archived per run to
+`runs/history/system2-runNN.jsonl`; `mlaya.analysis` joins it back to the decision log by iteration
+to score the escalations (resolve / recurrence / error rate).
 
 ### M3: logs → dataset → fine-tuning
 

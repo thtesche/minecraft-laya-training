@@ -261,6 +261,80 @@ class Brain:
         return target, meta
 
 
+# How many of the run's own action ticks the trajectory digest looks back over. Enough to show
+# a loop forming (a label refused a dozen times) without carrying the whole run into the prompt.
+DIGEST_WINDOW = 24
+
+
+def trajectory_digest(history: list[dict], window: int = DIGEST_WINDOW) -> dict:
+    """A compact read of where the run has been, built from the decision log System 1 already keeps.
+
+    System 2 used to see only the last five raw records, which is too little to tell a one-off
+    refusal from a structural loop: the same label refused twenty times in a row looked the same
+    as a label tried once. The digest is the content of `runs/decisions.jsonl` folded down to what
+    a next-move decision needs - the recent labels and how each one fared, which labels keep
+    failing, and the base/chest ledger - so the model is told the shape of the impasse, not asked
+    to re-derive it from a handful of ticks.
+    """
+    actions = [r for r in history if r.get("stage") == "action"][-window:]
+    recent = [
+        {
+            "label": r.get("label"),
+            "ok": bool(r.get("ok")),
+            "progressed": bool(r.get("progressed")),
+            "status": r.get("status"),
+        }
+        for r in actions
+    ]
+    attempts: dict[str, int] = {}
+    failures: dict[str, int] = {}
+    for r in actions:
+        label = str(r.get("label"))
+        attempts[label] = attempts.get(label, 0) + 1
+        if not r.get("progressed") and r.get("status") != "succeeded":
+            failures[label] = failures.get(label, 0) + 1
+    # Labels that keep failing without progress are the structural ones - the thing a richer brief
+    # is for. Listed worst-first so the model reads the stuck label before the noise.
+    repeated_failures = [
+        {"label": label, "failed": count, "attempts": attempts.get(label, count)}
+        for label, count in sorted(failures.items(), key=lambda kv: -kv[1])
+        if count >= 2
+    ]
+    last_state = next((r.get("state") for r in reversed(actions)
+                       if isinstance(r.get("state"), dict)), None) or {}
+    ledger = {
+        "phase": last_state.get("phase"),
+        "dimension": last_state.get("dimension"),
+        "base": last_state.get("base"),
+        "chest_pos": last_state.get("chest_pos"),
+        "furnace_pos": last_state.get("furnace_pos"),
+        "banked": last_state.get("banked"),
+    }
+    return {
+        "window": len(actions),
+        "recent": recent,
+        "repeated_failures": repeated_failures,
+        "ledger": ledger,
+    }
+
+
+def _plan_steps(plan: dict | None, allowed_labels: list[str]) -> list[str]:
+    """The ordered labels a System-2 reply proposes, from `plan` (a list) or the legacy `action`.
+
+    Kept permissive on purpose - the caller resolves each step against the live state and takes
+    the first that builds, so an out-of-set or stale label costs nothing but being skipped.
+    """
+    if not isinstance(plan, dict):
+        return []
+    steps = plan.get("plan")
+    if isinstance(steps, list):
+        ordered = [str(s) for s in steps if isinstance(s, str)]
+    else:
+        action = plan.get("action")
+        ordered = [str(action)] if isinstance(action, str) else []
+    return ordered
+
+
 def escalate_to_system2(
     cfg: LLMConfig,
     api_key: str | None,
@@ -268,8 +342,15 @@ def escalate_to_system2(
     history: list[dict],
     failure: dict,
     allowed_labels: list[str],
+    trajectory: dict | None = None,
 ) -> dict | None:
-    """System 2: ask a generative model to pick a valid next action (rare)."""
+    """System 2: ask a generative model for a way out when System 1 cannot act (rare).
+
+    The reply is normalised so every caller reads the same shape: `plan` is the ordered list of
+    allowed labels the model proposes (best first) and `action` is its first step, kept for the
+    offline teacher and the older log readers. `trajectory` is the digest from
+    `trajectory_digest`; passing it is what turns "pick a label" into "break this impasse".
+    """
     if not api_key:
         return {"error": f"missing {cfg.api_key_env}"}
     try:
@@ -281,19 +362,23 @@ def escalate_to_system2(
             # asked about this run, not about Minecraft in general, and should not have to
             # re-derive mid-Nether from `state.dimension` whether the next thing is a pickaxe.
             phase_persona(state) + ". You are the Minecraft expert advising this bot on its "
-            "next move. Pick exactly one next action from allowed_actions and reply with JSON "
-            '{"action": <one allowed label or null>, "goal": <short string>, '
-            '"note": <why, short>}.'
+            "next move. Its own controller is stuck: read `failure`, the `trajectory` of what it "
+            "has been doing, and what each entry in `allowed_actions` does, then propose the "
+            "shortest ordered sequence of allowed actions that breaks the impasse - not just the "
+            "label that keeps failing. Reply with JSON "
+            '{"plan": [<allowed labels, best first>], "goal": <short string>, '
+            '"note": <why this breaks the loop, short>}.'
         )
-        user = json.dumps(
-            {
-                "state": state,
-                "recent_history": history[-5:],
-                "failure": failure,
-                "allowed_actions": allowed_labels,
-            },
-            ensure_ascii=False,
-        )
+        payload = {
+            "state": state,
+            "failure": failure,
+            # What each allowed action actually does, so the model is not guessing from the label.
+            "allowed_actions": {label: CRITERIA.get(label, "") for label in allowed_labels},
+            "recent_history": history[-8:],
+        }
+        if trajectory is not None:
+            payload["trajectory"] = trajectory
+        user = json.dumps(payload, ensure_ascii=False)
         r = client.chat.completions.create(
             model=cfg.model,
             # Reasoning model: thinking tokens are emitted before the JSON (the local
@@ -309,6 +394,12 @@ def escalate_to_system2(
         content = choice.message.content
         if not content:
             return {"error": "empty model response", "finish_reason": choice.finish_reason}
-        return json.loads(content)
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            return {"error": f"non-object model response: {type(data).__name__}"}
+        steps = _plan_steps(data, allowed_labels)
+        data["plan"] = steps
+        data["action"] = steps[0] if steps else None
+        return data
     except Exception as e:  # escalation must never crash the loop
         return {"error": str(e)}

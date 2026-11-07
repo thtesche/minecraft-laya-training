@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 from mlaya.actions import _must_eat
 from mlaya.brain import (DANGER_BAND_NOTE, DANGER_DEFER_HEALTH, DANGER_DEFER_M, DANGER_QID,
-                         DEFER_QUIET_TICKS, INTENT_QID, Brain, danger_matters)
+                         DEFER_QUIET_TICKS, INTENT_QID, Brain, _plan_steps, danger_matters,
+                         escalate_to_system2, trajectory_digest)
 
 
 class _Router:
@@ -150,6 +151,71 @@ class DangerMattersTest(unittest.TestCase):
         self.assertFalse(danger_matters(g))
         g.boxed_in = False
         self.assertTrue(danger_matters(g))
+
+
+def _rec(label: str, *, ok=False, progressed=False, status="failed", state=None) -> dict:
+    rec = {"stage": "action", "label": label, "ok": ok, "progressed": progressed,
+           "status": status}
+    if state is not None:
+        rec["state"] = state
+    return rec
+
+
+class TrajectoryDigestTest(unittest.TestCase):
+    """The run's own decision log folded down to what a next-move decision needs."""
+
+    def test_recent_labels_and_repeated_failures_surface(self) -> None:
+        history = (
+            [_rec("explore", ok=True, progressed=True, status="succeeded")]
+            + [_rec("mine_obsidian") for _ in range(4)]
+            + [_rec("light_portal") for _ in range(2)]
+        )
+        digest = trajectory_digest(history)
+        self.assertEqual(digest["window"], 7)
+        self.assertEqual(digest["recent"][-1]["label"], "light_portal")
+        # Worst-first, and a label that failed once is not listed (threshold is 2).
+        failing = [f["label"] for f in digest["repeated_failures"]]
+        self.assertEqual(failing[0], "mine_obsidian")
+        self.assertEqual(digest["repeated_failures"][0]["failed"], 4)
+        self.assertNotIn("explore", failing)
+
+    def test_the_window_bounds_how_far_back_it_reads(self) -> None:
+        history = [_rec(f"l{i}") for i in range(40)]
+        self.assertEqual(trajectory_digest(history, window=10)["window"], 10)
+
+    def test_only_action_records_count_and_the_ledger_is_the_last_state(self) -> None:
+        history = [
+            {"stage": "policy", "reason": "stuck_offer_dropped", "label": "explore"},
+            _rec("mine_iron", state={"phase": "iron", "base": [1, 2, 3], "chest_pos": None}),
+        ]
+        digest = trajectory_digest(history)
+        self.assertEqual(digest["window"], 1)
+        self.assertEqual(digest["ledger"]["phase"], "iron")
+        self.assertEqual(digest["ledger"]["base"], [1, 2, 3])
+
+
+class PlanStepsTest(unittest.TestCase):
+    """The ordered labels a System-2 reply proposes, read permissively."""
+
+    def test_a_list_plan_is_kept_in_order_dropping_non_strings(self) -> None:
+        self.assertEqual(_plan_steps({"plan": ["a", 3, "b"]}, ["a", "b"]), ["a", "b"])
+
+    def test_a_legacy_single_action_becomes_a_one_step_plan(self) -> None:
+        self.assertEqual(_plan_steps({"action": "mine_stone"}, ["mine_stone"]), ["mine_stone"])
+
+    def test_an_error_or_empty_reply_has_no_steps(self) -> None:
+        self.assertEqual(_plan_steps({"error": "boom"}, ["a"]), [])
+        self.assertEqual(_plan_steps(None, ["a"]), [])
+
+
+class EscalateContractTest(unittest.TestCase):
+    """What `escalate_to_system2` guarantees without a model behind it."""
+
+    def test_a_missing_key_is_reported_not_raised(self) -> None:
+        out = escalate_to_system2(
+            SimpleNamespace(api_key_env="STRATA_API_KEY"), None,
+            {"phase": "early"}, [], {"trigger": "unresolved_label"}, ["get_wood"])
+        self.assertEqual(out, {"error": "missing STRATA_API_KEY"})
 
 
 if __name__ == "__main__":

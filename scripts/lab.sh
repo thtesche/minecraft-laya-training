@@ -285,6 +285,12 @@ cmd_up() {
     mv "$REPO/runs/decisions.jsonl" "$REPO/runs/history/decisions-run$((run_no - 1)).jsonl"
     log "previous log archived to runs/history/decisions-run$((run_no - 1)).jsonl"
   fi
+  # The System-2 side-file rides along with the decision log so a run's escalations stay paired
+  # with it (`mlaya.analysis` joins the two by iteration).
+  if [[ -f "$REPO/runs/system2.jsonl" ]]; then
+    mv "$REPO/runs/system2.jsonl" "$REPO/runs/history/system2-run$((run_no - 1)).jsonl"
+    log "previous System-2 log archived to runs/history/system2-run$((run_no - 1)).jsonl"
+  fi
 
   touch "$REPO/runs/decisions.jsonl"
   args=(-n "$n")

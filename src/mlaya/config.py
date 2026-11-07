@@ -95,6 +95,11 @@ class TrainConfig(BaseModel):
 
 class LoopConfig(BaseModel):
     max_iterations: int = 10
+    # Per-run budget for the *stall-loop* escalation: the new, costly trigger that asks System 2
+    # for a way out when a label keeps looping (`graph._guard`). The unresolved-label escalation
+    # is not capped by this - it is a correctness path that always has a fallback - only the
+    # chatty structural trigger is, so a run that keeps tripping the same loop cannot spend itself
+    # on the model. Until run207 this field was defined and read nowhere.
     max_escalations: int = 3
     hitl: bool = False
     # End the loop as soon as the overworld tech tree is complete (diamond tools + armour
@@ -106,6 +111,11 @@ class LoopConfig(BaseModel):
     # second and run86 spent ~300 of its 600 iterations waiting for one night.
     wait_hold_s: float = 30.0
     log_path: str = "runs/decisions.jsonl"
+    # The dedicated side-file for System-2 calls: one record per escalation with the full brief
+    # that was sent, the plan that came back, and whether it resolved. Kept apart from the main
+    # decision log so the escalations can be read and scored on their own (`mlaya.analysis` joins
+    # the two by iteration), and archived per run alongside `decisions.jsonl`.
+    system2_log_path: str = "runs/system2.jsonl"
     memory_path: str = "MEMORY.md"
 
 
@@ -129,6 +139,10 @@ class Settings(BaseModel):
 
     def log_path(self) -> Path:
         p = Path(self.loop.log_path)
+        return p if p.is_absolute() else ROOT / p
+
+    def system2_log_path(self) -> Path:
+        p = Path(self.loop.system2_log_path)
         return p if p.is_absolute() else ROOT / p
 
     def memory_path(self) -> Path:

@@ -25,7 +25,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
                       FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS,
                       _portal_lit_scan, _bed_at_stronghold)
-from .brain import Brain, escalate_to_system2
+from .brain import Brain, escalate_to_system2, trajectory_digest
 from .mcp import _find
 from .memory import MemoryLog
 from .config import Settings
@@ -36,6 +36,13 @@ FALLBACK_LABEL = "get_wood"
 
 # Labels whose step needs a destination; the M4 parameter layer picks it from `view_blocks`.
 TARGET_LABELS = frozenset({"explore"})
+
+# How many times a stall guard must have taken a label off the offer this run before the loop
+# escalates it to System 2 instead of running it into the same loop again. One drop is a single
+# bad patch of ground the cooldown handles on its own; this many is a label the withholding only
+# paces, which is the structural case the richer escalation exists for. Capped per run by
+# `loop.max_escalations`.
+STALL_ESCALATE_REPEATS = 2
 
 # A placed bed within this range of the bot means the bot is standing at a home base a previous
 # run (or a manual build) left behind: that bed's ground cell is re-adopted as `base`, so the run
@@ -395,11 +402,23 @@ class Agent:
     # is exactly "no hop has been refused yet".
     _nether_hop: tuple[tuple[int, int] | None, int] = (None, 0)
 
+    # How many times each label has been taken off the offer by a stall guard this run, and how
+    # many stall-triggered escalations have been spent. Class defaults for the same reason as
+    # `_lava_walked`: a stub agent built with `Agent.__new__` reads them in `_guard` and the stall
+    # guards, and an empty dict / zero is exactly "no label has looped yet". The guards rebind a
+    # fresh dict (never mutate in place), so the shared class default is never written.
+    _stall_dropped: dict[str, int] = {}
+    _stall_escalations: int = 0
+
     def __init__(self, settings: Settings, executor):
         self.settings = settings
         self.mcp = executor
         self.brain = Brain(settings.laya)
         self.log = MemoryLog(settings.log_path())
+        # The dedicated System-2 side-file: one record per escalation with the full brief sent and
+        # the plan that came back, kept apart from the decision log so the escalations can be
+        # scored on their own (`mlaya.analysis`). Archived per run beside `decisions.jsonl`.
+        self.system2_log = MemoryLog(settings.system2_log_path())
         self.history: list[dict] = []
         # The server restores default policy on death and on a dimension change; re-apply once for
         # each. The death the policy was last re-applied for (or found already old), by its server
@@ -1685,23 +1704,76 @@ class Agent:
                     return {"action": action, "note": f"unblock -> {action.label}"}
         action = resolve(decision.action_label, gs, decision.target)
         if action is not None:
+            # The label builds and would run - but if a stall guard has had to take it off the
+            # offer this run again and again (`STALL_ESCALATE_REPEATS`), running it once more only
+            # re-enters the loop the withholding keeps pacing rather than solving. Ask System 2 for
+            # a way out instead. Its pick is used only when it resolves to a *different* label, so
+            # the worst case is the very action the loop would have run anyway, and the budget
+            # (`loop.max_escalations`) keeps a run from spending itself on the model chasing a loop.
+            if (not decision.deferred
+                    and self._stall_dropped.get(decision.action_label, 0) >= STALL_ESCALATE_REPEATS
+                    and self._stall_escalations < self.settings.loop.max_escalations):
+                self._stall_escalations += 1
+                alt, chosen, _ = self._escalate(
+                    gs, "stall_loop", decision.action_label, state.get("iteration", 0))
+                if alt is not None and chosen != decision.action_label:
+                    return {"action": alt, "escalated": True, "note": f"stall -> {chosen}"}
             return {"action": action}
         if decision.deferred:
             # In danger or nothing valid: the server-side survival policy owns this tick.
             return {"action": None, "deferred": True, "note": decision.note}
-        plan = escalate_to_system2(
-            self.settings.llm, self.settings.api_key(), gs.as_state(), self.history,
-            {"triggers": ["unresolved_label"], "label": decision.action_label},
-            list(candidates(gs)),
-        )
-        label = (plan or {}).get("action")
-        alt = resolve(label, gs) if label else None
-        self.log.append({"stage": "escalation", "iteration": state.get("iteration", 0),
-                        "label": decision.action_label, "plan": plan, "chosen": label})
+        alt, chosen, _ = self._escalate(
+            gs, "unresolved_label", decision.action_label, state.get("iteration", 0))
         if alt is not None:
-            return {"action": alt, "escalated": True, "note": f"escalated -> {label}"}
+            return {"action": alt, "escalated": True, "note": f"escalated -> {chosen}"}
         return {"action": resolve(FALLBACK_LABEL, gs), "escalated": True,
                 "note": f"fallback -> {FALLBACK_LABEL}"}
+
+    def _escalate(self, gs, trigger: str, unresolved_label: str | None,
+                  iteration: int) -> tuple[Any, str | None, dict | None]:
+        """Ask System 2 for a way out, run the first proposed step that resolves, record the call.
+
+        Returns `(action, chosen_label, raw_plan)`: the concrete action to run (or None), the label
+        it came from, and the model's raw reply. A compact `stage: escalation` line still goes to
+        the decision log so the older readers and the report keep working; the full brief that was
+        sent, the plan and whether it resolved go to the System-2 side-file, where the escalations
+        are scored on their own (`mlaya.analysis`).
+        """
+        allowed = list(candidates(gs))
+        trajectory = trajectory_digest(self.history)
+        world = gs.as_state()
+        still_offered = (unresolved_label in allowed) if unresolved_label else None
+        failure = {"trigger": trigger, "label": unresolved_label, "still_offered": still_offered}
+        plan = escalate_to_system2(
+            self.settings.llm, self.settings.api_key(), world, self.history,
+            failure, allowed, trajectory=trajectory,
+        )
+        steps = plan.get("plan") if isinstance(plan, dict) else None
+        steps = steps if isinstance(steps, list) else []
+        chosen: str | None = None
+        action = None
+        for label in steps:
+            built = resolve(label, gs)
+            if built is not None:
+                chosen, action = label, built
+                break
+        self.log.append({"stage": "escalation", "iteration": iteration, "trigger": trigger,
+                         "label": unresolved_label, "plan": plan, "steps": steps,
+                         "chosen": chosen})
+        self.system2_log.append({
+            "iteration": iteration,
+            "trigger": trigger,
+            "unresolved": unresolved_label,
+            "still_offered": still_offered,
+            "allowed": allowed,
+            "trajectory": trajectory,
+            "state": world,
+            "plan": plan,
+            "steps": steps,
+            "chosen": chosen,
+            "resolved": chosen is not None,
+        })
+        return action, chosen, plan
 
     async def _execute(self, state: AgentState) -> dict:
         action = state["action"]
@@ -2171,6 +2243,8 @@ class Agent:
         if self._stuck_reps[label] >= STUCK_REPEATS:
             self._stuck_reps[label] = 0
             self._stuck_off[label] = STUCK_COOLDOWN
+            self._stall_dropped = {**self._stall_dropped,
+                                   label: self._stall_dropped.get(label, 0) + 1}
             self.log.append({"stage": "policy", "reason": "stuck_offer_dropped",
                              "label": label, "code": code, "ticks": STUCK_COOLDOWN})
 
@@ -2219,6 +2293,8 @@ class Agent:
             return
         self._wander_reps[label] = 0
         self._stuck_off[label] = STUCK_COOLDOWN
+        self._stall_dropped = {**self._stall_dropped,
+                               label: self._stall_dropped.get(label, 0) + 1}
         self.log.append({"stage": "policy", "reason": "wander_offer_dropped",
                          "label": label, "walked": round(float(travelled), 1),
                          "net": round(float(net), 1), "ticks": STUCK_COOLDOWN})
@@ -2263,6 +2339,8 @@ class Agent:
             return
         self._idle_reps[label] = 0
         self._stuck_off[label] = STUCK_COOLDOWN
+        self._stall_dropped = {**self._stall_dropped,
+                               label: self._stall_dropped.get(label, 0) + 1}
         self.log.append({"stage": "policy", "reason": "idle_offer_dropped",
                          "label": label, "ticks": IDLE_REPEATS,
                          "window": STUCK_COOLDOWN})
@@ -2312,6 +2390,8 @@ class Agent:
             return
         self._orbit_path.pop(label, None)
         self._stuck_off[label] = STUCK_COOLDOWN
+        self._stall_dropped = {**self._stall_dropped,
+                               label: self._stall_dropped.get(label, 0) + 1}
         self.log.append({"stage": "policy", "reason": "orbit_offer_dropped",
                          "label": label, "walked": round(path, 1),
                          "net": round(net, 1), "ticks": STUCK_COOLDOWN})

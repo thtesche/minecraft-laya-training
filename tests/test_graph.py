@@ -15,15 +15,16 @@ import json
 from types import SimpleNamespace
 import math
 import unittest
+from unittest import mock
 
-from mlaya import perception, progress
+from mlaya import graph, perception, progress
 from mlaya.actions import (Action, candidates, nether_expedition_complete, resolve,
                           tech_tree_complete)
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_STOP, BOXED_REPEATS, DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
                          LAVA_WALK_COOLDOWN, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
-                         ORBIT_WINDOW, PORTAL_INTENT_TICKS, STUCK_COOLDOWN, STUCK_REPEATS,
+                         ORBIT_WINDOW, PORTAL_INTENT_TICKS, STALL_ESCALATE_REPEATS, STUCK_COOLDOWN, STUCK_REPEATS,
                          WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
 from mlaya.perception import BlockHit, GameState
@@ -447,6 +448,100 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out["action"].tool, "build_structure")
         self.assertEqual(out["action"].args["blocks"],
                          [{"x": -180, "y": 64, "z": -118, "block_name": "air"}])
+
+
+class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
+    """A label a stall guard keeps dropping is handed to System 2 for a way out, not looped again.
+
+    The stall guards already withhold a looping label for a cooldown and let it back - a band-aid
+    that paces the loop without breaking it. Once a label has been dropped `STALL_ESCALATE_REPEATS`
+    times it is a structural problem, so the loop asks System 2 over the live candidates instead of
+    running the label into the same loop. The model's pick is used only when it resolves to a
+    *different* label; otherwise the loop runs the label it would have run anyway.
+    """
+
+    class _Log:
+        def __init__(self) -> None:
+            self.records: list = []
+
+        def append(self, rec) -> None:
+            self.records.append(rec)
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._blocked_label = None
+        agent.log = self._Log()
+        agent.system2_log = self._Log()
+        agent.history = []
+        agent.settings = Settings()
+        return agent
+
+    def _state(self, label: str):
+        return {"before": gs(), "decision": Decision(label), "iteration": 7}
+
+    async def test_a_repeatedly_dropped_label_escalates_to_a_resolvable_alternative(self) -> None:
+        agent = self._agent()
+        agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS}
+        alt = Action("mine_stone", "collect_block", {"block_name": "stone"}, "mine")
+        with mock.patch.object(graph, "candidates", return_value=["explore", "mine_stone"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: alt if lbl in ("explore", "mine_stone") else None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": ["mine_stone"], "action": "mine_stone"}) as esc:
+            out = await agent._guard(self._state("explore"))
+        self.assertTrue(out["escalated"])
+        self.assertIs(out["action"], alt)
+        self.assertEqual(out["note"], "stall -> mine_stone")
+        self.assertEqual(agent._stall_escalations, 1)
+        esc.assert_called_once()
+        # Both logs name the trigger; the side-file carries the brief and the outcome.
+        self.assertEqual(agent.log.records[-1]["trigger"], "stall_loop")
+        side = agent.system2_log.records[-1]
+        self.assertEqual(side["trigger"], "stall_loop")
+        self.assertEqual(side["chosen"], "mine_stone")
+        self.assertTrue(side["resolved"])
+        self.assertTrue(side["still_offered"])
+
+    async def test_the_same_label_back_from_the_model_runs_as_before(self) -> None:
+        agent = self._agent()
+        agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS}
+        action = Action("explore", "navigate", {}, "walk")
+        with mock.patch.object(graph, "candidates", return_value=["explore"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: action if lbl == "explore" else None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": ["explore"], "action": "explore"}):
+            out = await agent._guard(self._state("explore"))
+        # The model only echoed the looping label, so the loop runs it rather than claiming a fix,
+        # but the call was still spent against the budget and recorded.
+        self.assertIs(out["action"], action)
+        self.assertNotIn("escalated", out)
+        self.assertEqual(agent._stall_escalations, 1)
+        self.assertEqual(agent.system2_log.records[-1]["chosen"], "explore")
+
+    async def test_below_the_repeat_threshold_no_escalation(self) -> None:
+        agent = self._agent()
+        agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS - 1}
+        action = Action("explore", "navigate", {}, "walk")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: action if lbl == "explore" else None), \
+             mock.patch.object(graph, "escalate_to_system2") as esc:
+            out = await agent._guard(self._state("explore"))
+        self.assertIs(out["action"], action)
+        esc.assert_not_called()
+        self.assertEqual(agent._stall_escalations, 0)
+
+    async def test_the_budget_caps_the_stall_escalations(self) -> None:
+        agent = self._agent()
+        agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS}
+        agent._stall_escalations = agent.settings.loop.max_escalations
+        action = Action("explore", "navigate", {}, "walk")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: action if lbl == "explore" else None), \
+             mock.patch.object(graph, "escalate_to_system2") as esc:
+            out = await agent._guard(self._state("explore"))
+        self.assertIs(out["action"], action)
+        esc.assert_not_called()
 
 
 class PourSkipTest(unittest.TestCase):

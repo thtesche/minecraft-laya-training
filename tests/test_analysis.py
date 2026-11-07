@@ -41,11 +41,16 @@ def action(iteration: int, label: str, *, status="failed", text="", pos=0.0,
     }
 
 
-def escalation(iteration: int, unresolved: str, plan: dict, chosen: str | None) -> dict:
+def escalation(iteration: int, unresolved: str, plan: dict, chosen: str | None,
+               trigger: str | None = None) -> dict:
     """One System 2 call: the label System 1 offered but could not resolve, the model's plan,
-    and the label the loop ended up running."""
-    return {"ts": 1000 + iteration, "stage": "escalation", "iteration": iteration,
-            "label": unresolved, "plan": plan, "chosen": chosen}
+    and the label the loop ended up running. `trigger` names which path asked (the newer
+    `stall_loop` vs. the original `unresolved_label`); older logs carry no trigger at all."""
+    rec = {"ts": 1000 + iteration, "stage": "escalation", "iteration": iteration,
+           "label": unresolved, "plan": plan, "chosen": chosen}
+    if trigger is not None:
+        rec["trigger"] = trigger
+    return rec
 
 
 STALL = [action(i, "leave_nether", text="[NAVIGATION_TARGET_UNSUPPORTED] no path")
@@ -328,6 +333,41 @@ class TestSystem2(unittest.TestCase):
         text = analysis.to_markdown(self.report)
         self.assertIn("System 2 escalations (2)", text)
         self.assertIn("`hunt_string` had no action -> `hunt_string`", text)
+
+    def test_quality_rates_measure_the_calls_not_just_count_them(self):
+        # One call resolved (hunt_string), one errored out (cook_food): half the calls produced
+        # an action, half never reached a plan.
+        s2 = self.report["system2"]
+        self.assertEqual(s2["resolved"], 1)
+        self.assertEqual(s2["resolve_rate"], 0.5)
+        self.assertEqual(s2["error_rate"], 0.5)
+        self.assertEqual(s2["recurrences"], 0)
+        self.assertEqual(s2["recurrence_rate"], 0.0)
+
+    def test_the_same_unresolved_label_coming_back_counts_as_a_recurrence(self):
+        report = analysis.summarize([
+            escalation(5, "leave_nether", {"action": None}, None),
+            escalation(9, "leave_nether", {"action": None}, None),
+            escalation(11, "leave_nether", {"plan": ["dig_down"], "action": "dig_down"}, "dig_down"),
+        ])
+        s2 = report["system2"]
+        # Three calls on the same label: the second and third are recurrences of the first.
+        self.assertEqual(s2["calls"], 3)
+        self.assertEqual(s2["recurrences"], 2)
+        self.assertEqual(s2["recurrence_rate"], round(2 / 3, 3))
+
+    def test_the_trigger_kind_is_broken_out(self):
+        report = analysis.summarize([
+            escalation(5, "explore", {"plan": ["mine_stone"], "action": "mine_stone"},
+                       "mine_stone", trigger="stall_loop"),
+            escalation(6, "cook_food", {"action": None}, None),
+        ])
+        # A call with no trigger field (an older log line) folds into `unresolved_label`.
+        self.assertEqual(report["system2"]["by_trigger"],
+                         [{"kind": "stall_loop", "count": 1},
+                          {"kind": "unresolved_label", "count": 1}])
+        text = analysis.to_markdown(report)
+        self.assertIn("by trigger:", text)
 
 
 class TestEnd(unittest.TestCase):
