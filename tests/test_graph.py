@@ -6332,6 +6332,38 @@ class BodyHeldStopTest(unittest.TestCase):
                                gs(pos=(906.9, 117.0, 1364.7), **flat))
         self.assertEqual(agent._held_ticks, 1)
 
+    def test_a_held_dig_that_drifts_without_yielding_counts_as_a_stall(self) -> None:
+        # Live, run206 it303-305: `gather_scaffold` (`collect_block netherrack x32`) held three
+        # ticks in a row on one action id, the body drifting 6.4, 6.7 and 6.0 blocks along the rim
+        # of a lava lake while the pack went 29 -> 29 netherrack. `HELD_MOVE_EPS` (0.5) read that
+        # drift as the walk still making ground, so the streak never reached `BODY_HELD_STOP` and
+        # the run burned five minutes a tick on a dig that produced nothing.
+        agent = self._agent()
+        held = SimpleNamespace(status="held")
+        rim = dict(health=20.0, hostiles=[])
+        # it303: the dig came back with twenty netherrack - the action is working, the streak breaks.
+        agent._note_held(held, gs(pos=(-198.37, 33.0, -346.5), inventory={"netherrack": 9}, **rim),
+                               gs(pos=(-192.03, 32.0, -346.49), inventory={"netherrack": 29}, **rim))
+        self.assertEqual(agent._held_ticks, 0)
+        # it304 and it305: nothing new in the pack, the body dragged six blocks each.
+        agent._note_held(held, gs(pos=(-192.03, 32.0, -346.49), inventory={"netherrack": 29}, **rim),
+                               gs(pos=(-185.46, 32.0, -347.5), inventory={"netherrack": 29}, **rim))
+        self.assertEqual(agent._held_ticks, 1)
+        agent._note_held(held, gs(pos=(-185.46, 32.0, -347.5), inventory={"netherrack": 29}, **rim),
+                               gs(pos=(-179.5, 32.0, -347.9), inventory={"netherrack": 29}, **rim))
+        self.assertEqual(agent._stop_state(gs(), 305), {"done": True, "stop": "body_held"})
+
+    def test_a_held_dig_that_yields_blocks_is_not_a_stall(self) -> None:
+        # The same held tick that drifts only a block is progress when the dig put blocks in the
+        # pack: the stuck action is still producing, so the guard waits another budget.
+        agent = self._agent()
+        held = SimpleNamespace(status="held")
+        agent._note_held(held, gs(pos=(-198.4, 33.0, -346.5), health=20.0,
+                                  inventory={"netherrack": 9}, hostiles=[]),
+                        gs(pos=(-197.9, 33.0, -346.6), health=20.0,
+                           inventory={"netherrack": 29}, hostiles=[]))
+        self.assertEqual(agent._held_ticks, 0)
+
 
 class FleeStageTest(unittest.IsolatedAsyncioTestCase):
     """`leave_nether` crosses home under the flee stage, so the reflex stops fighting whatever is

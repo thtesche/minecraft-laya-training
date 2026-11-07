@@ -942,9 +942,13 @@ drains and its own wait. A call that runs out of it returns `[BODY_HELD]` with t
 last progress answer named (owner, response kind/phase, phase ticks) and status `held`, without
 resubmitting. `Agent._note_held` counts such calls in a row — a defer between them does not reset
 the count — and `BODY_HELD_STOP = 2` of them end the run with `"stop": "body_held"`. A hold that
-moved the fight forward — a heal, a rod, a thinned pack, or the body crossing `HELD_MOVE_EPS`
-(0.5) blocks of ground — breaks the streak instead: run151 walked its exit hop 869 -> 1043 blocks
-across six held ticks before the guard ended the run at it65 with the walk half done. Nothing the
+moved the fight forward — a heal, a rod, a thinned pack, a block the stuck action actually put in
+the pack, or the body crossing `HELD_WALK_MIN_BLOCKS` (10) blocks of ground — breaks the streak
+instead: run151 walked its exit hop 869 -> 1043 blocks across six held ticks before the guard ended
+the run at it65 with the walk half done. Drift is not output: run206 it303-305 held one action id
+three ticks in a row, the body dragged 6.4, 6.7 and 6.0 blocks along the rim of a lava lake with the
+pack going 29 -> 29 netherrack, and the old 0.5-block eps read that as a walk still running, so the
+run burned five minutes a tick on a dig that produced nothing. Nothing the
 loop can send moves a body the reflex owns; the fix for the endless `hold` itself belongs in
 `mine-ai-mcp`. The second call is what makes the report timely: run95 spent three *pairs* of
 five-minute waits on one held action id each (it268/269, it279/280, it354/355) and never saw a

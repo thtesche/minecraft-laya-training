@@ -210,11 +210,15 @@ DROP_UNDONE_REACH = 6.0
 # naming the *same* action id - and never reached the third in a row, so the guard never fired
 # and 18% of the run went into waiting on a body nobody was going to release.
 BODY_HELD_STOP = 2
-# A held tick whose body crossed at least this much ground is the bot's own walk still running,
-# not run89's standoff: live, run151 it55-64, six `[BODY_HELD]` ticks on `leave_nether` while the
-# dig-scaffold walk it had started advanced the body 869 -> 1043 blocks. The guard ended that run
-# at it65 with the exit half walked because it only looked for heals, rods and thinning packs.
-HELD_MOVE_EPS = 0.5
+# Ground a held tick has to cross before the body's drift counts as the bot's own walk still
+# running rather than a reflex dragging it: live, run151 it55-64, six `[BODY_HELD]` ticks on
+# `leave_nether` advanced the body 50-101 blocks each while the dig-scaffold walk worked toward the
+# gate. A few blocks per five-minute budget is not a walk: live, run206 it303-305, `collect_block
+# netherrack x32` held three ticks naming one action id, the body drifting 6.4, 6.7 and 6.0 blocks
+# along the rim of a lava lake while the pack went 29 -> 29 netherrack. The 0.5-block eps read that
+# drift as ground made, so the streak never reached `BODY_HELD_STOP` and the run burned five minutes
+# a tick on a dig that produced nothing.
+HELD_WALK_MIN_BLOCKS = 10.0
 # A foreground call the server refuses because one of *its* reflexes owns the body ("No new action
 # started; body owner: hostile_reflex", `ACTION_BUSY` with nothing to retrieve). Unlike
 # `[BODY_HELD]` it answers at once, so the loop can submit again every second and believe it made a
@@ -2018,8 +2022,11 @@ class Agent:
         A hold that healed the bot, brought in a blaze rod, or thinned the pack is progress, so it
         breaks the streak rather than counting toward the stop - run106's holds ran HP 7->13->20
         and rods 10->12 while a blaze spawner was being cleared, yet `BODY_HELD_STOP` ended the run
-        as though the body were simply stuck. Only a hold that moved none of the three - the true
-        deadlock - is counted.
+        as though the body were simply stuck. The stuck action's own output counts too: a dig that
+        put blocks in the pack, or a walk that carried the body `HELD_WALK_MIN_BLOCKS` of ground.
+        Drift is not output - run206's held `collect_block` dragged the body six blocks a tick for
+        three ticks and never added a netherrack, which the old 0.5-block eps read as a walk still
+        running. Only a hold that moved none of these - the true deadlock - is counted.
         """
         if getattr(res, "status", None) != "held":
             self._held_ticks = 0
@@ -2027,11 +2034,13 @@ class Agent:
         healed = (after.health or 0) > (before.health or 0)
         rods = after.inventory.get(BLAZE_ROD_ITEM, 0) > before.inventory.get(BLAZE_ROD_ITEM, 0)
         thinned = _hostile_count(after) < _hostile_count(before)
-        # A held tick whose body walked is the foreground action still making ground, not a
-        # deadlock: the walk owns the body, and it is going somewhere.
-        moved = (before.pos is not None and after.pos is not None
-                 and math.dist(before.pos, after.pos) >= HELD_MOVE_EPS)
-        self._held_ticks = 0 if (healed or rods or thinned or moved) else self._held_ticks + 1
+        # What the held action itself brought in. A dig that is working puts blocks in the pack; a
+        # body the reflex shuffles along a rim it cannot cross brings nothing.
+        yielded = any(count > before.inventory.get(item, 0)
+                      for item, count in after.inventory.items())
+        walked = (before.pos is not None and after.pos is not None
+                  and math.dist(before.pos, after.pos) >= HELD_WALK_MIN_BLOCKS)
+        self._held_ticks = 0 if (healed or rods or thinned or yielded or walked) else self._held_ticks + 1
 
     def _note_body_busy(self, action, res) -> str | None:
         """Count and log a tick the server refused because a reflex owns the body.
