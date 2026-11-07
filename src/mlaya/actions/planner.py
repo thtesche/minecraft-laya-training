@@ -645,6 +645,12 @@ def candidates(gs: GameState) -> list[str]:
                     # way home with 6 pearls in the pack. Netherrack is the Nether's own floor, so
                     # the restock is a dig here instead of a ~300 m walk home for cobblestone.
                     out.append("gather_scaffold")
+                elif _nether_haul_leashed(gs):
+                    # Pearls or rods are aboard and the gate is further than the leash: the wave
+                    # stops covering ground and walks back. run203 roamed 700 m out on a budget
+                    # that counts metres walked, not metres from home, and died there with 16
+                    # pearls and 9 rods when the return route closed under it.
+                    out.append("leave_nether" if _way_home_known(gs) else "explore")
                 elif _search_enderman_wanted(gs):
                     # No enderman in reach but the pearl budget still has ground to cover: roam new
                     # terrain to load one, the `explore_frontier` march `search_enderman` resolves
@@ -674,6 +680,10 @@ def candidates(gs: GameState) -> list[str]:
                     # "Out of room" is suppressed while the room is full of droppable junk: that is
                     # `drop_junk`'s job, not a reason to abandon the trip. No known exit: march.
                     out.append("leave_nether" if _way_home_known(gs) else "explore")
+                elif _nether_haul_leashed(gs) and _way_home_known(gs):
+                    # Rods in the pack and the gate further than the leash: the fortress march
+                    # stops where the haul still has a way back to it (see `_nether_haul_leashed`).
+                    out.append("leave_nether")
                 else:
                     # No blaze in reach, no reason to turn back: the fortress search. It is offered
                     # first-class here, the way `mine_diamond` is in the Overworld - not buried in
@@ -1549,6 +1559,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # than one long walk: pathfinder search times out on 450+ block walks through lava/sparse
         # terrain, so navigate in ~120 m hops. Each hop is a tick toward the gate, reloading the
         # world and resetting the search budget.
+        # `build: True` is what makes a hop a step instead of a refusal. A hop aims at the height
+        # the body stands on, and in the Nether the cell 120 m along that line is usually air over
+        # a lava sea: run203 logged 23 `[NAVIGATION_TARGET_UNSUPPORTED] ... No ground was found
+        # within 64 blocks below it` on `leave_nether` alone, the body never moving. The server
+        # accepts a mid-air target only when the caller says the bot means to scaffold to it (the
+        # same lesson `leave_portal` learned in run198).
         tx, tz, ty = float(ax), float(az), ay
         if gs.pos is not None:
             dx, dz = gs.pos[0] - ax, gs.pos[2] - az
@@ -1571,7 +1587,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                     tz = az + dz / span * NETHER_GATE_APPROACH
         return Action(label, "navigate",
                       {"x": round(tx), "y": ty, "z": round(tz),
-                       "range": 2, "dig": True, "scaffold": True},
+                       "range": 2, "dig": True, "scaffold": True, "build": True},
                       "walk toward the Nether exit portal (staged in hops if far away)")
     if label == "swap_to_diamond_helmet":
         # The offer and the resolve agree: while a crossing is pending the gold piece stays on,

@@ -298,6 +298,15 @@ NETHER_EXIT_STAGING_DISTANCE = 120.0
 # terrain the walk can start from.
 NETHER_EXIT_HOP_SHRINKS = 2
 NETHER_EXIT_HOP_MIN = 30.0
+# How far a wave may walk from its own gate once the pack holds something worth bringing back.
+# The pearl budget (`NETHER_PEARL_SEARCH_M`) counts metres *walked*, and a Nether path is never
+# straight: run203 covered 3998 m of ground and ended 700 m from the gate, at 4 health, with 16
+# pearls and 9 rods in the pack and no route back - the pathfinder answered
+# `[NAVIGATION_STOPPED] ... no path found ... visited 1 nodes` three ticks in a row and the bot
+# walked into the lava it was boxed in by. A haul is only worth the walk if the walk exists, so
+# past this distance a wave that already carries pearls or rods turns for the gate instead of
+# covering more ground. 400 m is three of the staged hops below.
+NETHER_GATE_LEASH_M = 400.0
 # How close the frame of the Nether exit has to be for `light_portal` to strike it. The gate cell
 # is remembered from the crossing, so an obsidian within this reach of it is the frame itself; a
 # hit further out is a Nether deposit and striking it would be a walk to a gate the scan never

@@ -117,6 +117,15 @@ half that as the crow flies, and run168 turned home from the treeline on every t
 from a warped chunk, an enderman at 28.1 m, budget already at 528 m). 900 m covers a round of the
 mapped forests and `PEARL_MARCH_STALL_LIMIT` still ends a trip whose route never opens.
 
+**The roam has a leash to the gate (`NETHER_GATE_LEASH_M`, 400 m).** Metres covered is not metres from
+home, and a Nether path is never straight. run203 walked 3998 m of ground and ended 700 m from its own
+gate at 4 health, 16 pearls and 9 rods in the pack; the return failed three ticks running -
+`[NAVIGATION_STOPPED] ... no path found ... visited 1 nodes`, the body on a one-block pillar with lava
+at feet level on every side - and everything the stronghold phase runs on went into that lava. Once the
+pack holds pearls or rods, `_nether_haul_leashed` takes the roam off the offer and `leave_nether` takes
+the tick. An empty pack is not leashed: nothing is at risk, and a wave sent home with nothing in it is
+the round-trip shape run199 spent 461 ticks on.
+
 **The restock is a dig, not a walk home (`gather_scaffold`).** Two things spend the scaffold. The
 hunt does: `collect_mob_drop` rebuilds the defensive roof every time the enderman teleports, and
 run169 spent 68 then 60 cobblestone on two hunts. Travel does too: `navigate` and `explore_frontier`

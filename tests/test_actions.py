@@ -41,7 +41,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
-                           NETHER_EXIT_HOP_MIN,
+                           NETHER_EXIT_HOP_MIN, NETHER_GATE_LEASH_M, _nether_haul_leashed,
+                           _nether_gate_distance,
                            NETHER_FOOD_MIN_RESERVE, NETHER_FOOD_EMERGENCY_FLOOR,
                            FOOD_BANK_KEEP, resolve, stronghold_complete,
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
@@ -6631,6 +6632,71 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertNotIn("search_enderman", out)
         self.assertIn("leave_nether", out)
 
+    def _roaming(self, **inv) -> GameState:
+        """A pearl wave in the Nether: helmet worn, gate remembered, no portal in the scan.
+
+        The gate is known only as the crossing the run watched (`nether_arrival`), which is the
+        state a wave is in once it has walked away from it - the portal block is out of scan
+        radius, so `leave_nether` stages the return in hops.
+        """
+        g = self._home(**inv)
+        g.dimension = self.NETHER
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        g.resources = {}
+        g.nether_entered = True
+        g.nether_arrival = (12, 65, -4)
+        g.nether_travel = 300.0
+        return g
+
+    def test_a_wave_that_already_carries_a_haul_turns_for_the_gate(self) -> None:
+        # run203: the pearl budget counts metres *walked*, not metres from home. The wave covered
+        # 3998 m of ground and ended 700 m from its own gate at 4 health with 16 pearls and 9 rods
+        # in the pack; the return route closed under it - three ticks of `[NAVIGATION_STOPPED]
+        # ... no path found ... visited 1 nodes` on a one-block pillar ringed by lava - and the
+        # whole stronghold phase's material went into that lava. Once the pack holds something
+        # worth banking, ground past the leash is not worth covering.
+        g = self._roaming(ender_pearl=6, blaze_rod=4, netherrack=64)
+        g.pos = (12.5 + NETHER_GATE_LEASH_M + 40.0, 65.0, -3.5)
+        self.assertAlmostEqual(_nether_gate_distance(g),
+                               math.dist((g.pos[0], g.pos[2]), (12, -4)), places=6)
+        self.assertGreater(_nether_gate_distance(g), NETHER_GATE_LEASH_M)
+        self.assertTrue(_nether_haul_leashed(g))
+        out = candidates(g)
+        self.assertIn("leave_nether", out)
+        self.assertNotIn("search_enderman", out)
+
+    def test_an_empty_pack_is_free_to_cover_ground(self) -> None:
+        # The leash protects a haul, not a plan: with nothing in the pack there is nothing to
+        # lose by walking further, and the wave keeps roaming (run199's round trips through the
+        # gate were exactly the shape an empty pack must not be sent home for).
+        g = self._roaming(netherrack=64)
+        g.pos = (12.5 + NETHER_GATE_LEASH_M + 40.0, 65.0, -3.5)
+        self.assertFalse(_nether_haul_leashed(g))
+        self.assertIn("search_enderman", candidates(g))
+        # Inside the leash the same state roams as before.
+        g.pos = (12.5 + 120.0, 65.0, -3.5)
+        self.assertFalse(_nether_haul_leashed(g))
+        self.assertIn("search_enderman", candidates(g))
+
+    def test_a_staged_hop_builds_to_its_own_height(self) -> None:
+        # A hop aims at the height the body stands on, and 120 m further along that line the
+        # Nether is usually air over a lava sea: run203 logged 23 `[NAVIGATION_TARGET_UNSUPPORTED]
+        # ... No ground was found within 64 blocks below it` on `leave_nether` alone, the body
+        # never moving. `build: True` is the server's permission to scaffold to a mid-air target
+        # (the same one `leave_portal` needed in run198), so the hop is a step rather than a
+        # refusal.
+        g = self._roaming(blaze_rod=9)
+        g.pos = (12.5 + 500.0, 40.0, -3.5)
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertTrue(a.args["build"])
+        self.assertTrue(a.args["scaffold"])
+        # The hop lands between the body and the gate, never past either.
+        gate = (12, -4)
+        self.assertLess(math.dist((a.args["x"], a.args["z"]), gate),
+                        math.dist((g.pos[0], g.pos[2]), gate))
+        self.assertGreater(math.dist((a.args["x"], a.args["z"]), gate), NETHER_GATE_APPROACH)
+
     def test_sixteen_eyes_send_the_bot_to_the_stronghold(self) -> None:
         g = self._home(ender_eye=16, white_wool=3, oak_log=1)
         self.assertIn("locate_stronghold", candidates(g))
@@ -9478,6 +9544,19 @@ class StewPantryTest(unittest.TestCase):
     def test_no_mushroom_in_the_scan_offers_nothing(self) -> None:
         g = self._pantry()
         self.assertNotIn("craft_stew", candidates(g))
+
+    def test_a_pack_without_a_table_brews_nothing(self) -> None:
+        # run203 it474-479: 62 red and 62 brown mushrooms and four bowls in the pack, no
+        # crafting_table in it, and four ticks of `[WORKSTATION_NOT_CARRIED] No crafting_table is
+        # carried for temporary use`. A stew is a craft, and `craft_item`'s temporary workstation
+        # is a table the pack has to carry - mushrooms on the ground do not stand in for it.
+        g = self._pantry(bowl=4, red_mushroom=62, brown_mushroom=62, crafting_table=0)
+        g.resources = {"red_mushroom": [BlockHit("red_mushroom", "red_mushroom",
+                                                 6, 64, 12, 9.0)],
+                       "brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom",
+                                                   7, 63, 14, 11.0)]}
+        self.assertNotIn("craft_stew", candidates(g))
+        self.assertIsNone(resolve("craft_stew", g))
 
     def test_the_missing_mushroom_is_picked_not_crafted(self) -> None:
         g = self._pantry(bowl=1, red_mushroom=1)

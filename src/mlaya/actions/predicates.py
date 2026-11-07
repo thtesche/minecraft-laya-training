@@ -1560,6 +1560,39 @@ def _nether_must_return(gs: GameState) -> bool:
             and (_blaze_rods(gs.inventory) or _blaze_powder(gs.inventory)))
 
 
+def _nether_gate_distance(gs: GameState) -> float | None:
+    """How far the body stands from the gate it came through, or None when no gate is known.
+
+    The same cell `leave_nether` walks to: the portal block the scan loaded, else the crossing the
+    run watched or the server remembered. Straight-line distance, because that is the distance the
+    staged hops close - the walked metres are always longer.
+    """
+    gate = _nether_way_home(gs)
+    if gate is None or gs.pos is None:
+        return None
+    return math.dist((gs.pos[0], gs.pos[2]), (gate[0], gate[2]))
+
+
+def _nether_haul_leashed(gs: GameState) -> bool:
+    """Whether a wave that already carries a haul has walked too far from its gate to keep roaming.
+
+    The pearl budget bounds metres walked, not metres from home, and Nether paths are never
+    straight: run203 covered 3998 m of ground and ended 700 m from its own gate at 4 health, with
+    16 pearls and 9 rods in the pack. The way back then failed three ticks running -
+    `[NAVIGATION_STOPPED] ... no path found ... visited 1 nodes`, the body boxed in by lava on a
+    one-block pillar - and the whole stronghold phase's material went into that lava. A wave with
+    nothing in the pack has nothing to lose by covering more ground, so the leash only bites once
+    pearls or rods are aboard: the haul is worth the walk home only while the walk home still
+    exists.
+    """
+    if not _in_nether(gs):
+        return False
+    if not (_blaze_rods(gs.inventory) or gs.inventory.get(ENDER_PEARL_ITEM, 0)):
+        return False
+    distance = _nether_gate_distance(gs)
+    return distance is not None and distance > NETHER_GATE_LEASH_M
+
+
 def _nether_hopeless(gs: GameState) -> bool:
     """Whether the hunt is over because no blaze is left to reach.
 
@@ -1715,6 +1748,9 @@ def _stew_brewable(gs: GameState) -> int:
     """
     if not _bowl_available(gs):
         return 0
+    # The brew is a craft at a workstation the pack has to carry (see `_stew_source_in_reach`).
+    if not _has(gs.inventory, "crafting_table"):
+        return 0
     inv = gs.inventory
     need = _stew_need(gs) or 1
     mushrooms = min(int(inv.get(n, 0) or 0) for n in STEW_MUSHROOMS)
@@ -1759,6 +1795,12 @@ def _stew_source_in_reach(gs: GameState) -> bool:
     too far: one stew is a meal, and refusing it would be the stall the fallback exists to end.
     """
     if not _bowl_available(gs):
+        return False
+    # A stew is a craft, and `craft_item`'s temporary workstation is a table the pack has to
+    # carry: run203 it474-479 asked for stew four ticks with 62 red and 62 brown mushrooms and
+    # four bowls in the pack and no table in it, each tick answering
+    # `[WORKSTATION_NOT_CARRIED] No crafting_table is carried for temporary use`.
+    if not _has(gs.inventory, "crafting_table"):
         return False
     if _stew_brewable(gs) > 0:
         return True

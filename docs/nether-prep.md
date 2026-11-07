@@ -116,10 +116,24 @@ Nether terrain is already provided for in the server reflex.
   picks the missing mushroom (`collect_block`) instead of asking the server for a batch it cannot
   cover, and the brew is capped by the mushrooms *and* bowls carried - one bowl per stew, because the
   bowl only comes back once the stew is eaten (run170 it32-35: `STEW_BATCH` asked with one red and
-  one brown carried, refused `[CRAFT_MATERIALS_MISSING]` four ticks running).
+  one brown carried, refused `[CRAFT_MATERIALS_MISSING]` four ticks running). Every brew is a craft at
+   a workstation the pack has to carry: run203 it474-479 asked four ticks with 62 red and 62 brown
+   mushrooms and four bowls in the pack and no `crafting_table` in it, each answered
+   `[WORKSTATION_NOT_CARRIED]`.
 - **Staged Nether exit** (when distance to gate > `NETHER_EXIT_STAGING_DISTANCE = 120.0` m): navigate in
   120 m hops toward the gate instead of one large walk. Pathfinder search times out on 450+ block walks
   through sparse/lava-heavy Nether terrain; ~120 m hops reload the world and reset the search budget per tick.
+  A hop carries `build: true`: it aims at the height the body stands on, and 120 m along that line the
+  Nether is usually air over a lava sea. Without the flag the server refuses a target with nothing under
+  it — run203 logged 23 `[NAVIGATION_TARGET_UNSUPPORTED] ... No ground was found within 64 blocks below
+  it` on `leave_nether` alone, the body never moving (the same permission `leave_portal` needed in run198).
+- **The wave's leash to its gate** (`NETHER_GATE_LEASH_M = 400.0` m): once the pack holds pearls or
+  rods, a wave stops covering ground past that distance from the gate it came through and walks back
+  (`_nether_haul_leashed`). The pearl budget counts metres *walked*, not metres from home, and Nether
+  paths are never straight — run203 ended 700 m out at 4 health with 16 pearls and 9 rods, boxed on a
+  one-block pillar ringed by lava, and the whole stronghold phase's material went into it. An empty pack
+  is not leashed: there is nothing to protect, and a bot sent home with nothing in it is run199's
+  round-trip shape.
 - **Gold dig only during the day:** the deep dig for gold is not on offer at night (the run
   sleeps then), but stays open for the auto-stop — otherwise the night would end the run too early.
 
