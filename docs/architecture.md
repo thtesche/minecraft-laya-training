@@ -1497,10 +1497,15 @@ respawn-bed phase at the frame with a full history behind it. It deadlocked ther
   resolver holds on the bed's own cell so the bot does not wander off the frame it must sleep at
   (`go_home`/`explore` are shut for this phase and would otherwise march it off). Both were latent:
   `sleep_stronghold` has zero ticks in any run to date.
-- **Still open: an invariant test that every offered label resolves.** The three bed bugs above are
-  one shape — a candidate the gate offers that the resolver then refuses, escalating the tick. A
-  single property test over `candidates(gs)` for representative stronghold states would catch the
-  whole class rather than each instance, and is the remaining guard worth adding.
+- **The class guard: every stronghold offer must resolve.** The three bed bugs above are one shape —
+  a candidate whose offer gate reads a weaker condition than its resolve gate, so the label sits on
+  the list while `resolve` answers None and the tick escalates; fixing them one by one leaves the
+  shape free to return. `StrongholdOffersResolveTest` walks a matrix of representative phase states
+  (pre-fill at the frame, the trek out, the bed gather, locate; then carried bed, crafted bed, string
+  alone, a tableless pack, the laid bed by day and at night, and the return trek from a death) and
+  asserts `resolve` accepts every label `candidates` offers. Each of the three defects, put back one
+  at a time, makes it fail; a new offer whose precondition drifts from its resolve fails here rather
+  than in a live run.
 
 ## End supply (2026-11-07): arrows, string and skeletons
 
