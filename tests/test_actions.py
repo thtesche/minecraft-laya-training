@@ -42,6 +42,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
                            NETHER_EXIT_HOP_MIN, NETHER_GATE_LEASH_M, _nether_haul_leashed,
+                           NETHER_EXIT_CLIMB_REACH, NETHER_EXIT_CLIMB_STEP, NETHER_EXIT_CLIMB_MIN,
                            _nether_gate_distance,
                            NETHER_FOOD_MIN_RESERVE, NETHER_FOOD_EMERGENCY_FLOOR,
                            FOOD_BANK_KEEP, resolve, stronghold_complete,
@@ -5914,6 +5915,48 @@ class NetherExpeditionTest(unittest.TestCase):
         a = resolve("leave_nether", g)
         self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), (g.pos[0], g.pos[2])),
                                NETHER_EXIT_HOP_MIN, delta=10.0)
+
+    def test_an_exit_a_ravine_above_is_climbed_not_crossed(self) -> None:
+        # Live, run210 it518-520: the bot stood at (-6.5, 18.0, -2.5) with the gate remembered at
+        # (-10, 66, -4) - 48 blocks under the frame - and `enter_nether_portal` answered
+        # `[PORTAL_STOPPED] ... no path or usable partial route found ... closest node was -9,18,-4`
+        # three ticks in a row. A crossing has no route when the frame stands that far above the
+        # feet, so the column is climbed in steps the way a long walk is staged into hops.
+        g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] + 3.5, 18.0, self.EXIT[2] + 1.5)
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["z"]), (self.EXIT[0], self.EXIT[2]))
+        self.assertEqual(a.args["y"], 18 + NETHER_EXIT_CLIMB_STEP)
+        self.assertLess(a.args["y"], self.EXIT[1])
+
+    def test_an_exit_within_one_step_is_crossed(self) -> None:
+        # The climb is only for a frame the pathfinder cannot reach at all. Six blocks up is the
+        # server's own portal approach, and crossing there is what the chain expects.
+        g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] + 1.0, float(self.EXIT[1]) - 6.0, self.EXIT[2] + 1.0)
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "enter_nether_portal")
+
+    def test_a_refused_climb_shortens_the_next_step(self) -> None:
+        # A column the 2000 ms search cannot route up at 16 blocks cannot route it up at 16 again.
+        g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] + 3.5, 18.0, self.EXIT[2] + 1.5)
+        g.nether_hop_repeats = 1
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.args["y"], 18 + NETHER_EXIT_CLIMB_STEP / 2)
+        g.nether_hop_repeats = 4
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.args["y"], 18 + NETHER_EXIT_CLIMB_MIN)
+
+    def test_a_climb_stops_below_the_frame(self) -> None:
+        # The climb aims at the portal's own column. Landing on the frame cell would be the
+        # `[NAVIGATION_PORTAL_INTENT_REQUIRED]` refusal the doorstep exists to avoid, so the step
+        # is capped one block under it.
+        g = self._down(blaze_rod=9)
+        g.pos = (self.EXIT[0] + 3.5, float(self.EXIT[1]) - 13.0, self.EXIT[2] + 1.5)
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.args["y"], self.EXIT[1] - 1)
 
     def test_standing_on_the_arrival_cell_crosses_instead_of_walking(self) -> None:
         # `navigate` into an active portal is refused outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED]

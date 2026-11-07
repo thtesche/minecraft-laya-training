@@ -1556,6 +1556,25 @@ row on the same 120 m hop, the body drifting 23 blocks between attempts, so the 
 streak every tick and the hop stayed 120 m. Timeouts now count on the hop rather than the cell; a stop
 the reflex held the body through (`[NAVIGATION_STOPPED] repeated_movement_failure`) still does not.
 
+### The exit frame standing a ravine above the body
+
+The same run ended 48 blocks under its own gate. At it518-520 the bot was at (-6.5, 18.0, -2.5) while
+`nether_gate` remembered the crossing at (-10, 66, -4), and `enter_nether_portal` answered
+`[PORTAL_STOPPED] Portal entry stopped: search timed out after 2000 ms compute ... no path or usable
+partial route found ... closest node was -9,18,-4` three ticks in a row. The closest node the
+pathfinder could reach was the body's own height: the portal tool walks to the frame, and a frame 48
+blocks up a ravine wall has no route to it. `PORTAL_STOPPED` appeared nowhere in `src/mlaya`, so the
+refusal counted as neither a hop repeat nor a stall, and the same crossing was offered again every
+tick until the iteration budget ran out.
+
+`leave_nether` now climbs before it crosses. `_exit_climb_needed` fires when the exit cell stands more
+than `NETHER_EXIT_CLIMB_REACH` (12) blocks above the feet and the walk is already at the doorstep stage
+(within `NETHER_EXIT_STAGING_DISTANCE` — a hop aims at the body's own height, so a far gate never needs
+climbing), and the action is a navigate to the portal's column at `floor(pos_y) + _exit_climb(gs)`,
+capped one block under the frame so it is not the portal cell itself. `_exit_climb` shrinks
+`NETHER_EXIT_CLIMB_STEP` (16 → 8 → 4) on the same `nether_hop_repeats` counter, and
+`[PORTAL_STOPPED] ... no path ...` feeds that counter like a hop timeout does.
+
 ## Next milestones
 
 - **Open after run187:** (1) the endgame's later links are live but unfinished — the powder is

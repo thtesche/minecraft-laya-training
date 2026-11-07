@@ -5634,6 +5634,28 @@ class NetherCrossingTest(unittest.TestCase):
                               True, "")
         self.assertEqual(agent._nether_hop, (None, 0))
 
+    def test_a_portal_stop_at_the_frame_is_counted_too(self) -> None:
+        # Live, run210 it518-520: three `[PORTAL_STOPPED] Portal entry stopped: search timed out ...
+        # no path or usable partial route found ... closest node was -9,18,-4` on one exit, the body
+        # 48 blocks under its gate. The crossing is the exit walk being refused, so it feeds the
+        # same counter `_exit_climb` shrinks on.
+        agent = self._agent()
+        stop = ("[PORTAL_STOPPED] Portal entry stopped: search timed out after 2000 ms compute "
+                "(limit 2000 ms); no path or usable partial route found; visited 82701 nodes, "
+                "generated 105778; closest node was -9,18,-4")
+        agent._note_nether_hop(Action("leave_nether", "enter_nether_portal",
+                                      {"x": -9, "y": 66, "z": -4}, ""), False, stop)
+        self.assertEqual(agent._nether_hop, ("hop", 1))
+        agent._note_nether_hop(Action("leave_nether", "enter_nether_portal",
+                                      {"x": -9, "y": 66, "z": -4}, ""), False, stop)
+        self.assertEqual(agent._nether_hop, ("hop", 2))
+        # A portal refusal that is not a routing give-up - the wrong target cell - says nothing
+        # about the exit walk and must not shrink it.
+        agent._note_nether_hop(Action("leave_nether", "enter_nether_portal",
+                                      {"x": -9, "y": 66, "z": -4}, ""), False,
+                              "[PORTAL_TARGET] Expected active nether_portal at -9,66,-4; observed air.")
+        self.assertEqual(agent._nether_hop, ("hop", 2))
+
     def test_arriving_in_the_nether_is_remembered_with_its_cell(self) -> None:
         # `leave_nether` needs the arrival cell whenever no exit portal block is loaded, and the
         # crossing itself is only observed afterwards as a dimension change - overworld first,

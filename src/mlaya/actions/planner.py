@@ -1556,6 +1556,18 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if not _in_nether(gs):
             return None
         cell = _exit_portal_cell(gs)
+        home = cell if cell is not None else _nether_way_home(gs)
+        # The frame can stand a ravine above the body: `enter_nether_portal` then has no route, and
+        # the server's closest reachable node is the body's own height (live, run210 it518-520,
+        # `[PORTAL_STOPPED] ... closest node was -9,18,-4` three ticks in a row 48 blocks under the
+        # gate). The column is climbed in steps, the way a long walk is staged into hops.
+        if home is not None and _exit_climb_needed(gs):
+            ax, ay, az = home
+            ty = min(ay - 1, math.floor(gs.pos[1]) + _exit_climb(gs))
+            return Action(label, "navigate",
+                          {"x": ax, "y": ty, "z": az,
+                           "range": 2, "dig": True, "scaffold": True, "build": True},
+                          "climb up the column the Nether exit portal stands on")
         if cell is not None:
             x, y, z = cell
             return Action(label, "enter_nether_portal", {"x": x, "y": y, "z": z},
@@ -1567,7 +1579,6 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # run74 walked 250 blocks to its own start position and waited at a non-portal until
         # the bot died - a guess is not the gate, and standing at the wrong cell is how the
         # trip never came back.
-        home = _nether_way_home(gs)
         if home is None:
             return None
         ax, ay, az = home

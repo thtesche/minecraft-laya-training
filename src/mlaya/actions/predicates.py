@@ -2098,6 +2098,42 @@ def _exit_hop(gs: GameState) -> float:
     return hop
 
 
+def _exit_cell(gs: GameState) -> tuple[int, int, int] | None:
+    """The Nether exit as the policy knows it: a portal block in the scan, else the crossing."""
+    return _exit_portal_cell(gs) or _nether_way_home(gs)
+
+
+def _exit_climb_needed(gs: GameState) -> bool:
+    """Whether the exit stands a ravine above the body, and the walk is close enough to climb it.
+
+    Live, run210 it518-520: the bot sat at (-6.5, 18.0, -2.5) with the gate remembered at
+    (-10, 66, -4) - 48 blocks under the frame - and `enter_nether_portal` answered
+    `[PORTAL_STOPPED] ... closest node was -9,18,-4` three ticks in a row. The pathfinder's closest
+    reachable node was the body's own height, so the crossing has no route; the column has to be
+    climbed. A hop aims at the height the body stands on, so this only bites once the walk is at
+    the doorstep stage - a gate 220 m away never needs climbing (run149, run203).
+    """
+    if gs.pos is None:
+        return False
+    cell = _exit_cell(gs)
+    if cell is None:
+        return False
+    span = math.dist((gs.pos[0], gs.pos[2]), (cell[0], cell[2]))
+    return span <= NETHER_EXIT_STAGING_DISTANCE and cell[1] - gs.pos[1] > NETHER_EXIT_CLIMB_REACH
+
+
+def _exit_climb(gs: GameState) -> float:
+    """How many blocks one climb step toward the exit's height takes.
+
+    Shrinks with the same counter as `_exit_hop`: a column the pathfinder cannot route up at 16
+    blocks cannot route it up at 16 either, and a shorter pillar is the next thing it can try.
+    """
+    step = NETHER_EXIT_CLIMB_STEP
+    for _ in range(min(gs.nether_hop_repeats, NETHER_EXIT_HOP_SHRINKS)):
+        step = max(NETHER_EXIT_CLIMB_MIN, step / 2.0)
+    return step
+
+
 def _furnace_needs_draining(gs: GameState) -> bool:
     """Whether the standing furnace at the base holds output that blocks the next cook.
 

@@ -3102,7 +3102,9 @@ class Agent:
         them in a row, the body drifting 23 blocks between attempts). That one is keyed on the hop
         rather than the cell, because the drift moves the aim every tick while the hop stays the
         same length - counting cells would reset the streak each tick and the hop would never
-        shrink.
+        shrink. `enter_nether_portal` answers the same way when the frame stands a ravine above the
+        body (`[PORTAL_STOPPED]`, run210 it518-520), so the crossing counts too: it is the exit walk
+        being refused, and `_exit_climb` shrinks on the same counter.
         """
         if action.label != "leave_nether":
             return
@@ -3111,7 +3113,7 @@ class Agent:
             return
         text = text or ""
         footing = "NAVIGATION_TARGET_UNSUPPORTED" in text
-        unreachable = ("NAVIGATION_STOPPED" in text
+        unreachable = (("NAVIGATION_STOPPED" in text or "PORTAL_STOPPED" in text)
                        and ("no path" in text or "no usable route" in text))
         if not (footing or unreachable):
             return

@@ -300,6 +300,18 @@ NETHER_EXIT_STAGING_DISTANCE = 120.0
 # terrain the walk can start from.
 NETHER_EXIT_HOP_SHRINKS = 2
 NETHER_EXIT_HOP_MIN = 30.0
+# The exit portal stands where the crossing left it, and a ravine or a dug shaft can put the body
+# far below that cell. Live, run210 it518-520: the bot stood at (-6.5, 18.0, -2.5) with the gate
+# remembered at (-10, 66, -4) - 48 blocks under the frame - and `enter_nether_portal` answered
+# `[PORTAL_STOPPED] ... no path or usable partial route found ... closest node was -9,18,-4` three
+# ticks in a row. The pathfinder's closest reachable node was the body's own height: a crossing is
+# only attempted when the frame stands within this many blocks above the feet, otherwise the exit
+# is climbed in steps the way a long walk is staged into hops.
+NETHER_EXIT_CLIMB_REACH = 12.0
+# Blocks of height one climb step takes, and the floor it shrinks to when the column keeps refusing
+# it. 16 is a pillar the 2000 ms search can plan; a 48 block climb in one target is not.
+NETHER_EXIT_CLIMB_STEP = 16.0
+NETHER_EXIT_CLIMB_MIN = 4.0
 # How far a wave may walk from its own gate once the pack holds something worth bringing back.
 # The pearl budget (`NETHER_PEARL_SEARCH_M`) counts metres *walked*, and a Nether path is never
 # straight: run203 covered 3998 m of ground and ended 700 m from the gate, at 4 health, with 16
