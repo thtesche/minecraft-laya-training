@@ -8018,6 +8018,62 @@ class PortalLitIsAWorldFactTest(unittest.TestCase):
         self.assertFalse(_portal_lit(g))
         self.assertIn("go_home", candidates(g))
 
+    def _dark_base(self, **inv) -> GameState:
+        """At the base, the obsidian frame standing and loaded, but the opening dark - no
+        `nether_portal` block anywhere in the scan. A previous run's SQLite has latched the gate
+        lit (`portal_lit`, `frame_complete`) onto a world that holds only the unlit frame (run204).
+        The whole expedition is otherwise stocked, so the only thing between the bot and the Nether
+        is a gate that has to burn."""
+        g = at_home(geared(cobblestone=64, diamond_pickaxe=2, golden_helmet=1, bow=1, arrow=16,
+                           cooked_mutton=64, white_bed=1, **inv),
+                    base=self.BASE)
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 18.0
+        g.phase = "day"
+        g.portal_lit = True          # the ledger's latch, from a run that really did light it
+        g.frame_complete = True      # the ledger's latch
+        g.nether_entered = True
+        g.powder_stowed = True
+        g.bed_pos = (self.BASE[0] - 1, self.BASE[1], self.BASE[2] + 1)
+        obs = [BlockHit("obsidian", "obsidian", x, y, z, 2.0)
+               for (x, y, z) in frame_obsidian_cells(self.BASE)]
+        g.resources = {"obsidian": obs}       # the frame stands and is loaded...
+        g.resource_found = {"obsidian": len(obs)}   # ...but no nether_portal block is counted
+        return g
+
+    def test_a_dark_frame_at_the_base_is_not_lit_whatever_the_ledger_latched(self) -> None:
+        # run204 it186-220: the latch overrode a loaded, dark frame in front of the bot. At the
+        # base the frame plane is scanned every tick, so there the scan is the authority and a
+        # standing frame with no portal block is a gate that is genuinely out.
+        self.assertFalse(_portal_lit(self._dark_base()))
+        # And the latch still holds where it is meant to: far from the gate, chunk unloaded.
+        self.assertTrue(_portal_lit(self._far_away()))
+
+    def test_the_dark_gate_is_not_crossed_until_it_burns(self) -> None:
+        # The offer read the latch and put `enter_portal` up, but `resolve` found no portal cell
+        # and fell silently to filler (`get_wood`/`go_home`) on every tick - 34 iterations that
+        # never crossed. Read dark, the crossing is off the offer and resolves to nothing, so
+        # there is no silent no-op to walk into.
+        g = self._dark_base()
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertIsNone(resolve("enter_portal", g))
+
+    def test_the_dark_base_frame_reopens_the_relight(self) -> None:
+        # With `_portal_lit` stuck true the whole relight chain stayed off the offer (it is gated
+        # on `not _portal_lit`) and the gate could never burn again. Carrying the igniter with the
+        # frame plane reading complete, `light_portal` is the next act.
+        g = self._dark_base(flint_and_steel=1)
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(self.BASE)}
+        self.assertIn("light_portal", candidates(g))
+
+    def test_the_igniter_is_craftable_for_a_frame_already_standing(self) -> None:
+        # The igniter's obsidian gate means "the frame's obsidian is secured before iron is spent
+        # on it" - carried for a build to come, or already standing in the frame. A restart onto a
+        # finished frame carries no ten obsidian and never will, so a standing frame secures it.
+        g = self._dark_base(flint=1, iron_ingot=1, obsidian=2)
+        self.assertIn("craft_flint_and_steel", candidates(g))
+
 
 class SmokerBesideTheFurnaceTest(unittest.TestCase):
     """A smoker is not a better furnace, it is a different one, and it stands next to it.

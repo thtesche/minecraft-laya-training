@@ -487,8 +487,13 @@ def candidates(gs: GameState) -> list[str]:
             # lava the scan *can* see is what reopens it. Once a source is in the listing the dig
             # walks to it itself, so the walk yields to `mine_obsidian`.
             out.append("approach_lava")
+        # The obsidian gate here means "the frame's obsidian is secured before iron is spent on the
+        # igniter" - either carried for a build still to come, or already standing in the frame. A
+        # restart onto a world whose frame a previous run finished (`_frame_started_at_base`) carries
+        # no ten obsidian and never will, so the raw count alone would hold the igniter off forever
+        # and the dark gate could never be re-lit (run204: complete frame, two obsidian in the pack).
         if (not has_fs and has_flint and iron >= FLINT_STEEL_IRON and table
-                and obsidian >= PORTAL_OBSIDIAN):
+                and (obsidian >= PORTAL_OBSIDIAN or _frame_started_at_base(gs))):
             out.append("craft_flint_and_steel")
         # `build_portal` runs while the bot carries ten obsidian, or to *resume* a frame it
         # already started: a partial build leaves exactly the cells it still needs in the pack,

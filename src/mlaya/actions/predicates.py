@@ -682,8 +682,24 @@ def _portal_lit(gs: GameState) -> bool:
     at it16, and by it40 sat 271 m into the Nether where the base gate read unlit again, putting the
     bucket and flint steps back on the offer. A crossing is proof the gate burns, and the scan names
     it whenever the bot stands close enough to use it.
+
+    The latch is for a gate whose chunk is *not loaded* to confirm it - a bot 190 m out (run58) or
+    deep in the Nether (run124), where the scan reads dark only because the gate is far away. At the
+    base the frame plane is loaded and scanned every tick, so there the scan is the authority: a
+    frame standing in front of the bot (`_frame_started_at_base`) with no `nether_portal` block in
+    the whole loaded scan is a gate that is genuinely out. A previous run's ledger can latch
+    `gate_lit` true onto a world whose base holds only the unlit obsidian, and trusting the latch
+    there deadlocked run204 it186-220: `enter_portal` was offered (the offer reads this flag) but
+    `resolve` found no portal cell and fell silently to filler (`get_wood`/`go_home`), while
+    `light_portal` stayed off the offer (the whole relight chain is gated on `not _portal_lit`), so
+    the dark gate could never be re-lit. `_at_base` keeps this away from the far-gate cases the latch
+    is there for.
     """
-    return bool(gs.portal_lit) or _portal_lit_scan(gs)
+    if _portal_lit_scan(gs):
+        return True
+    if _at_base(gs) and _frame_started_at_base(gs):
+        return False
+    return bool(gs.portal_lit)
 
 
 def _portal_built(gs: GameState) -> bool:
