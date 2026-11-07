@@ -1385,6 +1385,41 @@ class DroppedItemsParseTest(unittest.TestCase):
                          gs.dropped_items)
 
 
+class StewPantryNarrativeTest(unittest.TestCase):
+    """`gather_mushrooms` is offered on the pantry, but the resource line names only the four
+    nearest hits, so mushrooms thirty blocks out are invisible to the head: run210 it334 chose
+    `explore` over `gather_mushrooms` 0.872 to 0.128 on a tick where the walk was the only food
+    left. Naming the pantry is what makes the offer's evidence readable."""
+
+    @staticmethod
+    def _state(**inv) -> GameState:
+        gs = GameState(health=20.0, food=20.0, inventory=inv)
+        gs.resources = {"red_mushroom": [BlockHit("red_mushroom", "red_mushroom", 165, 77, 606, 30.0)]}
+        return gs
+
+    def test_a_short_pantry_with_a_mushroom_loaded_is_named(self) -> None:
+        text = self._state(bowl=4, cooked_mutton=16).narrative()
+        self.assertIn("Stew pantry: 4 bowls carried, 0 red_mushroom, 0 brown_mushroom", text)
+
+    def test_no_bowl_means_no_pantry_line(self) -> None:
+        # Without a bowl the recipe cannot open, so the walk is not on offer and the line is noise.
+        self.assertNotIn("Stew pantry", self._state(red_mushroom=2).narrative())
+
+    def test_a_full_pantry_is_not_named(self) -> None:
+        gs = self._state(bowl=4, red_mushroom=64, brown_mushroom=64)
+        self.assertNotIn("Stew pantry", gs.narrative())
+
+    def test_no_loaded_mushroom_is_not_named(self) -> None:
+        gs = self._state(bowl=4)
+        gs.resources = {}
+        self.assertNotIn("Stew pantry", gs.narrative())
+
+    def test_the_line_survives_a_log_round_trip(self) -> None:
+        gs = self._state(bowl=4, cooked_mutton=16)
+        rebuilt = GameState.from_state(gs.as_state())
+        self.assertIn("Stew pantry: 4 bowls carried", rebuilt.narrative())
+
+
 class PiglinBarterParseTest(unittest.TestCase):
     """`nearby.mobs` rows are grouped by name:age, so the barter partner is the nearest *adult*
     piglin with its loaded `entityId` - the exact id `barter` demands. A baby piglin id is refused

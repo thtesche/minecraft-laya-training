@@ -1613,6 +1613,18 @@ class GameState:
             present.sort(key=lambda t: t[1])
             parts.append("nearby resources: " + ", ".join(
                 f"{n} at {d:.0f} blocks" for n, d in present[:4]))
+        # The stew pantry is the food this run can renew where it stands, and `gather_mushrooms`
+        # is offered on it - but the resource line above names only the four nearest hits, so
+        # mushrooms thirty blocks out never reach the state the head reads. Live, run210 it334:
+        # `gather_mushrooms` lost to `explore` 0.128 to 0.872 with both on the shortlist; replayed
+        # on the same tick with the pantry named, 0.755 to 0.245. The line appears exactly when the
+        # walk is possible (a bowl carried, a stack below the cap, a mushroom loaded), so it never
+        # promises a meal the pack cannot make.
+        from .actions import BOWL_ITEM, STEW_MUSHROOMS, _mushroom_pantry_wanted  # lazy
+        if _mushroom_pantry_wanted(self):
+            bowls = int(self.inventory.get(BOWL_ITEM, 0))
+            parts.append(f"stew pantry: {bowls} bowl{'s' if bowls != 1 else ''} carried, "
+                         + ", ".join(f"{int(self.inventory.get(n, 0))} {n}" for n in STEW_MUSHROOMS))
         if self.unread:
             head = "; ".join(self.notifications[:2])
             parts.append(f"unread notifications ({self.unread}): {head}" if head

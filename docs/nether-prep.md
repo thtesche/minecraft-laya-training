@@ -164,6 +164,14 @@ Two things the mushroom pantry needs that the Nether cannot supply.
   take the tick. Both mushrooms are on `KEEP_MATERIALS` - raw
   mushrooms are not `EDIBLE`, so `stow_surplus` would otherwise file the pantry into the base
   chest, and no step withdraws it.
+- **The pantry has to be visible in the state, not only in the criteria.** The resource line names
+  only the four nearest scan hits, so mushrooms at 30-42 m never reach the narrative the head reads
+  while the criteria text promises them. Live, run210 it334: `gather_mushrooms` lost to `explore`
+  0.128 to 0.872 with both on the shortlist; replayed on the same tick with the line
+  "Stew pantry: 4 bowls carried, 0 red_mushroom, 0 brown_mushroom", 0.763 to 0.237. The line is
+  emitted exactly when `_mushroom_pantry_wanted` holds, so it never advertises a walk the pack
+  cannot take — and it does not steal a real hunt: on it335, with a blaze in reach, `hunt_blaze`
+  still beat the pantry 0.709 to 0.291.
 - **The reserve walk has a bound and a starting point.** `_food_reserve_walk_wanted` widens the
   hunt reach from `FOOD_HUNT_RANGE_DAY = 64` to `FOOD_HUNT_RANGE_RESERVE = 128` only in the lull,
   only while the reserve is short, only by day, and only while the bot is standing at its base.
