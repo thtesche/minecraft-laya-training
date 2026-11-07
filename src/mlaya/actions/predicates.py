@@ -1046,14 +1046,34 @@ def _bed_item_from_wool(inv: dict[str, int]) -> str | None:
     return None
 
 
+def _bed_item_to_craft(inv: dict[str, int]) -> str | None:
+    """The bed the pack can craft right now, or None.
+
+    A coloured bed when three wool of one colour are carried; otherwise a white bed when the
+    twelve string the server's plan weaves into three white wool are. This mirrors the base
+    `craft_bed`, whose `_bed_leaves_ready` gate already counts string - the stronghold craft used
+    to take wool only, so a pack holding enough string (but no wool) offered `hunt_wool` from the
+    candidate side yet had the hunt refused on the resolve side (string made `_bed_leaves_ready`
+    true), and the two sides deadlocked into an escalation loop (live, run208 it162: 24 string, a
+    sheep 90 m off, no wool).
+    """
+    wool_bed = _bed_item_from_wool(inv)
+    if wool_bed is not None:
+        return wool_bed
+    if inv.get("string", 0) >= BED_STRING_COST:
+        return "white_bed"
+    return None
+
+
 def _bed_materials_ready(gs: GameState) -> bool:
-    """Three wool of one colour and enough wood (one log or three planks) to craft a bed.
+    """Bed leaves (three wool of one colour, or twelve string) and enough wood (one log or three
+    planks) to craft a bed.
 
     This is the gate the stronghold phase adds ahead of `locate_stronghold`: no bed materials,
     no trek, because a run that cannot set a new spawn at the stronghold cannot finish there.
     """
     inv = gs.inventory
-    return _bed_item_from_wool(inv) is not None and (_logs(inv) >= 1 or _planks(inv) >= 3)
+    return _bed_item_to_craft(inv) is not None and (_logs(inv) >= 1 or _planks(inv) >= 3)
 
 
 def _bed_at_stronghold(gs: GameState) -> bool:

@@ -48,7 +48,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
                            _striding_to_stronghold, _stronghold_phase, _march_shed, _march_junk,
                            STRONGHOLD_MARCH_JUNK, _go_home_wanted, _cannot_heal,
-                           _bed_materials_ready, _bed_item_from_wool, _bed_at_stronghold,
+                           _bed_materials_ready, _bed_item_from_wool, _bed_item_to_craft,
+                           _bed_at_stronghold,
                            _bed_stronghold_stance, STRONGHOLD_BED_NEAR, _has_bed, _at_stance,
                            _bed_needs_moving, _unsafe_beds,
                            stronghold_candidates,
@@ -7138,6 +7139,44 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         self.assertEqual(a.tool, "craft_item")
         self.assertEqual(a.args["items"], [{"item_name": "red_bed"}])
         self.assertTrue(a.args["temporary_workstation"])
+
+    def test_string_without_wool_crafts_a_white_bed(self) -> None:
+        # run208 it162: 24 string, no wool, a sheep 90 m off. The stronghold craft took wool only,
+        # so the candidate side offered `hunt_wool` while the resolve side refused it (string made
+        # `_bed_leaves_ready` true) - an escalation loop. String now weaves into a white bed, the
+        # same leaf the base `craft_bed` accepts, so the chain crafts rather than treks to a sheep.
+        g = self._after_portal(string=12, oak_log=1)
+        self.assertFalse(_has_bed(g.inventory))
+        self.assertTrue(_bed_materials_ready(g))
+        self.assertEqual(stronghold_candidates(g), ["craft_bed_stronghold"])
+        a = resolve("craft_bed_stronghold", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"], [{"item_name": "white_bed"}])
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_string_short_of_a_bed_is_not_ready(self) -> None:
+        # Eleven string is one short of the server's twelve-string weave, and no wool at all: not
+        # enough to craft, so the gate stays shut and the gather chain still runs.
+        g = self._after_portal(string=11, oak_log=1)
+        self.assertFalse(_bed_materials_ready(g))
+
+    def test_string_without_wood_is_not_ready(self) -> None:
+        # The leaves are there (twelve string) but a bed also needs planks: no wood, not ready.
+        g = self._after_portal(string=12)
+        self.assertFalse(_bed_materials_ready(g))
+
+    def test_wool_still_wins_the_colour_over_string(self) -> None:
+        # Carrying both, the coloured wool bed is crafted (string is only the white-bed fallback).
+        g = self._after_portal(blue_wool=3, string=12, oak_log=1)
+        a = resolve("craft_bed_stronghold", g)
+        self.assertEqual(a.args["items"], [{"item_name": "blue_bed"}])
+
+    def test_the_bed_item_to_craft_prefers_wool_then_string(self) -> None:
+        self.assertEqual(_bed_item_to_craft({"green_wool": 3}), "green_bed")
+        self.assertEqual(_bed_item_to_craft({"string": 12}), "white_bed")
+        self.assertEqual(_bed_item_to_craft({"string": 16}), "white_bed")
+        self.assertIsNone(_bed_item_to_craft({"string": 11}))
+        self.assertIsNone(_bed_item_to_craft({}))
 
     def test_a_carried_bed_is_laid_beside_the_frame(self) -> None:
         g = self._after_portal(white_bed=1)

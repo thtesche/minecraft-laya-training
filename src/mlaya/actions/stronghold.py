@@ -562,7 +562,7 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
             return None
         if not _has(inv, "crafting_table") or not _bed_materials_ready(gs):
             return None
-        bed_item = _bed_item_from_wool(inv)
+        bed_item = _bed_item_to_craft(inv)
         if bed_item is None:
             return None
         return Action(label, "craft_item",
