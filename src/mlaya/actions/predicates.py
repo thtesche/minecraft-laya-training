@@ -1095,6 +1095,29 @@ def _bed_at_stronghold(gs: GameState) -> bool:
     return False
 
 
+def _bed_wool_owed(gs: GameState, inv: dict[str, int]) -> str | None:
+    """The wool colour the stronghold respawn bed still owes, kept back from the clutter shed.
+
+    A base bed sets `gs.bed_pos`, which makes `_pack_clutter` read every wool as clutter - but on
+    the trek to the stronghold frame that base bed is the old spawn being left behind, and the
+    carried wool buys the new spawn laid beside the frame. The window is the whole march, both legs:
+    the pre-fill walk out to fill the frame (`stronghold_frame` confirmed, portal not yet lit) and
+    the post-activation walk back to lay the bed, until a bed stands beside the frame
+    (`_bed_at_stronghold`). It keys on the saved frame cell, not `_striding_to_stronghold` itself,
+    because that march predicate lives in `stronghold`, imported after this module. Live, run208
+    it129: a base bed dropped the 4 white + 1 brown the stronghold craft needed, and with the wool
+    gone the bed phase deadlocked (a sheep 90 m off, `hunt_wool` offered but refused on resolve
+    because the pack still held string). Only the paying colour is kept, and only while no bed is
+    carried yet; other colours and any surplus still shed.
+    """
+    if _has_bed(inv) or gs.stronghold_frame is None or _bed_at_stronghold(gs):
+        return None
+    bed_item = _bed_item_from_wool(inv)
+    if bed_item is None:
+        return None          # the pack pays the bed in string; no wool stack to protect
+    return bed_item[: -len("_bed")] + "_wool"
+
+
 def _bed_stronghold_stance(gs: GameState) -> tuple[int, int, int] | None:
     """A clear cell beside the stronghold frame where a bed may be laid.
 
@@ -2624,13 +2647,16 @@ def _pack_clutter(gs: GameState, inv: dict[str, int]) -> list[str]:
     nothing on `JUNK_ITEMS`, nothing above `HOARD_CAP`, nothing of a worse tier - `drop_junk` had
     no name to give and every slot-needing action answered `[INVENTORY_FULL]`.
     So the shed asks the other question: is the thing this stack is *for* already in the pack?
-    A bed laid makes every wool clutter; a built bow and a full arrow reserve make feathers,
-    string and the flint behind them clutter; a flint and steel in hand closes the gravel dig.
+    A bed laid makes every wool clutter - except the one colour a still-owed stronghold respawn bed
+    is paid in, kept through the march (`_bed_wool_owed`); a built bow and a full arrow reserve make
+    feathers, string and the flint behind them clutter; a flint and steel in hand closes the gravel
+    dig.
     """
     out: list[str] = []
     bed_laid = gs.bed_pos is not None or any(n.endswith("_bed") for n in inv if inv.get(n, 0))
     if bed_laid:
-        out += [n for n in inv if n.endswith("_wool") and inv.get(n, 0) > 0]
+        kept = _bed_wool_owed(gs, inv)
+        out += [n for n in inv if n.endswith("_wool") and inv.get(n, 0) > 0 and n != kept]
     if _has(inv, BOW_ITEM) and inv.get(ARROW_ITEM, 0) >= NETHER_ARROWS:
         out += [n for n in ("feather", "string", "flint") if inv.get(n, 0) > 0]
     if _has(inv, "flint_and_steel") and inv.get("flint", 0) >= FLINT_GRAVEL:

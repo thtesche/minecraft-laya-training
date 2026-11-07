@@ -1468,6 +1468,40 @@ lid and stalled on the latch that was supposed to say the haul was done.
   pattern; why the base anchor keeps pulling the body off the chest is the goal-ordering question
   the bed phase left deliberately unaddressed.
 
+## Live findings run206–208 (2026-11-07): the stronghold bed deadlock
+
+run208 was the second run ever to activate the end portal (after run178) and the first to reach the
+respawn-bed phase at the frame with a full history behind it. It deadlocked there from it129 on.
+
+- **String has to be able to pay the stronghold bed.** The offer gate (`_bed_materials_ready`) read
+  a pack of twelve string as bed-ready, so `hunt_wool` was never offered; the resolve gate for the
+  craft read wool only, so the carried string bought nothing — offer and resolve diverged and the
+  tick escalated. `_bed_item_to_craft` (`d0f6871`) now mirrors the base `craft_bed`'s
+  `_bed_leaves_ready`: a coloured bed from three wool of a colour, else a white bed from twelve
+  string. Verified against the it133 snapshot rebuilt from `system2-run208.jsonl`.
+- **A base bed must not shed the wool the stronghold bed still owes.** The deeper cause of the same
+  deadlock: `_pack_clutter` reads every wool as clutter the moment any bed is laid (`gs.bed_pos`),
+  and run206's base bed was still set. On the trek to the frame it threw the 4 white + 1 brown the
+  respawn bed is crafted from (it129), after which only string was left and the craft/hunt gates
+  fought over it. `_bed_wool_owed` now keeps the one colour that pays the owed respawn bed out of
+  the shed across the whole march — both the pre-fill walk out and the post-activation walk back —
+  until a bed stands beside the frame (`_bed_at_stronghold`). The base bed is the old spawn being
+  left behind; other colours and any surplus wool still shed.
+- **The same offer/resolve divergence lived in two more bed steps, now aligned.**
+  `craft_bed_stronghold` was offered on carried materials but resolves only with a crafting table in
+  the pack (the temporary workstation is built from a carried table); its offer now requires the
+  table too, so a tableless pack drops the offer and the tech-tree chain (`craft_table`, else
+  `get_wood`) builds one first. `sleep_stronghold` was offered on a bed at the frame but resolves
+  only at night (and refuses with a hostile within `SLEEP_HOSTILE_CLEAR`); its offer now mirrors
+  that, and by day — when the one step left is still that night sleep — it offers `wait`, which the
+  resolver holds on the bed's own cell so the bot does not wander off the frame it must sleep at
+  (`go_home`/`explore` are shut for this phase and would otherwise march it off). Both were latent:
+  `sleep_stronghold` has zero ticks in any run to date.
+- **Still open: an invariant test that every offered label resolves.** The three bed bugs above are
+  one shape — a candidate the gate offers that the resolver then refuses, escalating the tick. A
+  single property test over `candidates(gs)` for representative stronghold states would catch the
+  whole class rather than each instance, and is the remaining guard worth adding.
+
 ## Next milestones
 
 - **Open after run187:** (1) the endgame's later links are live but unfinished — the powder is

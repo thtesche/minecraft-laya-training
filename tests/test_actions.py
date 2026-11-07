@@ -49,7 +49,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            _striding_to_stronghold, _stronghold_phase, _march_shed, _march_junk,
                            STRONGHOLD_MARCH_JUNK, _go_home_wanted, _cannot_heal,
                            _bed_materials_ready, _bed_item_from_wool, _bed_item_to_craft,
-                           _bed_at_stronghold,
+                           _bed_at_stronghold, _bed_wool_owed, _pack_clutter, _sleep_safe,
                            _bed_stronghold_stance, STRONGHOLD_BED_NEAR, _has_bed, _at_stance,
                            _bed_needs_moving, _unsafe_beds,
                            stronghold_candidates,
@@ -7014,6 +7014,36 @@ class StrongholdMarchShedTest(unittest.TestCase):
     def test_a_full_pack_sheds_on_the_way(self) -> None:
         self.assertIn("drop_junk", candidates(self._march()))
 
+    def test_the_bed_wool_survives_the_march_when_a_base_bed_was_left(self) -> None:
+        # Live, run208 it129: a bed stood at the base (`bed_pos`), so `_pack_clutter` read every
+        # wool as clutter and `drop_junk` threw the 4 white + 1 brown the stronghold respawn bed is
+        # crafted from. The craft then had no wool, `hunt_wool` was offered but refused on resolve
+        # (the pack still held string), and the bed phase deadlocked into an escalation loop. On the
+        # trek the base bed is the old spawn being left behind; the stack that pays for the new spawn
+        # beside the frame must ride along. This is the pre-fill leg (portal not yet lit), the half
+        # the first guard left exposed. Only the paying colour is kept - other wool still sheds.
+        g = self._march(white_wool=3, brown_wool=1)
+        g.bed_pos = self.BASE
+        self.assertTrue(_striding_to_stronghold(g))
+        self.assertFalse(g.end_portal_active)
+        self.assertFalse(_bed_at_stronghold(g))
+        self.assertEqual(_bed_wool_owed(g, g.inventory), "white_wool")
+        clutter = _pack_clutter(g, g.inventory)
+        self.assertNotIn("white_wool", clutter)      # pays the bed - kept
+        self.assertIn("brown_wool", clutter)         # a single fleece, not a payer - sheds
+
+    def test_the_bed_wool_sheds_again_once_the_respawn_bed_stands(self) -> None:
+        # The guard is the owed-bed window, not "forever near a frame": once a bed stands beside the
+        # frame the respawn is pinned and the wool is spare, so the clutter shed resumes.
+        g = self._march(white_wool=3)
+        g.bed_pos = self.BASE
+        g.end_portal_active = True
+        fx, fy, fz = self.FRAME
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", fx, fy, fz + 1, 1.0)]}
+        self.assertTrue(_bed_at_stronghold(g))
+        self.assertIsNone(_bed_wool_owed(g, g.inventory))
+        self.assertIn("white_wool", _pack_clutter(g, g.inventory))
+
     # The clutter the march shovels up, beyond the names already on JUNK_ITEMS. gravel and redstone
     # are KEEP_MATERIALS for the ordinary run; this phase overrides that. `spider_eye` is on
     # JUNK_ITEMS now, so it sheds through the ordinary path on the march as well.
@@ -7140,6 +7170,18 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         self.assertEqual(a.args["items"], [{"item_name": "red_bed"}])
         self.assertTrue(a.args["temporary_workstation"])
 
+    def test_no_crafting_table_builds_one_before_the_bed(self) -> None:
+        # The craft builds its workstation from a carried table (`temporary_workstation`), so its
+        # resolve refuses with no table in the pack. The offer used to appear on the wool alone, so
+        # it sat unresolved and escalated. With no table the offer now drops and the tech-tree chain
+        # builds one first: wool in hand but no table is `craft_table`, not a dead `craft_bed`.
+        g = self._after_portal(red_wool=3, oak_log=1)
+        del g.inventory["crafting_table"]
+        self.assertTrue(_bed_materials_ready(g))
+        self.assertNotIn("crafting_table", g.inventory)
+        self.assertNotIn("craft_bed_stronghold", stronghold_candidates(g))
+        self.assertIn("craft_table", candidates(g))
+
     def test_string_without_wool_crafts_a_white_bed(self) -> None:
         # run208 it162: 24 string, no wool, a sheep 90 m off. The stronghold craft took wool only,
         # so the candidate side offered `hunt_wool` while the resolve side refused it (string made
@@ -7188,15 +7230,43 @@ class StrongholdBedPhaseTest(unittest.TestCase):
 
     def test_a_laid_bed_is_slept_in_at_night(self) -> None:
         g = self._with_placed_bed(self._after_portal())
+        g.phase = "night"
         self.assertTrue(_bed_at_stronghold(g))
         self.assertFalse(getattr(g, "slept_at_stronghold", False))
         self.assertEqual(stronghold_candidates(g), ["sleep_stronghold"])
+        a = resolve("sleep_stronghold", g)
+        self.assertEqual(a.tool, "sleep")
         # The sleep is night-gated like any other: no bed-click by day.
         g.phase = "day"
         self.assertIsNone(resolve("sleep_stronghold", g))
+
+    def test_by_day_the_laid_bed_holds_at_the_frame_for_night(self) -> None:
+        # The sleep that pins the respawn only runs at night, so by day `sleep_stronghold` was
+        # offered on the laid bed yet resolved to nothing - an offer/resolve divergence that
+        # escalated every daytime tick. The bed is down and the one step left is that sleep, so the
+        # bot must not wander off the frame it has to sleep at: the day offers `wait`, which holds
+        # on the bed's own cell (`go_home`/`explore` are shut for this phase and would march it off).
+        g = self._with_placed_bed(self._after_portal())
+        g.phase = "day"
+        self.assertTrue(_bed_at_stronghold(g))
+        self.assertEqual(stronghold_candidates(g), ["wait"])
+        a = resolve("wait", g)
+        self.assertEqual(a.tool, "navigate")
+        # Holds on the bot's own cell (it already stands beside the frame), so the navigate settles
+        # at once rather than marching anywhere.
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (101, 60, 200))
+        self.assertEqual(a.args["range"], 1)
+
+    def test_a_hostile_at_the_bed_at_night_holds_rather_than_offers_a_refused_sleep(self) -> None:
+        # The resolve refuses the sleep with a hostile within `SLEEP_HOSTILE_CLEAR`, so the offer
+        # mirrors `_sleep_safe` too: a mob at the bedside at night offers `wait`, not a sleep the
+        # server would reject. (The combat reflex owns the body before this list is ever reached;
+        # the hold is only the fallback for the tick the reflex hands back.)
+        g = self._with_placed_bed(self._after_portal())
         g.phase = "night"
-        a = resolve("sleep_stronghold", g)
-        self.assertEqual(a.tool, "sleep")
+        g.nearest_hostile = 2.0
+        self.assertFalse(_sleep_safe(g))
+        self.assertEqual(stronghold_candidates(g), ["wait"])
 
     def test_the_chain_closes_once_the_bot_has_slept(self) -> None:
         g = self._with_placed_bed(self._after_portal())

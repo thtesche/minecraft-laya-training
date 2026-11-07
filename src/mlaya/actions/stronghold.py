@@ -311,8 +311,19 @@ def stronghold_candidates(gs: GameState) -> list[str]:
         # it lays it, so a has-bed-first test would read the just-placed bed as gone and craft a
         # second one instead of reaching the sleep.
         if _bed_at_stronghold(gs):
-            if not getattr(gs, "slept_at_stronghold", False):
+            if getattr(gs, "slept_at_stronghold", False):
+                return out
+            # The sleep that pins the respawn only runs at night (and refuses with a hostile
+            # close, or mid-sleep), so the offer is gated on exactly what its resolve needs - the
+            # offer-on-the-bed-alone it used to be resolved to nothing every daytime tick and
+            # escalated. By day the one step left is still that sleep, so the bot must not wander
+            # off the frame: `wait` holds it on the bed's own cell until night (the `wait` resolve
+            # carries the stronghold hold). `_sleep_safe` mirrors the resolve; `go_home`/`explore`
+            # are shut for this phase, which is what would otherwise march the body off.
+            if gs.phase == "night" and not gs.sleeping and _sleep_safe(gs):
                 out.append("sleep_stronghold")
+            else:
+                out.append("wait")
             return out
         # No bed and no wool to make one: gather it before the trek, the same gate the pre-fill
         # phase keeps ahead of travel - a bed at the base is the old spawn being left, so the
@@ -337,7 +348,12 @@ def stronghold_candidates(gs: GameState) -> list[str]:
         # Standing at the frame: lay the carried bed, or craft one from the carried wool.
         if _has_bed(inv):
             out.append("place_bed_stronghold")
-        elif _bed_materials_ready(gs):
+        elif _bed_materials_ready(gs) and _has(inv, "crafting_table"):
+            # The craft builds its workstation from a carried table (`temporary_workstation`), so
+            # its resolve refuses with no table in the pack - the offer used to appear on the wool
+            # alone and escalated. Gated on the table too, so a tableless pack drops this offer and
+            # the tech-tree chain (`craft_table`, else `get_wood`, both already on the planner's
+            # list in this phase) builds one first instead of a dead offer sitting unresolved.
             out.append("craft_bed_stronghold")
         return out
 

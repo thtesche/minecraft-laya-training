@@ -2132,6 +2132,15 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             mx, my, mz = (math.floor(v) for v in gs.pos)
             return Action(label, "navigate", {"x": mx, "y": my, "z": mz, "range": 1},
                           "stand still until sunrise - no weapon and no armour at night")
+        # Daytime at the stronghold frame with the respawn bed laid: the one step left is the sleep
+        # that pins the spawn, and that waits for night (`sleep_stronghold` offers `wait` here). The
+        # base-hold branch above cannot help - the base is ~1300 blocks off - and the phase shuts
+        # `go_home`/`explore`, so hold on the bed's own cell, a navigate that settles at once rather
+        # than a march off the frame it has to sleep at.
+        if _bed_at_stronghold(gs) and gs.pos is not None:
+            mx, my, mz = (math.floor(v) for v in gs.pos)
+            return Action(label, "navigate", {"x": mx, "y": my, "z": mz, "range": 1},
+                          "hold at the stronghold bed until night, when the respawn sleep can run")
         return None
     if label == "explore":
         if x is None or z is None:
