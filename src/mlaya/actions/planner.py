@@ -1721,7 +1721,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # Two steps in one label: fetch the mushrooms the batch still lacks, or brew once the
         # pack covers it. The bowl is never fetched separately - `craft_item` plans the bowl from
         # the carried planks on its way to the stew, and the server's own planner knows that
-        # recipe.
+        # recipe. That bowl craft is the only part of the plan that owes a workstation: the stew
+        # itself is shapeless and fits the 2x2 grid, so a carried bowl needs no table.
         #
         # The batch the pack is asked for is capped by what it holds. Asking for `STEW_BATCH`
         # with one red and one brown carried is the dead end of run170 it32-35: four identical
@@ -1747,7 +1748,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                 return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": STEW_ITEM, "count": brew}],
-                       "temporary_workstation": True},
+                       **({"temporary_workstation": True} if not _has(inv, BOWL_ITEM) else {})},
                       "brew mushroom stew from the bowl and both mushrooms - the bowl comes back "
                       "from every meal, so this renews itself")
     if label == "gather_mushrooms":

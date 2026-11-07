@@ -1764,8 +1764,10 @@ def _stew_brewable(gs: GameState) -> int:
     """
     if not _bowl_available(gs):
         return 0
-    # The brew is a craft at a workstation the pack has to carry (see `_stew_source_in_reach`).
-    if not _has(gs.inventory, "crafting_table"):
+    # The stew itself needs no workstation: its recipe is shapeless (bowl, red mushroom, brown
+    # mushroom - three ingredients, fits the 2x2 grid), so the server's plan only asks for a
+    # table when the bowl has to be made in the same batch. A carried bowl is enough on its own.
+    if int(gs.inventory.get(BOWL_ITEM, 0) or 0) <= 0 and not _has(gs.inventory, "crafting_table"):
         return 0
     inv = gs.inventory
     need = _stew_need(gs) or 1
@@ -1812,11 +1814,12 @@ def _stew_source_in_reach(gs: GameState) -> bool:
     """
     if not _bowl_available(gs):
         return False
-    # A stew is a craft, and `craft_item`'s temporary workstation is a table the pack has to
-    # carry: run203 it474-479 asked for stew four ticks with 62 red and 62 brown mushrooms and
-    # four bowls in the pack and no table in it, each tick answering
-    # `[WORKSTATION_NOT_CARRIED] No crafting_table is carried for temporary use`.
-    if not _has(gs.inventory, "crafting_table"):
+    # Only a bowl that still has to be made owes a workstation. The stew recipe is shapeless and
+    # fits the 2x2 grid, so a pack carrying a bowl can brew at home without a table - which is
+    # exactly what run203 it474-479 could not: four bowls, 62 red and 62 brown mushrooms, no
+    # table, and four ticks of `[WORKSTATION_NOT_CARRIED] No crafting_table is carried for
+    # temporary use`, because the call asked for a temporary workstation it did not carry.
+    if int(gs.inventory.get(BOWL_ITEM, 0) or 0) <= 0 and not _has(gs.inventory, "crafting_table"):
         return False
     if _stew_brewable(gs) > 0:
         return True

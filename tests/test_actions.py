@@ -9601,16 +9601,35 @@ class StewPantryTest(unittest.TestCase):
         g = self._pantry()
         self.assertNotIn("craft_stew", candidates(g))
 
-    def test_a_pack_without_a_table_brews_nothing(self) -> None:
+    def test_a_carried_bowl_brews_without_a_table(self) -> None:
         # run203 it474-479: 62 red and 62 brown mushrooms and four bowls in the pack, no
         # crafting_table in it, and four ticks of `[WORKSTATION_NOT_CARRIED] No crafting_table is
-        # carried for temporary use`. A stew is a craft, and `craft_item`'s temporary workstation
-        # is a table the pack has to carry - mushrooms on the ground do not stand in for it.
+        # carried for temporary use`. The stew recipe is shapeless - bowl, red mushroom, brown
+        # mushroom - so it fits the 2x2 grid and needs no workstation. Only a bowl the batch
+        # still has to make does.
         g = self._pantry(bowl=4, red_mushroom=62, brown_mushroom=62, crafting_table=0)
         g.resources = {"red_mushroom": [BlockHit("red_mushroom", "red_mushroom",
                                                  6, 64, 12, 9.0)],
                        "brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom",
                                                    7, 63, 14, 11.0)]}
+        self.assertIn("craft_stew", candidates(g))
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"][0]["item_name"], STEW_ITEM)
+        self.assertNotIn("temporary_workstation", a.args)
+
+    def test_a_bowl_the_batch_has_to_make_asks_for_the_table(self) -> None:
+        # No bowl carried, planks and a table in the pack: `craft_item` makes the bowl on the way
+        # to the stew, and that bowl craft is a 3x3 recipe, so the table is placed and recovered.
+        g = self._pantry(bowl=0, red_mushroom=2, brown_mushroom=2, oak_planks=6)
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertTrue(a.args["temporary_workstation"])
+
+    def test_no_bowl_and_no_table_brews_nothing(self) -> None:
+        # Planks without a table are not a bowl: the bowl recipe is three planks in a row, which
+        # the 2x2 grid cannot hold.
+        g = self._pantry(bowl=0, red_mushroom=2, brown_mushroom=2, crafting_table=0, oak_planks=6)
         self.assertNotIn("craft_stew", candidates(g))
         self.assertIsNone(resolve("craft_stew", g))
 

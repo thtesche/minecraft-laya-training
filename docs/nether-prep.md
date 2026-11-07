@@ -116,10 +116,12 @@ Nether terrain is already provided for in the server reflex.
   picks the missing mushroom (`collect_block`) instead of asking the server for a batch it cannot
   cover, and the brew is capped by the mushrooms *and* bowls carried - one bowl per stew, because the
   bowl only comes back once the stew is eaten (run170 it32-35: `STEW_BATCH` asked with one red and
-  one brown carried, refused `[CRAFT_MATERIALS_MISSING]` four ticks running). Every brew is a craft at
-   a workstation the pack has to carry: run203 it474-479 asked four ticks with 62 red and 62 brown
-   mushrooms and four bowls in the pack and no `crafting_table` in it, each answered
-   `[WORKSTATION_NOT_CARRIED]`.
+  one brown carried, refused `[CRAFT_MATERIALS_MISSING]` four ticks running). Only a bowl the
+  batch still has to make owes a workstation: the stew recipe is shapeless (bowl, red mushroom,
+  brown mushroom - three ingredients, fits the 2x2 grid), so a pack carrying a bowl brews without
+  a table. run203 it474-479 asked four ticks with 62 red and 62 brown mushrooms and four bowls in
+  the pack and no `crafting_table` in it, each answered `[WORKSTATION_NOT_CARRIED]` - the call
+  asked for a temporary workstation for a recipe that never needed one.
 - **Staged Nether exit** (when distance to gate > `NETHER_EXIT_STAGING_DISTANCE = 120.0` m): navigate in
   120 m hops toward the gate instead of one large walk. Pathfinder search times out on 450+ block walks
   through sparse/lava-heavy Nether terrain; ~120 m hops reload the world and reset the search budget per tick.
