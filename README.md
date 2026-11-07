@@ -149,6 +149,21 @@ positive examples (`--include-failed` for pure imitation). Ticks inside a ping-p
 ticks repeating one label or alternating two with no item gained — teach no intent, and a
 `stow_surplus` counts only when an item left the pack (see `docs/architecture.md`, M3).
 
+### Publishing to Hugging Face
+
+The served checkpoint and the training corpora are public:
+
+- **[thtesche/laya-minecraft-english](https://huggingface.co/thtesche/laya-minecraft-english)** — the current checkpoint (2026-11-07), full model card, lineage of all six fine-tunes
+- **[datasets/thtesche/laya-minecraft-training-data](https://huggingface.co/datasets/thtesche/laya-minecraft-training-data)** — every train/eval JSONL with schema and reward semantics
+
+A Hub id is a valid `LAYA_EXTRA_MODELS` source, so the loop can run straight from the Hub:
+
+```bash
+export LAYA_EXTRA_MODELS='{"english": "thtesche/laya-minecraft-english"}'
+```
+
+To publish a new checkpoint: `hf upload thtesche/laya-minecraft-english runs/checkpoints/minecraft-<time> --exclude "checkpoint_latest/*"`, then refresh the card (`hf/model-card.md`). Weights must go to a **model** repo — laya's loader defaults to `repo_type="model"` and does not resolve dataset repos.
+
 Tests: `uv run pytest tests/ -q` (1573 tests) — the same command the pre-commit hook and CI run.
 
 ## Documentation

@@ -571,7 +571,9 @@ a **food acquisition** that fits "actually survive".
 - **Registering:** `LAYA_EXTRA_MODELS` is a JSON object `{name: source}`; a name that hits a
   built-in checkpoint **retargets it**. `config.load_settings` parses the variable into
   `laya.extra_models` and `Brain` passes it on as `models=` to the `Router`. Thereby the
-  loop loads the fine-tune under `english` **without a code change**.
+  loop loads the fine-tune under `english` **without a code change**. A source may be a local
+  path **or a Hub id** — `laya.agent` resolves it via `snapshot_download` (model repos only),
+  so the published checkpoint `thtesche/laya-minecraft-english` can be served directly.
 - **Validation (fresh world run, 48 ticks → goal):** complete tech tree from nothing,
   `stop: "goal"`. Dataset: **35 rows** (26 train / 9 held-out), 17 intent labels across the
   whole chain (`get_wood` … `equip_armor`). Head fine-tuning (4 epochs, `rlcd`, encoder

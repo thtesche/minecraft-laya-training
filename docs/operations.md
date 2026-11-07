@@ -121,6 +121,7 @@ note on stderr rather than ending the reader.
    `LAYA_EXTRA_MODELS` value that serves it.
 4. A held-out split from the training runs is close to in-distribution; only a live run (or a
    whole unseen run as held-out) shows whether the head decides better.
+5. Optional — publish to the Hub: `hf upload thtesche/laya-minecraft-english runs/checkpoints/minecraft-<time> --exclude "checkpoint_latest/*"` and refresh the card from `hf/model-card.md`. The Hub id then works directly as a `LAYA_EXTRA_MODELS` source (`{"english": "thtesche/laya-minecraft-english"}`); corpora go to the dataset repo (`hf upload thtesche/laya-minecraft-training-data data --repo-type dataset`, card in `hf/dataset-card.md`). Weights belong in a **model** repo — laya's `snapshot_download` defaults to `repo_type="model"` and cannot resolve dataset repos.
 
 ## Teacher path (offline System 2 + judge)
 
