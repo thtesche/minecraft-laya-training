@@ -241,6 +241,14 @@ Offered only once the Overworld goal and the Nether haul stand (`tech_tree_compl
     `action.tool == "sleep"` — the walk to the bedside resolves under the same label with
     `navigate` and sets nothing — and a refused sleep leaves the goal open.
 
+**Pre-trek End supply.** Once the eyes are crafted and the bed or its materials are carried,
+`stronghold_candidates` appends `_stronghold_supply_steps` before `locate`/`travel`: only
+`craft_bow` and `craft_arrows`, which spend materials already in the pack. The march never doubles
+back to the base and `_stronghold_phase` suppresses the lull's whole offer list, so this is the last
+chance to turn carried string, flint and feathers into the `END_ARROWS` reserve. The farm steps
+(chickens, gravel, skeletons) are deliberately excluded — a 1300-block trek cannot wait on a mob
+that may never load. Background in `docs/architecture.md`, "End supply".
+
 ## Goal
 
 `stronghold_complete(gs)` — the end portal is active, latched on `activate_portal`'s own success

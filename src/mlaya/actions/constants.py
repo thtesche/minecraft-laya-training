@@ -54,15 +54,17 @@ CRITERIA: dict[str, str] = {
     "cook_food": "cook carried raw meat in the furnace at the base (or the carried furnace, set up just for the batch) so it feeds more hunger; cooked meat lasts far longer than bread, and before the Nether trip any carried fuel will do",
     "collect_smelted": "take what a cook left sitting in the furnace at the base back into the pack, so the next cook can start",
     # Nether prep, stocked in the daytime lull once the gate frame stands (see `_nether_prep_steps`).
-    "craft_bow": "craft a bow from string and sticks; the server's combat layer fires it for ranged defence against ghasts and blazes",
-    "craft_arrows": "craft arrows from flint, sticks and feathers so the carried bow has ammunition",
-    "hunt_feather": "kill a nearby chicken to collect feathers for the Nether arrows",
+    "craft_bow": "craft a bow from string and sticks; the server's combat layer fires it for ranged defence, and the End fight needs one bow plus a spare",
+    "craft_arrows": "craft arrows from flint, sticks and feathers, so the carried bow has the large End reserve rather than the Nether trip's token sixteen",
+    "hunt_feather": "kill a nearby chicken to collect feathers for the End arrow reserve",
+    "hunt_skeleton": "kill a skeleton and take the arrows it drops, so the End reserve grows from the mobs that shoot back; a skeleton is a shield fight",
+    "camp_skeleton_spawner": "camp the nearest loaded skeleton spawner: wait for skeletons to spawn, kill them for their arrows, then return to the same spawner once; the long farm for the End reserve",
     "mine_gold": "mine gold ore for the helmet that keeps piglins neutral in the Nether",
     "mine_gold_reserve": "mine extra gold ore to trade with piglins in the Nether for ender pearls",
     "smelt_gold": "smelt raw gold into gold ingots in the furnace for the gold helmet",
     "craft_gold_helmet": "craft the gold helmet that keeps piglins from attacking; carry it until the Nether trip",
     "replace_tool": "craft a fresh pickaxe to replace the one that is nearly worn out",
-    "collect_drops": "pick up items a mob dropped nearby when the survival reflex killed it",
+    "collect_drops": "pick up items a mob dropped nearby, prioritising arrows and string for the End reserve; also sweeps older drops that are still loaded",
     "recover_drops": "walk back to the last death site and recover the gear dropped there",
     "explore": "walk to new terrain to find missing resources; the last fallback",
     "wait": "hold position at the home base; nothing productive is left in the lull before the expedition",
@@ -621,6 +623,32 @@ BOW_ITEM = "bow"
 ARROW_ITEM = "arrow"
 BOW_STRING = 3
 NETHER_ARROWS = 16
+# --- The End fight's arrow economy ---
+# `NETHER_ARROWS` is the Nether gate's token reserve, not the goal. The dragon fight is fought at
+# range against a moving target and spends arrows far faster than a Nether trip ever did, so the
+# same supply chain (flint + stick + feather -> four arrows) keeps running through the daytime lull
+# and the pearl procurement until this many arrows are banked. The level the entrance policy asks
+# for is 32 (`portal-policy.ts`); 128 is four times that, with room for the fight itself.
+END_ARROWS = 128
+# A bow that breaks cannot be replaced in the End: there is no wood, no string and no crafting
+# table down there. One carried spare is cheap next to losing the ranged answer mid-fight.
+END_BOWS = 2
+# How far a loaded dropped arrow/string may lie and still be worth the walk. This is
+# `pick_up_items`' own maximum radius, so the sweep can target the drop's exact position.
+DROP_SWEEP_RADIUS = 32.0
+# Skeleton hunts are shield fights: a skeleton volleys from range and one unlucky exchange at low
+# health ends the run. The server refuses a hostile quarry without a shield, so the guard below
+# carries `_has_shield` as well as the health floor.
+SKELETON_HUNT_RANGE = 24.0
+SKELETON_HUNT_HEALTH = 16.0
+# A skeleton cluster inside the hunt reach is a spawner worth camping. `collect_mob_drop` remembers
+# the closest loaded spawner, waits `observe_for_ms` for quarry, and returns to that same spawner
+# once. Camping is only offered below this many banked arrows, with at least this many skeletons
+# inside the reach (the cluster is the only spawner evidence the state carries).
+SKELETON_CAMP_SHORT = 32
+SKELETON_CAMP_MIN_MOBS = 3
+SKELETON_CAMP_BATCH = 16
+SKELETON_CAMP_OBSERVE_MS = 20000
 FEATHER_ITEM = "feather"
 # Pickaxes carried into the Nether, the active one included. The expedition digs: netherrack for
 # cover, obsidian for a return gate if the arrival portal is gone, and the frame if the bot has to

@@ -934,6 +934,13 @@ class GameState:
     offhand: str | None = None
     # fresh "target died" reflex outcomes: the mob's drops are lying nearby
     drops: int = 0
+    # Every loaded dropped-item entity the status scan lists, nearest first:
+    # (item name, stack count, distance, position). `drops` above only counts kills from the last
+    # `EVENT_REACT_WINDOW_S`; an arrow a skeleton dropped five minutes ago, or string from a spider
+    # the reflex killed out of sight, is still worth the walk. The End fight is fought at range,
+    # so the supply sweep keys on this list rather than on a fresh kill alone.
+    dropped_items: list[tuple[str, int, float | None,
+                              tuple[float, float, float] | None]] = field(default_factory=list)
     # Home base: the surface anchor the run puts the bed, the portal frame and the chest at.
     # Injected by the loop (perception cannot know it) and carried into every decision so the
     # base-relative steps have one fixed point that survives the bot wandering off to mine.
@@ -1296,6 +1303,8 @@ class GameState:
             "last_death": self.last_death_cause,
             "death_pos": self.death_pos,
             "drops": self.drops,
+            "dropped_items": [[name, count, dist, list(pos) if pos else None]
+                              for name, count, dist, pos in self.dropped_items],
             "base": self.base,
             "chest_pos": self.chest_pos,
             "chest_above": list(self.chest_above) if self.chest_above else None,
@@ -1430,6 +1439,18 @@ class GameState:
                     distance=float(hit.get("distance") or 0.0),
                     above=hit.get("above"), below=hit.get("below"), level=hit.get("level")))
             gs.resources[name] = rebuilt
+        # Dropped items are logged as `[name, count, distance, [x, y, z]]`; the state keeps the
+        # position a 3-tuple so a report or a predicate reads it the same way as on the live tick.
+        gs.dropped_items = []
+        for entry in (data.get("dropped_items") or ()):
+            if not isinstance(entry, (list, tuple)) or len(entry) != 4:
+                continue
+            name, count, dist, pos = entry
+            cell = None
+            if isinstance(pos, (list, tuple)) and len(pos) == 3:
+                cell = tuple(float(v) for v in pos)
+            gs.dropped_items.append(
+                (str(name), int(count or 1), None if dist is None else float(dist), cell))
         # The network's cells come back from JSON as lists; the state keeps tuples so they are
         # hashable where a full chest is tested against a set, and a torn entry from an old log
         # simply drops instead of guessing.
@@ -1561,6 +1582,18 @@ class GameState:
         # stays on the state, so the log still records who was standing there.
         if self.drops:
             parts.append(f"{self.drops} mob(s) the reflex killed dropped items nearby")
+        # Older drops outlive the reflex window above, and the End reserve is built from exactly
+        # these: arrows from skeletons and string from spiders. Only the supply items are named;
+        # the raw drop list also holds every piece of junk a creeper scattered, which is noise.
+        from .actions import DROP_SWEEP_RADIUS  # lazy: `actions` imports this module
+        supply = [(n, c, d) for n, c, d, _ in self.dropped_items
+                  if n in ("arrow", "string") and (d is None or d <= DROP_SWEEP_RADIUS)]
+        if supply:
+            desc = ", ".join(
+                f"{c}x {n}" + (f" at {d:.0f} blocks" if d is not None else "")
+                for n, c, d in supply[:3]
+            )
+            parts.append(f"dropped supply nearby: {desc}")
         # Death is narrative only while the gear is still recoverable - inside the very window
         # `recover_drops` offers on (see `_can_recover`). Outside it the sentence is noise Laya
         # cannot act on: live, run78 read a 14-hours-old death in the *previous* world on every
@@ -1756,6 +1789,19 @@ def parse_status(data: dict) -> GameState:
             eid = nearest.get("entityId") if isinstance(nearest, dict) else None
             if isinstance(eid, int):
                 gs.piglins.append((eid, dist))
+
+    # Every loaded item entity, nearest first (`nearby.droppedItems`, no distance bound). This is
+    # what lets the loop walk back for arrows and string after the reflex's own kill window has
+    # closed, and it is the only read that sees a drop nobody just killed for.
+    for d in nearby.get("droppedItems") or []:
+        if not isinstance(d, dict) or not d.get("name"):
+            continue
+        pos = d.get("position")
+        cell = None
+        if isinstance(pos, dict) and all(k in pos for k in ("x", "y", "z")):
+            cell = (float(pos["x"]), float(pos["y"]), float(pos["z"]))
+        gs.dropped_items.append((str(d["name"]), int(d.get("count") or 1),
+                                 _num(d.get("distance")), cell))
 
     death = sit.get("lastDeath") or {}
     if isinstance(death, dict) and death.get("cause"):

@@ -386,6 +386,10 @@ def stronghold_candidates(gs: GameState) -> list[str]:
             elif _safe_spider_hunt(gs):
                 out.append("hunt_string")
             return out
+        # Spend the carried materials on the End reserve before the one-way trek. Only the
+        # deterministic crafts are listed here (`_stronghold_supply_steps`), so this cannot stall
+        # the march on a chicken, a gravel patch or a skeleton that never loads.
+        out.extend(_stronghold_supply_steps(gs))
         # A frame the locate phase confirmed but the body never reached has to be walked to: the
         # survey stops the moment a frame chunk loads, so re-sending `locate` answers in one tick
         # and moves nobody (run173 it75 and it79: two identical successes, the bot 108 m from the

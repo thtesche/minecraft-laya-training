@@ -2129,19 +2129,102 @@ def _gold_helmet_needed(gs: GameState) -> bool:
             and (gs.inventory.get(GOLD_HELMET_ITEM, 0) > 0 or _worn(gs, GOLD_HELMET_ITEM)))
 
 
+def _bows_held(gs: GameState) -> int:
+    """Bows the bot actually owns: one equipped (`tools.bow`) plus any carried in the pack."""
+    carried = int(gs.inventory.get(BOW_ITEM, 0))
+    equipped = str(gs.tools.get("bow") or "none").lower() != "none"
+    return carried + (1 if equipped else 0)
+
+
+def _end_arrows_wanted(gs: GameState) -> int:
+    """Arrows still short of the End fight's reserve. Never negative."""
+    return max(0, END_ARROWS - int(gs.inventory.get(ARROW_ITEM, 0)))
+
+
+def _end_bows_wanted(gs: GameState) -> int:
+    """Bows still short of the reserve (the carried one plus a spare)."""
+    return max(0, END_BOWS - _bows_held(gs))
+
+
 def _string_goal(gs: GameState) -> int:
-    """String still wanted: twelve for a bed, or three for the Nether bow once the bed exists."""
+    """String still wanted: twelve for a bed, or three per bow the End reserve still owes."""
     if not _bed_available(gs):
         return 12
-    return 0 if _has(gs.inventory, BOW_ITEM) else BOW_STRING
+    return BOW_STRING * _end_bows_wanted(gs)
 
 
 def _arrows_pending(gs: GameState) -> bool:
-    """The bow is built in the lull but the arrow reserve is not, so `craft_arrows` keeps
-    working; also what lets `get_flint` reopen the gravel dig after flint and steel already
-    exists (the only other flint sink)."""
-    return (_nether_idle(gs) and _has(gs.inventory, BOW_ITEM)
-            and gs.inventory.get(ARROW_ITEM, 0) < NETHER_ARROWS)
+    """The End arrow reserve is short, so the lull keeps crafting and gathering ammunition.
+
+    Also what lets `get_flint` reopen the gravel dig after flint and steel already exists (the
+    only other flint sink). Deliberately keyed to the End target, not `NETHER_ARROWS`: sixteen was
+    the Nether crossing's token reserve, and stopping there leaves the dragon fight dry.
+    """
+    return _nether_idle(gs) and _end_arrows_wanted(gs) > 0
+
+
+def _supply_drop(gs: GameState) -> tuple[str, float | None, tuple[float, float, float] | None] | None:
+    """The nearest loaded arrow or string drop inside the sweep radius, or None.
+
+    `pick_up_items` can filter by exact item and takes a centre, so a supply drop is walked to on
+    its own coordinates instead of sweeping a sixteen-block circle and hoovering junk. The list is
+    already nearest first (`perception.parse_status`), and an unknown distance is treated as in
+    reach: the server reported the entity, so it is loaded.
+
+    Only drops the run still needs count: a finished arrow reserve no longer chases arrow drops,
+    and string already at its goal is left where it lies. The sweep is a supply run, not a magnet.
+    """
+    arrows_short = _end_arrows_wanted(gs) > 0
+    string_short = int(gs.inventory.get("string", 0)) < _string_goal(gs)
+    for name, count, dist, pos in gs.dropped_items:
+        if count <= 0:
+            continue
+        if name == ARROW_ITEM and not arrows_short:
+            continue
+        if name == "string" and not string_short:
+            continue
+        if name not in (ARROW_ITEM, "string"):
+            continue
+        if dist is None or dist <= DROP_SWEEP_RADIUS:
+            return name, dist, pos
+    return None
+
+
+def _supply_drop_in_reach(gs: GameState) -> bool:
+    """Whether a dropped arrow or string is close enough to make `collect_drops` worth a tick."""
+    return _supply_drop(gs) is not None
+
+
+def _skeletons_in_reach(gs: GameState) -> int:
+    """Loaded skeletons inside the hunt reach, as the status scan counts them."""
+    return sum(count for name, kind, count, dist in gs.mobs
+               if name == "skeleton" and dist is not None and dist <= SKELETON_HUNT_RANGE)
+
+
+def _safe_skeleton_hunt(gs: GameState) -> bool:
+    """Whether a skeleton is a fight worth starting right now.
+
+    A skeleton answers from range and hits hard, so the guard needs a shield (the server refuses
+    an unshielded hostile quarry outright), a healthy body, and no more than a little company.
+    """
+    skeleton = gs.mob_nearest("skeleton")
+    if skeleton is None or skeleton > SKELETON_HUNT_RANGE:
+        return False
+    if (gs.health or 0) < SKELETON_HUNT_HEALTH or not _has_shield(gs):
+        return False
+    return len(_crowding_hostiles(gs, "skeleton", 16)) <= 2
+
+
+def _camp_skeleton_wanted(gs: GameState) -> bool:
+    """Whether a skeleton cluster is worth camping as a spawner.
+
+    The state carries no spawner block read, so the cluster itself is the evidence: three loaded
+    skeletons inside the hunt reach is not a random night spawn but a spawner doing its work. The
+    camp is only worth its long observation window while the reserve is still well short.
+    """
+    return (_end_arrows_wanted(gs) >= SKELETON_CAMP_SHORT
+            and _skeletons_in_reach(gs) >= SKELETON_CAMP_MIN_MOBS
+            and _safe_skeleton_hunt(gs))
 
 
 def _gold_ore_available(gs: GameState) -> bool:
@@ -2302,6 +2385,65 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
         elif _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
             out.append("mine_gold")
     return out
+
+
+def _end_supply_steps(gs: GameState) -> list[str]:
+    """The End fight's ranged supply, in the order the lull should work it.
+
+    Only steps that can progress right now are listed, the same shape as `_nether_prep_steps`: no
+    chicken, no gravel or no skeleton drops that step out and it can never block the run. It is
+    deliberately *not* part of `_all_nether_prep_steps`: the Nether gate departs without a bow
+    (commit 4fe43cd removed it after run34 blocked on unreachable spiders), so this reserve must
+    never hold the crossing shut. The lull offers it beside the prep; `stronghold_candidates`
+    offers the cheap crafts ahead of the one-way trek.
+
+    Scoped to the Overworld because every source lives there: the table, the chickens, the gravel
+    and the overworld skeletons. `_nether_idle` is the same daytime work window as the prep.
+    """
+    if not _nether_idle(gs) or not _overworld(gs):
+        return []
+    inv = gs.inventory
+    table = _has(inv, "crafting_table")
+    sticks = _can_sticks(inv, _logs(inv), _planks(inv))
+    arrows_short = _end_arrows_wanted(gs) > 0
+    bows_short = _end_bows_wanted(gs) > 0
+    out: list[str] = []
+    # The spare bow first: string and sticks are in hand, and a broken bow is the one loss the End
+    # cannot replace.
+    if bows_short and table and inv.get("string", 0) >= BOW_STRING and sticks:
+        out.append("craft_bow")
+    # Then spend what is carried on arrows: a deterministic craft, one tick per recipe.
+    if (arrows_short and _bows_held(gs) > 0 and table and sticks
+            and _has(inv, FLINT_ITEM) and _has(inv, FEATHER_ITEM)):
+        out.append("craft_arrows")
+    # Then restock the two farmed materials, each only while its source is actually loaded.
+    if arrows_short and not _has(inv, FEATHER_ITEM) and gs.mob_nearest("chicken") is not None:
+        out.append("hunt_feather")
+    if arrows_short and not _has(inv, FLINT_ITEM) and gs.resource_distance("gravel") is not None:
+        out.append("get_flint")
+    # Skeleton arrows are the renewable half of the reserve: they drop arrows *and* bones, and a
+    # spawner makes the supply repeatable. The normal hunt comes before the camp.
+    if arrows_short and _safe_skeleton_hunt(gs):
+        out.append("hunt_skeleton")
+    if _camp_skeleton_wanted(gs):
+        out.append("camp_skeleton_spawner")
+    # No bow and not enough string for one: the spider hunt is the only way into the chain.
+    if bows_short and inv.get("string", 0) < BOW_STRING and _safe_string_hunt(gs):
+        out.append("hunt_string")
+    return out
+
+
+def _stronghold_supply_steps(gs: GameState) -> list[str]:
+    """The cheap End-supply crafts to finish before the one-way trek, or [].
+
+    `_stronghold_phase` suppresses the lull's whole offer list, and the march never doubles back
+    to the base. The crafts that spend materials already carried are therefore finished here,
+    ahead of `locate`/`travel`: a tick or two, and the body never leaves the line. The farm steps
+    (chickens, gravel, skeletons) stay out on purpose - the trek cannot wait on a mob that may
+    never load.
+    """
+    return [step for step in _end_supply_steps(gs)
+            if step in ("craft_bow", "craft_arrows")]
 
 
 def _nether_bank_carried(gs: GameState) -> bool:
@@ -2657,7 +2799,10 @@ def _pack_clutter(gs: GameState, inv: dict[str, int]) -> list[str]:
     if bed_laid:
         kept = _bed_wool_owed(gs, inv)
         out += [n for n in inv if n.endswith("_wool") and inv.get(n, 0) > 0 and n != kept]
-    if _has(inv, BOW_ITEM) and inv.get(ARROW_ITEM, 0) >= NETHER_ARROWS:
+    # Feathers, string and flint are clutter only once the End reserve they feed is finished: a
+    # full arrow stack *and* the spare bow. At `NETHER_ARROWS` (16) the shed threw away the
+    # materials the other 112 arrows were made of.
+    if _bows_held(gs) >= END_BOWS and inv.get(ARROW_ITEM, 0) >= END_ARROWS:
         out += [n for n in ("feather", "string", "flint") if inv.get(n, 0) > 0]
     if _has(inv, "flint_and_steel") and inv.get("flint", 0) >= FLINT_GRAVEL:
         out += [n for n in inv if n == "gravel" and inv.get(n, 0) > 0]

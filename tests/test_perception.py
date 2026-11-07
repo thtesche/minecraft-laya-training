@@ -1347,6 +1347,44 @@ class HostileParseTest(unittest.TestCase):
         self.assertIn("creeper x1", gs.narrative())
 
 
+class DroppedItemsParseTest(unittest.TestCase):
+    """`view_status.nearby.droppedItems` is unbounded by distance and is what lets the loop walk
+    back for arrows and string after the reflex's own kill window has closed. The state keeps
+    every loaded drop; the narrative names only the two supply items, because the raw list also
+    holds every piece of junk a creeper scattered."""
+
+    def test_loaded_drops_are_parsed_with_position_and_distance(self) -> None:
+        st = _status({"nearby": {"droppedItems": [
+            {"name": "arrow", "count": 4, "distance": 12.0,
+             "position": {"x": 10, "y": 64.0, "z": 5}},
+            {"name": "string", "count": 2, "distance": 18.0,
+             "position": {"x": -3, "y": 63.5, "z": 9}},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(gs.dropped_items, [
+            ("arrow", 4, 12.0, (10.0, 64.0, 5.0)),
+            ("string", 2, 18.0, (-3.0, 63.5, 9.0)),
+        ])
+        narrative = gs.narrative()
+        self.assertIn("4x arrow at 12 blocks", narrative)
+        self.assertIn("2x string at 18 blocks", narrative)
+
+    def test_junk_drops_stay_out_of_the_narrative(self) -> None:
+        st = _status({"nearby": {"droppedItems": [
+            {"name": "dirt", "count": 3, "distance": 2.0,
+             "position": {"x": 0, "y": 64, "z": 0}},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(len(gs.dropped_items), 1)
+        self.assertNotIn("dropped supply nearby", gs.narrative())
+
+    def test_the_state_round_trips_through_a_log(self) -> None:
+        gs = GameState()
+        gs.dropped_items = [("arrow", 4, 12.0, (10.0, 64.0, 5.0))]
+        self.assertEqual(GameState.from_state(gs.as_state()).dropped_items,
+                         gs.dropped_items)
+
+
 class PiglinBarterParseTest(unittest.TestCase):
     """`nearby.mobs` rows are grouped by name:age, so the barter partner is the nearest *adult*
     piglin with its loaded `entityId` - the exact id `barter` demands. A baby piglin id is refused

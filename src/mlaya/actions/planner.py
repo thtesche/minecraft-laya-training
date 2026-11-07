@@ -111,7 +111,7 @@ def candidates(gs: GameState) -> list[str]:
         reactions.append("recover_drops")
     if _pickaxe_due_for_spare(gs) and _replacement_pickaxe(gs, inv):
         reactions.append("replace_tool")
-    if gs.drops > 0:
+    if gs.drops > 0 or _supply_drop_in_reach(gs):
         reactions.append("collect_drops")
     if reactions:
         return (["eat_food"] if eating else []) + reactions[:1]
@@ -855,6 +855,7 @@ def candidates(gs: GameState) -> list[str]:
     # portal (run176). The crossing is already behind the run when the phase opens.
     if _overworld(gs) and not _stronghold_phase(gs):
         out.extend(_nether_prep_steps(gs))
+        out.extend(_end_supply_steps(gs))
 
     # Home-base ground work. Once the gate is lit, a daytime maintenance step digs away the stray
     # terrain and reflex-placed defence scaffold that pile up above ground level around the base, so
@@ -1074,22 +1075,27 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                        "temporary_workstation": True},
                       f"craft an iron {iron_slot} from {cost} ingots")
     if label == "craft_bow":
-        if (_has(inv, BOW_ITEM) or not _has(inv, "crafting_table")
+        # A carried bow no longer closes the craft: the End wants one in hand plus a spare, so a
+        # second bow is made while the reserve is short of `END_BOWS`. `_bows_held` counts the
+        # equipped bow too - a bot with the bow in hand otherwise looked bow-less.
+        if (_bows_held(gs) >= END_BOWS or not _has(inv, "crafting_table")
                 or inv.get("string", 0) < BOW_STRING
                 or not _can_sticks(inv, _logs(inv), _planks(inv))):
             return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": BOW_ITEM}], "temporary_workstation": True},
-                      "craft a bow from string and sticks for the ranged answer to ghasts")
+                      "craft a bow from string and sticks - one in hand and a spare for the End")
     if label == "craft_arrows":
         if (not _nether_idle(gs) or not _has(inv, "crafting_table")
+                or _bows_held(gs) < 1
                 or not _has(inv, FLINT_ITEM) or not _has(inv, FEATHER_ITEM)
                 or not _can_sticks(inv, _logs(inv), _planks(inv))
-                or inv.get(ARROW_ITEM, 0) >= NETHER_ARROWS):
+                or _end_arrows_wanted(gs) <= 0):
             return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": ARROW_ITEM}], "temporary_workstation": True},
-                      "craft arrows from flint, sticks and feathers for the carried bow")
+                      "craft arrows from flint, sticks and feathers for the End reserve "
+                      f"({_end_arrows_wanted(gs)} still short)")
     if label == "equip_shield":
         if not _has(inv, SHIELD_ITEM) or _offhand(gs, SHIELD_ITEM):
             return None
@@ -1421,10 +1427,31 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "hunt_feather":
         if not _arrows_pending(gs) or _has(inv, FEATHER_ITEM) or gs.mob_nearest("chicken") is None:
             return None
+        want = min(8, max(1, _end_arrows_wanted(gs)))
         return Action(label, "collect_mob_drop",
-                      {"mob_name": "chicken", "drop_name": FEATHER_ITEM, "count": 4,
+                      {"mob_name": "chicken", "drop_name": FEATHER_ITEM, "count": want,
                        "allow_without_shield": True},
-                      "collect feathers from a chicken for the Nether arrows")
+                      f"collect {want} feathers from a chicken for the End arrow reserve")
+    if label == "hunt_skeleton":
+        want = _end_arrows_wanted(gs)
+        if want <= 0 or not _overworld(gs) or not _safe_skeleton_hunt(gs):
+            return None
+        # One skeleton drops 0-2 arrows, so ask for a batch that matches what is loaded: the
+        # server keeps hunting skeletons of that species until the count is met.
+        count = min(want, max(2, 2 * _skeletons_in_reach(gs)))
+        return Action(label, "collect_mob_drop",
+                      {"mob_name": "skeleton", "drop_name": ARROW_ITEM, "count": count,
+                       "allow_without_shield": False},
+                      f"kill a skeleton for its arrows ({want} still short of the End reserve)")
+    if label == "camp_skeleton_spawner":
+        if not _overworld(gs) or not _camp_skeleton_wanted(gs):
+            return None
+        count = min(_end_arrows_wanted(gs), SKELETON_CAMP_BATCH)
+        return Action(label, "collect_mob_drop",
+                      {"mob_name": "skeleton", "drop_name": ARROW_ITEM, "count": count,
+                       "observe_for_ms": SKELETON_CAMP_OBSERVE_MS,
+                       "camp_spawner": True, "allow_without_shield": False},
+                      "camp the skeleton spawner for a batch of arrows")
     if label == "mine_gold":
         if (not _can_mine(gs, GOLD_ORE) or not _gold_ore_available(gs) or _has(inv, RAW_GOLD)
                 or inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS):
@@ -1487,12 +1514,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         x, y, z = cell
         # `allow_low_supplies` on purpose. The server pauses a crossing below 16 food *and* 32
-        # arrows (`portal-policy.ts`), and this run banks `NETHER_ARROWS` = 16 - half of what the
-        # gate wants - so without the override the crossing is refused forever and the expedition
-        # cannot start at all (live, run41: `[PORTAL_LOW_SUPPLIES] 38/16 food ... 0/32 arrows`).
-        # The food half of that guard is not given away: `_expedition_prepared` already holds the
-        # run to the deep reserve, and the arrow half is the defensive reserve for a trip whose
-        # goal - blaze rods - is fought with a sword and a shield.
+        # arrows (`portal-policy.ts`), and the Nether trip needs neither full stack: the food half
+        # is covered by `_expedition_prepared`, and blaze rods are fought with sword and shield.
+        # Without the override the crossing is refused forever (live, run41:
+        # `[PORTAL_LOW_SUPPLIES] 38/16 food ... 0/32 arrows`) and the expedition cannot start.
+        # The End arrow reserve (`END_ARROWS`) is a separate, later supply goal; it is deliberately
+        # not a gate here, since a run that stalls on arrows never reaches the stronghold.
         return Action(label, "enter_nether_portal",
                       {"x": x, "y": y, "z": z, "allow_low_supplies": True},
                       "cross into the Nether through the lit gate at the base")
@@ -1825,8 +1852,21 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": item}], "temporary_workstation": True},
                       f"carry a fresh {item} before the active one breaks mid-dig")
     if label == "collect_drops":
-        if gs.drops <= 0:
+        supply = _supply_drop(gs)
+        if gs.drops <= 0 and supply is None:
             return None
+        if supply is not None:
+            # A named arrow/string drop: walk to its own cell and pick only that item, so the
+            # sweep does not spend the tick hoovering the junk beside it.
+            name, dist, pos = supply
+            away = f" {dist:.0f} blocks away" if dist is not None else ""
+            if pos is not None:
+                sx, sy, sz = pos
+                return Action(label, "pick_up_items",
+                              {"item": name, "radius": 8, "x": sx, "y": sy, "z": sz},
+                              f"walk to the {name} a mob dropped{away} for the End reserve")
+            return Action(label, "pick_up_items", {"item": name, "radius": 32},
+                          f"pursue the {name} a mob dropped{away} for the End reserve")
         return Action(label, "pick_up_items", {"radius": 16},
                       "collect items a mob dropped when the reflex killed it")
     if label == "recover_drops":

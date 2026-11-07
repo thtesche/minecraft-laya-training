@@ -1502,6 +1502,42 @@ respawn-bed phase at the frame with a full history behind it. It deadlocked ther
   single property test over `candidates(gs)` for representative stronghold states would catch the
   whole class rather than each instance, and is the remaining guard worth adding.
 
+## End supply (2026-11-07): arrows, string and skeletons
+
+The Nether trip only needed a token arrow stack; the dragon fight does not. Until now the run
+stopped at `NETHER_ARROWS = 16` — the crossing's defensive reserve — and treated feathers, string
+and flint as clutter the moment a bow and sixteen arrows existed. Three layers now build a real
+reserve, none of them a gate on the Nether crossing.
+
+- **The target is `END_ARROWS = 128` plus `END_BOWS = 2`** (one in hand, one spare). `_end_arrows_wanted` /
+  `_end_bows_wanted` / `_bows_held` drive every arrow decision: `craft_arrows`, `craft_bow`,
+  `hunt_feather`, `get_flint`, `_pack_clutter` and the lull offer all read the End target.
+  `_bows_held` counts the equipped bow (`tools.bow`), because a bot holding its bow otherwise read
+  as bow-less. The server's 32-arrow portal floor is not the goal and is not changed here.
+- **Dropped supply is walked to, not swept.** `GameState.dropped_items` parses
+  `nearby.droppedItems`; `_supply_drop` returns the nearest arrow or string within
+  `DROP_SWEEP_RADIUS = 32`, and `collect_drops` resolves to `pick_up_items` at that drop's own
+  `x/y/z` with `item` and a small radius. Only drops the reserve still needs count — a finished
+  arrow stack no longer chases arrows, and string at its goal is left where it lies. A fresh kill
+  with no named supply drop keeps the old `radius: 16` sweep.
+- **Skeletons are the renewable half.** `hunt_skeleton` fights a loaded skeleton when the body is
+  healthy (`SKELETON_HUNT_HEALTH = 16`), a shield is carried, and no more than a couple of
+  hostiles crowd the spot; `camp_skeleton_spawner` treats three or more loaded skeletons inside
+  `SKELETON_HUNT_RANGE = 24` as a spawner and camps it for `SKELETON_CAMP_OBSERVE_MS = 20000` while
+  the reserve is at least `SKELETON_CAMP_SHORT = 32` short. `collect_mob_drop` refuses an
+  unshielded hostile quarry, so both carry `allow_without_shield: False`. `verify.progressed`
+  accepts either only on an arrow gain, so a failed hunt does not read as progress.
+- **Where the work happens.** `_end_supply_steps` runs in the lull beside `_nether_prep_steps`,
+  Overworld-gated (`_overworld` and `_nether_idle`) because every source lives there. It is
+  deliberately **not** part of `_all_nether_prep_steps`: commit `4fe43cd` removed the bow from the
+  gate after run34 blocked on unreachable spiders, and the End reserve must not repeat that.
+  `_stronghold_supply_steps` offers only the deterministic crafts (`craft_bow`, `craft_arrows`)
+  ahead of the one-way trek; the farm steps stay out, since a march cannot wait on a mob that may
+  never load.
+- **Training gap.** The current Laya head has no rows for `hunt_skeleton` or
+  `camp_skeleton_spawner`, so the model should treat both as out of distribution and lean on the
+  rules/System-2 fallback until a retrain includes them. The corpus also has no End-phase runs yet.
+
 ## Next milestones
 
 - **Open after run187:** (1) the endgame's later links are live but unfinished — the powder is

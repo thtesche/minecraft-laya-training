@@ -211,6 +211,10 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         return bool(d.get("armor_delta"))
     if label == "hunt_blaze":
         return d["inventory_delta"].get("blaze_rod", 0) > 0
+    if label in ("hunt_skeleton", "camp_skeleton_spawner"):
+        # The hunt's proof is the arrow it was sent for. A bone alone is a skeleton killed but no
+        # ammunition gained, and the offer would re-fire forever if that counted.
+        return d["inventory_delta"].get("arrow", 0) > 0
     if label == "craft_blaze_powder":
         return d["inventory_delta"].get("blaze_powder", 0) > 0
     if label == "stow_blaze_powder":

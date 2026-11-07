@@ -767,13 +767,22 @@ class NetherPrepTest(unittest.TestCase):
     def test_craft_bow_needs_three_string(self) -> None:
         self.assertIsNone(resolve("craft_bow", self._lull(string=2)))
 
-    def test_bow_string_goal_drops_to_three_once_the_bed_exists(self) -> None:
-        # Twelve string is the bed's price; with the bed placed the bow only wants three.
-        g = self._lull()
+    def test_bow_string_goal_drops_to_three_for_the_spare_bow(self) -> None:
+        # Twelve string is the bed's price; with the bed placed and one bow owned, the End reserve
+        # owes one spare bow, so the hunt still wants three.
+        g = self._lull(bow=1)
         g.mobs = [("spider", "hostile", 1, 8.0)]
         g.health = 20.0
         a = resolve("hunt_string", g)
         self.assertEqual(a.args["count"], 3)
+
+    def test_bow_string_goal_is_six_with_no_bow_at_all(self) -> None:
+        # Both bows are still owed, so the spider hunt pays for two recipes (END_BOWS = 2).
+        g = self._lull()
+        g.mobs = [("spider", "hostile", 1, 8.0)]
+        g.health = 20.0
+        a = resolve("hunt_string", g)
+        self.assertEqual(a.args["count"], 6)
 
     # --- arrows: flint, stick and feather ---
     def test_craft_arrows_needs_flint_and_feather(self) -> None:
@@ -844,9 +853,13 @@ class NetherPrepTest(unittest.TestCase):
         g.resources = {**g.resources,
                        "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
         cand = candidates(g)
-        # Bow and arrows are no longer part of the prep gate.
-        self.assertNotIn("craft_arrows", cand)
         self.assertIn("mine_gold", cand)
+        # The End supply rides beside the prep in the same lull, but never inside the crossing
+        # gate: the Nether can depart without a bow, the End cannot.
+        self.assertIn("craft_arrows", cand)
+        self.assertIn("craft_bow", cand)       # one bow owned, the spare is still owed
+        self.assertNotIn("craft_arrows", _all_nether_prep_steps(g))
+        self.assertNotIn("craft_bow", _all_nether_prep_steps(g))
 
     def test_no_prep_before_the_portal(self) -> None:
         g = geared(flint_and_steel=1, cobblestone=64, string=3)
@@ -883,6 +896,109 @@ class NetherPrepTest(unittest.TestCase):
         self.assertFalse(tech_tree_complete(g))
         g.phase = "day"
         self.assertIn("mine_gold", candidates(g))
+
+
+class EndSupplyTest(unittest.TestCase):
+    """The End fight's arrow economy: the reserve is `END_ARROWS`, a spare bow rides along, and
+    the lull grows it from crafted arrows, chicken feathers, gravel flint and skeleton drops.
+    Deliberately outside `_all_nether_prep_steps`: the Nether gate departs without a bow."""
+
+    @staticmethod
+    def _lull(**inv) -> GameState:
+        base = {"flint_and_steel": 1, "white_bed": 1, "cooked_beef": 24, "furnace": 1,
+                "cobblestone": 64, "acacia_planks": 8}
+        base.update(inv)
+        g = at_home(lit_portal(geared(**base)))
+        g.food = 20.0
+        g.health = 20.0
+        return g
+
+    def test_an_older_arrow_drop_is_worth_the_walk(self) -> None:
+        g = self._lull()
+        g.dropped_items = [("arrow", 4, 12.0, (10.0, 64.0, 5.0))]
+        self.assertIn("collect_drops", candidates(g))
+        a = resolve("collect_drops", g)
+        self.assertEqual(a.tool, "pick_up_items")
+        self.assertEqual(a.args, {"item": "arrow", "radius": 8,
+                                  "x": 10.0, "y": 64.0, "z": 5.0})
+
+    def test_a_drop_beyond_the_sweep_radius_is_left_alone(self) -> None:
+        g = self._lull()
+        g.dropped_items = [("arrow", 4, 60.0, (60.0, 64.0, 5.0))]
+        self.assertNotIn("collect_drops", candidates(g))
+        self.assertIsNone(resolve("collect_drops", g))
+
+    def test_a_fresh_kill_still_sweeps_when_no_supply_drop_is_loaded(self) -> None:
+        g = self._lull()
+        g.drops = 1
+        a = resolve("collect_drops", g)
+        self.assertEqual(a.args, {"radius": 16})
+
+    def test_a_finished_arrow_reserve_leaves_arrow_drops_alone(self) -> None:
+        from mlaya.actions import END_ARROWS
+        g = self._lull(arrow=END_ARROWS)
+        g.dropped_items = [("arrow", 4, 12.0, (10.0, 64.0, 5.0))]
+        self.assertNotIn("collect_drops", candidates(g))
+        self.assertIsNone(resolve("collect_drops", g))
+
+    def test_string_at_its_goal_is_left_where_it_lies(self) -> None:
+        # The bed exists, so the string goal is the spare bow's three. Six carried is enough.
+        g = self._lull(string=6)
+        g.dropped_items = [("string", 2, 8.0, (9.0, 64.0, 4.0))]
+        self.assertIsNone(resolve("collect_drops", g))
+        g.dropped_items = [("arrow", 4, 8.0, (9.0, 64.0, 4.0))]
+        self.assertEqual(resolve("collect_drops", g).args["item"], "arrow")
+
+    def test_the_arrow_reserve_is_the_end_target(self) -> None:
+        from mlaya.actions import END_ARROWS
+        self.assertIsNone(resolve("craft_arrows",
+                                  self._lull(bow=1, flint=1, feather=1, arrow=END_ARROWS)))
+        a = resolve("craft_arrows",
+                    self._lull(bow=1, flint=1, feather=1, arrow=END_ARROWS - 1))
+        self.assertEqual(a.args["items"], [{"item_name": "arrow"}])
+
+    def test_a_carried_bow_does_not_block_the_spare(self) -> None:
+        from mlaya.actions import END_BOWS
+        a = resolve("craft_bow", self._lull(bow=1, string=3))
+        self.assertEqual(a.args["items"], [{"item_name": "bow"}])
+        self.assertIsNone(resolve("craft_bow", self._lull(bow=END_BOWS, string=3)))
+
+    def test_a_skeleton_hunt_is_a_shield_fight(self) -> None:
+        g = self._lull()
+        g.mobs = [("skeleton", "hostile", 2, 10.0)]
+        a = resolve("hunt_skeleton", g)
+        self.assertEqual(a.tool, "collect_mob_drop")
+        self.assertEqual(a.args["mob_name"], "skeleton")
+        self.assertEqual(a.args["drop_name"], "arrow")
+        self.assertFalse(a.args["allow_without_shield"])
+        g.offhand = None
+        self.assertIsNone(resolve("hunt_skeleton", g))
+
+    def test_a_skeleton_cluster_offers_the_spawner_camp(self) -> None:
+        from mlaya.actions import SKELETON_CAMP_OBSERVE_MS, _end_supply_steps
+        g = self._lull()
+        g.mobs = [("skeleton", "hostile", 4, 10.0)]
+        self.assertIn("hunt_skeleton", _end_supply_steps(g))
+        self.assertIn("camp_skeleton_spawner", _end_supply_steps(g))
+        a = resolve("camp_skeleton_spawner", g)
+        self.assertTrue(a.args["camp_spawner"])
+        self.assertEqual(a.args["observe_for_ms"], SKELETON_CAMP_OBSERVE_MS)
+        self.assertFalse(a.args["allow_without_shield"])
+
+    def test_the_supply_steps_never_join_the_crossing_gate(self) -> None:
+        g = self._lull(bow=1, flint=1, feather=1, string=3)
+        self.assertIn("craft_arrows", candidates(g))
+        self.assertNotIn("craft_arrows", _all_nether_prep_steps(g))
+        self.assertNotIn("craft_bow", _all_nether_prep_steps(g))
+
+    def test_the_stronghold_pre_trek_offer_is_crafts_only(self) -> None:
+        from mlaya.actions import _stronghold_supply_steps
+        g = self._lull(bow=1, flint=1, feather=1, string=3)
+        g.mobs = [("skeleton", "hostile", 4, 10.0)]
+        steps = _stronghold_supply_steps(g)
+        self.assertIn("craft_arrows", steps)
+        self.assertNotIn("hunt_skeleton", steps)
+        self.assertNotIn("camp_skeleton_spawner", steps)
 
 
 class OverworldGateTest(unittest.TestCase):
@@ -947,7 +1063,10 @@ class OverworldGateTest(unittest.TestCase):
         g.resources = {"gravel": [BlockHit("gravel", "gravel", 356, 70, 361, 3.0)]}
         cand = candidates(g)
         self.assertNotIn("fill_bucket", cand)
-        self.assertNotIn("get_flint", cand)
+        # `get_flint` may still be offered for the End arrow reserve, but the obsidian chain it
+        # used to be part of stays shut on the remembered gate.
+        self.assertNotIn("mine_obsidian", cand)
+        self.assertNotIn("approach_lava", cand)
         self.assertNotIn("mine_obsidian", cand)
 
 
@@ -1542,12 +1661,14 @@ class TechTreeCompleteTest(unittest.TestCase):
                                       "cobblestone": 64})
         self.assertTrue(tech_tree_complete(g))
 
-    def test_spider_does_not_trigger_string_hunt_anymore(self) -> None:
-        # Bow and arrows are optional; hunt_string is not offered even if a spider is in reach.
+    def test_spider_triggers_the_end_bow_string_hunt_but_not_the_gate(self) -> None:
+        # Bow and arrows stay out of the crossing gate, but the End reserve still owes two bows
+        # and the spider is within reach - so the hunt is offered, and the gate ignores it.
         g = self._complete(inventory={"diamond_sword": 1, "string": 2, "stick": 3,
                                       "cobblestone": 64}, health=20.0)
         g.mobs = [("spider", "hostile", 1, 18.0)]
-        self.assertNotIn("hunt_string", candidates(g))
+        self.assertIn("hunt_string", candidates(g))
+        self.assertTrue(tech_tree_complete(g))
 
     def test_bow_and_arrows_are_no_longer_required(self) -> None:
         # Bow and arrows are optional; tech_tree_complete is true even with a partial arrow reserve.
@@ -3768,7 +3889,7 @@ class HomeBaseTest(unittest.TestCase):
         # opens only when a stack is emptied, so the shed asks whether the stack's use is already
         # covered - the bed is laid, the bow is built, the arrow reserve is full.
         g = self._home(self._geared(white_wool=22, black_wool=2, feather=13, string=10, flint=1,
-                                    bow=1, arrow=16, flint_and_steel=1, amethyst_block=9, brick=4,
+                                    bow=2, arrow=128, flint_and_steel=1, amethyst_block=9, brick=4,
                                     polished_tuff=1, gold_nugget=3, white_bed=1, gravel=32))
         g.slots_used = 36
         self.assertIn("drop_junk", candidates(g))
@@ -7395,6 +7516,128 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         self.assertTrue(_bed_at_stronghold(g))
         self.assertFalse(_bed_needs_moving(g))
         self.assertFalse(_unsafe_beds(g))
+
+
+class StrongholdOffersResolveTest(unittest.TestCase):
+    """Every label the stronghold phase puts on the offer has to resolve.
+
+    The run206–208 bed bugs were one shape, three times over: a candidate whose offer gate read a
+    weaker condition than its resolve gate, so the label sat on the list while `resolve` answered
+    None - and the tick escalated (`hunt_wool` against string, `craft_bed_stronghold` without a
+    table, `sleep_stronghold` by day). Fixing them one by one leaves the shape free to come back, so
+    this is the class guard: build a representative stronghold state and assert `resolve` accepts
+    every label `candidates` offers. A new offer whose precondition drifts from its resolve fails
+    here instead of in a live run.
+    """
+
+    FRAME = (100, 60, 200)
+    BASE_FAR = (-80, 73, 28)
+    OVERWORLD = "minecraft:overworld"
+
+    def _state(self, **inv) -> GameState:
+        g = geared(**inv)
+        g.dimension = self.OVERWORLD
+        g.stronghold_frame = self.FRAME
+        g.portal_lit = True             # the Nether gate burns: the stronghold phase is open
+        g.powder_stowed = True          # `nether_expedition_complete`
+        g.health = 20.0
+        g.food = 20.0
+        g.mobs = []
+        g.pos = (101.0, 60.0, 200.0)
+        return g
+
+    def _assert_every_offer_resolves(self, g: GameState) -> None:
+        labels = candidates(g)
+        self.assertIn(labels, [labels])  # keeps the list in the failure message
+        unresolved = []
+        for label in labels:
+            if resolve(label, g) is None:
+                unresolved.append(label)
+        self.assertEqual(unresolved, [], f"offered but resolve refused: {unresolved} in {labels}")
+        # The phase's own list is a subset of the offer; each of its labels must resolve too.
+        for label in stronghold_candidates(g):
+            self.assertIsNotNone(resolve(label, g), f"{label} offered by the phase but refused")
+
+    # --- pre-fill: the trek out and the fill ---
+
+    def test_at_the_frame_with_eyes_resolves(self) -> None:
+        g = self._state(ender_eye=16)
+        g.stronghold_estimated = True
+        self.assertIn("activate_end_portal", candidates(g))
+        self._assert_every_offer_resolves(g)
+
+    def test_the_trek_out_with_a_bed_resolves(self) -> None:
+        g = self._state(ender_eye=16, white_bed=1)
+        g.stronghold_estimated = True
+        g.pos = (500.0, 70.0, 900.0)
+        self.assertIn("travel_to_stronghold", candidates(g))
+        self._assert_every_offer_resolves(g)
+
+    def test_the_gather_for_a_bed_resolves(self) -> None:
+        g = self._state(ender_eye=16)
+        g.stronghold_estimated = True
+        g.pos = (500.0, 70.0, 900.0)
+        g.mobs = [("sheep", "passive", 6, 8.0)]
+        self.assertIn("hunt_wool", candidates(g))
+        self._assert_every_offer_resolves(g)
+
+    def test_the_locate_tick_resolves(self) -> None:
+        g = self._state(ender_eye=16, white_bed=1)
+        g.pos = (500.0, 70.0, 900.0)
+        self._assert_every_offer_resolves(g)
+
+    # --- the respawn bed beside the lit frame ---
+
+    def test_carrying_the_bed_resolves(self) -> None:
+        g = self._state(white_bed=1)
+        g.end_portal_active = True
+        self._assert_every_offer_resolves(g)
+
+    def test_crafting_the_bed_resolves(self) -> None:
+        g = self._state(red_wool=3, oak_log=1)
+        g.end_portal_active = True
+        self.assertIn("craft_bed_stronghold", candidates(g))
+        self._assert_every_offer_resolves(g)
+
+    def test_string_alone_pays_for_the_bed(self) -> None:
+        # run208 it162: the offer read twelve string as bed-ready, the resolve read wool only, and
+        # the two sides deadlocked. The string must still be offered *and* still resolve.
+        g = self._state(string=12, oak_log=1)
+        g.end_portal_active = True
+        self.assertIn("craft_bed_stronghold", candidates(g))
+        self._assert_every_offer_resolves(g)
+
+    def test_a_tableless_pack_resolves_through_the_table_chain(self) -> None:
+        g = self._state(red_wool=3, oak_log=1)
+        g.end_portal_active = True
+        del g.inventory["crafting_table"]
+        self.assertNotIn("craft_bed_stronghold", candidates(g))
+        self._assert_every_offer_resolves(g)
+
+    def test_the_laid_bed_by_day_resolves(self) -> None:
+        g = self._state()
+        g.end_portal_active = True
+        g.phase = "day"
+        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed",
+                                             self.FRAME[0], self.FRAME[1], self.FRAME[2] + 1, 1.0)]
+        self._assert_every_offer_resolves(g)
+
+    def test_the_laid_bed_at_night_resolves(self) -> None:
+        g = self._state()
+        g.end_portal_active = True
+        g.phase = "night"
+        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed",
+                                             self.FRAME[0], self.FRAME[1], self.FRAME[2] + 1, 1.0)]
+        self.assertIn("sleep_stronghold", candidates(g))
+        self._assert_every_offer_resolves(g)
+
+    def test_the_return_trek_resolves(self) -> None:
+        g = self._state(white_bed=1)
+        g.end_portal_active = True
+        g.base = self.BASE_FAR
+        g.pos = (self.BASE_FAR[0] + 0.5, self.BASE_FAR[1] + 1.0, self.BASE_FAR[2] + 0.5)
+        self.assertIn("travel_to_stronghold", candidates(g))
+        self._assert_every_offer_resolves(g)
 
 
 class RodDemandSizedToTheFrameTest(unittest.TestCase):

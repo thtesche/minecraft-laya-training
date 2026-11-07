@@ -267,6 +267,15 @@ class GoldAndNetherPrepProgressTest(unittest.TestCase):
                                     diff(gs(inventory={"feather": 2}),
                                          gs(inventory={"feather": 2}))))
 
+    def test_skeleton_hunts_are_the_arrow_gain(self) -> None:
+        # A bone alone is a kill but no ammunition; the reserve step re-fires until an arrow lands.
+        self.assertTrue(progressed("hunt_skeleton",
+                                   diff(gs(inventory={}), gs(inventory={"arrow": 2}))))
+        self.assertTrue(progressed("camp_skeleton_spawner",
+                                   diff(gs(inventory={}), gs(inventory={"arrow": 1}))))
+        self.assertFalse(progressed("hunt_skeleton",
+                                    diff(gs(inventory={}), gs(inventory={"bone": 1}))))
+
 
 class PearlHuntProgressTest(unittest.TestCase):
     """The stronghold pearl run had no rule at all, so a working hunt read as no progress: the
