@@ -146,7 +146,10 @@ LAVA_WALK_COOLDOWN = 24
 # and run45 each spent an action walking 459 blocks to end 17 from the start -- 27 walked for every
 # block gained -- and the loop's own positions looked fine, because the bot really was moving. Two
 # such actions in a row and the label is withheld, so the next tick is offered something that goes
-# somewhere. The Nether march passes this on merit (609 walked, 396 net).
+# somewhere. The Nether march passes this on merit (609 walked, 396 net), and so does any tick that
+# put something in the pack: a hunt that landed pearls is not a shamble however it walked (live,
+# run208 it17 - 134.2 walked, 15.8 net, two ender pearls in the same tick). The gain is the same
+# reset `_track_orbit` uses, so the two walking guards read a productive tick the same way.
 WANDER_WALK = 80.0
 WANDER_RATIO = 6.0
 WANDER_REPEATS = 2
@@ -282,6 +285,18 @@ def _walk_progress(res) -> tuple[float | None, float | None]:
     if m is None or n is None:
         return None, None
     return float(m.group(1)), float(n.group(1))
+
+
+def _yielded(delta: dict | None) -> bool:
+    """Whether a tick brought anything into the pack: an item, a worn piece, an off-hand hold.
+
+    What a hunt or a dig lands is its own proof, independent of where the body ended up. A guard
+    that only reads the walk calls a hunt that collected three pearls a shamble, which is the
+    mistake `_track_orbit` already avoids and `_track_wander` did not.
+    """
+    delta = delta or {}
+    return (any(v > 0 for v in (delta.get("inventory_delta") or {}).values())
+            or bool(delta.get("armor_delta")) or bool(delta.get("offhand_delta")))
 
 
 def _fail_code(text: str | None) -> str | None:
@@ -2257,7 +2272,7 @@ class Agent:
             self.log.append({"stage": "policy", "reason": "stuck_offer_dropped",
                              "label": label, "code": code, "ticks": STUCK_COOLDOWN})
 
-    def _track_wander(self, label: str, res, gs=None) -> None:
+    def _track_wander(self, label: str, res, gs=None, delta: dict | None = None) -> None:
         """Withhold a label that keeps walking without arriving, per `WANDER_*`.
 
         The server reports each action's own progress: `distanceTravelledBlocks` is how far the bot
@@ -2271,6 +2286,12 @@ class Agent:
         The window is the same countdown as `_track_stuck`, so the label returns on its own and a
         walk that merely crossed rough ground is not lost. Progress of any kind -- a different
         ratio, a short walk, no progress reported at all -- starts that label's run over.
+
+        A tick that put something in the pack is progress too, however it moved: the yield is the
+        step's job and the body's displacement is not. Live, run208 it17 - `hunt_enderman` walked
+        134.2 blocks and ended 15.8 from its start, and the same tick landed two ender pearls; the
+        guard read the hunt as a shamble and took the pearl hunt off the offer for fifteen ticks.
+        `_track_orbit` has read a gain as progress since run145; this makes the two guards agree.
 
         The numbers are read from the structured payload where it carries them and from the result
         text otherwise, because the server prints both: `formatProgress` writes `**Travel:**` and
@@ -2292,6 +2313,11 @@ class Agent:
         # eight rods in the pack. Every attempt moves toward the portal, so the exit is retried
         # rather than pruned; `_track_stuck` still owns a walk that stops moving at all.
         if label == "leave_nether" and gs is not None and _in_nether(gs):
+            self._wander_reps.pop(label, None)
+            return
+        if _yielded(delta):
+            # The hunt or the dig delivered: pearls, rods, mushrooms, the mined block. Where the
+            # body ended up says nothing about a step whose whole job is a yield.
             self._wander_reps.pop(label, None)
             return
         if travelled < WANDER_WALK or net >= travelled / WANDER_RATIO:
@@ -2382,9 +2408,7 @@ class Agent:
         # stances and 39 of them carried an inventory delta that was a loss - junk dropped, a
         # meal eaten. A tick that walks five blocks and gives three cobblestone away has not got
         # anywhere, and the window reset on it 39 times so the guard never filled.
-        if (any(v > 0 for v in (delta.get("inventory_delta") or {}).values())
-                or delta.get("armor_delta") or delta.get("offhand_delta")
-                or delta.get("dimension_changed")):
+        if _yielded(delta) or (delta or {}).get("dimension_changed"):
             self._orbit_path.pop(label, None)
             return
         trail = self._orbit_path.setdefault(label, [])
@@ -3416,7 +3440,7 @@ class Agent:
         self._track_stuck(action.label, _ok, _text, progressed)
         # After the stuck guard: it owns the countdown and the offer window, and a wandering
         # action is not a refusal, so the two runs of counts do not disturb each other.
-        self._track_wander(action.label, res, after)
+        self._track_wander(action.label, res, after, delta)
         self._track_idle(action.label, delta)
         self._track_orbit(action.label, delta, after.pos)
         self._refresh_after(after)

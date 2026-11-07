@@ -761,7 +761,7 @@ progress. The loop now has one guard per kind of stall; each withholds the label
 | Stall | Guard | Trigger |
 |---|---|---|
 | the same refusal again and again | `_track_stuck` | `STUCK_REPEATS = 4` identical failure codes |
-| walking far, arriving nowhere | `_track_wander` | ≥ `WANDER_WALK = 80` m walked at a ratio worse than `WANDER_RATIO = 6`, `WANDER_REPEATS = 2`× |
+| walking far, arriving nowhere | `_track_wander` | ≥ `WANDER_WALK = 80` m walked at a ratio worse than `WANDER_RATIO = 6`, `WANDER_REPEATS = 2`×; a tick that put items, armour or an off-hand hold in the pack resets the run, as in `_track_orbit` |
 | succeeding at nothing | `_track_idle` | `IDLE_REPEATS = 3` ticks with no change at all (`wait`/`sleep` exempt) |
 | a walk off dropped junk that cannot be made | `_note_step_away` | `STEP_AWAY_GIVE_UP = 3` refusals in a row |
 | a body the server's reflex will not hand back | `MCPExecutor.call` / `_note_held` | `[mcp] action_wait_ms = 300000` per call, then `[BODY_HELD]`; `BODY_HELD_STOP = 2` of them in a row end the run with `"stop": "body_held"` |

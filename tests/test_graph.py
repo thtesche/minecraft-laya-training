@@ -1749,6 +1749,38 @@ class WanderGuardTest(unittest.TestCase):
         agent._track_wander("mine_iron", self._Res(20.0, 18.0))
         self.assertEqual(agent._wander_reps, {})
 
+    def test_a_tick_that_collected_is_not_a_wander(self) -> None:
+        # Live, run208 it17: `hunt_enderman` walked 134.2 blocks and ended 15.8 from its start -
+        # 8.5 walked for every block of net, past the ratio floor - and the same tick landed two
+        # ender pearls. A hunt's job is the pearl, not the distance, so the streak must not fill:
+        # two such ticks never take the pearl hunt off the offer.
+        agent = self._agent()
+        haul = {"inventory_delta": {"ender_pearl": 2, "netherrack": -23}}
+        for _ in range(WANDER_REPEATS + 1):
+            agent._track_wander("hunt_enderman", self._Res(134.2, 15.8), None, haul)
+        self.assertEqual(agent._wander_reps, {})
+        self.assertEqual(agent._stuck_off, {})
+        self.assertEqual(agent.log, [])
+
+    def test_a_worn_or_held_piece_counts_as_a_yield_too(self) -> None:
+        agent = self._agent()
+        agent._track_wander("hunt_blaze", self._Res(458.9, 16.6), None,
+                            {"armor_delta": ["golden_helmet"]})
+        self.assertEqual(agent._wander_reps, {})
+        agent._track_wander("hunt_blaze", self._Res(458.9, 16.6), None,
+                            {"offhand_delta": ["shield"]})
+        self.assertEqual(agent._wander_reps, {})
+
+    def test_a_tick_that_gives_items_away_is_still_a_wander(self) -> None:
+        # Only a gain is a yield - the reading the orbit guard already applies (run145: 39 of 79
+        # `approach_lava` ticks carried a delta that was a loss, junk dropped or a meal eaten). A
+        # walk that hands three cobblestone away has not got anywhere, and the ratio still owns it.
+        agent = self._agent()
+        loss = {"inventory_delta": {"cobblestone": -3}}
+        for _ in range(WANDER_REPEATS):
+            agent._track_wander("explore", self._Res(458.9, 16.6), None, loss)
+        self.assertEqual(agent._stuck_off.get("explore"), STUCK_COOLDOWN)
+
     def test_no_progress_reported_is_not_evidence(self) -> None:
         # Not every action reports progress, and a read or a refusal carries none. That is not a
         # reason to withhold anything.
