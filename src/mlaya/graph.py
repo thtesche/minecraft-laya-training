@@ -3087,28 +3087,40 @@ class Agent:
                 self._chest_above_name = name
 
     def _note_nether_hop(self, action, ok: bool, text: str | None) -> None:
-        """Count a hop toward the Nether exit that the terrain refused at the same cell.
+        """Count a hop toward the Nether exit that the ground refused.
 
         A hop the ground refuses leaves the body exactly where it was, so the next tick aims at the
         same air and gets the same answer (live, run149: sixteen `[NAVIGATION_TARGET_UNSUPPORTED]`
         on one 120 m hop, "no ground was found within 64 blocks below it"). Counting the repeats is
-        what lets `_exit_hop` halve the aim; a hop that walked, or one refused for a different
-        reason (a mob holding the body, a pathfinder stop), is not the terrain saying no to the
-        cell, so it clears the count.
+        what lets `_exit_hop` halve the aim; a hop that walked, or one a reflex held the body
+        through (`[HOSTILE_CONTACT]`, `[NAVIGATION_STOPPED] repeated_movement_failure`), says
+        nothing about the hop and clears the count.
+
+        The pathfinder exhausting its budget is a refusal of the hop as well: `[NAVIGATION_STOPPED]
+        ... no path or usable partial route found ... visited 97705 nodes` is the 2000 ms search
+        giving up on a 120 m walk through sparse Nether ground (live, run210 it339-342: three of
+        them in a row, the body drifting 23 blocks between attempts). That one is keyed on the hop
+        rather than the cell, because the drift moves the aim every tick while the hop stays the
+        same length - counting cells would reset the streak each tick and the hop would never
+        shrink.
         """
         if action.label != "leave_nether":
             return
         if ok:
             self._nether_hop = (None, 0)
             return
-        if "NAVIGATION_TARGET_UNSUPPORTED" not in (text or ""):
+        text = text or ""
+        footing = "NAVIGATION_TARGET_UNSUPPORTED" in text
+        unreachable = ("NAVIGATION_STOPPED" in text
+                       and ("no path" in text or "no usable route" in text))
+        if not (footing or unreachable):
             return
         args = getattr(action, "args", None) or {}
-        cell = (args.get("x"), args.get("z"))
-        if cell == self._nether_hop[0]:
-            self._nether_hop = (cell, self._nether_hop[1] + 1)
+        key = (args.get("x"), args.get("z")) if footing else "hop"
+        if key == self._nether_hop[0]:
+            self._nether_hop = (key, self._nether_hop[1] + 1)
         else:
-            self._nether_hop = (cell, 1)
+            self._nether_hop = (key, 1)
 
     def _note_furnace(self, action, ok: bool, text: str | None, res=None) -> None:
         """Give up a base furnace the loop can no longer use, so cooking falls back to a

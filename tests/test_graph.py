@@ -5609,6 +5609,31 @@ class NetherCrossingTest(unittest.TestCase):
         agent._note_nether_hop(hop, False, "[HOSTILE_CONTACT] evade response")
         self.assertEqual(agent._nether_hop, (None, 0))
 
+    def test_a_hop_the_pathfinder_could_not_route_is_counted_too(self) -> None:
+        # Live, run210 it339-342: three `[NAVIGATION_STOPPED] ... no path or usable partial route
+        # found ... visited 97705 nodes` in a row on the 120 m exit hop, the body drifting 23 blocks
+        # between attempts. A cell-keyed streak resets on every drift, so the hop stays 120 m and
+        # the search times out on the same length forever; the timeout is a fact about the hop, not
+        # the cell, so it counts on the hop.
+        agent = self._agent()
+        stop = ("[NAVIGATION_STOPPED] Pathfinder stopped: search timed out after 2000 ms compute "
+                "(limit 2000 ms); no path or usable partial route found; visited 97705 nodes")
+        agent._note_nether_hop(Action("leave_nether", "navigate", {"x": 141, "y": 68, "z": 318}, ""),
+                              False, stop)
+        self.assertEqual(agent._nether_hop, ("hop", 1))
+        agent._note_nether_hop(Action("leave_nether", "navigate", {"x": 138, "y": 68, "z": 296}, ""),
+                              False, stop)
+        self.assertEqual(agent._nether_hop, ("hop", 2))
+        self.assertEqual(agent._inject(GameState()).nether_hop_repeats, 2)
+        # A stop the reflex held the body through is not the hop being too long.
+        agent._note_nether_hop(Action("leave_nether", "navigate", {"x": 138, "y": 68, "z": 296}, ""),
+                              False, "[NAVIGATION_STOPPED] repeated_movement_failure")
+        self.assertEqual(agent._nether_hop, ("hop", 2))
+        # A hop that walked clears it.
+        agent._note_nether_hop(Action("leave_nether", "navigate", {"x": 138, "y": 68, "z": 296}, ""),
+                              True, "")
+        self.assertEqual(agent._nether_hop, (None, 0))
+
     def test_arriving_in_the_nether_is_remembered_with_its_cell(self) -> None:
         # `leave_nether` needs the arrival cell whenever no exit portal block is loaded, and the
         # crossing itself is only observed afterwards as a dimension change - overworld first,

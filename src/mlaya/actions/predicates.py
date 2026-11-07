@@ -2083,11 +2083,14 @@ def _igniter_craftable(gs: GameState, inv: dict[str, int]) -> bool:
 def _exit_hop(gs: GameState) -> float:
     """How far the next hop toward the Nether exit aims.
 
-    A hop keeps its full length until the terrain refuses it at the same cell: the body did not
-    move, so the next tick would aim at exactly the same air. Live, run149 it156-161 and
-    it318-320: the 120 m hop aimed at the height the gate came in at (y 66) while the bot stood at
-    y 37-77, and `[NAVIGATION_TARGET_UNSUPPORTED]` answered sixteen times - "no ground was found
-    within 64 blocks below it". Halving brings the target back onto the ground the walk starts from.
+    A hop keeps its full length until the ground refuses it: the body did not move, so the next
+    tick would aim at exactly the same air. Live, run149 it156-161 and it318-320: the 120 m hop
+    aimed at the height the gate came in at (y 66) while the bot stood at y 37-77, and
+    `[NAVIGATION_TARGET_UNSUPPORTED]` answered sixteen times - "no ground was found within 64
+    blocks below it". Halving brings the target back onto the ground the walk starts from. The
+    pathfinder's own give-up counts the same way (run210 it339-342: three `[NAVIGATION_STOPPED]`
+    timeouts on one 120 m hop, the body drifting 23 blocks between attempts), because a 2000 ms
+    search that finds no route at 120 m will find none at 120 m again.
     """
     hop = NETHER_EXIT_STAGING_DISTANCE
     for _ in range(min(gs.nether_hop_repeats, NETHER_EXIT_HOP_SHRINKS)):

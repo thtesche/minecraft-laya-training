@@ -1543,6 +1543,17 @@ reserve, none of them a gate on the Nether crossing.
   `camp_skeleton_spawner`, so the model should treat both as out of distribution and lean on the
   rules/System-2 fallback until a retrain includes them. The corpus also has no End-phase runs yet.
 
+## Live findings run210 (2026-11-07): the exit hop the pathfinder could not route
+
+The staged Nether exit walks home in ~120 m hops (`NETHER_EXIT_STAGING_DISTANCE`), since a 450+ block
+navigate exhausts the 2000 ms search. `_exit_hop` halves the hop after a refusal, but `_note_nether_hop`
+only counted `[NAVIGATION_TARGET_UNSUPPORTED]` — the ground saying "no footing at this cell". The
+pathfinder's own give-up, `[NAVIGATION_STOPPED] ... no path or usable partial route found ... visited
+97705 nodes`, was explicitly not a repeat. run210 it339-342 shows what that costs: three timeouts in a
+row on the same 120 m hop, the body drifting 23 blocks between attempts, so the cell key reset the
+streak every tick and the hop stayed 120 m. Timeouts now count on the hop rather than the cell; a stop
+the reflex held the body through (`[NAVIGATION_STOPPED] repeated_movement_failure`) still does not.
+
 ## Next milestones
 
 - **Open after run187:** (1) the endgame's later links are live but unfinished — the powder is
