@@ -1575,6 +1575,31 @@ capped one block under the frame so it is not the portal cell itself. `_exit_cli
 `NETHER_EXIT_CLIMB_STEP` (16 → 8 → 4) on the same `nether_hop_repeats` counter, and
 `[PORTAL_STOPPED] ... no path ...` feeds that counter like a hop timeout does.
 
+## Live findings run212 (2026-11-08): an expedition that never closed
+
+run212 spent its last 213 ticks (it384-599) crossing the same gate: 76 dimension changes, 71 of them
+`leave_nether` refused with `[PORTAL_ALREADY_INSIDE]`, in a three-tick rhythm — `leave_nether` fails
+at the frame, `leave_portal` steps one block out, `leave_nether` crosses home, `enter_portal` goes
+back down. The pack at it599 held sixteen ender eyes, no powder, `powder_bank` 0,
+`powder_stowed` False, `_eyes_owed` 0, `_rods_target` 0.
+
+The two sides of the gate disagreed because the latch only reads the chest. `nether_expedition_complete`
+is `powder_stowed` or powder in the pack at home; here the sixteen powder went into sixteen eyes in
+the pack and never touched a lid, so the haul read unfinished for the rest of the run. At home that
+kept `nether_expedition_open` true and `enter_portal` on offer; below the gate `_rods_target` was 0,
+so every Nether tick answered "nothing owed, come back". Neither side is wrong on its own — the
+offer set is the contradiction.
+
+`nether_expedition_complete` now also reads eyes carried in the Overworld as the haul in its final
+form: powder spent on the eyes it was fetched for is still a haul home. The Nether side of the rule
+is unchanged — eyes below the gate are not home, since a death there drops them with the body, and
+the way out of that is the crossing. The top-up fallback next to it stays open: two eyes and no
+powder still reopens the gate, because fourteen eyes cannot be crafted from nothing.
+
+A related gap is left open: `_note_crossing` (`graph.py`) charges a crossing against
+`PEARL_WAVE_MAX_TRIPS` only when `_powder_stowed` is set, so in a run where the powder is spent on
+eyes before it is banked the pearl waves never reach their cap and the counter stays dead.
+
 ## Next milestones
 
 - **Open after run187:** (1) the endgame's later links are live but unfinished — the powder is

@@ -6638,6 +6638,40 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertTrue(nether_expedition_complete(g))
         self.assertIn("craft_ender_eye", candidates(g))
 
+    def test_powder_already_crafted_into_eyes_is_a_haul_home(self) -> None:
+        # Live, run212 it356-599: sixteen powder went into sixteen eyes in the pack and never
+        # touched the chest, so the stow latch never set and the expedition read unfinished for the
+        # rest of the run. Home kept `enter_portal` on offer, the Nether kept saying come back, and
+        # the bot crossed the gate 76 times in 213 ticks without ever throwing an eye. Powder spent
+        # on the eyes it was fetched for is the haul in its final form.
+        g = self._home(ender_eye=16)
+        g.powder_stowed = False
+        g.powder_bank = 0
+        self.assertTrue(nether_expedition_complete(g))
+        self.assertFalse(nether_expedition_open(g))
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertIn("locate_stronghold", candidates(g))
+
+    def test_eyes_below_the_gate_are_not_yet_a_haul_home(self) -> None:
+        # The same pack read from the Nether is not home: a death down there drops the eyes with
+        # the body, and the way out of that is the crossing, not the eye chain.
+        g = self._home(ender_eye=16)
+        g.powder_stowed = False
+        g.powder_bank = 0
+        g.dimension = self.NETHER
+        self.assertFalse(nether_expedition_complete(g))
+
+    def test_a_spent_bank_still_reopens_the_gate_for_a_topup(self) -> None:
+        # Two eyes and no powder: the haul is home, but the fourteen eyes still owed cannot be
+        # crafted, so the top-up has to reopen the gate the completed haul closed. The fix above
+        # must not shut the fallback it sits next to.
+        g = self._home(ender_eye=2)
+        g.powder_stowed = False
+        g.powder_bank = 0
+        self.assertTrue(nether_expedition_complete(g))
+        self.assertTrue(nether_expedition_open(g))
+        self.assertIn("enter_portal", candidates(g))
+
     def test_pearls_and_powder_craft_the_eyes(self) -> None:
         g = self._home(ender_pearl=16, blaze_powder=16)
         self.assertIn("craft_ender_eye", candidates(g))

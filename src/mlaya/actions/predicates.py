@@ -1351,6 +1351,41 @@ def _in_nether(gs: GameState) -> bool:
     return "nether" in str(gs.dimension or "").lower()
 
 
+def _in_end(gs: GameState) -> bool:
+    """Whether the bot stands in the End (dimension `the_end`). The mirror of `_in_nether`.
+
+    The End is its own world: no base to walk home to, no tech tree, no stronghold march. So the
+    planner short-circuits the whole Overworld/Nether tree on this and offers only the fight.
+    """
+    return "end" in str(gs.dimension or "").lower()
+
+
+def _crystals_loaded(gs: GameState) -> bool:
+    """Whether any end crystal is loaded on its tower. They heal the dragon, so they fall first."""
+    return bool(getattr(gs, "end_crystals", ()))
+
+
+def _dragon_alive(gs: GameState) -> bool:
+    """Whether the dragon is loaded and not yet slain.
+
+    `dragon_slain` is the kill-receipt latch (`Agent._note_dragon`); `dragon_id` is the live
+    load. An unloaded dragon reads False here - not a death, just out of render - which is the cue
+    to walk to the fountain and reload it, never to close the goal.
+    """
+    return getattr(gs, "dragon_id", None) is not None and not getattr(gs, "dragon_slain", False)
+
+
+def _dragon_perched(gs: GameState) -> bool:
+    """Whether the loaded dragon is sitting on the fountain, where it is arrow-immune and answered
+    with a melee perch rather than a bow shot."""
+    return _dragon_alive(gs) and bool(getattr(gs, "dragon_perched", False))
+
+
+def _end_stone_short(gs: GameState) -> bool:
+    """Whether carried end stone is below the reserve the server's crystal staircases draw on."""
+    return int(gs.inventory.get(END_STONE, 0)) < END_STONE_RESERVE
+
+
 def _blaze_rods(inv: dict[str, int]) -> int:
     """Blaze rods carried, counting neither powder nor a chest full of either."""
     return int(inv.get(BLAZE_ROD_ITEM, 0))
@@ -4038,8 +4073,18 @@ def nether_expedition_complete(gs: GameState) -> bool:
     let that powder be banked while a pearl was in hand, and the latch never set: the stronghold
     block stayed shut, `craft_ender_eye` and the pearl hunt were never offered, and the run held on
     `wait`.
+
+    Eyes already crafted from that powder are the same haul in its final form. Live, run212
+    it356-599: sixteen powder became sixteen eyes in the pack and never touched the chest, so the
+    stow latch never set and the expedition read unfinished for the rest of the run. At home that
+    kept `nether_expedition_open` true and `enter_portal` on offer, while down at the gate
+    `_rods_target` was 0 - nothing owed, nothing to fetch - so every Nether tick said come back.
+    The bot crossed the gate 76 times in 213 ticks, 71 of them refused with
+    `[PORTAL_ALREADY_INSIDE]`, and never threw an eye.
     """
-    return bool(gs.powder_stowed) or (_overworld(gs) and _blaze_powder(gs.inventory) > 0)
+    return (bool(gs.powder_stowed)
+            or (_overworld(gs) and (_blaze_powder(gs.inventory) > 0
+                                    or gs.inventory.get(ENDER_EYE_ITEM, 0) > 0)))
 
 
 def nether_expedition_open(gs: GameState) -> bool:
