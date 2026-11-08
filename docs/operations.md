@@ -55,7 +55,10 @@ most two distinct labels and under 3 blocks moved).
 
 Optional, only when a trained head is meant to run:
 `export LAYA_EXTRA_MODELS='{"english": "<repo>/runs/checkpoints/minecraft-<time>"}'` before `up`.
-Without it the loop runs the base `english` checkpoint.
+Without it the loop runs the base `english` checkpoint. The head the lab serves by default is
+registered in the gitignored `.env` — currently `minecraft-20261107-132042` (fine-tuned on the
+runs 187–205 corpus over the 2026-10-28 checkpoint). A real environment variable still wins over
+the file, so an A/B run can override it without touching `.env`.
 
 **Watchdog:** `scripts/watchdog.sh` runs during every `up` and monitors the server log for freezes.
 If the server fails to tick (detected via "Can't keep up" in the log), the watchdog terminates the
