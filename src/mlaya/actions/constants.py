@@ -692,6 +692,9 @@ END_HEALTH_FLOOR = 12.0
 # provokes one. Best-effort only - the server also carries a gaze guard - and worn from a carried
 # copy, never crafted or carved here (that chain is too brittle to gate the crossing on).
 CARVED_PUMPKIN = "carved_pumpkin"
+# A carried stack holds 64 of its kind; past that the item needs a slot of its own. The drop
+# sweep uses this to refuse a walk the server would answer `[INVENTORY_FULL]` to.
+ITEM_STACK_CAP = 64
 # How far a loaded dropped arrow/string may lie and still be worth the walk. This is
 # `pick_up_items`' own maximum radius, so the sweep can target the drop's exact position.
 DROP_SWEEP_RADIUS = 32.0

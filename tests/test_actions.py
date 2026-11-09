@@ -1004,6 +1004,46 @@ class EndSupplyTest(unittest.TestCase):
         g.dropped_items = [("arrow", 4, 8.0, (9.0, 64.0, 4.0))]
         self.assertEqual(resolve("collect_drops", g).args["item"], "arrow")
 
+    def test_a_pinned_pack_does_not_chase_a_drop_it_cannot_hold(self) -> None:
+        # Live, run217 it311-599: 36 of 36 slots taken, two arrows lying 7.6 m away, and the sweep
+        # offered the walk 282 times while the server answered `inventory_full` every single tick.
+        from mlaya.perception import INVENTORY_SLOTS
+        g = self._lull()
+        g.slots_used = INVENTORY_SLOTS
+        g.dropped_items = [("arrow", 2, 7.6, (10.0, 64.0, 5.0))]
+        self.assertNotIn("collect_drops", candidates(g))
+        self.assertIsNone(resolve("collect_drops", g))
+
+    def test_room_in_a_stack_of_the_item_still_counts_as_room(self) -> None:
+        # Thirty arrows carried is not a full pack: the server adds to the stack that is open.
+        from mlaya.perception import INVENTORY_SLOTS
+        g = self._lull(arrow=30)
+        g.slots_used = INVENTORY_SLOTS
+        g.dropped_items = [("arrow", 4, 12.0, (10.0, 64.0, 5.0))]
+        self.assertIn("collect_drops", candidates(g))
+        g.dropped_items = [("arrow", 40, 12.0, (10.0, 64.0, 5.0))]
+        self.assertNotIn("collect_drops", candidates(g))
+
+    def test_a_fresh_kill_needs_a_slot_the_sweep_can_fill(self) -> None:
+        # The kill sweep names no item, so it can only work where a free slot exists.
+        from mlaya.perception import INVENTORY_SLOTS
+        g = self._lull()
+        g.slots_used = INVENTORY_SLOTS
+        g.drops = 1
+        self.assertNotIn("collect_drops", candidates(g))
+        g.slots_used = INVENTORY_SLOTS - 1
+        self.assertIn("collect_drops", candidates(g))
+
+    def test_a_withheld_reaction_hands_the_tick_to_the_rest_of_the_tree(self) -> None:
+        # `Agent._track_stuck` withholds a label the server keeps refusing, and the reaction branch
+        # used to return it regardless (run217: nine withholdings, 289 ticks of `collect_drops`).
+        g = self._lull()
+        g.dropped_items = [("arrow", 4, 12.0, (10.0, 64.0, 5.0))]
+        self.assertEqual(candidates(g), ["collect_drops"])
+        g.stuck_labels = frozenset({"collect_drops"})
+        self.assertNotIn("collect_drops", candidates(g))
+        self.assertTrue(candidates(g))
+
     def test_the_arrow_reserve_is_the_end_target(self) -> None:
         from mlaya.actions import END_ARROWS
         self.assertIsNone(resolve("craft_arrows",

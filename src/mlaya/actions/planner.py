@@ -114,12 +114,18 @@ def candidates(gs: GameState) -> list[str]:
     # A tool about to break, a mob the reflex just killed (its drops despawn in minutes),
     # or gear lying at a fresh death site are all time-sensitive, so the top reaction
     # owns the tick. Eating still rides along: survival outranks everything.
+    #
+    # The stuck guard applies here like everywhere else (`Agent._track_stuck`): a reaction the
+    # server keeps refusing is withheld for a cooling-off window and the tick falls through to the
+    # rest of the tree. Live, run217 it311-599: `collect_drops` was withheld nine times and this
+    # branch returned it anyway, so 289 ticks ran on one pickup the pack could not hold.
     reactions: list[str] = []
-    if _can_recover(gs):
+    if _can_recover(gs) and "recover_drops" not in gs.stuck_labels:
         reactions.append("recover_drops")
-    if _pickaxe_due_for_spare(gs) and _replacement_pickaxe(gs, inv):
+    if (_pickaxe_due_for_spare(gs) and _replacement_pickaxe(gs, inv)
+            and "replace_tool" not in gs.stuck_labels):
         reactions.append("replace_tool")
-    if gs.drops > 0 or _supply_drop_in_reach(gs):
+    if _drops_to_collect(gs) and "collect_drops" not in gs.stuck_labels:
         reactions.append("collect_drops")
     if reactions:
         return (["eat_food"] if eating else []) + reactions[:1]
@@ -1882,6 +1888,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": item}], "temporary_workstation": True},
                       f"carry a fresh {item} before the active one breaks mid-dig")
     if label == "collect_drops":
+        # The same test the offer reads, so a withheld sweep can never be resolved into a tick the
+        # server refuses for want of a slot.
+        if not _drops_to_collect(gs):
+            return None
         supply = _supply_drop(gs)
         if gs.drops <= 0 and supply is None:
             return None

@@ -2253,6 +2253,20 @@ def _arrows_pending(gs: GameState) -> bool:
     return _nether_idle(gs) and _eyes_owed(gs) <= 0 and _end_arrows_wanted(gs) > 0
 
 
+def _pack_room_for(gs: GameState, item: str, count: int = 1) -> bool:
+    """Whether the carried pack can take `count` of `item` without an `[INVENTORY_FULL]` refusal.
+
+    A stack of the item already in hand absorbs up to 64 of its kind; anything else needs a slot of
+    its own. Live, run217 it311-599: 36 of 36 slots taken, two arrows lying 7.6 m away, and the
+    sweep offered the walk 282 times - the server answered `inventory_full` every single one.
+    """
+    carried = int(gs.inventory.get(item, 0))
+    partial = carried % ITEM_STACK_CAP
+    if partial and partial + count <= ITEM_STACK_CAP:
+        return True
+    return gs.slots_used < INVENTORY_SLOTS
+
+
 def _supply_drop(gs: GameState) -> tuple[str, float | None, tuple[float, float, float] | None] | None:
     """The nearest loaded arrow or string drop inside the sweep radius, or None.
 
@@ -2263,6 +2277,8 @@ def _supply_drop(gs: GameState) -> tuple[str, float | None, tuple[float, float, 
 
     Only drops the run still needs count: a finished arrow reserve no longer chases arrow drops,
     and string already at its goal is left where it lies. The sweep is a supply run, not a magnet.
+    A drop the pack cannot hold is not a supply run either: the walk costs a tick and the server
+    refuses it outright, so a pinned pack gets no offer at all (see `_pack_room_for`).
     """
     arrows_short = _end_arrows_wanted(gs) > 0
     string_short = int(gs.inventory.get("string", 0)) < _string_goal(gs)
@@ -2275,6 +2291,8 @@ def _supply_drop(gs: GameState) -> tuple[str, float | None, tuple[float, float, 
             continue
         if name not in (ARROW_ITEM, "string"):
             continue
+        if not _pack_room_for(gs, name, count):
+            continue
         if dist is None or dist <= DROP_SWEEP_RADIUS:
             return name, dist, pos
     return None
@@ -2283,6 +2301,16 @@ def _supply_drop(gs: GameState) -> tuple[str, float | None, tuple[float, float, 
 def _supply_drop_in_reach(gs: GameState) -> bool:
     """Whether a dropped arrow or string is close enough to make `collect_drops` worth a tick."""
     return _supply_drop(gs) is not None
+
+
+def _drops_to_collect(gs: GameState) -> bool:
+    """Whether `collect_drops` has anything the carried pack can actually take.
+
+    A fresh kill's drops are not named, so that sweep needs a free slot; a supply drop is checked
+    item by item in `_supply_drop`. Live, run217: a pinned pack and one loaded arrow entity let the
+    reaction own 289 ticks in a row.
+    """
+    return _supply_drop(gs) is not None or (gs.drops > 0 and gs.slots_used < INVENTORY_SLOTS)
 
 
 def _skeletons_in_reach(gs: GameState) -> int:
