@@ -2695,6 +2695,33 @@ def _arrow_mats_to_bank(gs: GameState) -> frozenset[str]:
     return frozenset(mats)
 
 
+def _kit_armour(gs: GameState) -> set[str]:
+    """The carried armour a slot still stands on - the piece that keeps it covered.
+
+    `held` in `_keep_in_pack` only sees what is *on* the body, so the best piece of a slot sitting
+    in the pack is invisible to the whitelist and gets banked as surplus. `swap_to_gold_helmet`
+    makes that the everyday shape: gold goes on for piglin neutrality, the diamond helmet waits in
+    the pack, and `_gear_ready` counts it there. Banking it empties the slot, the chain rebuilds it
+    from five ingots and five diamonds, and the next `stow_surplus` banks that one too. Live,
+    run219: it104 stowed the diamond helmet, it111/113 crafted an iron and a diamond one, it121
+    stowed both, it126/128 crafted both again - two full helmet sets burned in 25 ticks while the
+    gate stood lit.
+
+    Only the best piece per slot is kept, so the iron chestplate a worn diamond one replaces still
+    goes to the chest.
+    """
+    out: set[str] = set()
+    for slot in ("helmet", "chestplate", "leggings", "boots"):
+        best, best_rank = None, 0
+        for material, rank in _GEAR_RANK.items():
+            name = f"{material}_{slot}"
+            if rank > best_rank and (_worn(gs, name) or _has(gs.inventory, name)):
+                best, best_rank = name, rank
+        if best is not None and not _worn(gs, best):
+            out.add(best)
+    return out
+
+
 def _keep_in_pack(gs: GameState) -> frozenset[str]:
     """`KEEP_MATERIALS`, plus everything the bot is wearing, holding or has decided to keep.
 
@@ -2709,7 +2736,7 @@ def _keep_in_pack(gs: GameState) -> frozenset[str]:
     held = {meta.get("item") for meta in list(gs.armor.values()) + list(gs.tool_meta.values())}
     held |= {f"{tier}_{cls}" for cls, tier in (gs.tools or {}).items()
              if tier and tier != "none"}
-    keep = KEEP_MATERIALS | set(EDIBLE) | set(_GEAR_KEEP) | {n for n in held if n}
+    keep = KEEP_MATERIALS | set(EDIBLE) | set(_GEAR_KEEP) | {n for n in held if n} | _kit_armour(gs)
     return keep - _arrow_mats_to_bank(gs)
 
 

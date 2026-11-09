@@ -5513,6 +5513,46 @@ class GoldHelmetSlotTest(unittest.TestCase):
         self.assertIn("diamond_helmet", _armor_to_wear(g))
 
 
+class CarriedKitIsNotSurplusTest(unittest.TestCase):
+    """run219 it104-128: the pack banks the helmet the worn one stands on, then rebuilds it.
+
+    `swap_to_gold_helmet` puts gold on the head for piglin neutrality and leaves the diamond
+    helmet in the pack, where `_gear_ready` counts it as the helmet slot being covered.
+    `_keep_in_pack` reads the body only, so that carried piece reads as surplus and goes to the
+    chest; the slot is then bare, the chain crafts it back from five ingots and five diamonds, and
+    the next `stow_surplus` banks that one too. Two full helmet sets burned between it104 and it128
+    while the gate stood lit.
+    """
+
+    BASE = (-1419, 68, -341)
+
+    def _at_base(self, **inv) -> GameState:
+        g = gs(pos=(-1417.5, 67.0, -344.5), dimension="minecraft:overworld",
+               inventory=dict(inv), tools={"pickaxe": "diamond", "sword": "diamond"},
+               health=20.0, food=17.0)
+        g.armor = {slot: {"item": f"diamond_{slot}"}
+                   for slot in ("chestplate", "leggings", "boots")}
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        g.base = self.BASE
+        g.chest_pos = self.BASE
+        g.portal_lit = True
+        return g
+
+    def test_the_carried_diamond_helmet_stays_in_the_pack(self) -> None:
+        g = self._at_base(iron_helmet=1, diamond_helmet=1, acacia_log=27)
+        self.assertNotIn("diamond_helmet", _surplus_besides_keep(g, g.inventory))
+        items = [i["item_name"] for i in resolve("stow_surplus", g).args["items"]]
+        self.assertNotIn("diamond_helmet", items)
+        self.assertIn("iron_helmet", items)
+
+    def test_a_spare_under_a_worn_piece_still_sheds(self) -> None:
+        # The best piece of the slot is on the head, so the weaker carried one keeps nothing and
+        # still goes to the chest.
+        g = self._at_base(iron_helmet=1, diamond_helmet=1)
+        g.armor["helmet"] = {"item": "diamond_helmet"}
+        self.assertIn("iron_helmet", _surplus_besides_keep(g, g.inventory))
+
+
 class NavigateArgumentsTest(unittest.TestCase):
     """Every `navigate` call must name whole block cells.
 
