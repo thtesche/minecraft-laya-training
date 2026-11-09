@@ -24,7 +24,8 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
                       FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS,
-                      _portal_lit_scan, end_complete)
+                      _portal_lit_scan, end_complete,
+                      LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
 from .brain import Brain, escalate_to_system2, trajectory_digest
 from .mcp import _find
 from .memory import MemoryLog
@@ -409,6 +410,12 @@ class Agent:
     # reads it through `_inject`, and an empty dict is exactly "no lava body has been stood
     # beside yet". `_note_lava_walk` rebinds a fresh dict, so the default is never mutated.
     _lava_walked: dict[tuple[int, int, int], int] = {}
+
+    # Fruitless walks per lava pool and the pools retired by them, with the ticks left. The same
+    # class-default reason as `_lava_walked`: an empty dict is exactly "no walk has failed yet".
+    # `_note_lava_tries` rebinds fresh dicts, so the defaults are never mutated.
+    _lava_tries: dict[tuple[int, int, int], int] = {}
+    _lava_retired: dict[tuple[int, int, int], int] = {}
 
     # The cell the base layout wants for the furnace has no footing, so the next attempt names no
     # cell at all. Class default for the same reason as `_durable`: a stub agent built with
@@ -906,6 +913,7 @@ class Agent:
         gs.stance_skip = frozenset(self._stance_skip)
         gs.rescue_skip = frozenset(self._rescue_skip)
         gs.lava_walked = frozenset(self._lava_walked)
+        gs.lava_retired = frozenset(self._lava_retired)
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.recover_written_off = frozenset(self._recover_written_off)
         gs.boxed_in = self._boxed[1] >= BOXED_REPEATS
@@ -2280,6 +2288,52 @@ class Agent:
                 walked[pos] = LAVA_WALK_COOLDOWN
         self._lava_walked = walked
 
+    def _note_lava_tries(self, action, delta: dict | None) -> None:
+        """Retire a lava pool whose walk keeps ending without obsidian.
+
+        The chains around the pond each have their own memory: `pour_skip` a refused cell,
+        `stance_skip` a stance with no footing, `lava_walked` a body `approach_lava` already
+        inspected. None of them sees the shape that cost run213 twenty round trips: the walk
+        *succeeds* and moves, but it ends a cell above the pour stance (the block over it still
+        standing), `_at_pour_stance` refuses the pour, and a base step (`go_home`) takes the next
+        tick and pulls the body the same twenty-four blocks back. it101-141 walked ~560 blocks,
+        formed no obsidian, and nothing was withheld because every action looked fine on its own.
+
+        So the count is per walk, not per refusal: a `mine_obsidian`/`approach_lava` navigate
+        that ends with no obsidian in the pack books one try against its target cell. At
+        `LAVA_POOL_RETIRE_AFTER` the whole pool (grouped by `LAVA_POOL_RADIUS`, as the walk and
+        the server both do) is retired for `LAVA_POOL_RETIRE_TICKS`, which closes `mine_obsidian`
+        and `approach_lava` and lets the base work that keeps stealing the tick actually run.
+        Any obsidian gained -- a pour that formed a block, a cast that mined one -- starts the
+        count over: the pool is working and must not be given up.
+
+        A countdown, not a lock: the walk digs, the scan changes, and the same pool may be the
+        one that works after the ticks in between.
+        """
+        retired = {pos: left - 1 for pos, left in self._lava_retired.items() if left > 1}
+        gained = int(((delta or {}).get("inventory_delta") or {}).get("obsidian", 0) or 0)
+        if gained > 0:
+            # It worked: forget every strike against it and let the cooldown run out.
+            self._lava_tries = {}
+            self._lava_retired = retired
+            return
+        if action.label not in ("mine_obsidian", "approach_lava") or action.tool != "navigate":
+            self._lava_retired = retired
+            return
+        pos = (action.args or {}).get("x"), (action.args or {}).get("y"), (action.args or {}).get("z")
+        if not all(isinstance(v, int) for v in pos):
+            self._lava_retired = retired
+            return
+        tries = dict(self._lava_tries)
+        tries[pos] = tries.get(pos, 0) + 1
+        if tries[pos] >= LAVA_POOL_RETIRE_AFTER:
+            tries.pop(pos, None)
+            retired[pos] = LAVA_POOL_RETIRE_TICKS
+            self.log.append({"stage": "policy", "reason": "lava_pool_retired",
+                             "cell": list(pos), "tries": LAVA_POOL_RETIRE_AFTER})
+        self._lava_tries = tries
+        self._lava_retired = retired
+
     def _track_stuck(self, label: str, ok: bool, text: str | None,
                      progressed: bool) -> None:
         """Withhold a label that keeps answering the identical refusal without progress.
@@ -3530,6 +3584,7 @@ class Agent:
         await self._rearm_policy(after)
         delta = vmod.diff(before, after)
         self._note_held(res, before, after)
+        self._note_lava_tries(action, delta)
         busy_owner = self._note_body_busy(action, res)
         if busy_owner is not None:
             await self._hold_body_busy()

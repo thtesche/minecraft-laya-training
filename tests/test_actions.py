@@ -266,6 +266,33 @@ class ReplaceToolTest(unittest.TestCase):
                tool_meta=self._worn(item="iron_pickaxe", maximum=250.0, left=5.0))
         self.assertIsNone(resolve("replace_tool", g))
 
+    def test_a_worn_diamond_pickaxe_is_not_backed_up_with_stone(self) -> None:
+        # run213 it494-517: a diamond pickaxe at 8% and no diamonds, with a table and cobble in
+        # the pack, so the offer fell through to stone. The stone spare ranks below the diamond
+        # in hand, so `stow_surplus` banked it on the next tick and `replace_tool` rebuilt it,
+        # until the materials ran out. A downgrade is not a backup: with no diamonds the offer is
+        # closed and the diamond dig (`mine_diamond`) is the way out.
+        g = gs(inventory={"crafting_table": 1, "cobblestone": 8, "acacia_log": 1},
+               tools={"pickaxe": "diamond"},
+               tool_meta=self._worn(item="diamond_pickaxe", maximum=1561.0, left=60.0))
+        self.assertIsNone(resolve("replace_tool", g))
+        self.assertNotIn("replace_tool", candidates(g))
+
+    def test_a_worn_iron_pickaxe_is_not_backed_up_with_stone(self) -> None:
+        # The same guard one tier down: the stone spare would be banked as surplus gear.
+        g = gs(inventory={"crafting_table": 1, "cobblestone": 8, "acacia_log": 1},
+               tools={"pickaxe": "iron"},
+               tool_meta=self._worn(item="iron_pickaxe", maximum=250.0, left=5.0))
+        self.assertIsNone(resolve("replace_tool", g))
+
+    def test_a_worn_stone_pickaxe_is_still_backed_up_with_stone(self) -> None:
+        # Same tier is not a downgrade: the fresh stone pickaxe is what the worn one hands over
+        # to, and the server equips it, so it never lands in the surplus whitelist.
+        g = gs(inventory={"crafting_table": 1, "cobblestone": 3, "acacia_log": 1},
+               tools={"pickaxe": "stone"}, tool_meta=self._worn(left=5.0))
+        self.assertEqual(resolve("replace_tool", g).args["items"],
+                         [{"item_name": "stone_pickaxe"}])
+
 
 class BedChainTest(unittest.TestCase):
     def test_craft_bed_from_wool(self) -> None:
@@ -802,18 +829,27 @@ class NetherPrepTest(unittest.TestCase):
         # No lit portal: the prep is out of scope, so arrow craft stays closed.
         self.assertIsNone(resolve("craft_arrows", geared(flint=1, feather=1)))
 
-    def test_feathers_come_from_a_chicken(self) -> None:
+    def test_feathers_wait_for_the_eyes_then_come_from_a_chicken(self) -> None:
+        # The arrow reserve stands down until the eyes are crafted, so the chicken hunt is not
+        # offered in the lull - feathers only fill slots on the Nether run until then. With the
+        # eyes in hand it is a plain chicken hunt again.
         g = self._lull(bow=1)
         g.mobs = [("chicken", "animal", 4, 6.0)]
+        self.assertIsNone(resolve("hunt_feather", g))
+        g.inventory["ender_eye"] = 16
         a = resolve("hunt_feather", g)
         self.assertEqual(a.args["mob_name"], "chicken")
         self.assertEqual(a.args["drop_name"], "feather")
 
-    def test_flint_reopens_for_arrows_after_flint_and_steel(self) -> None:
+    def test_flint_reopens_for_arrows_once_the_eyes_stand(self) -> None:
         # Carrying flint and steel used to close the gravel dig for good; the bow reopens it.
+        # Since Point 1 (2026-11-09) only after the eye task: before it, flint is the igniter's
+        # material, and digging it into arrows is how run213 left the gate dark.
         g = self._lull(bow=1)
         g.resources = {**g.resources,
                        "gravel": [BlockHit("gravel", "gravel", -196, -48, -98, 5.0)]}
+        self.assertIsNone(resolve("get_flint", g))
+        g.inventory["ender_eye"] = 16
         a = resolve("get_flint", g)
         self.assertEqual(a.tool, "collect_block")
         self.assertEqual(a.args["block_name"], "gravel")
@@ -859,8 +895,16 @@ class NetherPrepTest(unittest.TestCase):
                        "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
         cand = candidates(g)
         self.assertIn("mine_gold", cand)
-        # The End supply rides beside the prep in the same lull, but never inside the crossing
-        # gate: the Nether can depart without a bow, the End cannot.
+        # The End supply stands down until the eye task (Point 1, 2026-11-09): it used to ride
+        # beside the prep in the same lull, but the work belongs to the window after the eyes.
+        self.assertNotIn("craft_arrows", cand)
+        self.assertNotIn("craft_bow", cand)
+        # Neither list ever joins the crossing gate: the Nether can depart without a bow.
+        self.assertNotIn("craft_arrows", _all_nether_prep_steps(g))
+        self.assertNotIn("craft_bow", _all_nether_prep_steps(g))
+        # With the sixteen eyes in hand the reserve opens, still outside the crossing gate.
+        g.inventory["ender_eye"] = 16
+        cand = candidates(g)
         self.assertIn("craft_arrows", cand)
         self.assertIn("craft_bow", cand)       # one bow owned, the spare is still owed
         self.assertNotIn("craft_arrows", _all_nether_prep_steps(g))
@@ -906,12 +950,18 @@ class NetherPrepTest(unittest.TestCase):
 class EndSupplyTest(unittest.TestCase):
     """The End fight's arrow economy: the reserve is `END_ARROWS`, a spare bow rides along, and
     the lull grows it from crafted arrows, chicken feathers, gravel flint and skeleton drops.
-    Deliberately outside `_all_nether_prep_steps`: the Nether gate departs without a bow."""
+    Deliberately outside `_all_nether_prep_steps`: the Nether gate departs without a bow.
+
+    The lull carries the sixteen eyes: since the 2026-11-09 change the whole reserve stands down
+    until the eye task is done (`_eyes_owed`), so the window this class describes is the one after
+    the eyes are crafted. `test_the_whole_supply_stands_down_until_the_eyes_stand` covers the
+    other side of the gate.
+    """
 
     @staticmethod
     def _lull(**inv) -> GameState:
         base = {"flint_and_steel": 1, "white_bed": 1, "cooked_beef": 24, "furnace": 1,
-                "cobblestone": 64, "acacia_planks": 8}
+                "cobblestone": 64, "acacia_planks": 8, "ender_eye": 16}
         base.update(inv)
         g = at_home(lit_portal(geared(**base)))
         g.food = 20.0
@@ -1004,6 +1054,21 @@ class EndSupplyTest(unittest.TestCase):
         self.assertIn("craft_arrows", steps)
         self.assertNotIn("hunt_skeleton", steps)
         self.assertNotIn("camp_skeleton_spawner", steps)
+
+    def test_the_whole_supply_stands_down_until_the_eyes_stand(self) -> None:
+        # 2026-11-09: the End reserve is late supply, and worked during the Nether/eye phase it
+        # struck the igniter's flint into arrows while the gate stayed dark (live, run213). So the
+        # whole offer list - crafts, farms and the skeleton camp - waits on `_eyes_owed`; the
+        # materials are banked instead, and a skeleton drop is still picked up on the way.
+        from mlaya.actions import _end_supply_steps
+        g = self._lull(bow=1, flint=1, feather=1, string=3)
+        g.inventory.pop("ender_eye", None)
+        self.assertEqual(_end_supply_steps(g), [])
+        g.mobs = [("skeleton", "hostile", 4, 10.0), ("chicken", "animal", 1, 6.0)]
+        for label in ("craft_arrows", "craft_bow", "hunt_feather", "hunt_skeleton",
+                      "camp_skeleton_spawner"):
+            with self.subTest(label=label):
+                self.assertNotIn(label, candidates(g))
 
 
 class OverworldGateTest(unittest.TestCase):
@@ -1667,11 +1732,15 @@ class TechTreeCompleteTest(unittest.TestCase):
         self.assertTrue(tech_tree_complete(g))
 
     def test_spider_triggers_the_end_bow_string_hunt_but_not_the_gate(self) -> None:
-        # Bow and arrows stay out of the crossing gate, but the End reserve still owes two bows
-        # and the spider is within reach - so the hunt is offered, and the gate ignores it.
+        # Bow and arrows stay out of the crossing gate, and since Point 1 (2026-11-09) the End
+        # reserve waits for the eye task: with no eyes in hand the spider is left alone. With the
+        # eyes standing the hunt is offered - and the gate still ignores it.
         g = self._complete(inventory={"diamond_sword": 1, "string": 2, "stick": 3,
                                       "cobblestone": 64}, health=20.0)
         g.mobs = [("spider", "hostile", 1, 18.0)]
+        self.assertNotIn("hunt_string", candidates(g))
+        self.assertTrue(tech_tree_complete(g))
+        g.inventory["ender_eye"] = 16
         self.assertIn("hunt_string", candidates(g))
         self.assertTrue(tech_tree_complete(g))
 
@@ -2180,6 +2249,49 @@ class NetherGateTest(unittest.TestCase):
         a = resolve("approach_lava", g)
         self.assertIsNotNone(a)
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-77, 8, -73))
+
+    def test_approach_lava_leashes_a_deep_descent(self) -> None:
+        # The walk closes the last few blocks before the scan lists the source; it is not a
+        # descent. run148 spent 50 ticks walking down to flows 55 blocks under the base, which
+        # are exactly the bodies that cannot form obsidian. The leash is on height, as the
+        # Nether-exit climb is: a flat walk to a pond still happens (see the run114 test above).
+        g = self._geared(water_bucket=1, obsidian=3)
+        g.pos = (-160.5, 76.0, -72.5)
+        g.resources = {"lava": [
+            BlockHit("lava", "lava", -160, 21, -86, 55.4, above="stone", below="stone", level=2),
+            BlockHit("lava", "lava", -159, 21, -85, 55.9, above="stone", below="lava", level=8),
+        ]}
+        self.assertNotIn("approach_lava", candidates(g))
+        self.assertIsNone(resolve("approach_lava", g))
+
+    def test_a_retired_pool_closes_the_obsidian_chain(self) -> None:
+        # Three fruitless walks (run213 it101-141) retire the pool, so the base step that kept
+        # taking the next tick can finally run. Retired by stance cell, grouped by the radius the
+        # server calls one pool.
+        g = self._geared(water_bucket=1)
+        g.pos = (0.0, 64.0, 0.0)
+        g.resources = self._lava()
+        g.lava_retired = frozenset({(-270, 65, -56)})
+        self.assertNotIn("mine_obsidian", candidates(g))
+        self.assertIsNone(resolve("mine_obsidian", g))
+
+    def test_a_retired_pool_leaves_another_pool_workable(self) -> None:
+        g = self._geared(water_bucket=1)
+        g.pos = (0.0, 64.0, 0.0)
+        g.resources = {"lava": [
+            *self._lava()["lava"],
+            BlockHit("lava", "lava", -400, 64, -56, 20.0,
+                     above="air", below="stone", level=2),
+            BlockHit("lava", "lava", -400, 64, -57, 21.0,
+                     above="stone", below="stone", level=0),
+        ]}
+        g.lava_retired = frozenset({(-270, 65, -56)})
+        a = resolve("mine_obsidian", g)
+        self.assertIsNotNone(a)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual(a.args["y"], 65)
+        self.assertIn((a.args["x"], a.args["z"]),
+                      [(-399, -56), (-401, -56), (-400, -55), (-400, -57)])
 
     def test_mine_obsidian_needs_an_open_pour_cell(self) -> None:
         # The surface pond's only usable cell is capped by stone, so the bucket cannot be emptied
@@ -9171,14 +9283,40 @@ class PackDisciplineTest(unittest.TestCase):
 
     def test_the_whitelist_never_names_what_the_run_still_needs(self) -> None:
         # Every one of these has cost the run a step when it went missing: the obsidian for the
-        # frame, the bow kit for the Nether, the food for the crossing, the bed, the fuel. Food is
-        # held at the carried floor (`FOOD_BANK_KEEP`); only what stands above it is banked, and
-        # that is a count rule in `_bank_surplus_food`, not a whitelist entry.
-        g = self._at_chest(obsidian=10, string=2, feather=12, flint=1, stick=6, iron_ingot=2,
+        # frame, the bed, the fuel, the sticks. Food is held at the carried floor
+        # (`FOOD_BANK_KEEP`); only what stands above it is banked, and that is a count rule in
+        # `_bank_surplus_food`, not a whitelist entry. Arrows are the End reserve and are never
+        # banked. Feathers, string and flint are *not* on this list any more: until the eyes stand
+        # they have no sink and belong in the chest (`_arrow_mats_to_bank`, Point 1).
+        g = self._at_chest(obsidian=10, stick=6, iron_ingot=2,
                            cooked_mutton=FOOD_BANK_KEEP, oak_log=9, gravel=14, diamond=2,
                            white_wool=6, white_bed=1, crafting_table=1, bucket=1,
-                           flint_and_steel=1)
+                           flint_and_steel=1, arrow=32)
         self.assertNotIn("stow_surplus", candidates(g))
+
+    def test_the_arrow_materials_stow_while_the_eyes_are_owed(self) -> None:
+        # Point 1 (2026-11-09): feathers, string and flint have no sink until the eyes are
+        # crafted, and carried they only fill slots on the long Nether run. They go to the chest
+        # (never `drop_junk` - reversible), while the arrows themselves stay in hand for the End.
+        g = self._at_chest(feather=12, string=2, flint=1, flint_and_steel=1, arrow=8,
+                           white_bed=1)
+        self.assertIn("stow_surplus", candidates(g))
+        a = resolve("stow_surplus", g)
+        self.assertEqual({i["item_name"] for i in a.args["items"]},
+                         {"feather", "string", "flint"})
+
+    def test_the_bed_string_stays_until_a_bed_stands(self) -> None:
+        # String's twelve-string bed price is owed before its three-per-bow price. Banked string
+        # cannot be got back (the chest read books edibles only), so it stays until a bed stands.
+        g = self._at_chest(string=12, flint=1, flint_and_steel=1)
+        a = resolve("stow_surplus", g)
+        self.assertNotIn("string", {i["item_name"] for i in a.args["items"]})
+
+    def test_the_igniter_material_flint_stays_until_one_is_struck(self) -> None:
+        # With no `flint_and_steel` carried, flint is the igniter's material, not arrow stock.
+        g = self._at_chest(feather=4, flint=1)
+        a = resolve("stow_surplus", g)
+        self.assertEqual({i["item_name"] for i in a.args["items"]}, {"feather"})
 
     def test_food_above_the_carried_floor_is_banked(self) -> None:
         # run193 it399-400: 28 edibles were carried, the Enderman killed the bot, and the chest

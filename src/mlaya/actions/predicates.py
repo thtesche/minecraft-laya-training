@@ -470,6 +470,13 @@ def _replacement_pickaxe(gs: GameState, inv: dict[str, int]) -> str | None:
     a spare of that kind is already carried, so the reserve cannot craft the same spare twice
     (the server equips a same-tier fresh tool, but a lower-tier spare leaves the worn active
     one in hand - without this guard that would loop until the materials ran out).
+
+    A spare below the wielding tier is never built, whatever the materials: `_spare_gear`
+    files it as surplus on the very next tick (it ranks below the best gear carried or held),
+    so `replace_tool` crafts it and `stow_surplus` banks it forever (live, run213 it494-517: a
+    diamond pickaxe at 8% durability, no diamonds, and a stone-pickaxe offer that banked itself
+    every two ticks). Without the materials for a same-tier spare this returns None, and the
+    escape is the diamond dig (`mine_diamond` -> `craft_pickaxe_spare`).
     """
     tier = _pick_tier(inv, gs.tools)
     if tier < STONE_PICK_TIER:
@@ -483,7 +490,9 @@ def _replacement_pickaxe(gs: GameState, inv: dict[str, int]) -> str | None:
         item = "iron_pickaxe"
     elif table and inv.get("cobblestone", 0) >= 3 and sticks:
         item = "stone_pickaxe"
-    if item is None or _has_spare_pickaxe(gs, inv, item):
+    if item is None or TIER.get(item[: -len("_pickaxe")], 0) < tier:
+        return None
+    if _has_spare_pickaxe(gs, inv, item):
         return None
     return item
 
@@ -2233,8 +2242,15 @@ def _arrows_pending(gs: GameState) -> bool:
     Also what lets `get_flint` reopen the gravel dig after flint and steel already exists (the
     only other flint sink). Deliberately keyed to the End target, not `NETHER_ARROWS`: sixteen was
     the Nether crossing's token reserve, and stopping there leaves the dragon fight dry.
+
+    Held shut until the eye task is done (`_eyes_owed`): the End reserve is a late supply goal,
+    and gathering arrow materials during the Nether/eye phase burned the flint the igniter needs
+    and spent ticks hunting ammunition (live, run213: flint struck into arrows at an unlit gate,
+    the Nether trip never relit). The arrows are still wanted - for the End, after the stronghold
+    portal - so this only defers the pursuit; a skeleton drop picked up meanwhile is kept
+    (user call, 2026-11-09).
     """
-    return _nether_idle(gs) and _end_arrows_wanted(gs) > 0
+    return _nether_idle(gs) and _eyes_owed(gs) <= 0 and _end_arrows_wanted(gs) > 0
 
 
 def _supply_drop(gs: GameState) -> tuple[str, float | None, tuple[float, float, float] | None] | None:
@@ -2476,6 +2492,12 @@ def _end_supply_steps(gs: GameState) -> list[str]:
     """
     if not _nether_idle(gs) or not _overworld(gs):
         return []
+    # The whole reserve stands down until the eyes are crafted (`_eyes_owed`). It is a late
+    # supply goal for the End fight, and worked during the Nether/eye phase it competed with the
+    # igniter for flint and with the expedition for ticks (user call, 2026-11-09). Materials that
+    # fall in meanwhile are kept or banked, never re-crafted here until the eyes stand.
+    if _eyes_owed(gs) > 0:
+        return []
     inv = gs.inventory
     table = _has(inv, "crafting_table")
     sticks = _can_sticks(inv, _logs(inv), _planks(inv))
@@ -2616,6 +2638,35 @@ KEEP_MATERIALS = frozenset({
 })
 
 
+def _arrow_mats_to_bank(gs: GameState) -> frozenset[str]:
+    """Arrow-reserve materials that belong in the chest, not the pack, during the eye phase.
+
+    The End arrow reserve (`_end_supply_steps`, `_arrows_pending`) stands down until the eyes are
+    crafted (`_eyes_owed`), so until then feathers have no sink at all and only fill slots on the
+    long Nether run - they belong banked, from where a later hunt rebuilds the reserve once the
+    eyes stand. String follows the feathers, but only once a bed stands: its twelve-string price
+    is owed before its three-per-bow price is. Flint keeps its place in the pack while the
+    Overworld gate still owes an igniter (no `flint_and_steel` carried); once one is struck, flint
+    too is clutter and joins the bank. Arrows themselves are never banked here: they are the one
+    reserve material the chain does not re-craft, so a skeleton drop stays in hand for the End
+    (user call, 2026-11-09).
+
+    Empty once the eyes are in hand: from there the reserve is worked, and it wants its materials
+    carried for the deterministic crafts.
+    """
+    if _eyes_owed(gs) <= 0:
+        return frozenset()
+    mats = {FEATHER_ITEM}
+    # String serves the bed before it serves the bow, and the bed is owed early (`_string_goal`
+    # wants twelve until one stands). Banked, a bed's string cannot be got back - the chest read
+    # books edibles only - so string leaves the pack with the bed, never before it.
+    if _bed_available(gs):
+        mats.add("string")
+    if _has(gs.inventory, FLINT_STEEL_ITEM):
+        mats.add(FLINT_ITEM)
+    return frozenset(mats)
+
+
 def _keep_in_pack(gs: GameState) -> frozenset[str]:
     """`KEEP_MATERIALS`, plus everything the bot is wearing, holding or has decided to keep.
 
@@ -2630,7 +2681,8 @@ def _keep_in_pack(gs: GameState) -> frozenset[str]:
     held = {meta.get("item") for meta in list(gs.armor.values()) + list(gs.tool_meta.values())}
     held |= {f"{tier}_{cls}" for cls, tier in (gs.tools or {}).items()
              if tier and tier != "none"}
-    return KEEP_MATERIALS | set(EDIBLE) | set(_GEAR_KEEP) | {n for n in held if n}
+    keep = KEEP_MATERIALS | set(EDIBLE) | set(_GEAR_KEEP) | {n for n in held if n}
+    return keep - _arrow_mats_to_bank(gs)
 
 
 def _surplus_besides_keep(gs: GameState, inv: dict[str, int]) -> list[str]:
@@ -3285,6 +3337,16 @@ def _is_pour_cell(h: BlockHit, sources: set[tuple[int, int, int]]) -> bool:
             and any((h.x + dx, h.y, h.z + dz) in sources for dx, _, dz in _LATERAL))
 
 
+def _lava_retired(gs: GameState, hit: BlockHit) -> bool:
+    """Whether the pool this lava cell belongs to has been retired for a while.
+
+    `_note_lava_tries` (graph) books a walk that ended without obsidian, per pool. Retired is
+    keyed by the stance cell, so the test groups by `LAVA_POOL_RADIUS` -- the same radius the
+    server uses to call lava one pool and the walk uses to remember a body it stood beside.
+    """
+    return any(_dist(hit.pos, r) <= LAVA_POOL_RADIUS for r in gs.lava_retired)
+
+
 def _lava_pour_target(gs: GameState) -> BlockHit | None:
     """The nearest lava cell the carried water can actually turn into obsidian, or None.
 
@@ -3310,6 +3372,8 @@ def _lava_pour_target(gs: GameState) -> BlockHit | None:
         return None
     for h in hits:  # already nearest first
         if h.pos in gs.pour_skip or not _is_pour_cell(h, sources):
+            continue
+        if _lava_retired(gs, h):
             continue
         # A source whose every walkable stance the server already refused has no footing to
         # pour from (see `_pour_stance`), so the search moves to the next source -- the same
@@ -3339,7 +3403,7 @@ def _lava_cast_pool(gs: GameState) -> BlockHit | None:
     whole job to it.
     """
     for h in gs.resources.get("lava") or []:  # already nearest first
-        if h.level == 0:
+        if h.level == 0 and not _lava_retired(gs, h):
             return h
     return None
 
@@ -3418,7 +3482,7 @@ def _lava_walk_target(gs: GameState) -> tuple[int, int, int] | None:
     for h in gs.resources.get("lava") or []:  # already nearest first
         if _within_reach(gs, h, POUR_REACH):
             continue  # already at the lava: `mine_obsidian` owns that tick
-        if h.pos in gs.pour_skip:
+        if h.pos in gs.pour_skip or _lava_retired(gs, h):
             continue
         options = [p for p in _stance_options(gs, h) if p not in gs.stance_skip]
         if not options:
@@ -3434,7 +3498,10 @@ def _lava_walk_target(gs: GameState) -> tuple[int, int, int] | None:
             continue
         if gs.pos is None:
             return options[0]
-        return min(options, key=lambda p: _dist(gs.pos, p))
+        stance = min(options, key=lambda p: _dist(gs.pos, p))
+        if abs(stance[1] - gs.pos[1]) > LAVA_WALK_LEASH:
+            continue  # too far below (or above) to be worth the descent for a flow
+        return stance
     return None
 
 

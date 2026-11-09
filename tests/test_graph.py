@@ -19,7 +19,7 @@ from unittest import mock
 
 from mlaya import graph, perception, progress
 from mlaya.actions import (Action, candidates, nether_expedition_complete, resolve,
-                          tech_tree_complete)
+                          tech_tree_complete, LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_STOP, BOXED_REPEATS, DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
@@ -671,7 +671,10 @@ class PourSkipTest(unittest.TestCase):
         agent._banked_stores = ()
         agent.banked = {}
         agent._pour_skip = {(-129, 66, -30)}
-        self.assertEqual(agent._inject(gs()).pour_skip, frozenset({(-129, 66, -30)}))
+        agent._lava_retired = {(-129, 67, -30): 3}
+        state = agent._inject(gs())
+        self.assertEqual(state.pour_skip, frozenset({(-129, 66, -30)}))
+        self.assertEqual(state.lava_retired, frozenset({(-129, 67, -30)}))
 
 
 class NetherLandmarkWriteOffTest(unittest.TestCase):
@@ -1258,6 +1261,81 @@ class LavaWalkTest(unittest.TestCase):
         for _ in range(LAVA_WALK_COOLDOWN):
             agent._note_lava_walk(self._Action("explore", "navigate", {}), True)
         self.assertEqual(agent._lava_walked, {})
+
+
+class LavaPoolRetireTest(unittest.TestCase):
+    """A pool the lava walk keeps ending short of is retired, so the base work can run.
+
+    Live, run213 it101-141: the `mine_obsidian` walk to (-130,67,-30) arrived a cell above the
+    stance each time, `_at_pour_stance` refused the pour, and `go_home` took the next tick and
+    walked the body back -- twenty round trips of ~24 blocks and no obsidian. Every action looked
+    fine on its own, so neither `pour_skip` (a refused pour) nor `stance_skip` (a walk that did
+    not move) ever fired. The count is per walk and per pool, and any obsidian gained starts it
+    over: a pool that works must not be given up.
+    """
+
+    class _Action:
+        def __init__(self, label: str, tool: str, args: dict | None = None) -> None:
+            self.label = label
+            self.tool = tool
+            self.args = args or {}
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
+        agent._lava_tries = {}
+        agent._lava_retired = {}
+        agent.log = []
+        return agent
+
+    def _walk(self, agent: Agent, cell=(-130, 67, -30), label="mine_obsidian") -> None:
+        x, y, z = cell
+        agent._note_lava_tries(
+            self._Action(label, "navigate", {"x": x, "y": y, "z": z}), {})
+
+    def test_three_fruitless_walks_retire_the_pool(self) -> None:
+        agent = self._agent()
+        for _ in range(LAVA_POOL_RETIRE_AFTER - 1):
+            self._walk(agent)
+        self.assertEqual(agent._lava_retired, {})
+        self._walk(agent)
+        self.assertEqual(agent._lava_retired, {(-130, 67, -30): LAVA_POOL_RETIRE_TICKS})
+        self.assertIn("lava_pool_retired", [e.get("reason") for e in agent.log])
+
+    def test_obsidian_gained_starts_the_count_over(self) -> None:
+        agent = self._agent()
+        self._walk(agent)
+        self._walk(agent)
+        agent._note_lava_tries(self._Action("mine_obsidian", "collect_block", {}),
+                               {"inventory_delta": {"obsidian": 1}})
+        self.assertEqual(agent._lava_tries, {})
+        self.assertEqual(agent._lava_retired, {})
+        # Fresh strikes: two more walks do not retire the pool the gain proved.
+        self._walk(agent)
+        self._walk(agent)
+        self.assertEqual(agent._lava_retired, {})
+
+    def test_only_a_lava_walk_counts(self) -> None:
+        agent = self._agent()
+        for _ in range(LAVA_POOL_RETIRE_AFTER + 2):
+            agent._note_lava_tries(self._Action("go_home", "navigate",
+                                                {"x": 1, "y": 2, "z": 3}), {})
+            agent._note_lava_tries(self._Action("mine_obsidian", "collect_block",
+                                                {"block_name": "obsidian"}), {})
+        self.assertEqual(agent._lava_tries, {})
+        self.assertEqual(agent._lava_retired, {})
+
+    def test_the_pool_returns_when_the_retirement_runs_out(self) -> None:
+        # A countdown, not a lock: the walk digs, so the stance may be open on the next try.
+        agent = self._agent()
+        agent._lava_retired = {(-130, 67, -30): 2}
+        agent._note_lava_tries(self._Action("explore", "navigate", {}), {})
+        self.assertEqual(agent._lava_retired, {(-130, 67, -30): 1})
+        agent._note_lava_tries(self._Action("explore", "navigate", {}), {})
+        self.assertEqual(agent._lava_retired, {})
 
 
 class TickRecordTest(unittest.TestCase):

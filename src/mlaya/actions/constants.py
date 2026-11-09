@@ -410,6 +410,22 @@ POUR_REACH = 4.5
 # groups lava sources within 8 blocks of one another (`LAVA_POOL_RADIUS` in `cast-targets.ts`),
 # so a stance inside that radius is a stance of the body the bot already stood beside.
 LAVA_POOL_RADIUS = 8.0
+# How far in height `approach_lava` will walk to inspect a lava body. The walk exists to close the
+# last few blocks before the scan lists the level-0 source, not to descend the map to a flow that may
+# never form obsidian: the pathfinder's failures are vertical (the Nether-exit climb leash reads the
+# same way), and run148 spent 50 ticks walking down to flows 55 blocks under the base. A body a flat
+# walk away is still reached (live, run114: the pond the run's frame was paid from sat 60 blocks off
+# the anchor and no source was listed before the walk). Horizontal distance is not capped: the walk
+# is how the scan learns about the source, and a flat walk is what the run114 frame needed.
+LAVA_WALK_LEASH = 48.0
+# Fruitless lava walks on the same pool before it is retired for a while. A walk that ends short of
+# its pour stance and is followed by a base step (or another body) can repeat for a whole run -- the
+# body covers the same twenty-four blocks, the stance never opens, and no obsidian is formed (live,
+# run213 it101-141: twenty `mine_obsidian`/`go_home` round trips). Three strikes retires the pool;
+# any obsidian gained clears the count, and the retirement is a countdown, so the pool returns once
+# the ground around it has had time to change.
+LAVA_POOL_RETIRE_AFTER = 3
+LAVA_POOL_RETIRE_TICKS = 120
 # How many obsidian one server-side cast asks for. The dig itself opens the pool: `cast-obsidian.ts`
 # breaks up to `EXPOSING_BREAKS = 3` blocks of cap to get a sight line, pours, scoops the bucket back
 # and mines what formed, all inside one `collect_block`. Six keeps the whole frame within two casts

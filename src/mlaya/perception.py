@@ -988,6 +988,12 @@ class GameState:
     # another body instead of hopping back to it (live, run143: 94 `approach_lava` ticks bouncing
     # between two stances 5.6 blocks apart beside the same two flows, never a source).
     lava_walked: frozenset = frozenset()
+    # Lava pools retired after `LAVA_POOL_RETIRE_AFTER` fruitless walks (see `_note_lava_tries`).
+    # A walk that keeps ending short of its pour stance and never forms obsidian is not going to
+    # start forming it by walking the same twenty-four blocks again, and the base work it steals
+    # ticks from is what ends the loop (live, run213 it101-141). Keyed by the walk's target cell;
+    # `_lava_retired` groups by `LAVA_POOL_RADIUS`. A countdown, so the pool returns.
+    lava_retired: frozenset = frozenset()
     # A `drop_junk` the terrain refused to give a disposal pit for (`[DROP_HOLE_UNAVAILABLE]`):
     # from then on the drop goes onto the open ground instead of into a dug hole. Both free the
     # slots the relief is for, and the open drop cannot fail, so the loop cannot stall on it.

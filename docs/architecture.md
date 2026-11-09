@@ -2114,3 +2114,44 @@ eyes before it is banked the pearl waves never reach their cap and the counter s
   `tests/test_graph.py::GuardUnblockTest`, `tests/test_graph.py::PortalBaseAdoptTest`,
   `tests/test_graph.py::FurnaceSupportTest`,
   `tests/test_perception.py::PortalCornerParseTest` and `tests/test_verify.py::HomeBaseProgressTest`.
+
+## Live findings run213 (2026-11-09): late supply, a banked spare, and a pool on a leash
+
+run213 refined the A/B against the Oct-28 baseline: 4 milestones instead of 1 (frame it172, gate
+it265, Nether it266, bed it354), progress 0.852, one death. Three defects were left in the log, each
+fixed here for the next run.
+
+- **The End reserve ran before the eyes and cost the gate.** A Nether death at it278 emptied the
+  pack, including `flint_and_steel`; `light_portal` was never offerable again and the last 330 ticks
+  stayed in the Overworld. Meanwhile `craft_flint_and_steel` was on offer for 39 ticks and taken once
+  (it158), and the flint that arrived was struck into arrows: the End arrow economy
+  (`_end_supply_steps`, `_arrows_pending`) is a lull goal and does not know the gate is still dark.
+  It now stands down until the eye task is done: `_arrows_pending` and the top of
+  `_end_supply_steps` both test `_eyes_owed(gs) <= 0`, the same signal `_stronghold_phase` opens on.
+  The drive is deferred, not removed - the arrows are still wanted for the End, after the stronghold
+  portal, and `craft_bow`/`craft_arrows`/`hunt_feather`/`hunt_skeleton`/`camp_skeleton_spawner`/
+  `get_flint` all wait with it. Materials that fall in meanwhile are **banked, never dropped**:
+  `_arrow_mats_to_bank` takes feathers out of `_keep_in_pack` while the eyes are owed, string once a
+  bed stands (its twelve-string price is owed first, and banked string cannot be withdrawn), and
+  flint once a `flint_and_steel` is carried. Arrows themselves stay in hand - a skeleton drop is the
+  one reserve material the chain does not re-craft. `_stronghold_supply_steps` (the pre-trek crafts)
+  therefore only fires in the window it describes, after the eyes.
+- **`replace_tool` and `stow_surplus` undid each other.** run213 it494-517: a diamond pickaxe at 8%
+  durability, no diamonds, a table and cobble in the pack. `_replacement_pickaxe` fell through its
+  branches to a stone pickaxe, `_spare_gear` ranked that stone below the diamond in hand and banked
+  it on the next tick, and the offer rebuilt it until the materials ran out. A spare must now match
+  the wielding tier (`TIER[item] >= _pick_tier`); with no diamonds it returns `None`, and the escape
+  stays the diamond dig (`mine_diamond` -> `craft_pickaxe_spare`).
+- **A lava pond walked to and back, twenty times.** it101-141 alternated `mine_obsidian` and
+  `go_home`: the walk to (-130,67,-30) landed a cell above the pour stance (the block over it still
+  standing), `_at_pour_stance` refused the pour, a pending base step made `go_home` the next tick,
+  and the walk restarted from home. ~560 blocks, no obsidian, and neither `pour_skip` (a refused
+  pour) nor `stance_skip` (a walk that did not move) could see it - every action looked fine alone.
+  Two rules now: `approach_lava` is leashed in height (`LAVA_WALK_LEASH = 48`, the shape of the
+  Nether-exit climb leash - run148's flows sat 55 blocks under the base and can never form obsidian;
+  a flat walk stays, run114's frame was paid from a pond 60 blocks off the anchor), and
+  `Agent._note_lava_tries` books one try per `mine_obsidian`/`approach_lava` walk that ends with no
+  obsidian gained. At `LAVA_POOL_RETIRE_AFTER = 3` the pool is retired for
+  `LAVA_POOL_RETIRE_TICKS = 120`, closing both steps so the base work can run; any obsidian gained
+  clears the count, and the retirement is a countdown, so a pool the walk dug open comes back.
+  Tested in `tests/test_graph.py::LavaPoolRetireTest` and `tests/test_actions.py::NetherGateTest`.
