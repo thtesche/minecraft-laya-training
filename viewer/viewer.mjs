@@ -14,7 +14,9 @@
 // Usage: node viewer.mjs [--host 127.0.0.1] [--port 25565] [--version 1.21.4]
 //          [--username LayaView] [--target MineAI] [--view-port 3006] [--view-distance 6]
 //          [--distance 2] [--height 1] [--first-person] [--no-commands] [--names]
+//          [--state runs/.lab/viewer-state.json]
 
+import fs from 'node:fs'
 import mineflayer from 'mineflayer'
 import viewerPkg from 'prismarine-viewer'
 import viewerViewer from 'prismarine-viewer/viewer/index.js'
@@ -34,6 +36,9 @@ const DEFAULTS = {
   distance: 2,
   height: 1,
   commands: true,
+  // Where the viewer writes what it sees (connected, gamemode, camera, distance to the target)
+  // so `lab.sh status` can report the live view without parsing the log.
+  state: null,
   // prismarine-viewer paints every entity's username as a sprite above its model. The label is
   // the only thing in the picture that is not the world, so it stays off unless asked for.
   names: false
@@ -59,6 +64,8 @@ const FOLLOW_MS = 100
 const TP_EVERY_MS = 20000
 // How often the log reports where the camera is and how far MineAI is from it.
 const STATUS_MS = 30000
+// How often the state file `lab.sh status` reads is rewritten.
+const STATE_MS = 5000
 // The wait after the spawn before the game mode is judged.
 const SETTLE_MS = 3000
 const RECONNECT_MIN_MS = 5000
@@ -114,10 +121,14 @@ function start () {
 
   let followTimer = null
   let statusTimer = null
+  let stateTimer = null
   let commandsAllowed = opts.commands
   let askedSpectator = false
   let lastTp = 0
   let spawned = false
+  // mineflayer has no `bot.connected`; the viewer tracks the socket itself so the state file
+  // can say whether LayaView is in the world.
+  let connected = false
   let lastHint = 0
 
   // The only way out to the server's chat: commands, never plain text.
@@ -134,6 +145,33 @@ function start () {
     if (now - lastHint < 60000) return
     lastHint = now
     log('host action needed:', text)
+  }
+
+  // What the lab sees of the viewer: `lab.sh status` reads this file instead of the log, so it
+  // can tell "the process is up" apart from "LayaView is in the world with a camera on the bot".
+  function writeState () {
+    if (!opts.state) return
+    const fmt = (v) => ({ x: +v.x.toFixed(1), y: +v.y.toFixed(1), z: +v.z.toFixed(1) })
+    const target = bot.players?.[opts.target]?.entity
+    const pos = bot.entity?.position
+    const payload = {
+      updatedAt: new Date().toISOString(),
+      connected,
+      username: opts.username,
+      gamemode: bot.game?.gameMode,
+      dimension: bot.game?.dimension,
+      camera: pos ? fmt(pos) : null,
+      target: opts.target,
+      targetPosition: target ? fmt(target.position) : null,
+      distance: target && pos ? +pos.distanceTo(target.position).toFixed(1) : null,
+      viewPort: opts['view-port'],
+      viewDistance: opts['view-distance']
+    }
+    try {
+      fs.writeFileSync(opts.state, JSON.stringify(payload, null, 2) + '\n')
+    } catch (err) {
+      log('state write failed:', err.message)
+    }
   }
 
   function spectating () {
@@ -264,6 +302,8 @@ function start () {
     setTimeout(ensureSpectator, SETTLE_MS)
     followTimer = setInterval(follow, FOLLOW_MS)
     statusTimer = setInterval(status, STATUS_MS)
+    stateTimer = setInterval(writeState, STATE_MS)
+    writeState()
   })
 
   bot.on('game', () => { if (spawned) ensureSpectator() })
@@ -277,12 +317,16 @@ function start () {
     }
   })
 
+  bot.on('connect', () => { connected = true; writeState() })
   bot.on('kicked', (reason) => log('kicked:', JSON.stringify(reason)))
   bot.on('error', (err) => log('error:', err.message))
 
   bot.on('end', (reason) => {
+    connected = false
     clearInterval(followTimer)
     clearInterval(statusTimer)
+    clearInterval(stateTimer)
+    writeState()
     try { bot.viewer?.close() } catch {}
     log(`disconnected (${reason}); reconnecting in ${reconnectMs / 1000}s`)
     setTimeout(start, reconnectMs)

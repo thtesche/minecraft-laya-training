@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# The lab's lifecycle: world (Docker), MCP host (bun), run (mlaya), report (analyze).
+# The lab's lifecycle: world (Docker), MCP host (bun), run (mlaya), viewer (node), report (analyze).
 #
-#   ./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   start world, host, run
-#   ./scripts/lab.sh status                                    JSON: world, host, run, last tick
+#   ./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   start world, host, viewer, run
+#   ./scripts/lab.sh up --no-viewer                           the same, without the live view
+#   ./scripts/lab.sh status                                    JSON: world, viewer, host, run, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
 #   ./scripts/lab.sh report [run number]                        write the finished run's report
 #   ./scripts/lab.sh dataset [flags]                            fine-tuning corpus from every archived run
+#   ./scripts/lab.sh viewer [up|down|status]                   the LayaView spectator client alone
 #   ./scripts/lab.sh console "op LayaView"                      server console command
-#   ./scripts/lab.sh down [--run-only]                         stop run, host, world
+#   ./scripts/lab.sh down [--run-only]                         stop run, host, viewer, world
 #
 # Rules the lab enforces: one run at a time (lock file), a run only starts when the world
 # and the host are both healthy, the previous decisions log is archived first, and a run that
@@ -34,6 +36,12 @@ OPS_KNOWN="$STATE/ops-known.json"
 PY="$REPO/.venv/bin/python"
 MCP_PORT=25575
 MC_PORT=25565
+# The live view: a spectator client (LayaView) that watches the bot in the browser. It is an
+# add-on, never a dependency of a run - see start_viewer.
+VIEWER="$REPO/viewer"
+VIEWER_PORT=3006
+VIEWER_PID="$STATE/viewer.pid"
+VIEWER_STATE="$STATE/viewer-state.json"
 
 mkdir -p "$STATE"
 
@@ -149,6 +157,44 @@ start_host() {
   log "MCP host starting from $MCP_BRANCH @ $(mcp_commit) (log: runs/mcp.log)"
 }
 
+viewer_up() {
+  [[ -f "$VIEWER_PID" ]] && kill -0 "$(cat "$VIEWER_PID")" 2>/dev/null
+}
+
+# LayaView joins the world as a spectator and prismarine-viewer renders it on :3006. The viewer
+# reconnects by itself when the world restarts, so it outlives a `--fresh` without help.
+# It is an add-on: node missing or the deps not installed is a line in the log, never a reason
+# to refuse a run.
+start_viewer() {
+  if viewer_up; then
+    log "viewer already running (pid $(cat "$VIEWER_PID")) - http://localhost:$VIEWER_PORT"
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    log "viewer not started: node is not on the path"
+    return 1
+  fi
+  if [[ ! -d "$VIEWER/node_modules" ]]; then
+    log "viewer not started: viewer/node_modules is missing - run: cd viewer && npm install"
+    return 1
+  fi
+  # The braces keep the command substitution's pipe closed: without them the background job
+  # inherits it and `$( ... )` waits for a viewer that never exits.
+  pid=$( cd "$VIEWER" && { node viewer.mjs --host 127.0.0.1 --port "$MC_PORT" \
+    --view-port "$VIEWER_PORT" --state "$VIEWER_STATE" > "$REPO/runs/viewer.log" 2>&1 & echo $!; } )
+  echo "$pid" > "$VIEWER_PID"
+  log "viewer starting as LayaView (spectator) -> http://localhost:$VIEWER_PORT, log: runs/viewer.log"
+  return 0
+}
+
+stop_viewer() {
+  if viewer_up; then
+    kill "$(cat "$VIEWER_PID")" 2>/dev/null
+    rm -f "$VIEWER_PID"
+    log "viewer stopped"
+  fi
+}
+
 next_run_number() {  max=0
   for f in "$REPO"/runs/run*.log "$REPO"/runs/history/decisions-run*.jsonl; do
     n=$(basename "$f" | sed -n 's/.*run\([0-9]*\).*/\1/p')
@@ -210,12 +256,14 @@ cmd_up() {
   n=600
   fresh=0
   ignore_goal=0
+  no_viewer=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --n) n="${2:-600}"; shift 2 ;;
       --n=*) n="${1#--n=}"; shift ;;
       --fresh) fresh=1; shift ;;
       --ignore-goal) ignore_goal=1; shift ;;
+      --no-viewer) no_viewer=1; shift ;;
       *) log "unknown argument: $1"; return 1 ;;
     esac
   done
@@ -275,6 +323,14 @@ cmd_up() {
   fi
   log "MCP host healthy on 127.0.0.1:$MCP_PORT"
 
+  # The live view rides with the lab: started with the world, stopped with it. A viewer the
+  # lab does not manage is a viewer nobody remembers to stop.
+  if [[ $no_viewer == 1 ]]; then
+    stop_viewer
+  else
+    start_viewer
+  fi
+
   if ! "$PY" -m mlaya.cli probe; then
     log "probe failed - the host is not usable, the run is not started"
     return 1
@@ -313,12 +369,13 @@ cmd_up() {
 }
 
 cmd_status() {
-  "$PY" - "$REPO" "$(world_up && echo yes || echo no)" <<'EOF'
+  "$PY" - "$REPO" "$(world_up && echo yes || echo no)" "$VIEWER_PORT" <<'EOF'
 import json, os, subprocess, sys, time
 from pathlib import Path
 
 repo = Path(sys.argv[1])
 world_running = sys.argv[2] == "yes"
+viewer_port = int(sys.argv[3]) if len(sys.argv) > 3 else 3006
 state = repo / "runs" / ".lab"
 
 def running(pattern):
@@ -368,8 +425,22 @@ if len(actions) >= 6:
         anomalies.append("stalled: " + "/".join(sorted(str(l) for l in labels)))
 
 run_no = (state / "run_number").read_text().strip() if (state / "run_number").exists() else ""
+
+# The viewer reports itself through --state, so status can tell "the process is alive" apart
+# from "LayaView is actually in the world with a camera on the bot".
+viewer = {"running": pid_alive(state / "viewer.pid"), "url": f"http://localhost:{viewer_port}"}
+try:
+    vstate = json.loads((state / "viewer-state.json").read_text())
+except Exception:
+    vstate = {}
+for key in ("connected", "gamemode", "dimension", "camera", "target", "distance", "updatedAt"):
+    viewer[key] = vstate.get(key)
+if viewer["running"] and not viewer.get("connected"):
+    viewer["note"] = "process is up but LayaView is not in the world (reconnecting)"
+
 print(json.dumps({
     "world": {"running": world_running},
+    "viewer": viewer,
     "host": {"running": running("src/server/host.ts"),
              "branch": subprocess.run(["git", "-C", "/Users/thtesche/VibeCoding/mine-ai-mcp",
                                        "rev-parse", "--abbrev-ref", "HEAD"],
@@ -410,6 +481,24 @@ cmd_report() {
   report_run "${1:-}"
 }
 
+# The live view on its own: restart a viewer that dropped, or run one against a world that is
+# already up, without touching the host or starting a run.
+cmd_viewer() {
+  case "${1:-status}" in
+    up) start_viewer ;;
+    down) stop_viewer ;;
+    status)
+      if viewer_up; then
+        echo "viewer running (pid $(cat "$VIEWER_PID")) - http://localhost:$VIEWER_PORT"
+        cat "$VIEWER_STATE" 2>/dev/null || echo '{"connected": null}'
+      else
+        echo "viewer not running"
+      fi
+      ;;
+    *) echo "usage: lab.sh viewer up|down|status"; return 1 ;;
+  esac
+}
+
 # The fine-tuning corpus: every archived run plus the live log, rebuilt through today's
 # renderer so the head is trained on exactly the wording the loop serves. Extra flags
 # (--rerender, --include-failed, --limit …) go straight to `mlaya.cli dataset`.
@@ -428,6 +517,7 @@ cmd_down() {
     log "run stopped"
   fi
   if [[ ${1:-} != --run-only ]]; then
+    stop_viewer
     if host_up; then
       pkill -f 'src/server/host.ts'
       log "MCP host stopped"
@@ -482,9 +572,10 @@ case "${1:-status}" in
   analyze) shift; cmd_analyze "$@" ;;
   report) shift; cmd_report "$@" ;;
   dataset) shift; cmd_dataset "$@" ;;
+  viewer) shift; cmd_viewer "$@" ;;
   console) shift; cmd_console "$@" ;;
   op) shift; cmd_op "$*" ;;
   host-test) cmd_host_test ;;
   down) shift; cmd_down "$@" ;;
-  *) echo "usage: lab.sh up|status|analyze|report|host-test|down" ; exit 1 ;;
+  *) echo "usage: lab.sh up|status|analyze|report|viewer|host-test|down" ; exit 1 ;;
 esac

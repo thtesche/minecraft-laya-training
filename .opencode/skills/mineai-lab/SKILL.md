@@ -9,14 +9,16 @@ The lab is one command with a handful of verbs. Everything else in this skill is
 around them.
 
 ```bash
-./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   # world + host + run
-./scripts/lab.sh status                                   # JSON: world, host, run, last tick
+./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   # world + host + viewer + run
+./scripts/lab.sh up --no-viewer                           # the same, without the live view
+./scripts/lab.sh status                                   # JSON: world, viewer, host, run, last tick
 ./scripts/lab.sh report [run number]                      # the report a finished run writes itself
 ./scripts/lab.sh analyze [--baseline runs/history/…]      # defect report for the newest log
 ./scripts/lab.sh dataset [mlaya dataset flags]            # fine-tuning corpus from every archived run
+./scripts/lab.sh viewer [up|down|status]                  # the LayaView spectator client alone
 ./scripts/lab.sh console "op LayaView"                    # server console command
 ./scripts/lab.sh op Sanskrita                             # grant op, remembering the real UUID
-./scripts/lab.sh down [--run-only]                        # stop run, host, world
+./scripts/lab.sh down [--run-only]                        # stop run, host, viewer, world
 ```
 
 A run reports itself: `lab up` starts a watcher that writes

@@ -7,17 +7,29 @@ and LayaView never fights, builds or chats.
 
 ## Start
 
+The lab runs it: `lab.sh up` starts the viewer with the world, `lab.sh down` stops it, and
+`lab.sh viewer up|down|status` manages it on its own. `--no-viewer` on `up` leaves it out
+entirely.
+
+```bash
+./scripts/lab.sh viewer up          # http://localhost:3006
+```
+
+By hand, if the lab is not in the picture:
+
 ```bash
 cd viewer
 npm install
-node viewer.mjs > viewer.log 2>&1 &
+node viewer.mjs --state ../runs/.lab/viewer-state.json > ../runs/viewer.log 2>&1 &
 ```
 
 Options (defaults in brackets): `--host` [127.0.0.1], `--port` [25565, the LAN port of the
 world], `--version` [1.21.4], `--username` [LayaView], `--target` [MineAI], `--view-port` [3006],
 `--view-distance` [6], `--distance` [2] and `--height` [1] for the chase camera,
 `--first-person`, `--no-commands`, `--names` (prismarine-viewer paints every player's username as
-a sprite above its model; the label is off by default and `--names` brings it back).
+a sprite above its model; the label is off by default and `--names` brings it back),
+`--state` [none; the lab writes `runs/.lab/viewer-state.json` so `lab.sh status` can report the
+camera without parsing the log].
 
 Every 30 s the log reports where the camera is and how far MineAI is from it. The viewer
 reconnects by itself (5 s, doubling to 60 s) when the world closes or LayaView is

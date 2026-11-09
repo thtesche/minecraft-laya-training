@@ -29,15 +29,17 @@ head is trained. Run-by-run findings live in [`architecture.md`](architecture.md
   (a LAN world makes its host OP automatically), so `lab.sh` writes `Sanskrita` and `LayaView`
   into `ops.json` before each start, remembering the UUID the server actually assigns
   (`runs/.lab/ops-known.json`) — the name-derived offline UUID is not the one a real client uses.
-- **The live view** is the [viewer](../viewer/README.md): a spectator client in the browser. It
-  must stay a spectator, or the bot can no longer sleep through the night.
+- **The live view** is the [viewer](../viewer/README.md): a spectator client in the browser,
+  started by `lab.sh up` and stopped by `lab.sh down` (`--no-viewer` skips it, `lab.sh viewer
+  up|down|status` drives it on its own). It must stay a spectator, or the bot can no longer sleep
+  through the night.
 
 ## A run
 
-One command: `./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]`. The other verbs:
-`status` (JSON: world, host, run, last tick, anomalies), `report [run]`,
-`analyze [--baseline runs/history/…]`, `dataset [flags]`, `console "op LayaView"`,
-`down [--run-only]`.
+One command: `./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal] [--no-viewer]`. The other
+verbs: `status` (JSON: world, viewer, host, run, last tick, anomalies), `report [run]`,
+`analyze [--baseline runs/history/…]`, `dataset [flags]`, `viewer [up|down|status]`,
+`console "op LayaView"`, `down [--run-only]`.
 
 The lab does the bookkeeping that used to be manual:
 
@@ -48,6 +50,10 @@ The lab does the bookkeeping that used to be manual:
    `-crashed` suffix by hand).
 3. A watcher writes `runs/history/report-runNN.md` and `summary-runNN.json` the moment the loop's
    process exits, diffing against the previous run's summary — nobody has to ask for the analysis.
+4. The live view rides with the world: `up` starts LayaView, `down` stops it, and `status` reports
+   what the viewer writes to `runs/.lab/viewer-state.json` — connected, gamemode, camera, distance
+   to MineAI. The viewer is an add-on: node missing or `viewer/node_modules` not installed is a
+   line in the log, never a reason to refuse a run.
 
 `status` names the anomalies worth a look without reading the log: health ≤ 8, food ≤ 6, a host
 that answers `/health` but is not connected to the world, and a stall (six action ticks with at
