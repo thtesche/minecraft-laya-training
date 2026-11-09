@@ -238,6 +238,32 @@ FRAME_WIDTH = 5   # the anchor cell plus the 4 cells of the bottom row
 FRAME_HEIGHT = 5  # the 5 structural layers from the bottom row up to the top row
 
 
+def _working_room(grid: dict[tuple[int, int, int], str], bx: int, by: int, bz: int) -> bool:
+    """Whether the bot can stand beside the wall it is about to raise.
+
+    A portal frame is a wall one block thick: four columns at `z = bz`, running from the
+    ground row `by` up to the top row `by + 4`. The anchor column `bx` holds the bot's own
+    footing, so the west face is worked from there. Everything else -- the far column at
+    `bx + 4` and the whole top row -- is out of reach from the anchor: the bot has to walk
+    round the wall and work it from a cell beside it, at the same level, in `z = bz - 1` or
+    `bz + 1`. `build_structure` routes to each cell with `nearGoal(cell, BUILD_REACH)`, and
+    where no such footing exists the search finds no route at all.
+
+    So the site needs a strip of level ground along at least one side of the footprint:
+    solid under every frame column, and room for the body above it. A strip one cell wide in
+    `z` -- ground the frame can stand on with water or a drop on both sides -- passes every
+    other criterion and still cannot be built (live, run214: the base anchor landed on such a
+    ledge, the frame rose on it, and `build_portal` failed six ticks in a row on the far
+    column with `search timed out after 2000 ms … closest node was -5,62,62`, the bot never
+    leaving the anchor cell it stood on).
+    """
+    for dz in (-1, 1):
+        if all(_solid(grid.get((x, by, bz + dz))) and _open_sky(grid.get((x, by + 1, bz + dz)))
+               for x in range(bx + 1, bx + FRAME_WIDTH)):
+            return True
+    return False
+
+
 def flat_build_site(grid: dict[tuple[int, int, int], str],
                     feet: tuple[float, float, float]) -> tuple[int, int, int] | None:
     """A level, clear surface cell near the bot where the portal frame fits, or None.
@@ -263,6 +289,10 @@ def flat_build_site(grid: dict[tuple[int, int, int], str],
     `_at_surface` proved that is open ground -- live, run26: the bot stood at y=64, the pick was
     the floor of a two-deep dip at y=61, and the frame, chest and furnace went in 1-2 blocks
     under the surrounding ground).
+
+    Level ground under the footprint is not enough on its own: the wall is one block thick,
+    and everything east of the anchor column has to be worked from beside it. `_working_room`
+    demands a strip of the same level along at least one side of the frame.
     """
     if not grid:
         return None
@@ -287,7 +317,7 @@ def flat_build_site(grid: dict[tuple[int, int, int], str],
                     break
             if not clear:
                 break
-        if clear:
+        if clear and _working_room(grid, bx, by, bz):
             sites.append((bx, by, bz))
     if not sites:
         return None
@@ -322,7 +352,7 @@ def bed_frame_site(grid: dict[tuple[int, int, int], str], bed) -> bool:
         for dy in range(1, FRAME_HEIGHT):
             if not _open_sky(grid.get((x, by + dy, bz))):
                 return False
-    return True
+    return _working_room(grid, bx, by, bz)
 
 
 # How far the walk off an open drop goes. A toss lands up to two blocks out in whatever way the

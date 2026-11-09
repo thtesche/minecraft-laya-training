@@ -6,8 +6,8 @@ import unittest
 
 from mlaya.actions import resolve
 from mlaya.perception import BlockHit, GameState
-from mlaya.targets import (STEP_AWAY_MIN, Target, _compass, base_target, bed_frame_site, boxed_in,
-                           flat_build_site, frontier_heading, ground_targets, nearest_ground,
+from mlaya.targets import (FRAME_WIDTH, STEP_AWAY_MIN, Target, _compass, base_target, bed_frame_site,
+                           boxed_in, flat_build_site, frontier_heading, ground_targets, nearest_ground,
                            step_away_cell)
 
 
@@ -390,6 +390,31 @@ class FlatBuildSiteTest(unittest.TestCase):
         grid[(2, 62, 0)] = "air"
         self.assertIsNone(flat_build_site(grid, (2.5, 64.0, 0.5)))
 
+    def test_rejects_a_footprint_with_no_room_to_stand_beside_it(self) -> None:
+        # Live run214: the anchor landed on a strip of ground one cell wide in z, air on both
+        # sides and water a level below. Every frame cell had support beneath it and open sky
+        # above, so the pick took it; the wall then had no footing beside it, and the far
+        # column and the top row were out of reach from the anchor cell -- `build_portal`
+        # failed six ticks in a row on them with `search timed out after 2000 ms`.
+        grid = self._grid(range(-10, -1), range(62, 65))
+        for (x, y, z) in grid:
+            if z != 63:
+                grid[(x, y, z)] = "water" if y == 62 else "air"
+        self.assertIsNone(flat_build_site(grid, (-8.5, 64.0, 63.5)))
+
+    def test_accepts_a_site_once_one_side_of_the_frame_has_footing(self) -> None:
+        # The same ledge, with one side filled to the frame's own level: the bot can walk
+        # round the wall and work the far column and the top row from there.
+        grid = self._grid(range(-10, -1), range(62, 65))
+        for (x, y, z) in grid:
+            if z == 62:
+                grid[(x, y, z)] = "water" if y == 62 else "air"
+        site = flat_build_site(grid, (-8.5, 64.0, 63.5))
+        self.assertIsNotNone(site)
+        bx, by, bz = site
+        self.assertTrue(all(grid[(x, by, bz + 1)] not in ("air", "water")
+                            for x in range(bx + 1, bx + FRAME_WIDTH)))
+
     def test_rejects_a_pit_floor_below_the_bots_own_footing(self) -> None:
         # Live run26: the two scan reads reach three blocks below the bot, and a dug-out dip
         # floor met every other criterion, so the base sank to it -- the bot stood at y=64, the
@@ -449,6 +474,16 @@ class BedFrameSiteTest(unittest.TestCase):
     def test_a_slope_beside_the_bed_is_refused(self) -> None:
         grid = self._grid(range(0, 9), range(-2, 3))
         grid[(4, 64, 0)] = "stone"  # a frame bottom-row cell the build server will not dig
+        self.assertFalse(bed_frame_site(grid, self._bed(0, 64, 0)))
+
+    def test_a_bed_on_a_one_cell_ledge_is_refused(self) -> None:
+        # The run214 shape reached through the bed path: the ground under the footprint is
+        # level and clear, but nothing stands beside the wall, so the far column and the top
+        # row can never be reached.
+        grid = self._grid(range(0, 9), range(-2, 3))
+        for (x, y, z) in grid:
+            if z != 0:
+                grid[(x, y, z)] = "water" if y == 62 else "air"
         self.assertFalse(bed_frame_site(grid, self._bed(0, 64, 0)))
 
     def test_a_hole_under_the_frame_row_is_refused(self) -> None:

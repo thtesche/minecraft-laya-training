@@ -2025,7 +2025,12 @@ which tool the moment allows.
   below**: the server digs out the
   floor row and re-places it as obsidian, so a cell one above a hole would wrongly stay "without
   a landing surface" and the opening would never close (live, `light_portal` hung like this in
-  `[PORTAL_NO_FRAME]`). This makes the frame fit the terrain (live the old pick
+  `[PORTAL_NO_FRAME]`). The site also needs a strip of the same level along at least one side of
+  the footprint (`targets._working_room`): the wall is one block thick, so the far column and the
+  top row can only be worked from beside it, and a footprint with nothing to stand on alongside it
+  leaves those cells unreachable (live, run214: the anchor sat on a ledge one cell wide in `z`, and
+  `build_portal` failed six ticks running on the far column with `search timed out after 2000 ms`).
+  This makes the frame fit the terrain (live the old pick
   — the *lowest* standable cell — ran into a hollow, and 15 of 20 frame cells were stuck in stone). If no spot is within
   scan range, `targets.base_target` applies as before (only `GROUND_NAMES`, at/above the
   bot level, nearest first). `_REPLACEABLE` (incl. `cave_air`) stays for the
