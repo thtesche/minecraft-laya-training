@@ -24,7 +24,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
                       FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS,
-                      _portal_lit_scan, _bed_at_stronghold)
+                      _portal_lit_scan, end_complete)
 from .brain import Brain, escalate_to_system2, trajectory_digest
 from .mcp import _find
 from .memory import MemoryLog
@@ -713,6 +713,15 @@ class Agent:
         # The stronghold bed phase: set once `sleep_stronghold` reports success, so the run's
         # new end criterion (portal active + bed at stronghold + slept once) can close.
         self._slept_at_stronghold = False
+        # Phase 5's latches (the End fight), each set on its own action's receipt: the End has been
+        # entered at least once (`_note_end_entered`, on an `enter_end_portal` success), the dragon
+        # has died (`_note_dragon`, from a kill receipt - the run's goal), and the Overworld cell of
+        # the active end portal to step into (`_note_portal`, the `activate_portal` centre). Each only
+        # ever sets, the same shape as `_end_portal_active`; a cold restart rebuilds them from the
+        # logged state (`_restore_world`), so a run resumed in the End does not re-ask them.
+        self._end_entered = False
+        self._dragon_slain = False
+        self._end_portal_cell: tuple[int, int, int] | None = None
         # The end portal frame the locate phase confirmed (`_note_locate`): the cell the bot has to
         # walk to before `activate_end_portal` can aim at anything. A locate "succeeds" the moment a
         # frame chunk loads, so this is the only record of where the frame actually is.
@@ -829,6 +838,23 @@ class Agent:
             if isinstance(frame, (list, tuple)) and len(frame) == 3 and not self._stronghold_frame:
                 self._stronghold_frame = tuple(int(v) for v in frame)
                 restored.append("stronghold_frame")
+            # Phase 5: the stronghold sleep, the End crossing, the dragon's death and the portal
+            # cell. A restart in the Overworld entry window reads these back so the End candidates
+            # reopen (the sleep already pinned the respawn) instead of re-running the bed chain.
+            if note.get("slept_at_stronghold") and not self._slept_at_stronghold:
+                self._slept_at_stronghold = True
+                restored.append("slept_at_stronghold")
+            if note.get("end_entered") and not self._end_entered:
+                self._end_entered = True
+                restored.append("end_entered")
+            if note.get("dragon_slain") and not self._dragon_slain:
+                self._dragon_slain = True
+                restored.append("dragon_slain")
+            portal_cell = note.get("end_portal_cell")
+            if (isinstance(portal_cell, (list, tuple)) and len(portal_cell) == 3
+                    and not self._end_portal_cell):
+                self._end_portal_cell = tuple(int(v) for v in portal_cell)
+                restored.append("end_portal_cell")
         if restored:
             self.log.append({"stage": "policy", "reason": "world_state_restored",
                              "facts": restored, "gate": facts.gate_cell})
@@ -953,6 +979,9 @@ class Agent:
         gs.powder_bank = self._powder_bank
         gs.frame_eyes = self._frame_eyes
         gs.nether_landmarks = frozenset(self._nether_landmarks)
+        gs.end_entered = self._end_entered
+        gs.dragon_slain = self._dragon_slain
+        gs.end_portal_cell = self._end_portal_cell
         # The one milestone object, resolved after every latch above has been copied in, so the
         # ledger, the scan and the run's own bookkeeping meet in one place with one precedence.
         gs.progress = progress.progress_of(gs, self._durable)
@@ -1907,6 +1936,9 @@ class Agent:
         gs.powder_bank = self._powder_bank
         gs.frame_eyes = self._frame_eyes
         gs.nether_landmarks = frozenset(self._nether_landmarks)
+        gs.end_entered = self._end_entered
+        gs.dragon_slain = self._dragon_slain
+        gs.end_portal_cell = self._end_portal_cell
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.defer_quiet = self._defer_quiet
         # `_note_boxed` runs after this tick's observation (it needs the post-action cell), so
@@ -1929,7 +1961,8 @@ class Agent:
         p = self._milestones(gs)
         return (p.gate_lit, p.frame_complete, p.bed_at_base, p.powder_banked,
                 p.stronghold_estimated, self._stronghold_frame is not None,
-                p.end_portal_active, p.frame_eyes // 4)
+                p.end_portal_active, p.frame_eyes // 4,
+                self._slept_at_stronghold, self._end_entered, self._dragon_slain)
 
     async def _write_checkpoint(self, gs, reason: str) -> None:
         """Save the counters no ledger can prove, so a restart can pick the run up.
@@ -1959,6 +1992,13 @@ class Agent:
             "stronghold_frame": list(self._stronghold_frame) if self._stronghold_frame else None,
             "pearl_wave_trips": self._pearl_wave_trips,
             "barter_attempts": self._barter_attempts,
+            # Phase 5: the stronghold sleep that pins the respawn, the End crossing, the dragon's
+            # death, and the portal cell to step into - the counters no server table proves, so a
+            # restart in the Overworld entry window or in the End resumes without re-asking them.
+            "slept_at_stronghold": self._slept_at_stronghold,
+            "end_entered": self._end_entered,
+            "dragon_slain": self._dragon_slain,
+            "end_portal_cell": list(self._end_portal_cell) if self._end_portal_cell else None,
         }
         try:
             await self.mcp.call("note_save",
@@ -2007,12 +2047,24 @@ class Agent:
         first tick where both hold. The cost is that a run which never finds a fortress no longer
         stops early; it runs to the iteration limit and says `"stop": "limit"`, which is the
         honest report for an unfinished playthrough. The stronghold phase joins the AND the same
-        way (docs/stronghold.md): its latch (`gs.end_portal_active`) only ever sets too.
+        way (docs/stronghold.md): its latch (`gs.end_portal_active`) only ever sets too. Phase 5,
+        the dragon fight, is the last link: `end_complete` reads the kill-receipt latch
+        (`gs.dragon_slain`), which also only ever sets, so the run stops on the first tick where
+        every phase through the dragon's death holds.
+
+        The dragon dies in the End, and the respawn pin is read there from the `_slept_at_stronghold`
+        latch, never from a live bed scan. `_bed_at_stronghold` is deliberately out of this AND: it
+        reads `gs.resources` for a bed beside the frame and has no remembered-cell fallback, so it is
+        False the moment the bot is in the End (the Overworld bed is not loaded there) and with it in
+        the AND the dragon-death goal could never close. `_bed_at_base` stays sound across the
+        crossing only because it falls back to the remembered `gs.bed_pos`; the stronghold bed has no
+        such latch, so the sleep latch carries the respawn proof in its place.
         """
         return (bool(self.settings.loop.stop_when_complete)
                 and tech_tree_complete(gs) and nether_expedition_complete(gs)
-                and stronghold_complete(gs) and _bed_at_stronghold(gs)
-                and getattr(self, "_slept_at_stronghold", False))
+                and stronghold_complete(gs)
+                and getattr(self, "_slept_at_stronghold", False)
+                and end_complete(gs))
 
     def _stop_state(self, gs, iteration: int) -> dict:
         """`done`/`stop` for the next state: the goal ends the run early, else the limit does -
@@ -2638,6 +2690,15 @@ class Agent:
             value = portal.get("eyesAfter")
             if isinstance(value, int) and not isinstance(value, bool):
                 eyes = value
+            # The end-kind portal names the cell to step into (`center`), which is the one the
+            # crossing (`enter_the_end`) aims at - the interior block, not the frame corner the
+            # locate saved. Latched here off the activation evidence so Phase 5 never has to guess
+            # it; `stronghold_frame` stays the fallback for an answer that carried no centre.
+            if portal.get("kind") == "end":
+                center = portal.get("center")
+                if isinstance(center, dict) and all(isinstance(center.get(k), (int, float))
+                                                    for k in ("x", "y", "z")):
+                    self._end_portal_cell = (int(center["x"]), int(center["y"]), int(center["z"]))
         if eyes is None:
             match = re.search(r"Filled sockets: (\d+)\s*→\s*(\d+) of 12", text)
             if match:
@@ -2672,6 +2733,39 @@ class Agent:
             return
         if ok:
             self._slept_at_stronghold = True
+
+    def _note_end_entered(self, after) -> None:
+        """Latch that the End has been reached at least once.
+
+        Read off the dimension the observation lands in, not off the crossing call's ok: a restart
+        resumed in the End sets it the same way, and a crossing the server answered ok to but that
+        had not yet teleported would set it a tick early. Only ever sets, the same shape as
+        `_end_portal_active`; Phase 5 uses it only for the log and the resume note.
+        """
+        if "end" in str(getattr(after, "dimension", "") or "").lower():
+            self._end_entered = True
+
+    def _note_dragon(self, action, ok: bool, res=None) -> None:
+        """Latch the run's goal: the ender dragon is dead.
+
+        The only truth that closes Phase 5. It is read from the kill receipt, never from the fight
+        entities going unloaded - an empty `endFight` list is "nothing loaded", not "all dead", so
+        a dragon that flew out of render would end the run falsely. The End-combat tools all answer
+        with the same evidence (`combat.outcome`), and the final blow reports `dragon_died`; the
+        formatted text (`End combat: dragon_died.`) is the fallback when the structured answer is
+        absent. Only ever sets; once true the goal and the stronghold suppression both read it.
+        """
+        if action.tool not in ("destroy_end_crystal", "shoot_dragon",
+                               "prepare_dragon_perch", "attack_dragon_perch"):
+            return
+        outcome = _find(getattr(res, "data", None), "outcome")
+        if outcome == "dragon_died":
+            self._dragon_slain = True
+            return
+        # The structured answer is the first source; the receipt line is the fallback for a result
+        # that carried only text. `ok` is not required - a cancelled final blow still killed it.
+        if "dragon_died" in (getattr(res, "text", "") or ""):
+            self._dragon_slain = True
 
     def _note_build(self, action, ok: bool, delta: dict) -> None:
         """Remember that the frame build has nothing left to place.
@@ -3449,6 +3543,8 @@ class Agent:
         self._note_barter(action, _ok)
         self._note_portal(action, _ok, delta, res)
         self._note_sleep_stronghold(action, _ok, delta, res)
+        self._note_end_entered(after)
+        self._note_dragon(action, _ok, res)
         self._note_landmark(action, delta, after)
         progressed = vmod.progressed(action.label, delta, _ok)
         self._track_stuck(action.label, _ok, _text, progressed)

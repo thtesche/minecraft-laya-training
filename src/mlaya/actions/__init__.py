@@ -8,4 +8,5 @@ from __future__ import annotations
 from .constants import *  # noqa: F401,F403
 from .predicates import *  # noqa: F401,F403
 from .stronghold import *  # noqa: F401,F403
+from .end import *  # noqa: F401,F403
 from .planner import *  # noqa: F401,F403

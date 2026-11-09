@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .predicates import *  # noqa: F401,F403
 from .stronghold import *  # noqa: F401,F403
+from .end import *  # noqa: F401,F403
 
 
 def candidates(gs: GameState) -> list[str]:
@@ -87,6 +88,13 @@ def candidates(gs: GameState) -> list[str]:
     # tick goes to food or safety, nothing else (`_cannot_heal`).
     if _must_eat(gs) and "eat_food" not in gs.stuck_labels:
         return ["eat_food"]
+    # The End is its own world: no base to walk home to, no tech tree, no stronghold march. Its
+    # candidates live in `end.end_candidates` (which carries its own heal and death-recovery
+    # fallbacks), so the End short-circuits the whole Overworld/Nether tree here - before
+    # `_cannot_heal` below can route a wounded bot into `_recovery_steps`' walk home, which in the
+    # End has no destination at all. The rescues above (portal, water, boxed, drops) still ran.
+    if _in_end(gs):
+        return end_candidates(gs)
     if _cannot_heal(gs):
         if _stronghold_phase(gs):
             # Wounded and starving on the stronghold trek: `_recovery_steps` would walk the bot
@@ -764,6 +772,13 @@ def candidates(gs: GameState) -> list[str]:
     # Overworld-gated there, so it stays silent while a powder top-up runs the bot through the gate.
     if nether_expedition_complete(gs):
         out.extend(stronghold_candidates(gs))
+        # --- Phase 5: the End fight (the step after the stronghold sleep) ---
+        # Once the respawn is pinned at the frame the run no longer stops here: a short window fills
+        # the MLG water and (best-effort) the carved pumpkin, then enters the active end portal.
+        # `end_candidates` is self-gated (empty until the stronghold phase is done and the dragon is
+        # not yet dead), the same way `stronghold_candidates` is Overworld-gated, so this adds
+        # nothing until the hand-off and nothing once the bot has crossed into the End.
+        out.extend(end_candidates(gs))
 
     # --- Home base storage ---
     # A chest at the base is where a filling pack sheds surplus, well before the server's
@@ -927,6 +942,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     # does not own never reaches here, so the main dispatch below is untouched.
     if label in STRONGHOLD_LABELS:
         return resolve_stronghold(label, gs)
+    # The End fight's labels resolve in their own module (Phase 5 plan), the same shape as the
+    # stronghold's; a label it does not own never reaches here.
+    if label in END_LABELS:
+        return resolve_end(label, gs)
     inv = gs.inventory
     tier = _pick_tier(inv, gs.tools)
     x, y, z = gs.pos or (None, None, None)

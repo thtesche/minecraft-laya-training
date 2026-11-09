@@ -116,7 +116,17 @@ CRITERIA: dict[str, str] = {
     # spawn point so a death in the End does not send the bot back to the old base.
     "craft_bed_stronghold": "craft a bed from any three wool of one colour and enough wood, ready to set the stronghold spawn",
     "place_bed_stronghold": "walk to a clear spot beside the stronghold frame and lay the bed there, pinning the respawn point at the stronghold",
-    "sleep_stronghold": "sleep once in the stronghold bed to confirm the new spawn point, after which the run is finished",
+    "sleep_stronghold": "sleep once in the stronghold bed to confirm the new spawn point, after which the run enters the End to fight the dragon",
+    # Phase 5, the Ender Dragon fight (see `actions/end.py`). The combat tools are the server's;
+    # the loop only filters which one the moment allows and books it on the loaded entity.
+    "carve_pumpkin": "wear a carried carved pumpkin as a helmet, so looking at an enderman never provokes it in the End; best-effort, never blocks the crossing",
+    "enter_the_end": "step into the active end portal beside the stronghold to travel to the End and the dragon fight",
+    "position_end": "walk to the central fountain of the End island so the obsidian towers, their crystals and the dragon load as entities to attack",
+    "gather_end_stone": "mine end stone from the island for the server's crystal-tower staircases, which it builds from carried end stone when it cannot reach a caged crystal from below",
+    "destroy_crystal": "destroy one loaded end crystal on its tower, by bow if one is carried or by a melee staircase otherwise; the crystals heal the dragon and must fall first",
+    "shoot_dragon": "fire one full-charge bow shot at the flying dragon's body; the ranged answer while it circles and strafes, limited only by the carried arrows",
+    "prepare_perch": "build and verify a low staging notch beside the exit fountain while the dragon flies, so the next landing can be met with a melee blow to the head",
+    "attack_perch": "strike the dragon's head during a perch window from the prepared notch, then withdraw before takeoff; the melee answer while it sits on the fountain",
 }
 
 EDIBLE = {
@@ -645,6 +655,27 @@ END_ARROWS = 128
 # A bow that breaks cannot be replaced in the End: there is no wood, no string and no crafting
 # table down there. One carried spare is cheap next to losing the ranged answer mid-fight.
 END_BOWS = 2
+# --- The End fight itself (docs: the Phase 5 plan; the server owns the combat) ---
+# The exit fountain the End island generates at the world origin. On arrival the bot stands on an
+# obsidian platform offset from it, and nothing of the fight loads until the body is near the
+# centre; `position_end` navigates here so the towers, crystals and dragon become loaded entities.
+END_FOUNTAIN_CELL = (0, 64, 0)
+# End stone the loop keeps on hand for the server's crystal-tower staircases. A caged crystal the
+# bow cannot clear is reached by a melee staircase the server builds from carried end stone, and it
+# reports a shortfall before building; this is the reserve `gather_end_stone` tops back up to, the
+# same shape as `gather_scaffold` in the pearl hunt. End stone exists only in the End, so there is
+# no Overworld pre-stack - it is mined on the island between crystals.
+END_STONE = "end_stone"
+END_STONE_RESERVE = 64
+# Below this health the fight stops attacking and heals instead: there are no potions or golden
+# apples by design (consistent with the tech tree), so the only buffer is the diamond kit, the MLG
+# water reflex and food eaten back up. `_must_eat` already owns an acute tick; this is the softer
+# floor the combat candidates keep above before booking another attack.
+END_HEALTH_FLOOR = 12.0
+# The carved pumpkin worn as a helmet in the End: it hides the enderman gaze so a look never
+# provokes one. Best-effort only - the server also carries a gaze guard - and worn from a carried
+# copy, never crafted or carved here (that chain is too brittle to gate the crossing on).
+CARVED_PUMPKIN = "carved_pumpkin"
 # How far a loaded dropped arrow/string may lie and still be worth the walk. This is
 # `pick_up_items`' own maximum radius, so the sweep can target the drop's exact position.
 DROP_SWEEP_RADIUS = 32.0

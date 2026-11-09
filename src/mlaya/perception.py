@@ -1246,6 +1246,33 @@ class GameState:
     # which of the three answered each field. Injected like `base`: perception cannot know it,
     # and a tick whose stand is not logged cannot be read afterwards.
     progress: Any = None
+    # --- The End fight (Phase 5; parsed from `view_status.endFight`) ---
+    # The loaded fight entities, and only the loaded ones: an empty list means "nothing is loaded
+    # here", never "all dead" (the server's own schema says so). So the dragon's death is never read
+    # from these going empty - it is latched from a kill receipt (`dragon_slain`), and these only aim
+    # the next attack while the fight is in render.
+    #
+    # Each crystal as `(entity_id, x, y, z)`, nearest first; `destroy_end_crystal` needs the id.
+    end_crystals: tuple[tuple[int, int, int, int], ...] = ()
+    # The one dragon's loaded facts: its entity id (what every dragon tool takes), its health, the
+    # server's phase name (`DRAGON_PHASE_NAMES`, e.g. `holding_pattern`/`landing`/`sitting_flaming`),
+    # whether it is perched (sitting, and so arrow-immune), and the head cell to aim a perch melee at
+    # (the current perched-head estimate, else the predicted landing head). None while unloaded.
+    dragon_id: int | None = None
+    dragon_health: float | None = None
+    dragon_phase: str | None = None
+    dragon_perched: bool = False
+    perch_head: tuple[int, int, int] | None = None
+    # The loaded dragon-breath clouds as `(x, y, z)` cells. The server aborts shelter/perch on breath
+    # itself; the loop only logs the clouds so a recorded tick says what the arena held.
+    dragon_breath: tuple[tuple[int, int, int], ...] = ()
+    # Per-run latches the Agent sets (never perception): the End has been entered at least once
+    # (`_note_end_entered`), the dragon has died (`_note_dragon`, from a kill receipt - the run's
+    # goal), and the Overworld cell of the active end portal to step into (`_note_portal`, the
+    # `activate_portal` centre). Logged so a replayed tick and a cold restart read them back.
+    end_entered: bool = False
+    dragon_slain: bool = False
+    end_portal_cell: tuple[int, int, int] | None = None
 
     def resource_nearest(self, name: str) -> BlockHit | None:
         hits = self.resources.get(name)
@@ -1365,6 +1392,18 @@ class GameState:
             "powder_bank": self.powder_bank,
             "frame_eyes": self.frame_eyes,
             "nether_landmarks": [list(cell) for cell in self.nether_landmarks],
+            # The End fight: the loaded combat read and the per-run latches, logged for the same
+            # reason the stronghold facts are - a replayed tick and a cold restart both read them.
+            "end_crystals": [list(c) for c in self.end_crystals],
+            "dragon_id": self.dragon_id,
+            "dragon_health": self.dragon_health,
+            "dragon_phase": self.dragon_phase,
+            "dragon_perched": self.dragon_perched,
+            "perch_head": list(self.perch_head) if self.perch_head else None,
+            "dragon_breath": [list(c) for c in self.dragon_breath],
+            "end_entered": self.end_entered,
+            "dragon_slain": self.dragon_slain,
+            "end_portal_cell": list(self.end_portal_cell) if self.end_portal_cell else None,
             # The resolved milestones and the source of each. Logged for the same reason the
             # furnace's facts were: a run that started on a half-played world and rebuilt its
             # gate cannot be read afterwards unless the tick says what it believed about the
@@ -1399,10 +1438,20 @@ class GameState:
                       "stronghold_estimated", "end_portal_active", "slept_at_stronghold",
                       "stronghold_frame", "powder_cells",
                       "powder_bank", "frame_eyes", "frontier_heading", "warped_forest",
-                      "explore_stalls", "nether_landmarks"):
+                      "explore_stalls", "nether_landmarks",
+                      "dragon_id", "dragon_health", "dragon_phase", "dragon_perched",
+                      "end_entered", "dragon_slain"):
             value = data.get(field)
             if value is not None:
                 setattr(gs, field, value)
+        # The End combat reads come back from JSON as lists; the state keeps tuples of ints so a
+        # predicate reads a replayed tick the same way as a live one.
+        gs.end_crystals = tuple(tuple(int(v) for v in c) for c in (data.get("end_crystals") or ()))
+        gs.dragon_breath = tuple(tuple(int(v) for v in c) for c in (data.get("dragon_breath") or ()))
+        for field in ("perch_head", "end_portal_cell"):
+            value = data.get(field)
+            if isinstance(value, (list, tuple)) and len(value) == 3:
+                setattr(gs, field, tuple(int(v) for v in value))
         # A logged cell comes back from JSON as a list; the state keeps 3-tuples, and a cell that
         # stays a list is unhashable wherever a predicate puts it in a set (`_bed_reach_stance`
         # does `set(_bed_cells(gs))`, so a replayed tick raised where the live one never could).
@@ -1625,6 +1674,24 @@ class GameState:
             bowls = int(self.inventory.get(BOWL_ITEM, 0))
             parts.append(f"stew pantry: {bowls} bowl{'s' if bowls != 1 else ''} carried, "
                          + ", ".join(f"{int(self.inventory.get(n, 0))} {n}" for n in STEW_MUSHROOMS))
+        # The End fight, when the bot is down there. The crystals heal the dragon, so their count
+        # is the first thing a step keys on; then the dragon's own health and phase - a sitting
+        # dragon is arrow-immune and answered with a perch, a flying one with a bow. An empty arena
+        # is "nothing loaded yet", the cue to walk to the fountain so the ring loads, never a kill.
+        if "end" in str(self.dimension or "").lower():
+            if self.end_crystals:
+                parts.append(f"{len(self.end_crystals)} end crystal(s) still loaded on the towers, "
+                             "healing the dragon until destroyed")
+            if self.dragon_id is not None:
+                hp = f"{self.dragon_health:g} health" if self.dragon_health is not None else "health unknown"
+                phase = self.dragon_phase or "unknown phase"
+                stance = "perched and arrow-immune" if self.dragon_perched else "flying"
+                parts.append(f"the ender dragon is loaded: {hp}, {phase}, {stance}")
+            elif not self.end_crystals:
+                parts.append("no End fight entities are loaded; move to the central fountain so the "
+                             "towers, crystals and dragon load")
+            if self.dragon_breath:
+                parts.append(f"{len(self.dragon_breath)} dragon-breath cloud(s) nearby")
         if self.unread:
             head = "; ".join(self.notifications[:2])
             parts.append(f"unread notifications ({self.unread}): {head}" if head
@@ -1834,6 +1901,37 @@ def parse_status(data: dict) -> GameState:
     summary = surv.get("summary") if isinstance(surv, dict) else None
     if isinstance(summary, str) and summary not in ("unknown", ""):
         gs.survivors.append(summary)
+
+    # The End fight. Loaded entities only: an empty list is "nothing loaded", never "all dead", so
+    # the dragon's death is not read here (that is the kill-receipt latch `dragon_slain`); these aim
+    # the next attack while the fight is in render. One dragon at a time is all the arena holds.
+    end_fight = sit.get("endFight") or {}
+    if isinstance(end_fight, dict):
+        crystals: list[tuple[int, int, int, int]] = []
+        for c in end_fight.get("crystals") or []:
+            if not isinstance(c, dict):
+                continue
+            eid = c.get("entityId")
+            cp = c.get("position")
+            if isinstance(eid, int) and isinstance(cp, dict) and all(k in cp for k in ("x", "y", "z")):
+                crystals.append((eid, int(cp["x"]), int(cp["y"]), int(cp["z"])))
+        gs.end_crystals = tuple(crystals)
+        for dr in end_fight.get("dragons") or []:
+            if not isinstance(dr, dict) or not isinstance(dr.get("entityId"), int):
+                continue
+            gs.dragon_id = dr["entityId"]
+            gs.dragon_health = _num(dr.get("health"))
+            gs.dragon_phase = dr.get("phaseName") if isinstance(dr.get("phaseName"), str) else None
+            gs.dragon_perched = bool(dr.get("perched"))
+            head = dr.get("headEstimate") or dr.get("landingHeadEstimate")
+            if isinstance(head, dict) and all(k in head for k in ("x", "y", "z")):
+                gs.perch_head = (int(head["x"]), int(head["y"]), int(head["z"]))
+            break  # the arena holds one dragon; the first loaded entry is it
+        clouds: list[tuple[int, int, int]] = []
+        for cl in end_fight.get("clouds") or []:
+            if isinstance(cl, dict) and all(k in cl for k in ("x", "y", "z")):
+                clouds.append((int(cl["x"]), int(cl["y"]), int(cl["z"])))
+        gs.dragon_breath = tuple(clouds)
     return gs
 
 

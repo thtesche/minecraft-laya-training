@@ -1385,6 +1385,97 @@ class DroppedItemsParseTest(unittest.TestCase):
                          gs.dropped_items)
 
 
+class EndFightParseTest(unittest.TestCase):
+    """Phase 5: `view_status.endFight` -> GameState. Loaded entities only; an empty list is
+    "nothing loaded", never "all dead", so the dragon's death is never read from these (that is
+    the kill-receipt latch). Crystals and the dragon carry a nested `position`; a breath cloud is
+    flat `{id, x, y, z, radius}`, as the server serialises them."""
+
+    def test_the_loaded_fight_is_parsed(self) -> None:
+        st = _status({
+            "dimension": "minecraft:the_end",
+            "endFight": {
+                "dragons": [{
+                    "entityId": 42, "position": {"x": 3, "y": 70, "z": -5},
+                    "health": 148.0, "phase": 6, "phaseName": "sitting_scanning",
+                    "perched": True,
+                    "headEstimate": {"x": 0, "y": 66, "z": 0},
+                    "landingHeadEstimate": None,
+                }],
+                "crystals": [
+                    {"entityId": 7, "position": {"x": 10, "y": 74, "z": 0}, "cage": "present"},
+                    {"entityId": 8, "position": {"x": -10, "y": 74, "z": 0}, "cage": "none_observed"},
+                ],
+                "clouds": [{"id": 1, "x": 1, "y": 64, "z": 2, "radius": 3.0}],
+            },
+        })
+        gs = parse_status(st)
+        self.assertEqual(gs.end_crystals, ((7, 10, 74, 0), (8, -10, 74, 0)))
+        self.assertEqual(gs.dragon_id, 42)
+        self.assertEqual(gs.dragon_health, 148.0)
+        self.assertEqual(gs.dragon_phase, "sitting_scanning")
+        self.assertTrue(gs.dragon_perched)
+        self.assertEqual(gs.perch_head, (0, 66, 0))
+        self.assertEqual(gs.dragon_breath, ((1, 64, 2),))
+
+    def test_a_flying_dragon_falls_back_to_the_landing_head(self) -> None:
+        st = _status({"endFight": {"dragons": [{
+            "entityId": 42, "position": {"x": 0, "y": 80, "z": 0},
+            "health": 180.0, "phase": 0, "phaseName": "holding_pattern",
+            "perched": False, "headEstimate": None,
+            "landingHeadEstimate": {"x": 2, "y": 66, "z": 1},
+        }]}})
+        gs = parse_status(st)
+        self.assertFalse(gs.dragon_perched)
+        self.assertEqual(gs.perch_head, (2, 66, 1))
+
+    def test_an_empty_fight_is_nothing_loaded_not_all_dead(self) -> None:
+        gs = parse_status(_status({"dimension": "minecraft:the_end",
+                                   "endFight": {"dragons": [], "crystals": [], "clouds": []}}))
+        self.assertEqual(gs.end_crystals, ())
+        self.assertIsNone(gs.dragon_id)
+        self.assertFalse(gs.dragon_slain)       # never latched from an empty arena
+        self.assertIn("End fight entities are loaded", gs.narrative())
+
+    def test_the_narrative_names_the_crystals_and_the_dragon(self) -> None:
+        st = _status({
+            "dimension": "minecraft:the_end",
+            "endFight": {
+                "dragons": [{"entityId": 42, "position": {"x": 0, "y": 70, "z": 0},
+                             "health": 90.0, "phase": 0, "phaseName": "holding_pattern",
+                             "perched": False, "headEstimate": None, "landingHeadEstimate": None}],
+                "crystals": [{"entityId": 7, "position": {"x": 10, "y": 74, "z": 0}, "cage": "present"}],
+                "clouds": [],
+            },
+        })
+        n = parse_status(st).narrative()
+        self.assertIn("1 end crystal(s) still loaded", n)
+        self.assertIn("ender dragon is loaded", n)
+
+    def test_the_end_fields_round_trip_through_a_log(self) -> None:
+        gs = GameState()
+        gs.end_crystals = ((7, 10, 74, 0),)
+        gs.dragon_id = 42
+        gs.dragon_health = 148.0
+        gs.dragon_phase = "sitting_scanning"
+        gs.dragon_perched = True
+        gs.perch_head = (0, 66, 0)
+        gs.dragon_breath = ((1, 64, 2),)
+        gs.end_entered = True
+        gs.dragon_slain = True
+        gs.end_portal_cell = (100, 59, 200)
+        back = GameState.from_state(gs.as_state())
+        self.assertEqual(back.end_crystals, gs.end_crystals)
+        self.assertEqual(back.dragon_id, 42)
+        self.assertEqual(back.dragon_phase, "sitting_scanning")
+        self.assertTrue(back.dragon_perched)
+        self.assertEqual(back.perch_head, (0, 66, 0))
+        self.assertEqual(back.dragon_breath, ((1, 64, 2),))
+        self.assertTrue(back.end_entered)
+        self.assertTrue(back.dragon_slain)
+        self.assertEqual(back.end_portal_cell, (100, 59, 200))
+
+
 class StewPantryNarrativeTest(unittest.TestCase):
     """`gather_mushrooms` is offered on the pantry, but the resource line names only the four
     nearest hits, so mushrooms thirty blocks out are invisible to the head: run210 it334 chose

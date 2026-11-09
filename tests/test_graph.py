@@ -90,6 +90,10 @@ class WaterTicksTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -232,6 +236,10 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -469,6 +477,10 @@ class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent._blocked_label = None
         agent.log = self._Log()
         agent.system2_log = self._Log()
@@ -559,6 +571,10 @@ class PourSkipTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -674,6 +690,10 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -839,6 +859,10 @@ class StanceSkipTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -1059,6 +1083,10 @@ class RescueSkipTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -1192,6 +1220,10 @@ class LavaWalkTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent._lava_walked = {}
         return agent
 
@@ -1257,6 +1289,10 @@ class StuckOfferTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -1430,6 +1466,10 @@ class RememberedHomeTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, **over):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -1581,6 +1621,10 @@ class IdleOfferGuardTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -1687,6 +1731,10 @@ class WanderGuardTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -1855,6 +1903,10 @@ class OrbitGuardTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -1987,6 +2039,10 @@ class FurnaceDrainReadTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -2068,6 +2124,10 @@ class FrameCompleteLatchTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -2253,6 +2313,10 @@ class FrameRefusalTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -2382,6 +2446,10 @@ class RecoverWriteOffTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -2546,6 +2614,10 @@ class BuildSiteSurfaceGateTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -2585,6 +2657,10 @@ class SurfaceNoteTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -2668,6 +2744,10 @@ class BaseAnchorRepairTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -2740,6 +2820,10 @@ class DropHoleTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -2915,6 +2999,10 @@ class DropUndoneTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._drop_hole_blocked = True
@@ -3024,6 +3112,10 @@ class ChestSupportTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -3154,6 +3246,10 @@ class FurnaceSupportTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -3364,6 +3460,10 @@ class ChestLidTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -3476,6 +3576,10 @@ class GoalStopTest(unittest.TestCase):
 
     def _agent(self, stop_when_complete: bool = True) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -3507,9 +3611,12 @@ class GoalStopTest(unittest.TestCase):
         g = self._complete()
         g.powder_stowed = True          # the expedition is what the overworld goal was preparing
         g.end_portal_active = True      # and the stronghold is what the expedition was for
-        g.slept_at_stronghold = True    # new end: bed set and slept at the stronghold
-        g.stronghold_frame = (-269, 63, -1819)
-        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed", -269, 63, -1818, 1.0)]
+        g.slept_at_stronghold = True    # bed set and slept at the stronghold pins the respawn
+        g.dragon_slain = True           # and Phase 5's end: the ender dragon is dead
+        # The kill lands in the End, where the stronghold bed is out of render: no bed stands beside
+        # the frame in `gs.resources`. The goal reads the `slept_at_stronghold` latch for the respawn
+        # pin, never a live bed-beside-the-frame scan (which would be False down there and could then
+        # never let the dragon-death goal close), so none is seeded here.
         agent = self._agent()
         agent._slept_at_stronghold = True
         self.assertEqual(agent._stop_state(g, 3),
@@ -3589,6 +3696,10 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
 
     def _agent(self):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -3730,10 +3841,12 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._powder_stowed = True
         agent._end_portal_active = True
         agent._slept_at_stronghold = True
+        agent._dragon_slain = True       # Phase 5's end: the dragon is dead (latched from the kill)
         g = agent._inject(self._standing())
         g.slept_at_stronghold = True
-        g.stronghold_frame = (-269, 63, -1819)
-        g.resources["white_bed"] = [BlockHit("white_bed", "white_bed", -269, 63, -1818, 1.0)]
+        # No bed loaded beside the frame: the kill happens in the End, where the Overworld stronghold
+        # bed is out of render. The goal takes the respawn pin from the `slept_at_stronghold` latch,
+        # not a live frame-bed scan, so it closes all the same.
         self.assertTrue(agent._goal_reached(g))
         self.assertEqual(agent._stop_state(g, 3), {"done": True, "stop": "goal"})
 
@@ -3782,6 +3895,10 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, cells) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -3947,6 +4064,10 @@ class BaseTerrainScanTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, box) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.base = self.BASE
         agent._raised = []
         agent.mcp = self._Mcp(box)
@@ -4064,6 +4185,10 @@ class StockedChestReadTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, mcp) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -4150,6 +4275,10 @@ class PowderStowReadoptionTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, mcp) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -4284,6 +4413,10 @@ class WorldBootstrapTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, mcp) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.log = []
         agent.mcp = mcp
         agent.base = None
@@ -4400,6 +4533,10 @@ class CheckpointTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, mcp) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.log = []
         agent.mcp = mcp
         agent._powder_bank = 0
@@ -4486,6 +4623,10 @@ class CheckpointTest(unittest.IsolatedAsyncioTestCase):
         # `Agent.__new__` agents have no `__init__`, so the record of what was written is absent
         # rather than `None`; that is the same as "nothing written yet".
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.log = []
         agent.mcp = self._Mcp()
         agent._powder_bank = 0
@@ -4521,6 +4662,10 @@ class ContainerMissingTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -4673,6 +4818,10 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, data=None) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -4977,6 +5126,10 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, data) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -5255,6 +5408,10 @@ class BedSiteScanTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, grid) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -5374,6 +5531,10 @@ class SearchIsPaidForInMetresTest(unittest.IsolatedAsyncioTestCase):
         from mlaya.graph import Agent
         from mlaya.config import Settings
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -5404,6 +5565,10 @@ class NetherCrossingTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -6121,6 +6286,10 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, **over):
         agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -6226,6 +6395,10 @@ class StoppedBuildFrameMarkingTest(unittest.TestCase):
     @staticmethod
     def _agent(**over) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -6296,6 +6469,10 @@ class BodyHeldStopTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -6461,6 +6638,10 @@ class FleeStageTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self, order: list) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -6512,6 +6693,10 @@ class DeathPolicyTest(unittest.IsolatedAsyncioTestCase):
 
     def _agent(self) -> tuple[Agent, list]:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -6600,6 +6785,10 @@ class ShutInTest(unittest.TestCase):
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._raised = []
         agent._pearl_wave_trips = 0
@@ -6743,6 +6932,10 @@ class SleepStrongholdLatchTest(unittest.TestCase):
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
+        agent._slept_at_stronghold = False
         return agent
 
     def test_the_walk_to_the_bed_does_not_latch(self) -> None:
@@ -6770,6 +6963,127 @@ class SleepStrongholdLatchTest(unittest.TestCase):
         agent = self._agent()
         agent._note_sleep_stronghold(self._Action("sleep_stronghold", "sleep"), False, {})
         self.assertFalse(agent._slept_at_stronghold)
+
+
+class EndLatchTest(unittest.TestCase):
+    """Phase 5's three latches: the End reached, the end-portal cell to step into, the dragon dead.
+
+    `_note_end_entered` reads the dimension of the observation (a resumed run in the End sets it
+    too); `_note_portal` picks the interior `center` off an end-kind activation; `_note_dragon`
+    closes the run only on the kill receipt, never on the fight entities going unloaded.
+    """
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
+        agent._end_portal_active = False
+        agent._frame_eyes = 0
+        return agent
+
+    # --- the End reached ---
+
+    def test_an_end_observation_latches_the_entry(self) -> None:
+        agent = self._agent()
+        agent._note_end_entered(gs(dimension="minecraft:the_end"))
+        self.assertTrue(agent._end_entered)
+
+    def test_an_overworld_observation_does_not_latch(self) -> None:
+        agent = self._agent()
+        agent._note_end_entered(gs(dimension="minecraft:overworld"))
+        agent._note_end_entered(gs(dimension="minecraft:the_nether"))
+        self.assertFalse(agent._end_entered)
+
+    def test_the_entry_latch_only_ever_sets(self) -> None:
+        # A resumed run that is back in the Overworld (a death-respawn) must not read the latch back
+        # off: once reached, the End stays reached for the run.
+        agent = self._agent()
+        agent._note_end_entered(gs(dimension="minecraft:the_end"))
+        agent._note_end_entered(gs(dimension="minecraft:overworld"))
+        self.assertTrue(agent._end_entered)
+
+    # --- the end-portal cell ---
+
+    def test_an_end_activation_latches_the_centre_cell(self) -> None:
+        # `activate_portal` on the end frame reports the interior `center` - the cell the crossing
+        # steps into, not the frame corner the locate saved.
+        agent = self._agent()
+        fill = Action("activate_end_portal", "activate_portal", {"x": 100, "y": 60, "z": 200}, "")
+        res = SimpleNamespace(data={"response": {"data": {"result": {
+            "portal": {"kind": "end", "center": {"x": 100, "y": 59, "z": 200},
+                       "eyesAfter": 12, "activated": True}}}}},
+            text="Activated the end portal.\nFilled sockets: 11 → 12 of 12.")
+        agent._note_portal(fill, True, {}, res)
+        self.assertEqual(agent._end_portal_cell, (100, 59, 200))
+
+    def test_a_non_end_portal_leaves_the_cell_empty(self) -> None:
+        # The centre latch guards on `kind == "end"`: a nether activation carries no end cell.
+        agent = self._agent()
+        fill = Action("activate_end_portal", "activate_portal", {"x": 100, "y": 60, "z": 200}, "")
+        res = SimpleNamespace(data={"portal": {"kind": "nether",
+                                               "center": {"x": 1, "y": 2, "z": 3}}},
+                              text="Filled sockets: 11 → 12 of 12.")
+        agent._note_portal(fill, True, {}, res)
+        self.assertIsNone(agent._end_portal_cell)
+
+    def test_an_activation_without_a_centre_keeps_the_frame_fallback(self) -> None:
+        agent = self._agent()
+        fill = Action("activate_end_portal", "activate_portal", {"x": 100, "y": 60, "z": 200}, "")
+        res = SimpleNamespace(data={"portal": {"kind": "end", "eyesAfter": 12}},
+                              text="Filled sockets: 11 → 12 of 12.")
+        agent._note_portal(fill, True, {}, res)
+        self.assertIsNone(agent._end_portal_cell)
+
+    # --- the dragon dead ---
+
+    def test_the_kill_receipt_latches_the_goal(self) -> None:
+        agent = self._agent()
+        kill = Action("shoot_dragon", "shoot_dragon", {"entity_id": 42}, "")
+        res = SimpleNamespace(data={"combat": {"outcome": "dragon_died"}}, text="")
+        agent._note_dragon(kill, True, res)
+        self.assertTrue(agent._dragon_slain)
+
+    def test_the_receipt_text_is_enough_when_the_payload_is_not(self) -> None:
+        agent = self._agent()
+        kill = Action("attack_perch", "attack_dragon_perch", {"entity_id": 42}, "")
+        res = SimpleNamespace(data=None, text="End combat: dragon_died.")
+        agent._note_dragon(kill, True, res)
+        self.assertTrue(agent._dragon_slain)
+
+    def test_a_cancelled_final_blow_still_latches(self) -> None:
+        # `ok` is not required: a strike the server reported as killed, then cancelled the action
+        # wrapper on, still killed the dragon.
+        agent = self._agent()
+        kill = Action("attack_perch", "attack_dragon_perch", {"entity_id": 42}, "")
+        res = SimpleNamespace(data={"combat": {"outcome": "dragon_died"}}, text="")
+        agent._note_dragon(kill, False, res)
+        self.assertTrue(agent._dragon_slain)
+
+    def test_a_crystal_blow_does_not_latch_the_dragon(self) -> None:
+        # The crystal tool shares the receipt channel, but an `outcome` that is not `dragon_died`
+        # (and no receipt line) leaves the goal open.
+        agent = self._agent()
+        pop = Action("destroy_crystal", "destroy_end_crystal", {"entity_id": 7}, "")
+        res = SimpleNamespace(data={"combat": {"outcome": "crystal_destroyed"}}, text="")
+        agent._note_dragon(pop, True, res)
+        self.assertFalse(agent._dragon_slain)
+
+    def test_an_empty_arena_is_not_a_dead_dragon(self) -> None:
+        # The entities going unloaded is "nothing loaded", not "all dead": a view-status tick with
+        # no receipt never latches the kill.
+        agent = self._agent()
+        look = Action("position_end", "navigate", {"x": 0, "y": 64, "z": 0}, "")
+        res = SimpleNamespace(data={"endFight": {"dragons": [], "crystals": []}}, text="")
+        agent._note_dragon(look, True, res)
+        self.assertFalse(agent._dragon_slain)
+
+    def test_an_unrelated_tool_never_touches_the_goal(self) -> None:
+        agent = self._agent()
+        other = Action("mine_stone", "collect_block", {}, "")
+        res = SimpleNamespace(data={"combat": {"outcome": "dragon_died"}}, text="dragon_died")
+        agent._note_dragon(other, True, res)
+        self.assertFalse(agent._dragon_slain)
 
 
 if __name__ == "__main__":

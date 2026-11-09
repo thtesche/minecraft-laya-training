@@ -248,9 +248,17 @@ def _stronghold_phase(gs: GameState) -> bool:
         # The portal stands; the goal is the bed beside the frame and the sleep that pins the
         # spawn - both, not the sleep alone. A bed taken up after the sleep leaves the respawn
         # unpinned (live, run186 it10-13: `take_bed` hauled the frame bed into the pack and
-        # `go_home` followed), so the phase stays open until the bed stands again and is slept
-        # in, exactly as `_goal_reached` counts it.
-        return not (getattr(gs, "slept_at_stronghold", False) and _bed_at_stronghold(gs))
+        # `go_home` followed), so the phase stays open until the bed stands again and is slept in.
+        #
+        # Phase 5 extends the suppression past the sleep: once the bed is laid and slept in, the run
+        # no longer ends here but hands off to the End fight, and the only Overworld work left is to
+        # step into the portal beside the frame. `go_home`/`mine_stone`/`stow_surplus` would still
+        # pull the bot ~1300 blocks the wrong way (and a death-respawn lands it right here, where it
+        # must re-enter, not walk home). So the suppression holds through the first crossing and
+        # every re-entry until the dragon is dead; `end_portal_active` already proves the stronghold
+        # side is done, and `dragon_slain` ends the whole run anyway, so nothing is held too long.
+        return not (getattr(gs, "slept_at_stronghold", False) and _bed_at_stronghold(gs)
+                    and getattr(gs, "dragon_slain", False))
     return nether_expedition_complete(gs) and _ender_eyes(gs.inventory) >= _eyes_in_hand(gs)
 
 

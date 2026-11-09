@@ -54,6 +54,10 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            _bed_stronghold_stance, STRONGHOLD_BED_NEAR, _has_bed, _at_stance,
                            _bed_needs_moving, _unsafe_beds,
                            stronghold_candidates,
+                           end_candidates, resolve_end, end_complete, END_LABELS,
+                           _in_end, _crystals_loaded, _dragon_alive, _dragon_perched,
+                           _end_stone_short, CARVED_PUMPKIN, END_STONE, END_STONE_RESERVE,
+                           END_HEALTH_FLOOR, END_FOUNTAIN_CELL,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                            MUSHROOM_CAP, MUSHROOM_BATCH, MUSHROOM_SEED,
                            _mushroom_short, _mushroom_pantry_wanted,
@@ -2997,6 +3001,10 @@ class NetherGateTest(unittest.TestCase):
         # empty ground and close the completion gate on a respawn point that no longer exists.
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent.bed_pos = (-10, 70, -51)
         agent._note_bed(SimpleNamespace(label="take_bed", tool="collect_block", args={}),
@@ -3008,6 +3016,10 @@ class NetherGateTest(unittest.TestCase):
         # ever names it -- a failed sleep included, since it reports the cell it tried to use.
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent.bed_pos = None
         res = SimpleNamespace(data={"response": {"data": {"output": {"result": {
@@ -3021,6 +3033,10 @@ class NetherGateTest(unittest.TestCase):
         # walks back into its chunks, the scan names it and the respawn point is known again.
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent.base = (-10, 69, -52)
         agent.bed_pos = None
@@ -3032,6 +3048,10 @@ class NetherGateTest(unittest.TestCase):
         # is stale and has to go, or `sleep` keeps refusing and the run never ends.
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent.base = (-10, 69, -52)
         agent.bed_pos = (-10, 70, -51)
@@ -3046,6 +3066,10 @@ class NetherGateTest(unittest.TestCase):
         # the only record of the respawn point the run has.
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent.base = (-10, 69, -52)
         agent.bed_pos = (-10, 70, -51)
@@ -6167,6 +6191,10 @@ class NetherExpeditionTest(unittest.TestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
@@ -7557,11 +7585,16 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         self.assertNotIn("go_home", cands)
         self.assertIsNone(resolve("go_home", g))
 
-    def test_the_phase_closes_once_the_respawn_is_pinned(self) -> None:
-        # With the bed laid and the sleep latched the run's goal is met: the suppression lifts, so
-        # a finished run is an ordinary bot again (it will stop on the completion check, not idle).
+    def test_the_phase_holds_through_the_end_entry_until_the_dragon_is_dead(self) -> None:
+        # Phase 5 extends the suppression past the sleep: with the bed laid and the respawn pinned
+        # the run no longer ends here but hands off to the End fight, and the only Overworld work
+        # left is to step into the portal beside the frame. `go_home`/base chores would pull the bot
+        # ~1300 blocks the wrong way (and a death-respawn lands it right here, to re-enter). So the
+        # phase stays owned until `dragon_slain`; only then is a finished run an ordinary bot again.
         g = self._with_placed_bed(self._after_portal())
         g.slept_at_stronghold = True
+        self.assertTrue(_stronghold_phase(g))
+        g.dragon_slain = True
         self.assertFalse(_stronghold_phase(g))
 
     def test_a_taken_up_bed_keeps_the_phase_open(self) -> None:
@@ -7593,6 +7626,193 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         self.assertTrue(_bed_at_stronghold(g))
         self.assertFalse(_bed_needs_moving(g))
         self.assertFalse(_unsafe_beds(g))
+
+
+class EndFightTest(unittest.TestCase):
+    """Phase 5: the Overworld entry window and the End fight (crystals first, then the dragon).
+
+    The server owns the combat; these pin what the loop filters: which label the moment allows,
+    the order (crystals before the dragon, a perched dragon by melee and a flying one by bow), the
+    argument binding onto the loaded entity, and the goal that only an observed kill closes.
+    """
+
+    FRAME = (100, 60, 200)
+    OVERWORLD = "minecraft:overworld"
+    END = "minecraft:the_end"
+
+    def _entry(self, pos=(101.0, 60.0, 200.0), **inv) -> GameState:
+        """The Overworld hand-off: portal active, respawn pinned, standing by the frame."""
+        g = geared(**inv)
+        g.dimension = self.OVERWORLD
+        g.stronghold_frame = self.FRAME
+        g.end_portal_active = True
+        g.slept_at_stronghold = True
+        g.health = 20.0
+        g.food = 20.0
+        g.pos = pos
+        return g
+
+    def _end(self, pos=(0.5, 64.0, 0.5), health=20.0, **inv) -> GameState:
+        """A geared bot standing in the End island."""
+        g = geared(**inv)
+        g.dimension = self.END
+        g.health = health
+        g.food = 20.0
+        g.pos = pos
+        return g
+
+    def _flying(self, g: GameState, dragon_id=42, health=180.0) -> GameState:
+        g.dragon_id = dragon_id
+        g.dragon_health = health
+        g.dragon_phase = "holding_pattern"
+        g.dragon_perched = False
+        return g
+
+    def _perched(self, g: GameState, dragon_id=42, health=90.0) -> GameState:
+        g.dragon_id = dragon_id
+        g.dragon_health = health
+        g.dragon_phase = "sitting_scanning"
+        g.dragon_perched = True
+        g.perch_head = (0, 66, 0)
+        return g
+
+    # --- the goal and its primitives ---
+
+    def test_the_goal_only_closes_on_the_kill_latch(self) -> None:
+        g = self._end()
+        self.assertFalse(end_complete(g))       # an empty arena is "nothing loaded", not "all dead"
+        g.dragon_slain = True
+        self.assertTrue(end_complete(g))
+
+    def test_a_loaded_dragon_not_slain_reads_alive(self) -> None:
+        g = self._flying(self._end())
+        self.assertTrue(_dragon_alive(g))
+        g.dragon_slain = True                   # the kill latch, not an unloaded entity
+        self.assertFalse(_dragon_alive(g))
+
+    def test_a_perched_dragon_is_arrow_immune(self) -> None:
+        self.assertTrue(_dragon_perched(self._perched(self._end())))
+        self.assertFalse(_dragon_perched(self._flying(self._end())))
+
+    def test_end_stone_reserve_is_read_against_the_pack(self) -> None:
+        self.assertTrue(_end_stone_short(self._end()))
+        self.assertFalse(_end_stone_short(self._end(**{END_STONE: END_STONE_RESERVE})))
+
+    # --- the Overworld entry window ---
+
+    def test_the_entry_window_steps_into_the_portal(self) -> None:
+        g = self._entry()
+        self.assertIn("enter_the_end", end_candidates(g))
+
+    def test_a_carried_pumpkin_is_worn_before_the_crossing(self) -> None:
+        g = self._entry(**{CARVED_PUMPKIN: 1})
+        cands = end_candidates(g)
+        self.assertEqual(cands[0], "carve_pumpkin")       # best-effort, but first when carried
+        self.assertIn("enter_the_end", cands)
+
+    def test_an_empty_bucket_is_filled_for_the_mlg_water(self) -> None:
+        from mlaya.actions import BUCKET_ITEM
+        g = self._entry(**{BUCKET_ITEM: 1})
+        self.assertIn("fill_bucket", end_candidates(g))
+
+    def test_the_entry_window_is_shut_until_the_respawn_is_pinned(self) -> None:
+        g = self._entry()
+        g.slept_at_stronghold = False
+        self.assertEqual(end_candidates(g), [])
+
+    def test_a_dead_dragon_closes_the_whole_phase(self) -> None:
+        g = self._entry()
+        g.dragon_slain = True
+        self.assertEqual(end_candidates(g), [])
+
+    # --- the fight: crystals first, then the dragon ---
+
+    def test_an_empty_arena_walks_to_the_fountain(self) -> None:
+        self.assertEqual(end_candidates(self._end()), ["position_end"])
+
+    def test_crystals_fall_before_the_dragon_is_touched(self) -> None:
+        g = self._flying(self._end(**{END_STONE: END_STONE_RESERVE}))
+        g.end_crystals = ((7, 10, 70, 0),)
+        cands = end_candidates(g)
+        self.assertEqual(cands, ["destroy_crystal"])       # the dragon steps wait for a clear ring
+        self.assertNotIn("shoot_dragon", cands)
+        self.assertNotIn("attack_perch", cands)
+
+    def test_end_stone_is_topped_up_before_a_caged_crystal(self) -> None:
+        g = self._flying(self._end())                       # end stone short (none carried)
+        g.end_crystals = ((7, 10, 70, 0),)
+        cands = end_candidates(g)
+        self.assertEqual(cands, ["gather_end_stone", "destroy_crystal"])
+
+    def test_a_flying_dragon_is_answered_with_the_bow(self) -> None:
+        g = self._flying(self._end())
+        cands = end_candidates(g)
+        self.assertEqual(cands[0], "shoot_dragon")
+        self.assertIn("prepare_perch", cands)               # the notch is dug ahead of the landing
+
+    def test_a_perched_dragon_is_answered_with_a_melee_strike(self) -> None:
+        g = self._perched(self._end())
+        cands = end_candidates(g)
+        self.assertEqual(cands[0], "attack_perch")
+        self.assertIn("prepare_perch", cands)
+
+    def test_below_the_floor_the_fight_heals_first(self) -> None:
+        g = self._flying(self._end(health=END_HEALTH_FLOOR - 4.0, cooked_mutton=4))
+        self.assertEqual(end_candidates(g)[0], "eat_food")
+
+    # --- resolve: the argument binding onto the loaded entity ---
+
+    def test_resolve_routes_end_labels_to_their_own_module(self) -> None:
+        # `resolve` hands every END label to `resolve_end`; destroy_crystal aims at the first crystal.
+        g = self._flying(self._end(**{END_STONE: END_STONE_RESERVE}))
+        g.end_crystals = ((7, 10, 70, 0), (8, -10, 70, 0))
+        a = resolve("destroy_crystal", g)
+        self.assertEqual(a.tool, "destroy_end_crystal")
+        self.assertEqual(a.args["entity_id"], 7)
+
+    def test_shoot_binds_the_dragon_id_and_refuses_a_perch(self) -> None:
+        g = self._flying(self._end())
+        a = resolve_end("shoot_dragon", g)
+        self.assertEqual(a.tool, "shoot_dragon")
+        self.assertEqual(a.args["entity_id"], 42)
+        self.assertIsNone(resolve_end("shoot_dragon", self._perched(self._end())))
+
+    def test_attack_perch_refuses_a_flying_dragon(self) -> None:
+        self.assertEqual(resolve_end("attack_perch", self._perched(self._end())).tool,
+                         "attack_dragon_perch")
+        self.assertIsNone(resolve_end("attack_perch", self._flying(self._end())))
+
+    def test_the_dragon_tools_wait_while_a_crystal_stands(self) -> None:
+        g = self._flying(self._end())
+        g.end_crystals = ((7, 10, 70, 0),)
+        self.assertIsNone(resolve_end("shoot_dragon", g))
+        self.assertIsNone(resolve_end("prepare_perch", g))
+
+    def test_enter_the_end_aims_at_the_portal_cell(self) -> None:
+        g = self._entry()
+        g.end_portal_cell = (100, 59, 200)
+        a = resolve_end("enter_the_end", g)
+        self.assertEqual(a.tool, "enter_end_portal")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (100, 59, 200))
+
+    def test_enter_the_end_falls_back_to_the_frame_cell(self) -> None:
+        g = self._entry()                       # no portal cell latched yet
+        a = resolve_end("enter_the_end", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FRAME)
+
+    def test_position_end_navigates_to_the_fountain(self) -> None:
+        a = resolve_end("position_end", self._end())
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), END_FOUNTAIN_CELL)
+        self.assertIsNone(resolve_end("position_end", self._entry()))   # only in the End
+
+    def test_carve_pumpkin_wears_a_carried_copy_once(self) -> None:
+        g = self._entry(**{CARVED_PUMPKIN: 1})
+        a = resolve_end("carve_pumpkin", g)
+        self.assertEqual(a.tool, "equip")
+        self.assertEqual(a.args["items"][0]["destination"], "head")
+        g.armor = {"helmet": {"item": CARVED_PUMPKIN}}      # worn: the step drops out
+        self.assertIsNone(resolve_end("carve_pumpkin", g))
 
 
 class StrongholdOffersResolveTest(unittest.TestCase):
@@ -9425,6 +9645,10 @@ class StepAwayDropsWholeCellTest(unittest.TestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
@@ -9445,6 +9669,10 @@ class DeferQuietTest(unittest.TestCase):
     def _agent(self):
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
@@ -9482,6 +9710,10 @@ class RefreshAfterTest(unittest.TestCase):
     def _agent(self):
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
@@ -9553,6 +9785,10 @@ class WaitHoldTest(unittest.IsolatedAsyncioTestCase):
         from mlaya.config import Settings
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
@@ -9583,6 +9819,10 @@ class StepAwayGroundReadTest(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
         from mlaya.graph import Agent
         agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
         agent.bed_pos = None
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
