@@ -14,6 +14,7 @@ from . import progress
 from . import survival
 from . import verify as vmod
 from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
+                      INVENTORY_SLOTS,
                       tech_tree_complete, _at_base, _at_surface, _cell, _gear_ready, _in_nether,
                       _overworld,
                       _has, _pick_tier, DIAMOND_PICK_TIER,
@@ -1769,6 +1770,17 @@ class Agent:
             if (not decision.deferred
                     and self._stall_dropped.get(decision.action_label, 0) >= STALL_ESCALATE_REPEATS
                     and self._stall_escalations < self.settings.loop.max_escalations):
+                # The clear case needs no model: a pinned pack refuses every gather, and shedding
+                # it is the universal unblock. Live, run217 it311-599: 36/36 slots and one loaded
+                # arrow let `collect_drops` refuse `[INVENTORY_FULL]` 282 times - and all three
+                # escalation budgets had already burned on an earlier, out-of-reach drop, so the
+                # real stall never reached System 2 at all. Shedding first here keeps the scarce
+                # escalations for the genuinely ambiguous impasses the model is for.
+                relief = self._preselect_fix(gs, decision.action_label)
+                if relief is not None:
+                    self.log.append({"stage": "policy", "reason": "stall_preselect",
+                                     "stuck": decision.action_label, "via": relief.label})
+                    return {"action": relief, "note": f"stall preselect -> {relief.label}"}
                 self._stall_escalations += 1
                 alt, chosen, _ = self._escalate(
                     gs, "stall_loop", decision.action_label, state.get("iteration", 0))
@@ -1784,6 +1796,23 @@ class Agent:
             return {"action": alt, "escalated": True, "note": f"escalated -> {chosen}"}
         return {"action": resolve(FALLBACK_LABEL, gs), "escalated": True,
                 "note": f"fallback -> {FALLBACK_LABEL}"}
+
+    def _preselect_fix(self, gs, unresolved_label: str | None) -> Any:
+        """A deterministic unblock for the stall cases that need no model, else None.
+
+        Only the pinned-pack case is clear enough to settle here: a full pack refuses every gather,
+        so `inventory_relief` (deposit, grow the chest network, or drop junk) is the unblock whatever
+        the stuck label was. The relief must resolve to a *different* label - a stuck `drop_junk`
+        cannot be its own relief - and the whole thing stays off the System-2 budget. Every other
+        impasse (a drop out of reach, a mob that will not come) is left to the escalation, which now
+        reads the computed reason in `failure.diagnostics` and need not guess.
+        """
+        if gs.slots_used is None or gs.slots_used < INVENTORY_SLOTS:
+            return None
+        relief = inventory_relief(gs)
+        if relief is not None and relief.label != unresolved_label:
+            return relief
+        return None
 
     def _escalate(self, gs, trigger: str, unresolved_label: str | None,
                   iteration: int) -> tuple[Any, str | None, dict | None]:

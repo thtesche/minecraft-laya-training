@@ -829,29 +829,47 @@ PHASE_NETHER = "You are a Minecraft player killing blazes for blaze rods"
 PHASE_STRONGHOLD = "You are a Minecraft player finding the stronghold"
 PHASE_END = "You are a Minecraft player fighting the ender dragon"
 
+# One row per run phase: the persona sentence (System 1 head + System 2 framing), a stable slug
+# for the logged state (the `phase` field the server fills is the *time of day*, null in the
+# Nether, so System 2 was reading an empty box where the run phase is actually well defined), and
+# a short brief of what the phase is trying to achieve - the preconditions System 2 needs so it
+# can tell a stuck label from a step that still serves the goal.
+_PHASE_ROWS = {
+    "diamond_kit": (PHASE_TECH,
+                    "mine and craft a full diamond kit: diamond pickaxe and sword to hand, "
+                    "diamond armour worn on all four slots."),
+    "prepare_nether": (PHASE_PREP,
+                       "before crossing, finish the Nether kit: shield, a bow with arrows, a "
+                       "cooked-food reserve, a bed, and a lit Overworld portal."),
+    "nether_blaze": (PHASE_NETHER,
+                     "hunt blazes for blaze rods and barter gold with piglins for ender pearls, "
+                     "then leave the Nether with the haul."),
+    "stronghold": (PHASE_STRONGHOLD,
+                   "craft the eyes of ender, find the stronghold and activate the end portal."),
+    "end_dragon": (PHASE_END, "enter the End and defeat the ender dragon."),
+}
 
-def phase_persona(source) -> str:
-    """The phase sentence for both model interfaces, from one source of truth.
 
-    `source` is a `GameState` or its `as_state()` dict - System 1 renders it from the
-    object, System 2 escalates with the logged state dict, and neither may frame the run
-    differently than the other. The phases follow the world: the dimension owns nether
-    and end work; in the Overworld a finished diamond kit (worn, diamond pickaxe and
-    sword to hand) says the climb is over and only the crossing is left.
-    In the Overworld the stronghold follows the Nether haul: once the blaze powder is
-    banked (`powder_stowed`) and until the end portal stands active (`end_portal_active`),
-    the run is out for eyes of ender and the stronghold (docs/stronghold.md). Both are loop
-    latches that only ever set, so the sentence cannot flicker with the world.
+def _phase_key(source) -> str:
+    """The run phase as a stable slug, from one source of truth (`GameState` or `as_state()` dict).
+
+    The branch logic both `phase_persona` and `phase_brief` read, so neither interface can frame the
+    run differently than the other. The phases follow the world: the dimension owns nether and end
+    work; in the Overworld a finished diamond kit (worn, diamond pickaxe and sword to hand) says the
+    climb is over and only the crossing is left. In the Overworld the stronghold follows the Nether
+    haul: once the blaze powder is banked (`powder_stowed`) and until the end portal stands active
+    (`end_portal_active`), the run is out for eyes of ender and the stronghold (docs/stronghold.md).
+    Both are loop latches that only ever set, so the phase cannot flicker with the world.
     """
     def field(name: str, default=None):
         return source.get(name, default) if isinstance(source, dict) else getattr(source, name, default)
     dim = str(field("dimension") or "").lower()
     if "end" in dim:
-        return PHASE_END
+        return "end_dragon"
     if "nether" in dim:
-        return PHASE_NETHER
+        return "nether_blaze"
     if field("powder_stowed") and not field("end_portal_active"):
-        return PHASE_STRONGHOLD
+        return "stronghold"
     tools = field("tools") or {}
     armor = field("armor") or {}
 
@@ -861,7 +879,23 @@ def phase_persona(source) -> str:
 
     kit = (all(worn(slot) for slot in ("helmet", "chestplate", "leggings", "boots"))
            and tools.get("pickaxe") == "diamond" and tools.get("sword") == "diamond")
-    return PHASE_PREP if kit else PHASE_TECH
+    return "prepare_nether" if kit else "diamond_kit"
+
+
+def phase_persona(source) -> str:
+    """The phase sentence for both model interfaces, from one source of truth (`_phase_key`)."""
+    return _PHASE_ROWS[_phase_key(source)][0]
+
+
+def phase_brief(source) -> tuple[str, str]:
+    """The run phase as `(slug, goal)`: a stable name and what the phase is trying to achieve.
+
+    System 2 reads both - the slug fills the `phase` the server leaves empty outside the Overworld
+    day/night cycle, and the goal line tells it the phase's preconditions so it can judge whether a
+    stuck label still serves them or should give way.
+    """
+    key = _phase_key(source)
+    return key, _PHASE_ROWS[key][1]
 
 
 @dataclass

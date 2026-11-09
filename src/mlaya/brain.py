@@ -7,7 +7,7 @@ from typing import Any
 from .actions import (CRITERIA, DEFER_QUIET_TICKS, RECOVER_HEALTH, _must_eat,
                       _recovery_owed)
 from .config import LLMConfig, LayaConfig
-from .perception import phase_persona
+from .perception import INVENTORY_SLOTS, phase_brief, phase_persona
 
 # Two decisions per tick, one forward pass:
 #   in_danger  - binary gate; a reliable zero-shot signal. Yes -> defer to the survival policy.
@@ -334,6 +334,49 @@ def _plan_steps(plan: dict | None, allowed_labels: list[str]) -> list[str]:
     return ordered
 
 
+# Fields the escalation state carries for the log and System 1 but that only add noise to a System-2
+# brief: the viewer/other player roll call never bears on the next move, and the time-of-day `phase`
+# the server fills is null outside the Overworld, where it reads as "phase unknown" over a run phase
+# that is in fact well defined. Both are dropped from the System-2 view and the run phase is set
+# from `phase_brief` instead.
+_SYSTEM2_DROP_FIELDS = ("players",)
+
+
+def _system2_state_view(state: dict) -> dict:
+    """The state as System 2 should read it: the logged view, trimmed and annotated.
+
+    `as_state()` is the log's own vocabulary and must stay whole (`from_state` rebuilds a tick from
+    it), so the tailoring happens on a copy. The run phase replaces the empty time-of-day box, the
+    home base is marked as the Overworld landmark it always is (System 2 mid-Nether must not read
+    the base coordinates as somewhere nearby), and the fields that only add noise are dropped.
+    """
+    view = {k: v for k, v in state.items() if k not in _SYSTEM2_DROP_FIELDS}
+    view["phase"] = phase_brief(state)[0]
+    base = state.get("base")
+    if base is not None:
+        view["base"] = {"pos": list(base), "dimension": "overworld"}
+    return view
+
+
+def _failure_diagnostics(state: dict) -> dict:
+    """Why a reaction cannot make progress, computed so System 2 does not re-derive it from raw state.
+
+    The stuck reactions are the ones that need a free slot or a drop in reach, so the brief names the
+    pack's fullness and the nearest loaded drop outright: a pinned pack says "shed first", a drop
+    tens of blocks out says "walk to it or let it lie", and neither should cost System 2 a guess.
+    """
+    slots_used = state.get("slots_used")
+    diag: dict[str, Any] = {}
+    if isinstance(slots_used, int):
+        diag["pack"] = {"slots_used": slots_used, "slots_max": INVENTORY_SLOTS,
+                        "full": slots_used >= INVENTORY_SLOTS}
+    dists = [drop[2] for drop in (state.get("dropped_items") or [])
+             if len(drop) > 2 and drop[2] is not None]
+    if dists:
+        diag["nearest_drop_m"] = round(min(dists), 1)
+    return diag
+
+
 def escalate_to_system2(
     cfg: LLMConfig,
     api_key: str | None,
@@ -350,7 +393,9 @@ def escalate_to_system2(
     offline teacher and the older log readers. `trajectory` is the digest from
     `trajectory_digest`; passing it is what turns "pick a label" into "break this impasse".
     System 2 sees all available actions, not just the currently-ready ones, so it can propose
-    a sequence that achieves preconditions before executing the stuck label.
+    a sequence that achieves preconditions before executing the stuck label, and the `failure`
+    brief carries the computed reason (pack fullness, nearest drop) so the model is not left to
+    reverse-engineer why the stuck label keeps refusing.
     """
     if not api_key:
         return {"error": f"missing {cfg.api_key_env}"}
@@ -358,23 +403,30 @@ def escalate_to_system2(
         from openai import OpenAI
 
         client = OpenAI(base_url=cfg.base_url, api_key=api_key)
+        phase_slug, phase_goal = phase_brief(state)
         system = (
             # The same phase sentence System 1 reads at the head of every state - System 2 is
             # asked about this run, not about Minecraft in general, and should not have to
             # re-derive mid-Nether from `state.dimension` whether the next thing is a pickaxe.
-            phase_persona(state) + ". You are the Minecraft expert advising this bot on its "
-            "next move. Its own controller is stuck: read `failure`, the `trajectory` of what it "
-            "has been doing, and what each entry in `actions` does. "
+            # The phase goal spells out the preconditions the run is working toward, so the model
+            # can tell a stuck label from a step that still serves the goal.
+            f"{phase_persona(state)}. The run phase is `{phase_slug}`: {phase_goal} "
+            "You are the Minecraft expert advising this bot on its "
+            "next move. Its own controller is stuck: read `failure` (which names the stuck label and "
+            "the computed reason it keeps refusing), the `trajectory` of what it has been doing, and "
+            "what each entry in `actions` does. "
             "Some actions are immediately available (ready: true), others need preconditions met first. "
             "Propose the shortest ordered sequence of actions that breaks the impasse, "
             "including setup steps if needed. The sequence may include actions that are not currently "
-            "ready, if getting them ready (e.g. by moving or gathering resources) would solve the stuck label. "
+            "ready, if getting them ready (e.g. shedding a full pack with drop_junk, or moving to a "
+            "distant drop) would solve the stuck label. "
             "Reply with JSON "
             '{"plan": [<action labels, best first>], "goal": <short string>, '
             '"note": <why this breaks the loop, short>}.'
         )
+        failure = {**failure, "diagnostics": _failure_diagnostics(state)}
         payload = {
-            "state": state,
+            "state": _system2_state_view(state),
             "failure": failure,
             # All actions with descriptions, plus which are currently ready.
             "actions": {

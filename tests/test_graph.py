@@ -555,6 +555,44 @@ class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(out["action"], action)
         esc.assert_not_called()
 
+    async def test_a_pinned_pack_sheds_first_without_spending_an_escalation(self) -> None:
+        # The clear case: a full pack refuses every gather, so `inventory_relief` settles it on its
+        # own and the scarce System-2 budget is left untouched (the run217 compounding failure).
+        agent = self._agent()
+        agent._stall_dropped = {"collect_drops": STALL_ESCALATE_REPEATS}
+        stuck = Action("collect_drops", "pick_up_items", {"radius": 16}, "sweep")
+        relief = Action("drop_junk", "drop_item", {"items": [{"item_name": "netherrack"}]}, "shed")
+        with mock.patch.object(graph, "candidates", return_value=["collect_drops"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: stuck if lbl == "collect_drops" else None), \
+             mock.patch.object(graph, "inventory_relief", return_value=relief), \
+             mock.patch.object(graph, "escalate_to_system2") as esc:
+            out = await agent._guard(self._state_with("collect_drops", slots_used=36))
+        self.assertIs(out["action"], relief)
+        self.assertEqual(out["note"], "stall preselect -> drop_junk")
+        esc.assert_not_called()
+        self.assertEqual(agent._stall_escalations, 0)
+        self.assertEqual(agent.log.records[-1]["reason"], "stall_preselect")
+
+    async def test_a_pack_with_room_escalates_instead_of_preselecting(self) -> None:
+        # A drop out of reach with a pack that still has room is not the pinned-pack case, so the
+        # controller leaves it to the (now well-informed) escalation rather than shedding blindly.
+        agent = self._agent()
+        agent._stall_dropped = {"collect_drops": STALL_ESCALATE_REPEATS}
+        stuck = Action("collect_drops", "pick_up_items", {"radius": 16}, "sweep")
+        with mock.patch.object(graph, "candidates", return_value=["collect_drops"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: stuck if lbl == "collect_drops" else None), \
+             mock.patch.object(graph, "inventory_relief", return_value=None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": [], "action": None}) as esc:
+            out = await agent._guard(self._state_with("collect_drops", slots_used=33))
+        esc.assert_called_once()
+        self.assertEqual(agent._stall_escalations, 1)
+
+    def _state_with(self, label: str, **kw):
+        return {"before": gs(**kw), "decision": Decision(label), "iteration": 7}
+
 
 class PourSkipTest(unittest.TestCase):
     """A pour the server refuses for want of a clickable face is remembered, not retried.

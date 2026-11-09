@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 from mlaya.actions import _must_eat
 from mlaya.brain import (DANGER_BAND_NOTE, DANGER_DEFER_HEALTH, DANGER_DEFER_M, DANGER_QID,
-                         DEFER_QUIET_TICKS, INTENT_QID, Brain, _plan_steps, danger_matters,
+                         DEFER_QUIET_TICKS, INTENT_QID, Brain, _failure_diagnostics, _plan_steps,
+                         _system2_state_view, danger_matters,
                          escalate_to_system2, trajectory_digest)
 
 
@@ -222,6 +223,63 @@ class EscalateContractTest(unittest.TestCase):
             SimpleNamespace(api_key_env="STRATA_API_KEY"), None,
             {"phase": "early"}, [], {"trigger": "unresolved_label"}, ["get_wood"])
         self.assertEqual(out, {"error": "missing STRATA_API_KEY"})
+
+
+class System2StateViewTest(unittest.TestCase):
+    """The System-2 view trims the noise and annotates what the model would otherwise misread."""
+
+    def _nether_state(self) -> dict:
+        return {
+            "dimension": "the_nether",
+            "phase": None,  # the server's time-of-day box, empty outside the Overworld
+            "slots_used": 33,
+            "players": ["LayaView"],
+            "base": [-77, 69, -27],
+            "dropped_items": [["gold_nugget", 1, 87.6, [-374.96, 32.0, 147.87]]],
+        }
+
+    def test_the_player_roll_call_is_dropped(self) -> None:
+        self.assertNotIn("players", _system2_state_view(self._nether_state()))
+
+    def test_the_run_phase_fills_the_empty_time_of_day_box(self) -> None:
+        self.assertEqual(_system2_state_view(self._nether_state())["phase"], "nether_blaze")
+
+    def test_the_base_is_marked_as_the_overworld_landmark(self) -> None:
+        self.assertEqual(_system2_state_view(self._nether_state())["base"],
+                         {"pos": [-77, 69, -27], "dimension": "overworld"})
+
+    def test_a_run_without_a_base_leaves_it_none(self) -> None:
+        state = self._nether_state()
+        state["base"] = None
+        self.assertIsNone(_system2_state_view(state)["base"])
+
+    def test_the_logged_state_is_not_mutated(self) -> None:
+        state = self._nether_state()
+        _system2_state_view(state)
+        self.assertEqual(state["phase"], None)
+        self.assertEqual(state["base"], [-77, 69, -27])
+        self.assertIn("players", state)
+
+
+class FailureDiagnosticsTest(unittest.TestCase):
+    """The computed reason a stuck reaction keeps refusing, so System 2 need not reverse-engineer it."""
+
+    def test_a_pinned_pack_reads_as_full(self) -> None:
+        diag = _failure_diagnostics({"slots_used": 36})
+        self.assertEqual(diag["pack"], {"slots_used": 36, "slots_max": 36, "full": True})
+
+    def test_a_pack_with_room_is_not_full(self) -> None:
+        self.assertFalse(_failure_diagnostics({"slots_used": 33})["pack"]["full"])
+
+    def test_the_nearest_drop_distance_is_surfaced(self) -> None:
+        diag = _failure_diagnostics({
+            "slots_used": 20,
+            "dropped_items": [["gold_nugget", 1, 87.6, None], ["blaze_rod", 1, 5.2, None]],
+        })
+        self.assertEqual(diag["nearest_drop_m"], 5.2)
+
+    def test_no_drops_means_no_distance_field(self) -> None:
+        self.assertNotIn("nearest_drop_m", _failure_diagnostics({"slots_used": 20}))
 
 
 if __name__ == "__main__":
