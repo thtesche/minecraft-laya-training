@@ -346,9 +346,11 @@ def escalate_to_system2(
     """System 2: ask a generative model for a way out when System 1 cannot act (rare).
 
     The reply is normalised so every caller reads the same shape: `plan` is the ordered list of
-    allowed labels the model proposes (best first) and `action` is its first step, kept for the
+    labels the model proposes (best first) and `action` is its first step, kept for the
     offline teacher and the older log readers. `trajectory` is the digest from
     `trajectory_digest`; passing it is what turns "pick a label" into "break this impasse".
+    System 2 sees all available actions, not just the currently-ready ones, so it can propose
+    a sequence that achieves preconditions before executing the stuck label.
     """
     if not api_key:
         return {"error": f"missing {cfg.api_key_env}"}
@@ -362,17 +364,23 @@ def escalate_to_system2(
             # re-derive mid-Nether from `state.dimension` whether the next thing is a pickaxe.
             phase_persona(state) + ". You are the Minecraft expert advising this bot on its "
             "next move. Its own controller is stuck: read `failure`, the `trajectory` of what it "
-            "has been doing, and what each entry in `allowed_actions` does, then propose the "
-            "shortest ordered sequence of allowed actions that breaks the impasse - not just the "
-            "label that keeps failing. Reply with JSON "
-            '{"plan": [<allowed labels, best first>], "goal": <short string>, '
+            "has been doing, and what each entry in `actions` does. "
+            "Some actions are immediately available (ready: true), others need preconditions met first. "
+            "Propose the shortest ordered sequence of actions that breaks the impasse, "
+            "including setup steps if needed. The sequence may include actions that are not currently "
+            "ready, if getting them ready (e.g. by moving or gathering resources) would solve the stuck label. "
+            "Reply with JSON "
+            '{"plan": [<action labels, best first>], "goal": <short string>, '
             '"note": <why this breaks the loop, short>}.'
         )
         payload = {
             "state": state,
             "failure": failure,
-            # What each allowed action actually does, so the model is not guessing from the label.
-            "allowed_actions": {label: CRITERIA.get(label, "") for label in allowed_labels},
+            # All actions with descriptions, plus which are currently ready.
+            "actions": {
+                label: {"description": CRITERIA.get(label, ""), "ready": label in allowed_labels}
+                for label in CRITERIA
+            },
             "recent_history": history[-8:],
         }
         if trajectory is not None:
@@ -396,7 +404,7 @@ def escalate_to_system2(
         data = json.loads(content)
         if not isinstance(data, dict):
             return {"error": f"non-object model response: {type(data).__name__}"}
-        steps = _plan_steps(data, allowed_labels)
+        steps = _plan_steps(data, CRITERIA.keys())
         data["plan"] = steps
         data["action"] = steps[0] if steps else None
         return data
