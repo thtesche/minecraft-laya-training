@@ -141,7 +141,8 @@ label must search the **raw** stores for powder itself — mirror
 - The phase is offered **only** once `tech_tree_complete` AND
   `nether_expedition_complete` both hold. It no longer stops at an **activated end portal**: since
   2026-11-04 it runs on to the bed beside the frame and the sleep that pins the respawn there
-  (`place_bed_stronghold`, `sleep_stronghold`). End entry and the dragon fight are the next phase.
+  (`place_bed_stronghold`, `sleep_stronghold`). End entry and the dragon fight are Phase 5 (see
+  `docs/architecture.md`), implemented and not yet walked live.
 
 ## Key file map
 

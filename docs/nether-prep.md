@@ -1,9 +1,12 @@
 # Nether preparation (pre-gate step)
 
-Status: **all four phases implemented and closed live** (phase 0 reference kit, phase 1 bow +
-arrows + cobblestone reserve, phase 2 gold helmet, phase 3 the Nether visit itself: crossing,
-fortress, rod haul, walk home). The last link of the chain — the powder standing in the chest at
-the gate — has now been walked: run187 banked it at it540 (`powder_banked`). Details below.
+Status: **the visit is closed live** (phase 0 reference kit, phase 2 gold helmet and the cobblestone
+reserve, phase 3 the Nether visit itself: crossing, fortress, rod haul, walk home). The last link of
+the chain — the powder standing in the chest at the gate — has now been walked: run187 banked it at
+it540 (`powder_banked`). Phase 1 (bow + arrows) is **not** part of the crossing gate — commit
+`4fe43cd` removed it after run34 — and since 2026-11-09 the arrow economy is deferred until the eyes
+are crafted: it is the End's reserve, not the Nether's (see `architecture.md`, "End supply" and
+"Live findings run213"). Details below.
 
 ## Idea
 
@@ -70,8 +73,15 @@ the bot therefore only has to *have* it and carry **arrows**. That makes this no
 combat AI, but pure procurement — just like eating:
 
 - **Bow** = 3 sticks + 3 string. String comes from hunting spiders (`hunt_string`, target in the lull 3).
-- **Arrows** = flint + stick + feather. Flint (`get_flint`, reopened after the flint and steel) and
-  feathers (`hunt_feather`, chickens) are part of the chains.
+- **Arrows** = flint + stick + feather. Flint (`get_flint`, reopened once the eyes stand — since
+  2026-11-09; before that it reopened right after the flint and steel) and feathers (`hunt_feather`,
+  chickens) are part of the chains.
+
+**When it runs (2026-11-09).** The procurement stands down until the eye task is done
+(`_eyes_owed`): before that, feathers, string and flint have no sink and are banked rather than
+carried, because run213 struck the igniter's flint into arrows while the gate stayed dark and then
+lost the only igniter to a death in the Nether. The bow and the `NETHER_ARROWS` reserve are *not*
+required to cross — the crossing departs without either.
 
 The server scaffold already knows `netherrack`/`basalt` (`scaffold_blocks`), so the
 Nether terrain is already provided for in the server reflex.
@@ -224,9 +234,11 @@ The bed rule around the frame has four parts, all of them corrections from live 
 
 **Phase 1 — done:**
 - **Bow + arrows** (`craft_bow`, `craft_arrows`, `hunt_feather`): bow = 3 string (spiders,
-  `hunt_string`) + 3 sticks; arrows = flint (`get_flint`, reopened after the flint and steel) +
+  `hunt_string`) + 3 sticks; arrows = flint (`get_flint`, reopened once the eyes stand) +
   stick + feather (chickens). Goal: bow present ∧ ≥ 16 arrows (`NETHER_ARROWS`). The server fires
-  the bow itself (`combat.bow`).
+  the bow itself (`combat.bow`). Not a crossing requirement, and since 2026-11-09 the whole chain
+  waits for the eye task and the real target is the End's `END_ARROWS = 128` — the materials are
+  banked until then (see `architecture.md`, "End supply").
 - **Cobblestone minimum reserve** raised to 64 in the lull (`NETHER_COBBLE`), refilled only once
   it falls below 56 (`NETHER_COBBLE_SLACK`), so a scaffold block does not send `mine_stone` to
   collect a pile just dropped; the light threshold 12 continues to apply outside the lull. Before the passage the bot carries a spare-pickaxe reflex

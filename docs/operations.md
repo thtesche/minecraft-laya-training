@@ -101,10 +101,11 @@ note on stderr rather than ending the reader.
 - **Every fix comes with tests**, written from the live state that showed the defect (the cell,
   the label, the refusal text), and the new test must fail without the fix.
 - Tests: `.venv/bin/python -m pytest -q` — that is what the pre-commit hook runs (`pytest` is in
-  the venv; `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests` gives the same 1398
+  the venv; `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests` gives the same 1755
   tests). There is no bare `python` on the machine; always `.venv/bin/python`.
-- **Commits:** small and thematic, straight on `main`, the message one sentence without a prefix
-  that names the live case behind it (run, cell, count). Push only when asked.
+- **Commits:** small and thematic, straight on `main`, a one-line summary with a scope prefix —
+  `fix(runNNN):`, `feat(end):`, `docs(operations):` — that names the live case behind it (run,
+  cell, count). Push only when asked.
 - Agent fixtures in `tests/test_graph.py` build `Agent` with `Agent.__new__` and set each field by
   hand; a new field that `_inject` reads needs adding to those fixtures.
 

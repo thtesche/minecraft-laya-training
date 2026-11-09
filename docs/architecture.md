@@ -1544,6 +1544,10 @@ reserve, none of them a gate on the Nether crossing.
 - **Training gap.** The current Laya head has no rows for `hunt_skeleton` or
   `camp_skeleton_spawner`, so the model should treat both as out of distribution and lean on the
   rules/System-2 fallback until a retrain includes them. The corpus also has no End-phase runs yet.
+- **The window moved (2026-11-09).** Everything above describes the target and the machinery, not
+  when it runs: since the run213 fix the whole reserve stands down until the eye task is done
+  (`_eyes_owed`), and the materials that arrive before it are banked. See *Live findings run213*
+  below for what a run that worked the reserve early actually cost.
 
 ## Live findings run210 (2026-11-07): the exit hop the pathfinder could not route
 
@@ -1600,16 +1604,75 @@ A related gap is left open: `_note_crossing` (`graph.py`) charges a crossing aga
 `PEARL_WAVE_MAX_TRIPS` only when `_powder_stowed` is set, so in a run where the powder is spent on
 eyes before it is banked the pearl waves never reach their cap and the counter stays dead.
 
+## Phase 5 — the End and the dragon (2026-11-08, `71c9b63`)
+
+The stronghold phase closes with the portal lit and the respawn pinned beside the frame; Phase 5 is
+the link after it and the last one in `Agent._goal_reached`'s AND: the run stops on the first tick
+where `end_complete` holds **and** every earlier phase does. The module mirrors `stronghold.py`
+down to the seams — the server owns the combat, the loop only reads the loaded fight and filters
+which tool the moment allows.
+
+- **The shape.** `src/mlaya/actions/end.py` owns `END_LABELS` (`carve_pumpkin`, `enter_the_end`,
+  `position_end`, `gather_end_stone`, `destroy_crystal`, `shoot_dragon`, `prepare_perch`,
+  `attack_perch`), `end_candidates`, `resolve_end` and `end_complete`. The planner splices
+  `end_candidates` after the stronghold chain in the Overworld and **short-circuits the whole
+  tree with it in the End** (before `_cannot_heal` can route a wounded bot into a walk home that
+  has no destination there); `resolve` tries `resolve_end` first for those labels. The server
+  keeps the hard mechanics — crystal demolition, leading a bow shot, building and timing the
+  perch, the MLG water reflex (`survival.BASE_CHANGES["bucket_fall_save"]`), the blast arithmetic
+  — exactly as it does for the Nether and the stronghold.
+- **Two faces, one function, dispatched on the dimension.** In the Overworld after the sleep it is
+  the entry/re-entry window: wear a carried `carved_pumpkin` when there is one (it hides the
+  enderman gaze; best-effort, never crafted and never a gate), top an empty bucket up into the MLG
+  water at a source, and step into `end_portal_cell` — the `activate_portal` centre, with the
+  stronghold frame as the fallback. In the End it is the fight, in the order the fight walks it:
+  heal below `END_HEALTH_FLOOR = 12.0` (the diamond kit, the MLG water and food are the only
+  buffers by design — no potions, no golden apples), recover a death's drops through the shared
+  `recover_drops` (its `_can_recover` gate already restricts it to a death in the current
+  dimension), then `gather_end_stone` while the reserve is short and `destroy_crystal` while any
+  crystal is loaded. The crystals heal the dragon, so they fall first, and the server's melee
+  staircase to a caged one draws on `END_STONE_RESERVE = 64`. With the towers cleared, a perched
+  dragon is arrow-immune and answered by `attack_perch`, a flying one by `shoot_dragon`, and
+  `prepare_perch` rides along in both windows so the staging notch is dug and verified before the
+  next landing instead of scrambled for when it begins. An empty arena is not a kill: it is
+  `position_end`, a walk to the fountain (`END_FOUNTAIN_CELL = (0, 64, 0)`) until the towers,
+  crystals and dragon load again.
+- **What perception reads.** `view_status.endFight` fills `GameState.end_crystals` as
+  `(entity_id, x, y, z)`, nearest first (`destroy_end_crystal` takes the id), and the one dragon
+  the arena holds — `dragon_id`, health, the server's `dragon_phase`, `dragon_perched`, and the
+  head estimate (current perch, else the predicted landing head) a perch melee aims at. Breath
+  clouds are logged so a recorded tick says what the arena held. All of it is *the loaded fight*:
+  an empty list is "nothing loaded", never "all dead".
+- **The goal is a receipt.** `Agent._note_dragon` latches `dragon_slain` from the End tools'
+  `combat.outcome == "dragon_died"` (the formatted `dragon_died` line as the fallback for a
+  text-only result, and `ok` is not required — a cancelled final blow still killed it). The latch
+  only ever sets and survives a restart through the note read-back; `end_complete` reads it, so a
+  dragon that flies out of render cannot close the run. Two consequences of the same shape: the
+  respawn pin is read from the `_slept_at_stronghold` latch rather than a live bed scan (which is
+  False the moment the body is in the End), and `_stronghold_phase` stays open until
+  `dragon_slain`, so the bed-and-sleep machinery cannot re-fire on a death-respawn down there.
+- **Not yet walked live.** No run has entered the End: no decisions log holds a tick with
+  `dimension: the_end`. run213 lit the gate (it265) and crossed (it266), but the death at it278
+  cost the igniter and the remaining 322 ticks stayed in the Overworld. The earlier endgame runs
+  got further in pieces — 179–186 filled the frame (and run186 laid and slept in the frame bed,
+  the phase's own partial walk), run208 activated the portal at it118 — but none closed the whole
+  chain from an empty world. Phase 5 therefore rests on `EndFightTest` (`tests/test_actions.py`)
+  and `EndLatchTest` (`tests/test_graph.py`), and the corpus has no End rows to train on. The
+  return path — egg, exit portal, homecoming — is deliberately deferred and is not part of the
+  goal.
+
 ## Next milestones
 
-- **Open after run187:** (1) the endgame's later links are live but unfinished — the powder is
-  banked (run187 it540), the frame is filled and the portal lit (runs 179–186), but no run has
-  completed the bed phase from an empty world, so `sleep_stronghold` and the return trek rest on
-  tests and on run186's partial walk; (2) the fine-tuned head has never been served in a live run
-  (`LAYA_EXTRA_MODELS` unset), and the corpus has no endgame rows to train on; (3) the viewer's
-  chunk window: LayaView loads at `--view-distance 6`, so a bot working beyond it is not on screen —
-  the patch in `viewer/viewer.mjs` is deferred; (4) steps that leave the base (`mine_diamond`,
-  `mine_gold`) are still not held back by `_shed_owed`, only `mine_obsidian` is; (5) the server's
+- **Open after run213:** (1) two phases have still not been walked from end to end — the stronghold
+  bed phase (run184 filled the frame, run186 laid and slept in the frame bed, but no run has closed
+  it from an empty world; run213's Nether death at it278 cost the igniter and never reached the
+  stronghold) and Phase 5 (no run has entered the End at all — see the section above); (2) the
+  fine-tuned head is now served live (registered in the gitignored `.env`, `ddc7753`); run213 was
+  its first A/B — four milestones to the Oct-28 checkpoint's one (run188), and ahead of run210 on
+  efficiency though without its `powder_banked`; (3) the viewer's chunk window: LayaView loads at
+  `--view-distance 6`, so a bot working beyond it is not on screen — the patch in
+  `viewer/viewer.mjs` is deferred; (4) steps that leave the base (`mine_diamond`, `mine_gold`) are
+  still not held back by `_shed_owed`, only `mine_obsidian` is; (5) the server's
   `observed_containers` table is empty in the lab world (checked 2026-11-02), so
   `_walk_home_to_memory` cannot fire there.
 

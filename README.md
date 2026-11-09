@@ -51,7 +51,8 @@ rationale and the zero-shot findings behind this split are in
 | Stall guards — refusals, wandering, idle steps, quiet defers, `wait` hold | implemented (see [`docs/architecture.md`](docs/architecture.md#stall-guards)) |
 | Equipment durability audit and replacement crafting | implemented; worn-out armor (below 15%) triggers replacement craft from reserve — see [`docs/architecture.md`](docs/architecture.md#equipment-durability-audit-and-replacement-crafting) |
 | Nether visit (phase 3) — crossing, fortress search, blaze rods home as powder | implemented, **closed live**: run187 lit the gate (it510), crossed (it511) and banked the powder in the gate chest (it540) — see [`docs/nether-prep.md`](docs/nether-prep.md) |
-| Stronghold → End portal (phase 4) — eyes of ender, stronghold search, end-portal activation, demand-sized re-supply, respawn bed beside the frame | implemented, walked live (run184 filled the frame, run186 laid and slept in the frame bed); the bed phase is not yet validated in a run that reaches the fortress — see [`docs/stronghold.md`](docs/stronghold.md) |
+| Stronghold → End portal (phase 4) — eyes of ender, stronghold search, end-portal activation, demand-sized re-supply, respawn bed beside the frame | implemented, walked live (run184 filled the frame, run186 laid and slept in the frame bed, run208 activated the portal); the whole chain has not yet been closed from an empty world — see [`docs/stronghold.md`](docs/stronghold.md) |
+| The End → dragon (phase 5) — pumpkin and MLG water, enter the portal, crystals first, bow for the flying dragon and a melee perch, `end_complete` as the final goal | implemented, **not yet walked live** (no run has entered the End) — see [`docs/architecture.md`](docs/architecture.md#phase-5--the-end-and-the-dragon-2026-11-08-71c9b63) |
 | M3, second round — run79–86 head on top of the 2026-10-14 checkpoint | trained (held-out accuracy 0.767 → 0.885), served live since run87 via `LAYA_EXTRA_MODELS` |
 | M5 — stronger training signal: relative narrative + offline teacher/judge labels | planned (see [`docs/architecture.md`](docs/architecture.md#next-milestones)) |
 
@@ -59,8 +60,10 @@ The run **stops itself** once every phase stands (`Agent._goal_reached`): the ov
 (`actions.tech_tree_complete` — full diamond kit **worn** + shield in the off-hand, a bed at the
 base, all Nether prep steps done, the food reserve banked and the gate lit) **and** the Nether trip
 (`actions.nether_expedition_complete` — the blaze powder deposited in the chest at the gate) **and**
-the stronghold phase (`stronghold_complete` — the end portal active — **plus** a bed standing beside
-the frame and one sleep in it, so the respawn is pinned at the stronghold). The portal is lit
+the stronghold phase (`stronghold_complete` — the end portal active — **plus** the sleep latch that
+proves the respawn was pinned at the frame; the live bed scan is deliberately not read there, since
+it is false the moment the body is in the End) **and** Phase 5 (`end_complete` — the dragon dead,
+latched from the kill receipt). The portal is lit
 **last** in the overworld: `light_portal` waits for the whole stocked trip, so the gate never burns
 through the prep window. The carried bed is laid the very next tick, by day or by night — the
 `sleep` server sets the respawn point at a bed used in daylight too — and that opens the crossing.
@@ -164,12 +167,13 @@ export LAYA_EXTRA_MODELS='{"english": "thtesche/laya-minecraft-english"}'
 
 To publish a new checkpoint: `hf upload thtesche/laya-minecraft-english runs/checkpoints/minecraft-<time> --exclude "checkpoint_latest/*"`, then refresh the card (`hf/model-card.md`). Weights must go to a **model** repo — laya's loader defaults to `repo_type="model"` and does not resolve dataset repos.
 
-Tests: `uv run pytest tests/ -q` (1573 tests) — the same command the pre-commit hook and CI run.
+Tests: `uv run pytest tests/ -q` (1755 tests) — the same command the pre-commit hook and CI run.
 
 ## Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — design, layers, decisions, and the
-  milestone-by-milestone findings from the live runs (M1–M4, homebase, Nether chain).
+  milestone-by-milestone findings from the live runs (M1–M4, homebase, Nether chain, the stronghold
+  hand-off and the End phase).
 - [`docs/nether-prep.md`](docs/nether-prep.md) — the Nether preparation design and the
   phase 3 visit, with its live status.
 - [`docs/stronghold.md`](docs/stronghold.md) — the phase after the Nether haul: eyes of ender,

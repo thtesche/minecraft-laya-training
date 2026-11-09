@@ -9,9 +9,10 @@ portal fires*).
 
 Scope of this phase, as the user set it: **gather eyes of ender, navigate to the stronghold and
 remember it, activate the end portal, and top up blaze rods from the Nether only if needed**, then
-pin the respawn at the frame. Entering the End and the dragon fight are a later phase (the server
-already carries `enter_end_portal`, `shoot_dragon`, `attack_dragon_perch`, `destroy_end_crystal`
-for it).
+pin the respawn at the frame. Entering the End and the dragon fight are Phase 5: implemented in
+`src/mlaya/actions/end.py` and documented in
+[`architecture.md`](architecture.md#phase-5--the-end-and-the-dragon-2026-11-08-71c9b63) — not yet
+walked live.
 
 Live status: the chain has been walked for real — runs 179–184 reached and filled the frame, run186
 laid and clicked the bed beside it (it9, it11) and then looped: `take_bed` collected the bed back
@@ -417,8 +418,10 @@ hid in a phase no run had walked yet (`ea8b541`), and two more came from live ru
 
 ## Out of reach / later (deliberately not in this phase)
 
-- **Entering the End and the dragon fight** — the next phase; the server tools exist, the bed-at-
-  stronghold seam is noted above.
+- **Entering the End and the dragon fight** — Phase 5, now implemented (`end.py`) and owned by the
+  planner once the sleep above lands; see
+  [`architecture.md`](architecture.md#phase-5--the-end-and-the-dragon-2026-11-08-71c9b63). The
+  bed-at-stronghold seam is noted above, and the phase has not been walked live yet.
 - **Bartering for pearls** — endermen are faster; `barter` stays a fallback only if the enderman
   hunt proves unreachable in a world.
 - **Ender chests, blaze farms, enchanting** — outside this bot's tree, as in the Nether prep.
