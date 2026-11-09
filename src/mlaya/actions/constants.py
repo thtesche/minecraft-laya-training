@@ -205,6 +205,9 @@ IRON_ARMOR_COST = dict(IRON_ARMOR)
 # One `mine_iron` is a single `collect_block`, so the goal of a whole iron kit must not become one
 # unbounded dig: cap the per-action count and let the loop re-offer the step for the rest.
 IRON_MINE_BATCH = 8
+# One `smelt_item` puts at most this many of a stack into the furnace. The room test has to use
+# the same number as the resolve, or the offer and the action disagree.
+SMELT_BATCH = 3
 
 # Overworld -> Nether gate. A portal frame is ten obsidian with four cobblestone corners; the
 # server's `build_structure portal_frame` builds exactly that from a carried stack, so the

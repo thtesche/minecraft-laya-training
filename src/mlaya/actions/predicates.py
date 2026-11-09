@@ -2441,7 +2441,7 @@ def _gold_reserve_steps(gs: GameState) -> list[str]:
     inv = gs.inventory
     if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
         return []
-    if (_has(inv, RAW_GOLD) and _furnace_fuel(inv) is not None and _furnace_room(gs)
+    if (_has(inv, RAW_GOLD) and _gold_smelt_room(gs)
             and (_smelting_reach(gs) or gs.furnace_pos is not None)):
         return ["smelt_gold"]
     if _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
@@ -2498,7 +2498,7 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
             if table:
                 out.append("craft_gold_helmet")
         elif _has(inv, RAW_GOLD):
-            if (_smelting_reach(gs) and _furnace_fuel(inv) is not None and _furnace_room(gs)):
+            if _smelting_reach(gs) and _gold_smelt_room(gs):
                 out.append("smelt_gold")
         elif _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs):
             out.append("mine_gold")
@@ -2825,25 +2825,34 @@ def _bed_pad_wanted(gs: GameState) -> bool:
 
 
 def _idle_off_base(gs: GameState) -> bool:
-    """A geared Overworld bot standing off its base - the state the empty-candidate fallback walks
-    home from, rather than letting `explore` march it to the horizon.
+    """A bot with a base, standing off it, in the Overworld - the state the empty-candidate
+    fallback walks home from, rather than letting `explore` march it to the horizon.
 
     `wait` holds an idle bot only *at* the base (`BASE_RADIUS` = 4 m). The moment a step drifts it
     off - a `collect_drops` a few metres out - the empty-candidate fallback used to flip to
     `explore`, which has no tether home: each frontier step pushed the bot further, `wait` never
     re-fired, and the base was lost (live run97 it163-193: a collect_drops to 10 m, then `explore`
     ratcheted 332 -> 652 m out and oscillated there to the run's end). Walking home lands the bot
-    back where `wait` can hold it. Once geared with a base, there is nothing in the Overworld worth
+    back where `wait` can hold it. Once a base exists, there is nothing in the Overworld worth
     walking *outward* for - the next phase waits at the gate the base holds - so home is right
     whenever the lull has run dry. The Nether is excluded: there the fallback `explore` is the
     march to the fortress, not wandering, so `_overworld` keeps this to the Overworld.
+
+    The kit is deliberately *not* part of the test. Live, run218 it167-243: the shield broke in the
+    blaze fight (46 of 336 uses left, gone on the next tick), `_gear_ready` requires a shield in the
+    off-hand, and this predicate read it - so a bot 643 m from its base with a 36/36 pack and
+    nothing nameable to shed was left with `explore` as its only candidate and walked an 11 m
+    triangle until the iteration limit. A lost shield is exactly the reason to walk home: the
+    furnace, the crafting table and the chest are all there. Night already keeps a defenceless bot
+    from the long walk (`_defenceless_at_night`), and a home walk that keeps failing is stuck-listed
+    like any other step, after which `explore` takes the tick.
 
     This is a second, narrower reason than `_go_home_wanted` and shared the same way: the fallback
     offers `go_home` exactly in this state and `resolve` accepts it exactly here, so the two gates
     cannot disagree. It is deliberately read only by the empty-candidate fallback, never added to
     the ordinary offer, so no non-empty candidate set the policy was trained on changes.
     """
-    return _gear_ready(gs) and gs.base is not None and not _at_base(gs) and _overworld(gs)
+    return gs.base is not None and not _at_base(gs) and _overworld(gs)
 
 
 def _junk_carried(inv: dict[str, int]) -> list[str]:
@@ -3269,15 +3278,53 @@ def _furnace_ready(gs: GameState) -> bool:
     return gs.furnace_pos is not None
 
 
-def _furnace_room(gs: GameState) -> bool:
+def _furnace_room(gs: GameState, item: str | None = None, count: int = 1) -> bool:
     """Whether the pack has a free slot for the output `smelt_item` has to recover.
 
     A smelt that completes with no room leaves its cooked output stuck in the furnace (live,
     run26), and a furnace with pre-existing output refuses the next insert forever. Requiring a
     free slot keeps a cook from stranding itself; when the pack is full the loop sheds
     (`stow_surplus`/`drop_junk`) first.
+
+    Named with the item it feeds, the test is not simply "a slot is free": the input leaves the
+    pack before the output comes back, so a smelt that empties the stack it is made of opens the
+    very slot its output lands in. Live, run218 it167-243: 36 of 36 slots, one raw iron, nothing
+    on any junk list and nothing above a cap - `_furnace_room` read False, `smelt_iron` was never
+    offered, the ingot a shield needs was never smelted, and with no shield `_gear_ready` stayed
+    false for 77 ticks, closing both the crossing and the walk home.
     """
-    return gs.slots_used < INVENTORY_SLOTS
+    if gs.slots_used < INVENTORY_SLOTS:
+        return True
+    return item is not None and 0 < int(gs.inventory.get(item, 0)) <= max(1, int(count))
+
+
+def _smelt_room(gs: GameState, item: str, capacity: int | None = None,
+                wanted: int | None = None) -> bool:
+    """`_furnace_room` for one named smelt, sized exactly as the resolve will size it.
+
+    The count is the one `resolve` will request - the carried stack, the fuel's furnace capacity,
+    and how much of the output the run still wants - so the offer never opens a smelt the action
+    then has to refuse.
+    """
+    carried = int(gs.inventory.get(item, 0))
+    if carried <= 0:
+        return False
+    count = min(carried, SMELT_BATCH)
+    if capacity is not None:
+        count = min(count, capacity)
+    if wanted is not None:
+        count = min(count, wanted)
+    return _furnace_room(gs, item, count)
+
+
+def _gold_smelt_room(gs: GameState) -> bool:
+    """Room for the gold smelt, sized exactly as `smelt_gold` sizes its count."""
+    inv = gs.inventory
+    fuel = _furnace_fuel(inv)
+    if fuel is None:
+        return False
+    wanted = max(0, _gold_ingots_wanted(gs) - inv.get(GOLD_INGOT, 0))
+    return _smelt_room(gs, RAW_GOLD, fuel[1], wanted)
 
 
 def _cooking_station(gs: GameState) -> tuple[int, int, int] | None:

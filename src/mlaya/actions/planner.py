@@ -148,8 +148,11 @@ def candidates(gs: GameState) -> list[str]:
     # happened to gather the meat.
     if _smoker_worth_placing(gs) and _has(inv, "smoker"):
         out.append("place_smoker")
-    if ((_has(inv, "furnace") or _furnace_ready(gs)) and _first_cookable(inv) and not eating
-            and _furnace_room(gs) and _food_source_in_reach(gs)):
+    raw_meat = _first_cookable(inv)
+    cook_fuel = _furnace_fuel(inv)
+    if ((_has(inv, "furnace") or _furnace_ready(gs)) and raw_meat and not eating
+            and _smelt_room(gs, raw_meat, cook_fuel[1] if cook_fuel else None)
+            and _food_source_in_reach(gs)):
         # Cook raw meat so it feeds far more hunger. Outside the Nether lull only coal/charcoal
         # may be spent on it (as before, so it never steals wood from the chain); during the lull
         # any carried fuel does, so a bot with raw meat and wood still cooks.
@@ -330,7 +333,7 @@ def candidates(gs: GameState) -> list[str]:
                 and _smoker_craft_ready(gs) and _first_cookable(inv) is not None):
             out.append("craft_smoker")
         if (_smelting_reach(gs) and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs)
-                and _furnace_room(gs)):
+                and _smelt_room(gs, "raw_iron")):
             out.append("smelt_iron")
         if table and iron >= 3 and tier < IRON_PICK_TIER and _can_sticks(inv, logs, planks):
             out.append("craft_iron_pickaxe")
@@ -920,7 +923,7 @@ def candidates(gs: GameState) -> list[str]:
     # `wait` holds only *at* the base, though, so an idle bot that has drifted off it (a
     # `collect_drops` a few metres out) fell through to `explore` and marched away with no tether
     # home - `wait` never re-fired and the base was lost (live run97 it163-193: `explore` ratcheted
-    # 332 -> 652 m out and oscillated there to the end). So an idle geared Overworld bot off its
+    # 332 -> 652 m out and oscillated there to the end). So an idle Overworld bot off its
     # base walks home first (`_idle_off_base`), where `wait` can hold it; `explore` stays the
     # fallback in the Nether (the march to the fortress) and before a base or a kit is in hand. A
     # home walk that keeps failing is stuck-listed like any other step, and then `explore` takes
@@ -1063,9 +1066,9 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       "craft a furnace to smelt iron")
     if label == "smelt_iron":
         if (not _smelting_reach(gs) or inv.get("raw_iron", 0) < 1
-                or inv.get("coal", 0) < 1 or not _furnace_room(gs)):
+                or inv.get("coal", 0) < 1 or not _smelt_room(gs, "raw_iron")):
             return None
-        count = min(inv.get("raw_iron", 0), 3)
+        count = min(inv.get("raw_iron", 0), SMELT_BATCH)
         return Action(label, "smelt_item", _smelt_args(gs, "raw_iron", count, "coal"),
                       "smelt raw iron into ingots")
     if label == "craft_iron_pickaxe":
@@ -1499,17 +1502,17 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         fuel = _furnace_fuel(inv)
         if inv.get(RAW_GOLD, 0) < 1 or fuel is None:
             return None
-        if not _furnace_room(gs):
-            return None
         if inv.get(GOLD_INGOT, 0) + inv.get(RAW_GOLD, 0) >= _gold_ingots_wanted(gs):
             return None
         fuel_name, capacity = fuel
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
         if fuel_name not in ("coal", "charcoal") and not _nether_idle(gs):
             return None
-        count = min(inv.get(RAW_GOLD, 0), 3, capacity,
+        count = min(inv.get(RAW_GOLD, 0), SMELT_BATCH, capacity,
                     max(0, _gold_ingots_wanted(gs) - inv.get(GOLD_INGOT, 0)))
-        if count < 1:
+        # The room test uses this exact count: a smelt that empties the raw stack it feeds opens
+        # the slot its ingots land in, one that leaves it standing needs a slot of its own.
+        if count < 1 or not _furnace_room(gs, RAW_GOLD, count):
             return None
         # A carried furnace (temporary workstation) always wins: no walking home, no waiting
         # for a base furnace that may be hundreds of blocks away or not standing at all.
@@ -1853,7 +1856,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
     if label == "cook_food":
         raw = _first_cookable(inv)
         fuel = _furnace_fuel(inv)
-        if not raw or fuel is None or not _furnace_room(gs):
+        if not raw or fuel is None:
             return None
         # The station rule lives in `cooking_reach`, the same one the offer asks, so the two
         # cannot drift: run78's eight `[WORKSTATION_NOT_CARRIED]` came precisely from this
@@ -1871,8 +1874,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                 and _provisioned(gs) >= _food_goal(gs)):
             return None
         fuel_name, capacity = fuel
+        count = min(inv.get(raw, 0), SMELT_BATCH, capacity)
+        # Sized to the count the cook actually requests: the raw stack that leaves the pack for
+        # the furnace is the slot the cooked output lands in.
+        if count < 1 or not _furnace_room(gs, raw, count):
+            return None
         return Action(label, "smelt_item",
-                      _smelt_args(gs, raw, min(inv.get(raw, 0), 3, capacity), fuel_name, station),
+                      _smelt_args(gs, raw, count, fuel_name, station),
                       f"cook {raw} into {COOKED[raw]} using {fuel_name}")
     if label == "eat_food":
         food = _first_edible(inv)

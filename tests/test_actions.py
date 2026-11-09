@@ -21,7 +21,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                           _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_target, _rods_target,
                           _frame_needs_obsidian, _furnace_site, _gold_reserve_short, _known_footings,
                           _centre,
-                          _hoard_surplus, _idle_off_base, _nether_prep_steps,
+                          _hoard_surplus, _idle_off_base, _gear_ready, _nether_prep_steps,
                          _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt, _safe_blaze_hunt, _safe_zombie_hunt,
                           _safe_spider_hunt, _safe_string_hunt,
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
@@ -4488,14 +4488,18 @@ class BaseFurnaceTest(unittest.TestCase):
     def test_a_full_pack_holds_cooking_back(self) -> None:
         # Live, run26: the cook completed but the pack had no free slot for the output, so the
         # output stayed in the furnace and every later insert was refused (`[FURNACE_NOT_EMPTY]`).
-        # One free slot keeps the recovery from stranding itself; at 36 the loop sheds first.
+        # One free slot keeps the recovery from stranding itself. The input is not a second
+        # question: it leaves the pack for the furnace before the output comes back, so a cook
+        # that empties the stack it feeds opens the very slot its cooked items land in.
         g = self._lull(furnace=0, beef=2, coal=1)
         g.furnace_pos = (-197, -46, -99)
         # An animal in reach, so this is about the pack room and not about whether cooking can
         # advance the food goal at all (see `CookFoodReachTest`).
         g.mobs = [("cow", "animal", 1, 9.0)]
         g.slots_used = 36
-        self.assertNotIn("cook_food", candidates(g))
+        self.assertIn("cook_food", candidates(g))          # both beef go in, the slot is freed
+        g.inventory["beef"] = 9
+        self.assertNotIn("cook_food", candidates(g))       # 3 of 9 stay in the pack: no room
         self.assertIsNone(resolve("cook_food", g))
         g.slots_used = 35
         self.assertIn("cook_food", candidates(g))
@@ -4505,9 +4509,29 @@ class BaseFurnaceTest(unittest.TestCase):
         g = self._lull(furnace=0, raw_gold=2, coal=1)
         g.furnace_pos = (-197, -46, -99)
         g.slots_used = 36
-        self.assertNotIn("smelt_gold", candidates(g))
+        self.assertIn("smelt_gold", candidates(g))         # both raw gold go in
+        self.assertIsNotNone(resolve("smelt_gold", g))
+        g.inventory["raw_gold"] = 8
+        self.assertNotIn("smelt_gold", candidates(g))      # a stack the batch cannot empty
         self.assertIsNone(resolve("smelt_gold", g))
 
+    def test_a_full_pack_can_smelt_the_stack_it_empties(self) -> None:
+        # Live, run218 it167-243: 36 of 36 slots, one raw iron, nothing on any junk list and
+        # nothing above a cap. `smelt_iron` read "no room" and never came back, so the ingot the
+        # shield needs was never smelted, and without a shield the crossing and the walk home
+        # both stayed shut. The raw iron leaves the pack for the furnace before the ingot comes
+        # back out of it, so a smelt that empties its own stack opens the slot its output lands in.
+        g = self._lull(furnace=1, raw_iron=1, coal=3)
+        g.offhand = None                                   # the shield is what the ingot is for
+        g.tools = {**g.tools, "shield": "none"}
+        g.slots_used = 36
+        self.assertIn("smelt_iron", candidates(g))
+        self.assertEqual(resolve("smelt_iron", g).args["count"], 1)
+        g.inventory["raw_iron"] = 5
+        self.assertNotIn("smelt_iron", candidates(g))      # 3 in, 2 still carried
+        self.assertIsNone(resolve("smelt_iron", g))
+        g.slots_used = 35
+        self.assertIn("smelt_iron", candidates(g))
 
 class CraftFurnaceReachTest(unittest.TestCase):
     """`craft_furnace` is gated on a furnace being *reachable*, not merely remembered.
@@ -5299,14 +5323,14 @@ class FrameCompleteLatchTest(unittest.TestCase):
 
 
 class IdleWalksHomeTest(unittest.TestCase):
-    """An idle geared bot off its base walks home, so `wait` can hold it there.
+    """A bot with a base, standing off it, walks home, so `wait` can hold it there.
 
     `wait` is the empty-candidate fallback only *at* the base (`BASE_RADIUS` = 4 m). The moment an
     idle bot drifts off - a `collect_drops` a few metres out - the fallback used to flip to
     `explore`, which has no tether home: each frontier step pushed it further, `wait` never
     re-fired, and the base was lost (live run97 it163-193: a collect_drops to 10 m, then `explore`
     ratcheted 332 -> 652 m out and oscillated there to the run's end). The fallback now walks an
-    idle geared Overworld bot home first (`_idle_off_base`), and `resolve` honours that offer so the
+    idle Overworld bot home first (`_idle_off_base`), and `resolve` honours that offer so the
     two gates cannot disagree. `explore` stays the fallback in the Nether (the march to the
     fortress) and when a home walk keeps failing and is stuck-listed.
     """
@@ -5358,6 +5382,78 @@ class IdleWalksHomeTest(unittest.TestCase):
         g = self._idle_off()
         g.stuck_labels = ("go_home",)
         self.assertEqual(candidates(g), ["explore"])
+
+    def test_a_bot_that_lost_its_shield_still_walks_home(self) -> None:
+        # Live, run218 it167-243: the shield broke in the blaze fight (46 of 336 uses, gone on the
+        # next tick), `_gear_ready` requires one in the off-hand, and this predicate read it. A bot
+        # 643 m from its base with a 36/36 pack and nothing nameable to shed was left with `explore`
+        # as its only candidate and walked an 11 m triangle until the iteration limit. Losing the
+        # shield is exactly the reason to walk home: the furnace, the table and the chest are there.
+        g = self._idle_off()
+        g.offhand = None
+        g.tools = {**g.tools, "shield": "none"}
+        self.assertFalse(_gear_ready(g))
+        self.assertTrue(_idle_off_base(g))
+        # With no planks in hand the shield's six are owed, so the lull has real work and the
+        # fallback never comes into play.
+        self.assertIn("get_wood", candidates(g))
+        # Stocked for the shield and with the chest standing at the base, nothing else is owed
+        # out here: the tether home, not the frontier.
+        g.inventory["acacia_planks"] = 8
+        g.chest_pos = self.BASE
+        self.assertEqual(candidates(g), ["go_home"])
+        self.assertIsNotNone(resolve("go_home", g))
+
+
+class DriftedFullPackTest(unittest.TestCase):
+    """run218 it167-243: 36 of 36 slots, one raw iron, no shield, 643 m from the base.
+
+    Nothing on any junk list, nothing above a cap, nothing spare to shed - and the one step that
+    could have emptied the pack, `smelt_iron`, read "no room" because the pack had no *free* slot.
+    The raw iron leaves the pack for the furnace before the ingot comes back out of it, so the
+    smelt opens the slot its own output lands in. With the shield gone, `_gear_ready` is false,
+    which closes both the crossing and `_idle_off_base`: `explore` was the only candidate for 77
+    ticks, and the bot walked an 11 m triangle until the iteration limit.
+    """
+
+    PACK = {"acacia_log": 7, "acacia_planks": 2, "armadillo_scute": 1, "arrow": 4,
+            "blaze_powder": 16, "bowl": 4, "brown_mushroom": 2, "chest": 1, "coal": 3,
+            "cobblestone": 18, "cooked_beef": 3, "cooked_chicken": 12, "cooked_mutton": 2,
+            "cooked_porkchop": 31, "crafting_table": 1, "crimson_roots": 3,
+            "diamond_pickaxe": 2, "diamond_sword": 1, "feather": 13, "furnace": 1,
+            "golden_helmet": 1, "gunpowder": 1, "lead": 1, "nether_brick_fence": 10,
+            "nether_brick_stairs": 1, "nether_bricks": 64, "nether_wart_block": 2,
+            "netherrack": 6, "porkchop": 5, "raw_iron": 1, "red_mushroom": 34,
+            "rotten_flesh": 7, "stick": 2, "string": 10, "weeping_vines": 8}
+
+    def _drifted(self) -> GameState:
+        g = gs(inventory=dict(self.PACK),
+               tools={"pickaxe": "diamond", "sword": "diamond"})
+        g.armor = {slot: {"item": f"diamond_{slot}"}
+                   for slot in ("helmet", "chestplate", "leggings", "boots")}
+        g.base = (-77, 69, -27)
+        g.furnace_pos = (-77, 70, -28)
+        g.bed_pos = (-77, 70, -27)
+        g.portal_lit = True
+        g.pos = (-710.52, 62.23, -125.5)
+        g.dimension = "minecraft:overworld"
+        g.health = 20.0
+        g.food = 20.0
+        g.slots_used = 36
+        return g
+
+    def test_the_smelt_that_empties_its_own_stack_has_room(self) -> None:
+        g = self._drifted()
+        self.assertIn("smelt_iron", candidates(g))
+        self.assertEqual(resolve("smelt_iron", g).args["count"], 1)
+
+    def test_a_stack_the_batch_cannot_empty_still_needs_a_slot(self) -> None:
+        g = self._drifted()
+        g.inventory["raw_iron"] = 5
+        self.assertNotIn("smelt_iron", candidates(g))
+        self.assertIsNone(resolve("smelt_iron", g))
+        # Nothing else is owed out there, so the fallback is the tether home, not the frontier.
+        self.assertEqual(candidates(g), ["go_home"])
 
 
 class GoldHelmetSlotTest(unittest.TestCase):
