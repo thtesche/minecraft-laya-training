@@ -321,17 +321,16 @@ def trajectory_digest(history: list[dict], window: int = DIGEST_WINDOW) -> dict:
 def _plan_steps(plan: dict | None, allowed_labels: list[str]) -> list[str]:
     """The ordered labels a System-2 reply proposes, from `plan` (a list) or the legacy `action`.
 
-    Kept permissive on purpose - the caller resolves each step against the live state and takes
-    the first that builds, so an out-of-set or stale label costs nothing but being skipped.
+    Filters to only allowed labels; a label outside the set is skipped, not run.
     """
     if not isinstance(plan, dict):
         return []
     steps = plan.get("plan")
     if isinstance(steps, list):
-        ordered = [str(s) for s in steps if isinstance(s, str)]
+        ordered = [str(s) for s in steps if isinstance(s, str) and str(s) in allowed_labels]
     else:
         action = plan.get("action")
-        ordered = [str(action)] if isinstance(action, str) else []
+        ordered = [str(action)] if isinstance(action, str) and str(action) in allowed_labels else []
     return ordered
 
 

@@ -195,10 +195,16 @@ class TrajectoryDigestTest(unittest.TestCase):
 
 
 class PlanStepsTest(unittest.TestCase):
-    """The ordered labels a System-2 reply proposes, read permissively."""
+    """The ordered labels a System-2 reply proposes, filtered to allowed set only."""
 
     def test_a_list_plan_is_kept_in_order_dropping_non_strings(self) -> None:
         self.assertEqual(_plan_steps({"plan": ["a", 3, "b"]}, ["a", "b"]), ["a", "b"])
+
+    def test_labels_outside_allowed_set_are_dropped(self) -> None:
+        # If the model proposes a label not in the candidate set, it must be filtered
+        # out to prevent a mismatch between the escalation candidates and the action run.
+        self.assertEqual(_plan_steps({"plan": ["craft_flint_and_steel", "get_wood"]}, ["get_wood"]), ["get_wood"])
+        self.assertEqual(_plan_steps({"plan": ["invalid", "another_invalid"]}, ["get_wood"]), [])
 
     def test_a_legacy_single_action_becomes_a_one_step_plan(self) -> None:
         self.assertEqual(_plan_steps({"action": "mine_stone"}, ["mine_stone"]), ["mine_stone"])
