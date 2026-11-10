@@ -154,6 +154,24 @@ class SampleTest(unittest.TestCase):
         self.assertEqual(seen_history_lengths, [0, 3])
 
 
+class FlipMergeTest(unittest.TestCase):
+    """The flip test's verdict has to land on the judgment the dataset reads, not a side file."""
+
+    def test_the_flip_result_is_folded_into_the_judgment(self) -> None:
+        judgments = [{"iteration": 3, "judge_label": "mine_stone"},
+                     {"iteration": 9, "judge_label": "mine_stone"}]
+        flips = [{"iteration": 3, "flip_verdict": "A", "flip_label": "get_wood", "flip": True},
+                 {"iteration": 9, "flip_verdict": "B", "flip_label": "mine_stone", "flip": False}]
+        merged = t.apply_flips(judgments, flips)
+        self.assertTrue(merged[0]["flip"])
+        self.assertEqual(merged[0]["flip_label"], "get_wood")
+        self.assertFalse(merged[1]["flip"])
+
+    def test_a_disagreement_the_flip_test_never_ran_stays_unmarked(self) -> None:
+        merged = t.apply_flips([{"iteration": 3, "judge_label": "mine_stone"}], [])
+        self.assertNotIn("flip", merged[0])
+
+
 class FlipTest(unittest.TestCase):
     """The flip test: the same disagreement judged with the blind pair's slots swapped."""
 

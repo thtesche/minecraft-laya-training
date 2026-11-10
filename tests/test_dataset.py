@@ -336,6 +336,34 @@ class TeacherSourceTest(unittest.TestCase):
         self.assertEqual(len(taught), 1)
         self.assertEqual(taught[0]["expected"][INTENT_QID], "mine_stone")
 
+    def test_a_verdict_that_flips_on_the_slot_swap_is_not_taught(self):
+        # The flip test re-judges the same two actions in the opposite slots. A verdict that
+        # changes with the letter is a reaction to the letter, and run220 caught four of its
+        # seventeen verdicts doing exactly that - those cannot become training labels.
+        with tempfile.TemporaryDirectory() as d:
+            rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                             progressed=False, narrative="safe no-progress")
+            log = _write(Path(d), [rec])
+            entry = self._teacher(rec, "mine_stone")
+            entry.update({"flip_verdict": "B", "flip_label": "get_wood", "flip": True})
+            tf = Path(d) / "teacher.jsonl"
+            tf.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            taught = ds.build_rows(log, teacher=tf)
+        self.assertEqual(taught, [])
+
+    def test_a_verdict_that_survives_the_swap_is_still_taught(self):
+        with tempfile.TemporaryDirectory() as d:
+            rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                             progressed=False, narrative="safe no-progress")
+            log = _write(Path(d), [rec])
+            entry = self._teacher(rec, "mine_stone")
+            entry.update({"flip_verdict": "A", "flip_label": "mine_stone", "flip": False})
+            tf = Path(d) / "teacher.jsonl"
+            tf.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            taught = ds.build_rows(log, teacher=tf)
+        self.assertEqual(len(taught), 1)
+        self.assertEqual(taught[0]["expected"][INTENT_QID], "mine_stone")
+
     def test_a_tick_the_teacher_never_reviewed_is_not_filled(self):
         # The fallback must not let a judgment from a different run's same iteration leak in.
         with tempfile.TemporaryDirectory() as d:

@@ -293,6 +293,24 @@ def make_judge_fn(cfg: JudgeConfig, api_key: str | None) -> JudgeFn:
     return judge
 
 
+def apply_flips(judgments: list[dict], flips: list[dict]) -> list[dict]:
+    """Fold the flip test's verdicts into the judgments they re-judged.
+
+    The side-file is what the dataset reads, so a verdict's stability has to live in it, not in a
+    separate audit file the builder never sees. A judgment with `flip: True` is one the judge
+    reversed when the same two actions were handed over under the other letter: the verdict was
+    about the slot, and the dataset must not learn from it.
+    """
+    by_iteration = {f.get("iteration"): f for f in flips}
+    for j in judgments:
+        f = by_iteration.get(j.get("iteration"))
+        if f:
+            j["flip_verdict"] = f.get("flip_verdict")
+            j["flip_label"] = f.get("flip_label")
+            j["flip"] = bool(f.get("flip"))
+    return judgments
+
+
 def run_teacher(records: list[dict], settings, sample: int = 0) -> list[dict]:
     """Replay with the live LLMs wired from `settings`; `sample` caps the reviewed ticks (0 = all)."""
     s2_fn = make_system2_fn(settings.llm, settings.api_key())

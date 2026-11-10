@@ -181,7 +181,9 @@ def _teacher_label(teacher_map: tuple[dict, dict], rec: dict, narrative: str,
     wrote), so a judgment is found whether or not the dataset itself was built with `rerender`.
     When that hash misses - the side-file was generated before a renderer change - the tick is
     still matched by its identity, so an expensive batch of judgments is not thrown away. Only a
-    judge label that is a real candidate here and differs from Laya's own pick counts.
+    judge label that is a real candidate here and differs from Laya's own pick counts. A verdict
+    the flip test caught reversing when the two actions swapped slots is dropped: it was about the
+    letter, not the action.
     """
     by_hash, by_tick = teacher_map
     if not by_hash and not by_tick:
@@ -190,6 +192,8 @@ def _teacher_label(teacher_map: tuple[dict, dict], rec: dict, narrative: str,
     j = by_hash.get(key) or by_tick.get((rec.get("iteration"), laya_label,
                                         tuple(sorted(candidates))))
     if not j:
+        return None
+    if j.get("flip"):
         return None
     jl = j.get("judge_label")
     if isinstance(jl, str) and jl in candidates and jl != laya_label:

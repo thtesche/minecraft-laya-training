@@ -207,6 +207,9 @@ def cmd_teacher(args) -> int:
         out = _resolve(args.out) if args.out else _teacher_out_path(log).with_name(
             _teacher_out_path(log).stem + "-flip.jsonl")
         ds.write_jsonl(out, flips)
+        # The merged side-file is the artifact the dataset reads: every judgment now carries its
+        # own flip result, so an unstable verdict can be filtered where labels are taken.
+        ds.write_jsonl(side, tmod.apply_flips(judgments, flips))
         flipped = sum(1 for f in flips if f["flip"])
         print(json.dumps({
             "log": str(log),
