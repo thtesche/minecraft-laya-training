@@ -300,8 +300,17 @@ cmd_up() {
   if ! ensure_mcp_branch; then
     return 1
   fi
+  # The host loads its code when it starts, so a patch committed after it came up is not in
+  # the running bot. `mcp_commit` records what the host started from: a tree ahead of it means
+  # a fix nobody restarted for sits in the repo while the bot plays the old one.
+  started_commit=$(cat "$STATE/mcp_commit" 2>/dev/null)
   echo "$(mcp_commit)" > "$STATE/mcp_commit"
   if ! host_up; then
+    start_host
+  elif [[ "$started_commit" != "$(mcp_commit)" ]]; then
+    log "MCP host is running $started_commit but the tree is at $(mcp_commit) - restarting it for the patch"
+    pkill -f 'src/server/host.ts'
+    sleep 2
     start_host
   elif [[ "$(cat "$STATE/host_args" 2>/dev/null)" != "$MCP_DATA_ROOT" ]]; then
     log "MCP host is running with a stale bot ledger - restarting with $MCP_DATA_ROOT"
@@ -407,7 +416,15 @@ actions = [r for r in records if r.get("stage") == "action"]
 last = actions[-1] if actions else {}
 state_ = last.get("state", {})
 
+# The host's code is fixed at its start; the repo moves under it. Reporting the tree's HEAD
+# as the host's commit would say a patch is in play when the bot is still running the old one.
+started_commit = (state / "mcp_commit").read_text().strip() if (state / "mcp_commit").exists() else None
+tree_commit = subprocess.run(["git", "-C", "/Users/thtesche/VibeCoding/mine-ai-mcp",
+                              "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+
 anomalies = []
+if running("src/server/host.ts") and started_commit and tree_commit and started_commit != tree_commit:
+    anomalies.append(f"host runs MCP {started_commit} while the tree is at {tree_commit} - restart it for the patch")
 if running("src/server/host.ts") and not (health.get("minecraft") or {}).get("connected"):
     # The run reads the world through the host. A host that answers /health but is not
     # connected to Minecraft is blind, and every tick after that is a failed perception.
@@ -445,9 +462,8 @@ print(json.dumps({
              "branch": subprocess.run(["git", "-C", "/Users/thtesche/VibeCoding/mine-ai-mcp",
                                        "rev-parse", "--abbrev-ref", "HEAD"],
                                       capture_output=True, text=True).stdout.strip(),
-             "commit": subprocess.run(["git", "-C", "/Users/thtesche/VibeCoding/mine-ai-mcp",
-                                       "rev-parse", "--short", "HEAD"],
-                                      capture_output=True, text=True).stdout.strip(),
+             "commit": started_commit or tree_commit,
+             "tree_commit": tree_commit,
              "runtime": (health.get("runtime") or {}).get("state"),
              "connected": (health.get("minecraft") or {}).get("connected"),
              "foreground": health.get("foreground"),
