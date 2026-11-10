@@ -2339,6 +2339,20 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._note_build(self._Action("build_portal"), False, {"inventory_delta": {}})
         self.assertFalse(agent._frame_complete)
 
+    def test_the_state_names_which_nether_trip_the_bot_is_on(self) -> None:
+        # The phase sentence in front of every prompt has to describe the trip the body is really
+        # making: the rod haul, or the pearl wave that follows it (run220 read "killing blazes for
+        # blaze rods" on a tick whose only candidate was `search_enderman`).
+        agent = self._agent()
+        agent._powder_stowed = True
+        down = agent._inject(gs(dimension="minecraft:the_nether",
+                                inventory={"ender_pearl": 6}))
+        self.assertEqual(down.nether_trip, "pearls")
+        agent._powder_stowed = False
+        down = agent._inject(gs(dimension="minecraft:the_nether",
+                                inventory={"blaze_rod": 9}))
+        self.assertEqual(down.nether_trip, "rods")
+
     def test_the_plane_read_latches_a_finished_frame(self) -> None:
         # The build that finishes the frame *spends* its obsidian, so `_note_build` does not latch
         # (that is the no-op build only). The plane read is what proves it finished, and it must

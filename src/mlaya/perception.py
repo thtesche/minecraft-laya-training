@@ -826,6 +826,7 @@ class BlockHit:
 PHASE_TECH = "You are a Minecraft player working toward a full diamond kit"
 PHASE_PREP = "You are a Minecraft player preparing for the nether"
 PHASE_NETHER = "You are a Minecraft player killing blazes for blaze rods"
+PHASE_NETHER_PEARLS = "You are a Minecraft player hunting endermen for ender pearls"
 PHASE_STRONGHOLD = "You are a Minecraft player finding the stronghold"
 PHASE_END = "You are a Minecraft player fighting the ender dragon"
 
@@ -840,10 +841,14 @@ _PHASE_ROWS = {
                     "diamond armour worn on all four slots."),
     "prepare_nether": (PHASE_PREP,
                        "before crossing, finish the Nether kit: shield, a bow with arrows, a "
-                       "cooked-food reserve, a bed, and a lit Overworld portal."),
-    "nether_blaze": (PHASE_NETHER,
-                     "hunt blazes for blaze rods and barter gold with piglins for ender pearls, "
-                     "then leave the Nether with the haul."),
+                       "cooked-food reserve, a bed, a chest standing at the base, and a lit "
+                       "Overworld portal."),
+    "nether_rods": (PHASE_NETHER,
+                    "hunt blazes at the fortress for blaze rods, turn them into powder and bank "
+                    "that powder in the chest at the gate, then leave the Nether with the haul."),
+    "nether_pearls": (PHASE_NETHER_PEARLS,
+                      "the rod haul is banked: barter gold with piglins and hunt endermen for the "
+                      "pearls the eyes of ender cost, then leave the Nether with them."),
     "stronghold": (PHASE_STRONGHOLD,
                    "craft the eyes of ender, find the stronghold and activate the end portal."),
     "end_dragon": (PHASE_END, "enter the End and defeat the ender dragon."),
@@ -867,7 +872,13 @@ def _phase_key(source) -> str:
     if "end" in dim:
         return "end_dragon"
     if "nether" in dim:
-        return "nether_blaze"
+        # The Nether has two jobs, and the run is in one of them at a time: the rod haul that banks
+        # the powder, and the pearl waves that pay for the eyes (docs/stronghold.md, "Nether in
+        # Wellen"). `Agent._inject` derives `nether_trip` from `_pearl_wave_trip`, the same predicate
+        # the planner's Nether block splits on, so the persona cannot call the trip a blaze hunt
+        # while every offer down there is a pearl hunt (live, run220 it228: `search_enderman` chosen
+        # on the tick, "killing blazes for blaze rods" in the sentence above it).
+        return "nether_pearls" if field("nether_trip") else "nether_rods"
     if field("powder_stowed") and not field("end_portal_active"):
         return "stronghold"
     tools = field("tools") or {}
@@ -1243,6 +1254,12 @@ class GameState:
     # `barter_attempts`, reset on a cold restart (nothing in the world re-derives it); a restart
     # mid-hunt simply grants a fresh five, which is the safe direction - it never strands the bot.
     pearl_wave_trips: int = 0
+    # Which Nether trip the body is on: "rods" (the blaze haul that banks the powder) or "pearls"
+    # (the waves that pay for the eyes). Derived every tick by `Agent._inject` from
+    # `_pearl_wave_trip`, the same predicate the planner's Nether block splits on, so the phase
+    # persona and the offer can never describe two different trips. Empty means "not derived yet",
+    # which reads as the rod haul - the trip every run starts with.
+    nether_trip: str = ""
     # The cells a blaze-powder stow actually deposited into (Agent `_note_stow`): the storage
     # network's roomy chest, which is not always `chest_pos`. `take_blaze_powder` withdraws from
     # these remembered cells, and `powder_exhausted` only latches once every one of them has
@@ -1424,6 +1441,7 @@ class GameState:
             "powder_stowed": self.powder_stowed,
             "powder_exhausted": self.powder_exhausted,
             "pearl_wave_trips": self.pearl_wave_trips,
+            "nether_trip": self.nether_trip,
             "stronghold_estimated": self.stronghold_estimated,
             "end_portal_active": self.end_portal_active,
             "slept_at_stronghold": self.slept_at_stronghold,
@@ -1475,6 +1493,7 @@ class GameState:
                       "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
                       "nether_entered", "portal_lit", "nether_arrival", "nether_gate", "nether_ticks",
                       "nether_travel", "powder_stowed", "powder_exhausted", "pearl_wave_trips",
+                      "nether_trip",
                       "stronghold_estimated", "end_portal_active", "slept_at_stronghold",
                       "stronghold_frame", "powder_cells",
                       "powder_bank", "frame_eyes", "frontier_heading", "warped_forest",

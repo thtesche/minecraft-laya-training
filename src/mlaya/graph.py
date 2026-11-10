@@ -25,7 +25,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       BED_PORTAL_CLEARANCE, _gate_gap,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
                       FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS,
-                      _portal_lit_scan, end_complete,
+                      _portal_lit_scan, end_complete, _pearl_wave_trip,
                       LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
 from .brain import Brain, escalate_to_system2, trajectory_digest
 from .mcp import _find
@@ -991,6 +991,10 @@ class Agent:
         gs.end_entered = self._end_entered
         gs.dragon_slain = self._dragon_slain
         gs.end_portal_cell = self._end_portal_cell
+        # Which Nether trip the body is on, derived from the same predicate the planner's Nether
+        # block splits on, so the phase sentence the model reads describes the trip it is really
+        # making (see `perception._phase_key`).
+        gs.nether_trip = "pearls" if _pearl_wave_trip(gs) else "rods"
         # The one milestone object, resolved after every latch above has been copied in, so the
         # ledger, the scan and the run's own bookkeeping meet in one place with one precedence.
         gs.progress = progress.progress_of(gs, self._durable)
@@ -1976,6 +1980,7 @@ class Agent:
         gs.end_entered = self._end_entered
         gs.dragon_slain = self._dragon_slain
         gs.end_portal_cell = self._end_portal_cell
+        gs.nether_trip = "pearls" if _pearl_wave_trip(gs) else "rods"
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.defer_quiet = self._defer_quiet
         # `_note_boxed` runs after this tick's observation (it needs the post-action cell), so

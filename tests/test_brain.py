@@ -242,7 +242,14 @@ class System2StateViewTest(unittest.TestCase):
         self.assertNotIn("players", _system2_state_view(self._nether_state()))
 
     def test_the_run_phase_fills_the_empty_time_of_day_box(self) -> None:
-        self.assertEqual(_system2_state_view(self._nether_state())["phase"], "nether_blaze")
+        self.assertEqual(_system2_state_view(self._nether_state())["phase"], "nether_rods")
+
+    def test_a_pearl_trip_is_named_as_one(self) -> None:
+        # The Nether has two jobs. Once the rod haul is banked the trip hunts pearls, and the
+        # slug System 2 reads has to say so, not keep calling it a blaze hunt.
+        state = self._nether_state()
+        state["nether_trip"] = "pearls"
+        self.assertEqual(_system2_state_view(state)["phase"], "nether_pearls")
 
     def test_the_base_is_marked_as_the_overworld_landmark(self) -> None:
         self.assertEqual(_system2_state_view(self._nether_state())["base"],

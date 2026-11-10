@@ -956,6 +956,18 @@ class PhasePersonaTest(unittest.TestCase):
         gs.dimension = "minecraft:the_end"
         self.assertIn("fighting the ender dragon", gs.narrative())
 
+    def test_a_pearl_trip_is_not_called_a_blaze_hunt(self) -> None:
+        # The rod haul and the pearl wave are different jobs, and the sentence in front of every
+        # prompt has to name the one the bot is doing. Live, run220 it228: the tick chose
+        # `search_enderman` under "You are a Minecraft player killing blazes for blaze rods".
+        from mlaya.perception import PHASE_NETHER, PHASE_NETHER_PEARLS, phase_persona
+        gs = GameState(health=20.0, food=20.0)
+        gs.dimension = "minecraft:the_nether"
+        self.assertEqual(phase_persona(gs), PHASE_NETHER)
+        gs.nether_trip = "pearls"
+        self.assertEqual(phase_persona(gs), PHASE_NETHER_PEARLS)
+        self.assertIn("hunting endermen for ender pearls", gs.narrative())
+
     def test_system_two_reads_the_same_sentence_from_the_state_dict(self) -> None:
         # `escalate_to_system2` receives `gs.as_state()`, not the object: the sentence must
         # survive the round trip or the two model faces get two different runs.
