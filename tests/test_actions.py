@@ -7155,6 +7155,26 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertTrue(_safe_enderman_hunt(g))
         self.assertIn("hunt_enderman", candidates(g))
 
+    def test_a_wave_with_every_pearl_owed_does_not_hunt_a_zero_count(self) -> None:
+        # Live, run220 it485-487: the pearl ladder offered `hunt_enderman` on an enderman in reach
+        # alone, with no check on whether a pearl was still owed. With the last pearl just picked up
+        # the owed count fell to zero, `resolve` sized the drop at `count: 0`, and the host rejected
+        # it (`-32602`, "expected number to be >0") three ticks running. The Overworld procurement
+        # offer has always gated on the owed count; the Nether ladder now does too.
+        g = self._home(ender_pearl=16, mobs=[("enderman", "hostile", 12, 18.0)],
+                       netherrack=ENDERMAN_HUNT_BLOCKS)
+        g.dimension = self.NETHER
+        g.armor["helmet"] = {"item": "golden_helmet"}
+        self.assertTrue(_safe_enderman_hunt(g))
+        self.assertEqual(_pearls_owed(g), 0)
+        self.assertNotIn("hunt_enderman", candidates(g))
+        self.assertIsNone(resolve("hunt_enderman", g))
+        # One pearl short of the frame's demand, the hunt is back on and sized to the one owed.
+        g.inventory["ender_pearl"] = 15
+        self.assertEqual(_pearls_owed(g), 1)
+        self.assertIn("hunt_enderman", candidates(g))
+        self.assertEqual(resolve("hunt_enderman", g).args["count"], 1)
+
     def test_the_wave_roams_until_the_pearl_budget_is_spent(self) -> None:
         # No enderman loaded: the wave roams new ground, bounded in metres like the fortress
         # hunt, so an empty stretch sends the bot home to stow and relaunch instead of burning

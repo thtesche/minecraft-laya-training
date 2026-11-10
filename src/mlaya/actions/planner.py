@@ -646,12 +646,17 @@ def candidates(gs: GameState) -> list[str]:
                 # a death down here would drop the whole wave, which is why the waves exist.
                 # `barter_pearls` moved here from the rod trip (it used to ride the rods-done tick,
                 # commit 584a51a): the user's waves keep the risky trades off the rod haul.
-                if _safe_enderman_hunt(gs) and gs.slots_used < INVENTORY_SLOTS:
+                if _pearls_owed(gs) > 0 and _safe_enderman_hunt(gs) and gs.slots_used < INVENTORY_SLOTS:
                     # An enderman in reach is the whole point of the trip, so it outranks the
                     # near-full walk home. run168 it107-108 held one at 23.9 m with 63 netherrack
                     # in the pack and `slots_used 33` - `_nether_must_return` fired first and sent
                     # the wave home past it, three trips running. One free slot is all a pearl
                     # needs; the near-full latch stays for the case where there is none.
+                    # The `_pearls_owed` gate mirrors the Overworld procurement offer
+                    # (`stronghold.py`): a wave that already holds every pearl the eyes owe has
+                    # nothing to hunt for, and `resolve_stronghold` would size the call at
+                    # `count: 0`, which the host rejects (run220 it485-487, three dead ticks with
+                    # 7 pearls against 7 owed).
                     out.append("hunt_enderman")
                 elif _nether_must_return(gs) and not junk_full:
                     out.append("leave_nether" if _way_home_known(gs) else "explore")

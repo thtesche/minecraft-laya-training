@@ -446,6 +446,12 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         if not _safe_enderman_hunt(gs):
             return None
         want = _eyes_owed(gs) - _ender_pearls(inv)
+        if want <= 0:
+            # Every offer that reaches here is already pearl-gated (`stronghold` procurement and
+            # `planner`'s pearl ladder both check the owed count), so this is the belt the craft
+            # step wears too (`craft_ender_eye`): a zero-count `collect_mob_drop` is a host-side
+            # -32602, never a tick worth spending.
+            return None
         return Action(label, "collect_mob_drop",
                       {"mob_name": ENDERMAN_MOB, "drop_name": ENDER_PEARL_ITEM,
                        "count": min(3, want), "allow_without_shield": True},
