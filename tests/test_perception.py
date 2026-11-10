@@ -687,6 +687,20 @@ class NarrativeSaysWhatTheRulesDoTest(unittest.TestCase):
         gs.on_ground = False
         self.assertIn("in the air", gs.narrative())
 
+    def test_a_pack_with_room_left_does_not_read_as_full(self) -> None:
+        # run220 tick 427: 34 of 36 slots used, and the line said "the pack is full". System 2
+        # read that as no room for a pearl and dropped junk instead of hunting 18 endermen at 5
+        # blocks. Near-full is a fact the shed rule acts on; full is a different fact.
+        gs = GameState(health=20.0, food=20.0)
+        gs.slots_used = 34
+        text = gs.narrative()
+        self.assertIn("nearly full (34/36 slots, 2 free)", text)
+        self.assertNotIn("pack is full", text)
+        gs.slots_used = 36
+        self.assertIn("pack is full (36/36 slots)", gs.narrative())
+        gs.slots_used = 20
+        self.assertNotIn("pack", gs.narrative())
+
     def test_death_is_gone_once_the_gear_is_lost_anyway(self) -> None:
         # Outside `recover_drops`' own window there is nothing left to say about the death:
         # run78 read a 14-hour-old death from the *previous* world on every tick (the server

@@ -1648,8 +1648,15 @@ class GameState:
             parts.append(line)
         inv = ", ".join(f"{c}x {n}" for n, c in sorted(self.inventory.items())) or "empty"
         parts.append(f"inventory: {inv}")
-        if self.slots_used >= INVENTORY_NEAR_FULL:
+        if self.slots_used >= INVENTORY_SLOTS:
             parts.append(f"the pack is full ({self.slots_used}/{INVENTORY_SLOTS} slots)")
+        elif self.slots_used >= INVENTORY_NEAR_FULL:
+            # "Full" at 34/36 is not full, and the reviewer read it as full: run220 tick 427, where
+            # System 2 dropped junk instead of hunting the 18 endermen at 5 blocks because the line
+            # said the pack had no room left. Say how much room there is.
+            free = INVENTORY_SLOTS - self.slots_used
+            parts.append(f"the pack is nearly full ({self.slots_used}/{INVENTORY_SLOTS} slots, "
+                         f"{free} free)")
         tools = ", ".join(f"{cls} {tier}".strip() for cls, tier in self.tools.items()
                           if tier and tier != "none") or "no tools"
         parts.append(f"tools: {tools}")
