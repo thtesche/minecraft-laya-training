@@ -58,7 +58,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            end_candidates, resolve_end, end_complete, END_LABELS,
                            _in_end, _crystals_loaded, _dragon_alive, _dragon_perched,
                            _end_stone_short, CARVED_PUMPKIN, END_STONE, END_STONE_RESERVE,
-                           END_HEALTH_FLOOR, END_FOUNTAIN_CELL,
+                           END_HEALTH_FLOOR, END_FOUNTAIN_CELL, BUCKET_IRON,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                            MUSHROOM_CAP, MUSHROOM_BATCH, MUSHROOM_SEED,
                            _mushroom_short, _mushroom_pantry_wanted,
@@ -8047,6 +8047,32 @@ class EndFightTest(unittest.TestCase):
         from mlaya.actions import BUCKET_ITEM
         g = self._entry(**{BUCKET_ITEM: 1})
         self.assertIn("fill_bucket", end_candidates(g))
+
+    def test_no_bucket_is_crafted_from_iron_before_the_crossing(self) -> None:
+        # There is no iron in the End: a bot carrying neither bucket nor water must craft one here,
+        # from the stronghold kit's iron, ahead of stepping through. The generic resolver binds it.
+        g = self._entry(iron_ingot=BUCKET_IRON)
+        cands = end_candidates(g)
+        self.assertIn("craft_bucket", cands)
+        self.assertLess(cands.index("craft_bucket"), cands.index("enter_the_end"))
+        self.assertIsNotNone(resolve("craft_bucket", g))
+
+    def test_the_bucket_craft_waits_on_enough_iron(self) -> None:
+        self.assertNotIn("craft_bucket", end_candidates(self._entry(iron_ingot=BUCKET_IRON - 1)))
+
+    def test_a_carried_water_bucket_needs_no_craft_or_fill(self) -> None:
+        from mlaya.actions import WATER_BUCKET
+        cands = end_candidates(self._entry(**{WATER_BUCKET: 1}))
+        self.assertNotIn("craft_bucket", cands)      # the MLG water already rides along
+        self.assertNotIn("fill_bucket", cands)
+
+    def test_the_crossing_proceeds_even_without_a_bucket_or_iron(self) -> None:
+        # Never a hard gate: a pack that can reach neither iron nor a water source still crosses on
+        # its diamond kit rather than loop forever (the run9 unfillable-bucket deadlock).
+        cands = end_candidates(self._entry())
+        self.assertNotIn("craft_bucket", cands)
+        self.assertNotIn("fill_bucket", cands)
+        self.assertIn("enter_the_end", cands)
 
     def test_the_entry_window_is_shut_until_the_respawn_is_pinned(self) -> None:
         g = self._entry()

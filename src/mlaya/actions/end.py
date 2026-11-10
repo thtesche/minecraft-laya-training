@@ -97,9 +97,17 @@ def _end_entry_candidates(gs: GameState) -> list[str]:
     # Best-effort: wear a carried carved pumpkin so the enderman gaze never provokes one.
     if _pumpkin_wearable(gs):
         out.append("carve_pumpkin")
-    # The MLG water bucket is what the survival reflex pours for a fall in the End. It rides down
-    # from the Nether prep; if only an empty bucket is carried, top it up at a source here. Never a
-    # gate - the entry proceeds on the supply reserve the stronghold phase already met.
+    # The MLG water bucket is what the survival reflex pours for a fall in the End, and there is no
+    # water to scoop and no iron to smelt once across - it is secured here in the Overworld window or
+    # not at all. With neither a bucket nor water carried, craft one from the stronghold kit's iron
+    # (the generic `craft_bucket` resolver spends three ingots at a temporary table); with only an
+    # empty bucket in hand, top it up at a source. Both ride ahead of the crossing so the pour reflex
+    # goes down full. Still never a hard gate, though: a pack that can reach neither iron nor a water
+    # source crosses on its diamond kit rather than loop forever on an unfillable bucket (the run9
+    # fill_bucket no-water-source deadlock the planner's portal chain warns of).
+    if (not _has(inv, BUCKET_ITEM) and not _has(inv, WATER_BUCKET)
+            and inv.get("iron_ingot", 0) >= BUCKET_IRON):
+        out.append("craft_bucket")
     if _has(inv, BUCKET_ITEM) and not _has(inv, WATER_BUCKET):
         out.append("fill_bucket")
     # Step through the active portal. The cell is the `activate_portal` centre (`end_portal_cell`),
