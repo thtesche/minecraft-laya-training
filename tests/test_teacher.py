@@ -100,12 +100,58 @@ class ReplayTest(unittest.TestCase):
         self.assertFalse(judg["agree"])
         self.assertEqual(calls, [])  # no label to disagree with -> no judge
 
+    def test_reasoning_is_carried_through_when_s2_returns_it(self):
+        judg = self._run(
+            [_act(1, ["mine_stone", "get_wood"], "get_wood")],
+            s2_fn=lambda s, c, h: ("get_wood", "same pick", "first I check the pack, then..."),
+            judge_fn=lambda *a: ("A", None, ""))[0]
+        self.assertEqual(judg["s2_reasoning"], "first I check the pack, then...")
+
+    def test_a_two_tuple_s2_leaves_reasoning_empty(self):
+        judg = self._run(
+            [_act(1, ["mine_stone", "get_wood"], "get_wood")],
+            s2_fn=lambda s, c, h: ("get_wood", "same pick"),
+            judge_fn=lambda *a: ("A", None, ""))[0]
+        self.assertEqual(judg["s2_reasoning"], "")
+
     def test_the_blind_pairing_is_stable_for_a_tick(self):
         # Same seed (the tick's narrative) -> same A/B order every time it is replayed.
         rec = _act(7, ["mine_stone", "get_wood"], "get_wood", state={"health": 20.0})
         a1 = t._blind_pair("get_wood", "mine_stone", t.render_narrative(rec) or "")
         a2 = t._blind_pair("get_wood", "mine_stone", t.render_narrative(rec) or "")
         self.assertEqual(a1, a2)
+
+
+class SampleTest(unittest.TestCase):
+    def _run(self, n):
+        return [_act(i, ["mine_stone", "get_wood"], "get_wood") for i in range(n)]
+
+    def test_n_at_or_above_the_count_reviews_all(self):
+        recs = self._run(5)
+        self.assertEqual(t.sample_teachable(recs, 0), {0, 1, 2, 3, 4})
+        self.assertEqual(t.sample_teachable(recs, 5), {0, 1, 2, 3, 4})
+        self.assertEqual(t.sample_teachable(recs, 9), {0, 1, 2, 3, 4})
+
+    def test_the_sample_spans_the_run_endpoints_included(self):
+        recs = self._run(100)
+        picks = t.sample_teachable(recs, 5)
+        self.assertEqual(len(picks), 5)
+        self.assertIn(0, picks)       # first teachable tick
+        self.assertIn(99, picks)      # last teachable tick
+
+    def test_only_reviewed_ticks_produce_a_judgment_others_feed_history(self):
+        recs = self._run(4)
+        seen_history_lengths = []
+
+        def s2(state, candidates, history):
+            seen_history_lengths.append(len(history))
+            return "mine_stone", ""
+
+        judg = t.replay(recs, s2_fn=s2, judge_fn=lambda *a: ("A", None, ""),
+                        review={0, 3})
+        self.assertEqual([j["iteration"] for j in judg], [0, 3])
+        # Tick 3 is reviewed after ticks 0..2 have all gone into history.
+        self.assertEqual(seen_history_lengths, [0, 3])
 
 
 class FlipTest(unittest.TestCase):

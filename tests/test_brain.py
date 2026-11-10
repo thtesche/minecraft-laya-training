@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 from mlaya.actions import _must_eat
 from mlaya.brain import (DANGER_BAND_NOTE, DANGER_DEFER_HEALTH, DANGER_DEFER_M, DANGER_QID,
-                         DEFER_QUIET_TICKS, INTENT_QID, Brain, _failure_diagnostics, _plan_steps,
-                         _system2_state_view, danger_matters,
-                         escalate_to_system2, trajectory_digest)
+                        DEFER_QUIET_TICKS, INTENT_QID, Brain, _failure_diagnostics, _plan_steps,
+                        _review_situation, _system2_state_view, danger_matters,
+                        escalate_to_system2, review_payload, trajectory_digest)
 
 
 class _Router:
@@ -266,6 +266,55 @@ class System2StateViewTest(unittest.TestCase):
         self.assertEqual(state["phase"], None)
         self.assertEqual(state["base"], [-77, 69, -27])
         self.assertIn("players", state)
+
+
+class ReviewPayloadTest(unittest.TestCase):
+    """The reviewer reads a digest, not the raw state dump and eight full records."""
+
+    def _state(self) -> dict:
+        return {
+            "health": 20.0, "food": 15.0, "phase": "day", "raining": False,
+            "position": [-288.49, 53.0, -378.79], "on_ground": True, "in_water": False,
+            "dimension": "overworld", "inventory": {"oak_log": 3, "acacia_log": 5},
+            "tools": {}, "armor": {}, "hostiles": [], "base": None, "chest_pos": None,
+            "slots_used": 8, "progress": {"gate": False, "bed": False, "powder": 0, "eyes": 0},
+        }
+
+    def test_the_payload_is_situation_and_digest_not_raw_fields(self) -> None:
+        payload = review_payload(self._state(), [], ["get_wood", "craft_pickaxe"])
+        self.assertEqual(sorted(payload), ["candidates", "phase", "situation", "trajectory"])
+        self.assertNotIn("state", payload)
+        self.assertNotIn("recent_history", payload)
+
+    def test_the_situation_is_the_paragraph_system_1_reads(self) -> None:
+        payload = review_payload(self._state(), [], ["get_wood"])
+        self.assertIn("3x oak_log", payload["situation"])
+        self.assertIn("No hostile mobs within 16 blocks", payload["situation"])
+
+    def test_the_history_is_a_label_ledger_not_full_records(self) -> None:
+        history = [{"stage": "action", "label": "get_wood", "ok": True, "progressed": True,
+                   "status": "succeeded", "state": {"phase": "day"}}]
+        digest = review_payload(self._state(), history, ["get_wood"])["trajectory"]
+        self.assertEqual(digest["window"], 1)
+        self.assertEqual(digest["recent"][0]["label"], "get_wood")
+
+    def test_the_review_window_is_twelve_ticks(self) -> None:
+        history = [{"stage": "action", "label": f"l{i}", "ok": True, "progressed": True,
+                   "status": "succeeded"} for i in range(40)]
+        self.assertEqual(review_payload(self._state(), history, ["get_wood"])["trajectory"]["window"], 12)
+
+    def test_the_digest_stays_small_enough_to_prefill_fast(self) -> None:
+        import json
+        # The raw view the digest replaced ran 88k characters on a mid-run tick; the reviewer's
+        # brief has to be an order of magnitude smaller or the prefill dominates every call.
+        payload = review_payload(self._state(), [{"stage": "action", "state": self._state()}] * 8,
+                                 ["get_wood", "craft_pickaxe"])
+        self.assertLess(len(json.dumps(payload)), 4000)
+
+    def test_a_bare_state_still_reads_without_raising(self) -> None:
+        situation = review_payload({"not_a_state": 1}, [], ["get_wood"])["situation"]
+        self.assertEqual(_review_situation({"not_a_state": 1}), situation)
+        self.assertIn("inventory: empty", situation.lower())
 
 
 class FailureDiagnosticsTest(unittest.TestCase):

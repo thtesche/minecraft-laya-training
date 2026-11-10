@@ -462,3 +462,142 @@ def escalate_to_system2(
         return data
     except Exception as e:  # escalation must never crash the loop
         return {"error": str(e)}
+
+
+def _reasoning_of(message: Any) -> str:
+    """The model's thinking, if the server returned it alongside the answer.
+
+    The local Strata server emits the reasoning tokens as a `reasoning_content` field on the
+    message (some servers use `reasoning`); the OpenAI client parks unknown fields on
+    `model_extra`. Read both so the teacher can record *how* System 2 got to its pick, not only
+    the pick - that is the only window onto whether the prompt is helping it decide well.
+    """
+    for attr in ("reasoning_content", "reasoning"):
+        val = getattr(message, attr, None)
+        if isinstance(val, str) and val:
+            return val
+    extra = getattr(message, "model_extra", None) or {}
+    for key in ("reasoning_content", "reasoning"):
+        val = extra.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return ""
+
+
+# How many action ticks the review digest looks back over. The raw eight records the reviewer used
+# to be handed cost ~67k characters and forced the model to re-count the pack and the mob list by
+# hand; twelve label/outcome pairs say the same thing in a few hundred.
+REVIEW_DIGEST_WINDOW = 12
+
+
+def _review_situation(state: dict) -> str:
+    """The tick as one readable paragraph - the same rendering System 1 sees.
+
+    `GameState.from_state` is the inverse of the logged state, so an archived tick reads exactly as
+    the live loop reads it: milestones first, then health/hunger, depth, distance to base, the chest
+    network, the pack, tools, worn armour, hostiles within 16 blocks. That is the digest: the facts a
+    next-move decision keys on, already phrased, instead of the raw per-field dump the model has to
+    parse and add up itself.
+    """
+    try:
+        from .perception import GameState
+        return GameState.from_state(state).narrative()
+    except Exception:
+        return ""
+
+
+def review_payload(state: dict, history: list[dict], candidates: list[str]) -> dict:
+    """The digested brief System 2 reads for one review tick.
+
+    Ordered for the server's prompt cache: the phase line, then the candidate descriptions (both
+    change rarely), then the situation and the trajectory, which change every tick. Nothing in here
+    is a raw field dump - the reviewer is given the reading, not the data it would have to read.
+    """
+    phase_slug, phase_goal = phase_brief(state)
+    return {
+        "phase": {"name": phase_slug, "goal": phase_goal},
+        "candidates": {label: CRITERIA.get(label, "") for label in candidates},
+        "situation": _review_situation(state),
+        "trajectory": trajectory_digest(history, window=REVIEW_DIGEST_WINDOW),
+    }
+
+
+# The neutral review framing, apart from the escalation one on purpose. The escalation prompt
+# tells the model its controller is *stuck* and to break an impasse - true when the live loop has
+# run out of moves, but a bias when the offline teacher asks the same model to grade an ordinary
+# tick where nothing is stuck. Here the task is a plain choice among the same candidates System 1
+# weighed, so the two systems answer the same question and their picks can be compared cleanly.
+def review_with_system2(
+    cfg: LLMConfig,
+    api_key: str | None,
+    state: dict,
+    history: list[dict],
+    candidates: list[str],
+    digest: bool = True,
+) -> dict:
+    """System 2 as an offline reviewer: pick the single best action among `candidates`.
+
+    No impasse framing, no full action catalogue, no failure/trajectory brief - the model sees the
+    same state and the same candidate set System 1 chose from and names the one it would pick.
+    Returns `{action, note, reasoning}` (or `{error}`); `reasoning` is the server's thinking when it
+    returns it. This is the teacher path only; the live loop keeps `escalate_to_system2`.
+    """
+    if not api_key:
+        return {"error": f"missing {cfg.api_key_env}"}
+    options = [c for c in candidates if c in CRITERIA]
+    if not options:
+        return {"error": "no known candidates to review"}
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(base_url=cfg.base_url, api_key=api_key)
+        phase_slug, phase_goal = phase_brief(state)
+        # Ordered for the server's prompt cache: the fully static instruction block first (identical
+        # on every call, so its KV is reused run-long), then the slowly-changing phase line, then the
+        # per-tick payload. The response format already forces a JSON object, so the schema is stated
+        # once and plainly - no "reply only with JSON, no markdown" plea for the model to spend
+        # thinking tokens second-guessing.
+        system = (
+            "You are a Minecraft survival expert reviewing one decision a survival bot faced on its "
+            "way to a full diamond kit, the Nether, and the End. You are given the run phase, the "
+            "candidate actions available at this tick, a plain description of the situation, and a "
+            "digest of the ticks leading up to it. Choose the single candidate action that best "
+            "advances survival and progress right now. Judge only on the merits - you are not told "
+            "which action the bot actually chose. "
+            'Reply with this JSON object: {"action": <one candidate label>, "note": <short reason>}.'
+        )
+        if digest:
+            payload = review_payload(state, history, options)
+        else:
+            # The raw view, kept for A/B measurements against the digest.
+            payload = {
+                "phase": {"name": phase_slug, "goal": phase_goal},
+                "candidates": {label: CRITERIA.get(label, "") for label in options},
+                "state": _system2_state_view(state),
+                "recent_history": history[-8:],
+            }
+        r = client.chat.completions.create(
+            model=cfg.model,
+            max_tokens=cfg.max_tokens,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            response_format={"type": "json_object"},
+        )
+        choice = r.choices[0]
+        content = choice.message.content
+        reasoning = _reasoning_of(choice.message)
+        if not content:
+            return {"error": "empty model response", "finish_reason": choice.finish_reason,
+                    "reasoning": reasoning}
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            return {"error": f"non-object model response: {type(data).__name__}",
+                    "reasoning": reasoning}
+        action = data.get("action")
+        return {
+            "action": action if isinstance(action, str) and action in options else None,
+            "note": str(data.get("note") or ""),
+            "reasoning": reasoning,
+        }
+    except Exception as e:  # the teacher is offline tooling; never crash the batch
+        return {"error": str(e)}

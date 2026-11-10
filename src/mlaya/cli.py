@@ -219,7 +219,7 @@ def cmd_teacher(args) -> int:
         }, indent=2, ensure_ascii=False))
         return 0
 
-    judgments = tmod.run_teacher(records, settings)
+    judgments = tmod.run_teacher(records, settings, sample=args.sample)
 
     out = _resolve(args.out) if args.out else _teacher_out_path(log)
     ds.write_jsonl(out, judgments)
@@ -237,7 +237,8 @@ def cmd_teacher(args) -> int:
         "teacher_path": str(out),
         "s2_key": s2_key,
         "judge_key": judge_key,
-        "teachable_ticks": len(judgments),
+        "sampled": args.sample or "all",
+        "reviewed_ticks": len(judgments),
         "agree": agree,
         "disagree": disagree,
         "judge_verdicts": verdicts,
@@ -392,6 +393,10 @@ def main(argv: list[str] | None = None) -> int:
     tch.add_argument("--log", required=True, help="archived run log to review")
     tch.add_argument("--out", default="",
                      help="teacher side-file (default: teacher-<run>.jsonl beside the log)")
+    tch.add_argument("--sample", type=int, default=0,
+                     help="review only N teachable ticks, spread evenly across the run (0 = all); "
+                          "the unreviewed ticks still feed S2's history context. One S2 call is "
+                          "~2 min against the local server, so a rich run needs a sample")
     tch.add_argument("--flip-from", default="",
                      help="instead of running the teacher, re-judge the disagreements in this "
                            "side-file with the blind pair's A/B slots swapped (the flip test)")

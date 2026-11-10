@@ -27,7 +27,7 @@ import random
 from typing import Any, Callable
 
 from .actions import CRITERIA
-from .brain import escalate_to_system2
+from .brain import review_payload, review_with_system2
 from .config import JudgeConfig, LLMConfig
 from .dataset import _narrative_hash, render_narrative
 
@@ -35,7 +35,10 @@ from .dataset import _narrative_hash, render_narrative
 # than one eligible label, and a label Laya really chose among them. The `in_danger` gate and its
 # floor/ceiling heuristic in `dataset.py` are deliberately left alone - this path is about the
 # intent choice only.
-S2Fn = Callable[[dict, list[str], list[dict]], tuple[str | None, str]]
+# System 2 returns its pick, a short reason, and optionally its thinking. The thinking is a third
+# element the live wiring provides; a test fake may return just `(label, note)` and `replay` fills
+# the reasoning with "".
+S2Fn = Callable[[dict, list[str], list[dict]], tuple]
 JudgeFn = Callable[[dict, str, str, list[str]], tuple[str | None, str | None, str]]
 
 
@@ -99,13 +102,36 @@ def judge_tick(rec: dict, laya_label: str, s2_label: str, candidates: list[str],
     return {"judge_verdict": verdict, "judge_label": label, "judge_note": (note or "")[:300]}
 
 
-def replay(records: list[dict], *, s2_fn: S2Fn, judge_fn: JudgeFn) -> list[dict]:
+def sample_teachable(records: list[dict], n: int) -> set[Any]:
+    """The iterations of `n` teachable ticks spread evenly across the run (all of them if n<=0).
+
+    One System-2 call takes ~2 minutes against the local reasoning server, so a rich run's few
+    hundred teachable ticks is many hours. A representative sample - the same two-model question on
+    ticks taken from the whole trajectory, not just a short run's handful - gives the quality read
+    for a fraction of the calls. Even spacing (endpoints included) keeps the sample from clustering
+    in whichever phase happened to carry the most choices.
+    """
+    teach = [r.get("iteration") for r in records if _teachable_candidates(r)]
+    if n <= 0 or n >= len(teach):
+        return set(teach)
+    if n == 1:
+        return {teach[0]}
+    picks = {teach[round(i * (len(teach) - 1) / (n - 1))] for i in range(n)}
+    return picks
+
+
+def replay(records: list[dict], *, s2_fn: S2Fn, judge_fn: JudgeFn,
+           review: set[Any] | None = None) -> list[dict]:
     """Produce one judgment per teachable action tick (pure; the LLM calls are injected).
 
     `s2_fn(state, candidates, history)` returns `(label, note)` - System 2's pick among the
     candidates (or None) and its reason. `judge_fn(state, a_label, b_label, candidates)` returns
     `(verdict, better_action, note)`. Keeping both injectable is what lets the agreement logic,
     the blind pairing and the verdict mapping be tested with no network.
+
+    `review` restricts the LLM calls to the teachable ticks whose iteration it names (from
+    `sample_teachable`); the ticks left out still feed the history S2 reads for context, they are
+    just not themselves reviewed. `None` reviews every teachable tick.
     """
     out: list[dict] = []
     history: list[dict] = []
@@ -113,14 +139,17 @@ def replay(records: list[dict], *, s2_fn: S2Fn, judge_fn: JudgeFn) -> list[dict]
         if rec.get("stage") not in ("action", "defer"):
             continue
         candidates = _teachable_candidates(rec)
-        if not candidates:
-            # A non-teachable tick still belongs to the history S2 reads for context.
+        if not candidates or (review is not None and rec.get("iteration") not in review):
+            # A tick that is not reviewed - non-teachable, or outside the sample - still belongs
+            # to the history S2 reads for context.
             if rec.get("stage") == "action":
                 history.append(rec)
             continue
         narrative = render_narrative(rec) or ""
         laya_label = rec.get("label")
-        s2_label, s2_note = s2_fn(rec.get("state") or {}, candidates, history)
+        res = s2_fn(rec.get("state") or {}, candidates, history)
+        s2_label, s2_note = res[0], res[1]
+        s2_reasoning = res[2] if len(res) > 2 else ""
         if s2_label not in candidates:
             s2_label = None
         agree = s2_label is not None and s2_label == laya_label
@@ -132,6 +161,10 @@ def replay(records: list[dict], *, s2_fn: S2Fn, judge_fn: JudgeFn) -> list[dict]
             "s2_label": s2_label,
             "agree": agree,
             "s2_note": (s2_note or "")[:300],
+            # Six of the thirty sample ticks ran the thinking to the 4096-token output cap, so a
+            # 4000-character cut would hide the part where the model actually commits to a pick -
+            # the part we are reading the reasoning for.
+            "s2_reasoning": (s2_reasoning or "")[:8000],
             "progressed": bool(rec.get("progressed")),
             "judge_verdict": None,
             "judge_label": None,
@@ -190,22 +223,24 @@ def flip_verdicts(records: list[dict], judgments: list[dict], judge_fn: JudgeFn)
 # --- live LLM wiring (used by the CLI; replaced by fakes in tests) ---------------------------
 
 def make_system2_fn(cfg: LLMConfig, api_key: str | None) -> S2Fn:
-    """A `replay` S2 callable backed by `brain.escalate_to_system2`.
+    """A `replay` S2 callable backed by `brain.review_with_system2`.
 
-    Deliberately neutral: the failure brief says only that this is an offline review, and Laya's
-    own choice is *not* handed to the model, so S2 forms its opinion over the same state and the
-    same candidates Laya saw - not for or against a label it was shown.
+    The review framing is neutral by design: no impasse ("your controller is stuck"), no failure
+    or trajectory brief, and Laya's own choice is *not* handed to the model. S2 picks among the
+    same candidates Laya weighed, over the same state - so the two systems answer the same
+    question and the picks compare cleanly. The third return value is the model's thinking, carried
+    through so the side-file records *how* S2 decided, not only what it chose.
     """
-    def s2(state: dict, candidates: list[str], history: list[dict]) -> tuple[str | None, str]:
-        plan = escalate_to_system2(
-            cfg, api_key, state, history,
-            {"triggers": ["offline_teacher_review"]}, list(candidates))
-        if not isinstance(plan, dict):
-            return None, ""
-        if plan.get("error"):
-            return None, f"error: {plan['error']}"
-        label = plan.get("action")
-        return (label if label in candidates else None), str(plan.get("note") or "")
+    def s2(state: dict, candidates: list[str],
+           history: list[dict]) -> tuple[str | None, str, str]:
+        out = review_with_system2(cfg, api_key, state, history, list(candidates))
+        if not isinstance(out, dict):
+            return None, "", ""
+        if out.get("error"):
+            return None, f"error: {out['error']}", str(out.get("reasoning") or "")
+        label = out.get("action")
+        return ((label if label in candidates else None),
+                str(out.get("note") or ""), str(out.get("reasoning") or ""))
     return s2
 
 
@@ -230,17 +265,17 @@ def make_judge_fn(cfg: JudgeConfig, api_key: str | None) -> JudgeFn:
             from openai import OpenAI
 
             client = OpenAI(base_url=cfg.base_url, api_key=api_key)
-            payload = {
-                "state": state,
-                "option_A": {"action": a_label, "what_it_does": CRITERIA.get(a_label, "")},
-                "option_B": {"action": b_label, "what_it_does": CRITERIA.get(b_label, "")},
-                "allowed_actions": {c: CRITERIA.get(c, "") for c in candidates},
-            }
+            # The judge reads the same digest the reviewer does: the situation as a paragraph and a
+            # short trajectory ledger, not the raw field dump. A verdict on two candidate actions
+            # cannot use more than that, and the raw state made every judgement a 30k-token prefill.
+            brief = review_payload(state, [], candidates)
+            brief["option_A"] = {"action": a_label, "what_it_does": CRITERIA.get(a_label, "")}
+            brief["option_B"] = {"action": b_label, "what_it_does": CRITERIA.get(b_label, "")}
             r = client.chat.completions.create(
                 model=cfg.model,
                 max_tokens=cfg.max_tokens,
                 messages=[{"role": "system", "content": JUDGE_SYSTEM},
-                          {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                          {"role": "user", "content": json.dumps(brief, ensure_ascii=False)}],
                 response_format={"type": "json_object"},
             )
             content = r.choices[0].message.content
@@ -258,8 +293,9 @@ def make_judge_fn(cfg: JudgeConfig, api_key: str | None) -> JudgeFn:
     return judge
 
 
-def run_teacher(records: list[dict], settings) -> list[dict]:
-    """Replay with the live LLMs wired from `settings`."""
+def run_teacher(records: list[dict], settings, sample: int = 0) -> list[dict]:
+    """Replay with the live LLMs wired from `settings`; `sample` caps the reviewed ticks (0 = all)."""
     s2_fn = make_system2_fn(settings.llm, settings.api_key())
     judge_fn = make_judge_fn(settings.judge, settings.judge_api_key())
-    return replay(records, s2_fn=s2_fn, judge_fn=judge_fn)
+    review = sample_teachable(records, sample) if sample else None
+    return replay(records, s2_fn=s2_fn, judge_fn=judge_fn, review=review)
