@@ -12,7 +12,8 @@ import re
 import unittest
 from types import SimpleNamespace
 
-from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pearls_wanted, _bed_at_base,
+from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pearls_wanted,
+                           _base_storage_ready, _bed_at_base,
                           _bed_cells, _bed_reachable, _bed_reach_stance, _bed_stance,
                           _click_gap, _crowding_hostiles, _diamond_reason, _expedition_prepared,
                           _eyes_owed, _flat_ground_near, _frame_empty, _food_source_in_reach,
@@ -64,7 +65,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                             FOOD_HUNT_RANGE_DAY, FOOD_HUNT_RANGE_NIGHT, FOOD_HUNT_RANGE_RESERVE,
                             _food_hunt_range, _food_reserve_walk_wanted,
                             _surplus_besides_keep,
-                           tech_tree_complete, WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH)
+                           tech_tree_complete, WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH,
+                           _chest_candidates, _chest_site, _plank_units, CHEST_PLANKS)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources, parse_warped_forest)
 
@@ -104,6 +106,17 @@ def at_home(g: GameState, base: tuple = (-197, -47, -98)) -> GameState:
     """Stand the bot on the home base, so the base-only steps are eligible (`_at_base`)."""
     g.base = base
     g.pos = (base[0] + 0.5, base[1] + 1.0, base[2] + 0.5)
+    return g
+
+
+def with_chest(g: GameState) -> GameState:
+    """Stand the base's chest, which the crossing gate waits for (`_base_storage_ready`).
+
+    A fixture that expects the gate to light or the bot to cross needs one: without it the
+    lighting gate stays shut, and the run has nowhere to bank the haul.
+    """
+    bx, by, bz = g.base
+    g.chest_pos = (bx, by + 1, bz + 1)
     return g
 
 
@@ -1970,6 +1983,7 @@ class NetherGateTest(unittest.TestCase):
             "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0)],
         }
         g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        g.chest_pos = (-197, -46, -97)   # the base chest the crossing gate waits for
         return g
 
     def test_craft_bucket_from_three_iron(self) -> None:
@@ -2721,6 +2735,7 @@ class NetherGateTest(unittest.TestCase):
             g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
             g.phase = phase
             g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+            g.chest_pos = (-197, -46, -97)
             return g
 
         day = carried("day")
@@ -2866,6 +2881,7 @@ class NetherGateTest(unittest.TestCase):
                                        cobblestone=64))
         g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
         g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        g.chest_pos = (-197, -46, -97)
         g.phase = "night"
         self.assertIn("light_portal", candidates(g))
         self.assertNotIn("place_bed", candidates(g))
@@ -3359,6 +3375,7 @@ class NetherGateTest(unittest.TestCase):
         g = self._at_home(self._geared(diamond_pickaxe=1, cobblestone=64, flint_and_steel=1,
                                        stick=2, furnace=1))
         g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        g.chest_pos = (-197, -46, -97)
         bx, by, bz = g.base
         g.bed_pos = (bx + 2, by + 1, bz)
         g.furnace_pos = (bx, by + 1, bz - 1)
@@ -3920,17 +3937,23 @@ class HomeBaseTest(unittest.TestCase):
         self.assertNotIn("go_home", candidates(g))
         self.assertIsNone(resolve("go_home", g))
 
-    def test_a_carried_chest_waits_for_a_filling_pack_before_it_walks_the_bot_home(self) -> None:
+    def test_a_carried_chest_walks_the_bot_home_when_the_gate_waits_for_it(self) -> None:
         # Live, run99 it153-165: a bot on 29 of the 36 slots left the base for the trip's food,
         # and the carried chest drew it straight back every time it reached the animals -
         # `go_home` and `hunt_food` swapped the same 70 m four times over. The chest is placed
-        # for the room it frees, so a light pack owes it no walk; once the pack fills, it does.
+        # for the room it frees, so a light pack owes it no walk once the gate burns. It does
+        # owe it while the gate is still dark: the crossing waits for the chest to stand
+        # (`_base_storage_ready`), so a chest in the pack is base work.
         g = self._geared(chest=1)
         g.base = (-197, -47, -98)
         g.pos = (-250.5, 64.0, -120.5)
         g.slots_used = INVENTORY_NEAR_FULL - 4
+        g.portal_lit = True
         self.assertNotIn("go_home", candidates(g))
         self.assertIsNone(resolve("go_home", g))
+        g.portal_lit = False
+        self.assertIn("go_home", candidates(g))
+        self.assertIsNotNone(resolve("go_home", g))
         g.slots_used = INVENTORY_NEAR_FULL
         self.assertIn("go_home", candidates(g))
         self.assertIsNotNone(resolve("go_home", g))
@@ -5250,7 +5273,7 @@ class WoodGateDeadZoneTest(unittest.TestCase):
 
     def _lull(self, **inv) -> GameState:
         # A geared bot at a lit gate (the Nether lull), by day, with no bed.
-        g = lit_portal(at_home(geared(**inv)))
+        g = with_chest(lit_portal(at_home(geared(**inv))))
         g.phase = "day"
         g.health = 20.0
         g.food = 18.0
@@ -5734,6 +5757,7 @@ class NetherExpeditionTest(unittest.TestCase):
                      diamond_pickaxe=2, bowl=1)
         stock.update(inv)
         g = at_home(geared(**stock), base=self.BASE)
+        g.chest_pos = (self.BASE[0], self.BASE[1] + 1, self.BASE[2] + 1)
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                    *self.GATE, 2.0)],
                        "obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
@@ -6603,6 +6627,7 @@ class NetherExpeditionTest(unittest.TestCase):
     def test_the_powder_needs_a_chest_to_go_into(self) -> None:
         g = self._home(blaze_powder=18)
         g.nether_entered = True
+        g.chest_pos = None                      # no lid at the base: nowhere to put it
         self.assertNotIn("stow_blaze_powder", candidates(g))
         self.assertIsNone(resolve("stow_blaze_powder", g))
 
@@ -6697,7 +6722,7 @@ class PiglinBarterTest(unittest.TestCase):
                 "cobblestone": 64, "acacia_planks": 4, "coal": 4, "golden_helmet": 1,
                 "diamond_pickaxe": 2, "bowl": 1}
         base.update(inv)
-        g = at_home(lit_portal(geared(**base)))
+        g = with_chest(at_home(lit_portal(geared(**base))))
         g.food = 20.0
         g.resources = {**(g.resources or {}),
                        "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
@@ -8771,6 +8796,7 @@ class BurningGateUnstockedPrepTest(unittest.TestCase):
             "gold_ore": [BlockHit("gold_ore", "gold_ore", 231, 60, 226, 8.0)],
         }
         g.furnace_pos = (229, 62, 222)   # the oven stands at the base, so no temporary one
+        g.chest_pos = (self.BASE[0], self.BASE[1] + 1, self.BASE[2] + 1)
         return g
 
     def test_a_burning_gate_does_not_stop_the_gold_chain(self) -> None:
@@ -8977,6 +9003,7 @@ class PortalLitIsAWorldFactTest(unittest.TestCase):
                for (x, y, z) in frame_obsidian_cells(self.BASE)]
         g.resources = {"obsidian": obs}       # the frame stands and is loaded...
         g.resource_found = {"obsidian": len(obs)}   # ...but no nether_portal block is counted
+        g.chest_pos = (self.BASE[0], self.BASE[1] + 1, self.BASE[2] + 1)
         return g
 
     def test_a_dark_frame_at_the_base_is_not_lit_whatever_the_ledger_latched(self) -> None:
@@ -9739,7 +9766,7 @@ class ExpeditionSparePickaxeTest(unittest.TestCase):
         stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64,
                      golden_helmet=1, cooked_mutton=64, white_bed=1, diamond_pickaxe=1)
         stock.update(inv)
-        g = at_home(geared(**stock), base=self.BASE)
+        g = with_chest(at_home(geared(**stock), base=self.BASE))
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                    *self.GATE, 2.0)],
                        "obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
@@ -9836,6 +9863,103 @@ class ExpeditionSparePickaxeTest(unittest.TestCase):
         # at all. So there was no path to a second diamond pickaxe before this.
         self.assertNotIn("craft_diamond_pickaxe",
                          candidates(self._stocked(diamond=3, stick=4)))
+
+
+class BaseChestGateTest(unittest.TestCase):
+    """The crossing waits for a chest standing at the base.
+
+    What a Nether trip brings home only survives a death down there if it stands in the chest at
+    the gate: one step empties the pack. Live, run220: the gate lit at it181 and the bot crossed
+    on that same tick with sixteen blaze powder carried and no chest ever placed - `place_chest`
+    sat on the offer beside `enter_portal` and the crossing took the tick. The gate is the place
+    to say no, in the same shape as the spare pickaxe and the food reserve.
+    """
+
+    BASE = (-197, -47, -98)
+
+    def _stocked(self, **inv) -> GameState:
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, bowl=1,
+                     golden_helmet=1, cooked_mutton=64, white_bed=1, diamond_pickaxe=2)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)],
+                       "white_bed": [BlockHit("white_bed", "white_bed", -196, -47, -98, 1.0)]}
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        g.phase = "day"
+        g.food = 20.0
+        return g
+
+    def test_a_chestless_base_keeps_the_gate_dark(self) -> None:
+        g = self._stocked()
+        self.assertIsNone(g.chest_pos)
+        self.assertFalse(_base_storage_ready(g))
+        self.assertNotIn("light_portal", candidates(g))
+        self.assertIsNone(resolve("light_portal", g))
+
+    def test_a_standing_chest_opens_the_gate(self) -> None:
+        g = self._stocked()
+        g.chest_pos = (-197, -46, -97)
+        self.assertTrue(_base_storage_ready(g))
+        self.assertIn("light_portal", candidates(g))
+
+    def test_ground_that_refuses_a_chest_does_not_pin_the_gate(self) -> None:
+        # The escape hatch: a base whose ground answers `[PLACE_NO_SUPPORT]` can never hold a
+        # chest, and a gate that waits for one would hold the whole run shut.
+        g = self._stocked()
+        g.chest_blocked = True
+        self.assertTrue(_base_storage_ready(g))
+        self.assertIn("light_portal", candidates(g))
+
+    def test_a_base_with_no_room_for_a_chest_does_not_pin_the_gate(self) -> None:
+        g = self._stocked()
+        g.chest_blocked = False
+        g.pos = tuple(g.base)
+        # Every candidate cell is taken: the bed, the furnace, the frame plane.
+        g.placement_refused = {cell for cell in _chest_candidates(g)}
+        self.assertIsNone(_chest_site(g))
+        self.assertTrue(_base_storage_ready(g))
+        self.assertIn("light_portal", candidates(g))
+
+    def test_wood_the_world_cannot_supply_does_not_pin_the_gate(self) -> None:
+        # The chest's eight planks come from `get_wood` alone. Once the loop has turned that off
+        # - no logs anywhere in reach - the chest is unmakeable, and a gate waiting for it would
+        # run the iteration budget out. With the planks in hand the chest is still owed.
+        g = self._stocked()
+        g.slots_used = 20
+        g.stuck_labels = frozenset({"get_wood"})
+        self.assertTrue(_base_storage_ready(g))
+        self.assertIn("light_portal", candidates(g))
+        g.inventory["oak_planks"] = 8
+        self.assertFalse(_base_storage_ready(g))
+        self.assertNotIn("light_portal", candidates(g))
+
+    def test_the_chest_is_prep_work_of_the_lull(self) -> None:
+        # Eight planks at a table, then the placement at the base: the chest is owed before the
+        # gate burns, not once the pack overflows.
+        g = self._stocked(oak_planks=8)
+        self.assertIn("craft_chest", _all_nether_prep_steps(g))
+        a = resolve("craft_chest", g)
+        self.assertEqual(a.args["items"], [{"item_name": "chest"}])
+        g.inventory["chest"] = 1
+        self.assertEqual(_all_nether_prep_steps(g), ["place_chest"])
+        a = resolve("place_chest", g)
+        self.assertEqual(a.tool, "place_block")
+        self.assertEqual(a.args["block_name"], "chest")
+
+    def test_a_short_pack_still_arms_the_wood_for_the_chest(self) -> None:
+        # `get_wood` used to fetch the chest's planks only once the pack was nearly full; the
+        # crossing gate now waits for the chest, so the lull owes them from the start.
+        g = self._stocked()
+        g.slots_used = 20
+        self.assertIn("get_wood", candidates(g))
+
+    def test_a_chest_in_the_pack_walks_a_light_pack_home(self) -> None:
+        g = geared(chest=1)
+        g.base = self.BASE
+        g.pos = (-250.5, 64.0, -120.5)
+        g.slots_used = 20
+        self.assertIn("go_home", candidates(g))
+        self.assertIsNotNone(resolve("go_home", g))
 
 
 class PaidGoalEndsTheDiamondDigTest(unittest.TestCase):
@@ -10788,7 +10912,7 @@ class StewBowlPrepTest(unittest.TestCase):
         base = {"flint_and_steel": 1, "white_bed": 1, "cooked_beef": 24, "furnace": 1,
                 "cobblestone": 64, "golden_helmet": 1, "diamond_pickaxe": 2}
         base.update(inv)
-        g = at_home(lit_portal(geared(**base)), base=self.BASE)
+        g = with_chest(at_home(lit_portal(geared(**base)), base=self.BASE))
         g.food = 20.0
         g.phase = "day"
         return g

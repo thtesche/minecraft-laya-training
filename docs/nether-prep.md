@@ -195,8 +195,20 @@ Two things the mushroom pantry needs that the Nether cannot supply.
 
 `light_portal` fires only when `_expedition_ready` holds, and that is the whole preparation in one
 predicate: the prep steps done, the food reserve banked, **two diamond pickaxes** in the pack
-(`NETHER_PICKAXES = 2`, the spare rides on the lighting gate, not on the craft step), and a bed at
-hand. No hour: `place_bed` lays the carried bed the very next tick, by day as well as by night.
+(`NETHER_PICKAXES = 2`, the spare rides on the lighting gate, not on the craft step), a bed at
+hand, and **a chest standing at the base** (`_base_storage_ready`). No hour: `place_bed` lays the
+carried bed the very next tick, by day as well as by night.
+
+The chest is on that gate for the same reason the pickaxe spare is: a haul that stays in the pack
+is a haul a single blaze takes back — one death in the Nether empties the inventory, and the base
+chest is the only lid it survives in. Live, run220: the gate lit at it181 and the bot crossed on
+that same tick with sixteen blaze powder carried and no chest ever placed, while `place_chest` sat
+on the offer beside `enter_portal`. Three escapes keep the gate from pinning a run: the ground's
+own refusal (`gs.chest_blocked`, `[PLACE_NO_SUPPORT]`), a base whose every candidate cell is
+already taken or refused, and a `get_wood` the loop has switched off with fewer than eight plank
+units in hand — a chest the world has no wood for cannot be waited for. The chest is a prep step
+of the lull (`craft_chest` → `place_chest` in `_all_nether_prep_steps`), and `get_wood` counts its
+eight planks among the lull's wood needs from the start, not only once the pack overflows.
 
 The bed rule around the frame has four parts, all of them corrections from live runs:
 

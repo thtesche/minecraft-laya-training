@@ -1768,10 +1768,16 @@ which tool the moment allows.
   goal is split in two. `_expedition_ready` is the prepared trip minus the burning gate and the laid
   bed: **a bed at hand** (`_bed_available`, carried or standing — a leftover bed merely *loaded* still
   needs `take_bed`/`place_bed` to bring it home), **no Nether prep step left open**
-  (`_all_nether_prep_steps`: bow+arrows, gold helmet, deep cobblestone) **and the food reserve
-  banked** (`_food_reserve_met`, the 64 units from `_food_goal`) — and, because the bed is laid
+  (`_all_nether_prep_steps`: bow+arrows, gold helmet, deep cobblestone, the base chest) **and the
+  food reserve banked** (`_food_reserve_met`, the 64 units from `_food_goal`) — and, because the bed is laid
   *after* the gate burns (see the bed note below), with a bed at hand, so `place_bed` runs the
-  very next tick, by day or by night. `light_portal` requires `_expedition_ready`, so **the gate is lit last**: the portal
+  very next tick, by day or by night. The gate also waits for **a chest standing at the base**
+  (`_base_storage_ready`): a haul that stays in the pack is a haul one blaze takes back, and the
+  chest is the only lid the run has (live, run220: crossed at it181 with sixteen blaze powder carried
+  and no chest ever placed, while `place_chest` sat on the offer beside `enter_portal`). It gives up
+  on the chest only where it cannot be had at all — the ground's own refusal (`gs.chest_blocked`), a
+  base whose every candidate cell is taken or refused, or a `get_wood` the loop has switched off
+  with fewer than eight plank units in hand. `light_portal` requires `_expedition_ready`, so **the gate is lit last**: the portal
   burning is the last Overworld act, and `tech_tree_complete` — `_portal_lit` **and** `_gear_ready`
   **and** `_bed_at_base` **and** `not _all_nether_prep_steps` **and** `_food_reserve_met` — closes in
   the same tick the bed goes down. It must never light early — the bot works at the base right

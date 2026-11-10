@@ -299,10 +299,13 @@ def candidates(gs: GameState) -> list[str]:
         # the ground seven times. Gated on exactly what makes `craft_chest` eligible, plus a pack
         # full enough to shed -- so it rides alongside `drop_junk` as the build-instead-of-drop
         # option, and stays out of the idle `wait`/`go_home`/`explore` fallbacks a light pack owns.
+        # The lull counts too: the crossing gate now waits for the chest (`_base_storage_ready`),
+        # so the planks are owed before the gate lights, not only once the pack overflows - run220
+        # crossed at it181 with sixteen powder in the pack and no chest ever built.
         chest_short = (gs.base is not None and not _chest_ready(gs) and not gs.chest_blocked
                        and _chest_site(gs) is not None and not _has(inv, CHEST_ITEM)
-                       and gs.slots_used >= INVENTORY_NEAR_FULL
-                       and _plank_units(inv) < CHEST_PLANKS)
+                       and _plank_units(inv) < CHEST_PLANKS
+                       and (gs.slots_used >= INVENTORY_NEAR_FULL or _nether_idle(gs)))
         if chest_short:
             need_planks = max(need_planks, CHEST_PLANKS)
         # The stew bowl is the last wood the lull owes: the Nether has no trees, so the bowl a

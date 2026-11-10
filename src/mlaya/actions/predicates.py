@@ -2486,6 +2486,16 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
     planks = _planks(inv)
     sticks = _can_sticks(inv, logs, planks)
     out: list[str] = []
+    # The chest at the gate. The crossing waits for it (`_base_storage_ready`): a haul carried
+    # through the gate is a haul one blaze takes back, and the base has no other lid. Like every
+    # other prep step it drops out when it cannot progress - no table, no planks, no cell the
+    # ground will hold - so it never leaves a run unable to end. Live, run220: the bot crossed at
+    # it181 with sixteen blaze powder in the pack and no chest ever placed.
+    if not _chest_ready(gs) and not gs.chest_blocked and _chest_site(gs) is not None:
+        if _has(inv, CHEST_ITEM) and _at_base(gs):
+            out.append("place_chest")
+        elif table and _plank_units(inv) >= CHEST_PLANKS:
+            out.append("craft_chest")
     # The stew bowl. The Nether has no wood at all, so the bowl a stew comes back from has to be
     # carried in from the Overworld: a pack with both mushrooms and no bowl has a pantry it cannot
     # open (run171 crossed with 2 red and 1 brown mushroom and never brewed a meal). One craft at
@@ -2610,9 +2620,15 @@ def _expedition_ready(gs: GameState) -> bool:
     lit the opening holds portal blocks and the bed falls on the ground beside the base instead.
     So the gate lights once a bed is *at hand*, and the bed is laid at once. After that the
     completion gate needs only the bed at the base.
+
+    The chest at the base rides on this gate too (`_base_storage_ready`): a haul that stays in the
+    pack is a haul a single blaze takes back, and the loop has no other place to put it. run220
+    crossed at it181 with sixteen powder carried and no chest ever built, because `place_chest` was
+    only ever an offer next to `enter_portal` and the crossing took the tick.
     """
     return (_expedition_prepared(gs)
-            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES)
+            and gs.inventory.get("diamond_pickaxe", 0) >= NETHER_PICKAXES
+            and _base_storage_ready(gs))
 
 
 # What stays in the pack while a chest stands open behind it.
@@ -3031,6 +3047,24 @@ def _combat_blocks_carried(inv: dict[str, int]) -> int:
 def _chest_ready(gs: GameState) -> bool:
     """A chest has been placed at the base (its coordinates are remembered)."""
     return gs.chest_pos is not None
+
+
+def _base_storage_ready(gs: GameState) -> bool:
+    """Whether the base can bank what a Nether trip brings home.
+
+    The chest at the gate is the only place the haul survives a death down there: one step empties
+    the pack, and everything the trip paid for goes with it. Live, run220: the gate lit at it181 and
+    the bot crossed on that same tick with sixteen blaze powder in the pack and no chest ever
+    placed - `place_chest` sat on the offer beside `enter_portal` and the crossing took the tick.
+    Two escapes keep the gate from pinning the run on ground that will not hold a chest: the
+    ground's own refusal (`chest_blocked`, `[PLACE_NO_SUPPORT]`), and a base whose every candidate
+    cell is already taken or refused, where no chest can stand at all. A third covers the material:
+    the eight planks a chest costs come only from `get_wood`, and once the loop has turned that off
+    because the loaded world holds no logs, the chest can never be made and a gate waiting for it
+    would hold the run shut until the iteration budget ran out.
+    """
+    return (_chest_ready(gs) or gs.chest_blocked or _chest_site(gs) is None
+            or ("get_wood" in gs.stuck_labels and _plank_units(gs.inventory) < CHEST_PLANKS))
 
 
 def _chest_network(gs: GameState) -> list[tuple[int, int, int]]:
@@ -3973,14 +4007,14 @@ def _base_steps_ready(gs: GameState) -> bool:
     # was never offered the placement).
     if _furnace_worth_placing(gs):
         return True
-    # A carried chest only pulls the bot home once the pack is filling. The chest is placed for
-    # the room it frees, not for its own sake, and a light pack owes it nothing: live, run99
-    # it153-165, a bot on 29 of 36 slots hunted the trip's food 70 m out, and the carried chest
-    # walked it back every time it arrived - `go_home` and `hunt_food` handed each other the same
-    # 70 m four times over. At the base the chest is still offered (`place_chest`), so the early
-    # placement a bot that happens to be home can make is not lost; only the walk is deferred.
-    if (not gs.chest_blocked and _has(inv, CHEST_ITEM) and not _chest_ready(gs)
-            and gs.slots_used >= INVENTORY_NEAR_FULL):
+    # A carried chest only pulls the bot home once the pack is filling, or once the crossing is
+    # waiting on it: `light_portal` requires a chest at the base (`_base_storage_ready`), so a
+    # chest in the pack is base work whatever the pack's fullness. The pack rule alone left
+    # run220's gate dark for its whole lull: the chest was crafted late, the pack stayed light,
+    # and nothing ever drew the bot back to stand it.
+    if (not gs.chest_blocked and _chest_site(gs) is not None and _has(inv, CHEST_ITEM)
+            and not _chest_ready(gs)
+            and (gs.slots_used >= INVENTORY_NEAR_FULL or not _portal_lit(gs))):
         return True
     if (_chest_ready(gs) and gs.slots_used >= INVENTORY_NEAR_FULL and _sheddable(gs, inv)
             and not _storage_reachable(gs)):
