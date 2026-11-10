@@ -11179,6 +11179,36 @@ class NetherFoodSecurityTest(unittest.TestCase):
                          "the cow in reach can fill the larder, so the gate waits for it")
 
 
+class CriterionStatesWhatTheRulesDoTest(unittest.TestCase):
+    """A candidate's sentence is the only rule text System 2 and the judge ever see.
+
+    Both read `CRITERIA`, so a description that disagrees with the planner is a fact the model
+    has to guess - and it guesses vanilla Minecraft. run220 tick 1: System 2 "corrected" a
+    wooden pickaxe into a table-first order the harness never requires. The flip test at tick
+    110 saw a judge call the gold helmet uncraftable with five ingots in the pack, which is
+    exactly the recipe. Where the number is a constant the planner uses, the line names it.
+    """
+
+    def test_the_smelt_line_names_the_batch_the_planner_loads(self) -> None:
+        from mlaya.actions.constants import CRITERIA, SMELT_BATCH
+        self.assertIn(f"at most {SMELT_BATCH} raw iron", CRITERIA["smelt_iron"])
+
+    def test_the_gold_helmet_line_names_the_recipe_the_planner_requires(self) -> None:
+        from mlaya.actions.constants import CRITERIA, GOLD_HELMET_INGOTS
+        self.assertIn(f"{GOLD_HELMET_INGOTS} gold ingots", CRITERIA["craft_gold_helmet"])
+
+    def test_the_wooden_pickaxe_is_offered_without_a_table(self) -> None:
+        from mlaya.actions.constants import CRITERIA
+        from mlaya.actions.planner import resolve
+        from mlaya.perception import GameState
+        gs = GameState(health=20.0, food=20.0)
+        gs.inventory = {"oak_log": 3}
+        act = resolve("craft_pickaxe", gs)
+        self.assertIsNotNone(act, "the planner offers the first pickaxe with no table in the pack")
+        self.assertNotIn("temporary_workstation", act.args)
+        self.assertIn("no crafting table", CRITERIA["craft_pickaxe"])
+
+
 class LabelRegistryTest(unittest.TestCase):
     """Every label the planner can offer must carry a brain criterion.
 
