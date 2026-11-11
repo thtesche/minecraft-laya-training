@@ -1,5 +1,15 @@
 # minecraft-laya-training
 
+[![CI](https://github.com/thtesche/minecraft-laya-training/actions/workflows/test.yml/badge.svg)](https://github.com/thtesche/minecraft-laya-training/actions/workflows/test.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
+[![Model](https://img.shields.io/badge/%F0%9F%A4%97%20Model-laya--minecraft--english-FFD21E.svg)](https://huggingface.co/thtesche/laya-minecraft-english)
+[![Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-training--data-FFD21E.svg)](https://huggingface.co/datasets/thtesche/laya-minecraft-training-data)
+
+> **A dual-process Minecraft agent.** A calibrated **System-1** head decides every tick; a code
+> layer guarantees only *valid* actions ever reach it; an LLM **System 2** steps in only when
+> System 1 is stuck. The reward is the world, not a human label.
+
 A Minecraft agent whose **System-1 decisions are made by
 [Laya](https://github.com/NandhaKishorM/laya)** — a non-autoregressive
 typed-decision engine (`choice` / `score` / `noul`) — and which acts through the
@@ -54,7 +64,7 @@ rationale and the zero-shot findings behind this split are in
 | Stronghold → End portal (phase 4) — eyes of ender, stronghold search, end-portal activation, demand-sized re-supply, respawn bed beside the frame | implemented, walked live (run184 filled the frame, run186 laid and slept in the frame bed, run208 activated the portal); the whole chain has not yet been closed from an empty world — see [`docs/stronghold.md`](docs/stronghold.md) |
 | The End → dragon (phase 5) — pumpkin and MLG water, enter the portal, crystals first, bow for the flying dragon and a melee perch, `end_complete` as the final goal | implemented, **not yet walked live** (no run has entered the End) — see [`docs/architecture.md`](docs/architecture.md#phase-5--the-end-and-the-dragon-2026-11-08-71c9b63) |
 | M3, second round — run79–86 head on top of the 2026-10-14 checkpoint | trained (held-out accuracy 0.767 → 0.885), served live since run87 via `LAYA_EXTRA_MODELS` |
-| M5 — stronger training signal: relative narrative + offline teacher/judge labels | planned (see [`docs/architecture.md`](docs/architecture.md#next-milestones)) |
+| M5 — stronger training signal: relative narrative + offline teacher/judge labels | reached — served since 2026-11-11 (corpus 187–220 with flip-stable teacher corrections; see [`docs/architecture.md`](docs/architecture.md#next-milestones)) |
 
 The run **stops itself** once every phase stands (`Agent._goal_reached`): the overworld goal
 (`actions.tech_tree_complete` — full diamond kit **worn** + shield in the off-hand, a bed at the
@@ -167,7 +177,7 @@ export LAYA_EXTRA_MODELS='{"english": "thtesche/laya-minecraft-english"}'
 
 To publish a new checkpoint: `hf upload thtesche/laya-minecraft-english runs/checkpoints/minecraft-<time> --exclude "checkpoint_latest/*"`, then refresh the card (`hf/model-card.md`). Weights must go to a **model** repo — laya's loader defaults to `repo_type="model"` and does not resolve dataset repos.
 
-Tests: `uv run pytest tests/ -q` (1755 tests) — the same command the pre-commit hook and CI run.
+Tests: `uv run pytest tests/ -q` (1818 tests) — the same command the pre-commit hook and CI run.
 
 ## Documentation
 
