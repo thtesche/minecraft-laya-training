@@ -185,3 +185,9 @@ Tests: `uv run pytest tests/ -q` (1755 tests) — the same command the pre-commi
   started and archived, how a fix lands, how a head is trained.
 - [`viewer/README.md`](viewer/README.md) — the live browser view of the bot (a spectator
   client with prismarine-viewer).
+
+## License
+
+The agent code in this repository is [MIT licensed](LICENSE). The published Laya checkpoints and
+training corpora on the Hub carry their own license (`apache-2.0`), inherited from the
+[`convaiinnovations/laya`](https://huggingface.co/convaiinnovations/laya) base model.
