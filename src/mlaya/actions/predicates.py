@@ -1856,6 +1856,13 @@ def _stew_brewable(gs: GameState) -> int:
     # table when the bowl has to be made in the same batch. A carried bowl is enough on its own.
     if int(gs.inventory.get(BOWL_ITEM, 0) or 0) <= 0 and not _has(gs.inventory, "crafting_table"):
         return 0
+    # The brew still needs a slot for its output. `mushroom_stew` does not stack, and the server
+    # reserves the room to store it *before* it spends the ingredients - so even a brew that would
+    # free its own three slots is refused when the pack is already full. Live, run (tick 450-452):
+    # a stocked pantry at 36/36 answered `[CRAFT_EXECUTION_FAILED] ... needs inventory room to
+    # store 1 mushroom_stew (36/36 slots)` three ticks running while the oracle said `drop_junk`.
+    if gs.slots_used >= INVENTORY_SLOTS:
+        return 0
     inv = gs.inventory
     need = _stew_need(gs) or 1
     mushrooms = min(int(inv.get(n, 0) or 0) for n in STEW_MUSHROOMS)
@@ -1910,7 +1917,14 @@ def _stew_source_in_reach(gs: GameState) -> bool:
         return False
     if _stew_brewable(gs) > 0:
         return True
+    # Nothing brews yet, so the only path left is a walk to the mushroom the pack is missing - and
+    # a walk fetches no slot. Both kinds already carried with nothing brewing means the brew was
+    # withheld for want of room (a full pack, by `_stew_brewable`), and that room a mushroom walk
+    # cannot buy: the drop belongs there, not the stew. A kind the pack carries none of wants a
+    # fresh slot of its own, which `collect_block` is refused when the pack is near full.
     missing = [n for n in STEW_MUSHROOMS if int(gs.inventory.get(n, 0) or 0) <= 0]
+    if not missing or gs.slots_used >= INVENTORY_NEAR_FULL:
+        return False
     return all(gs.resource_nearest(n) is not None for n in missing)
 
 

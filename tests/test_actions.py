@@ -10802,6 +10802,37 @@ class StewPantryTest(unittest.TestCase):
         self.assertEqual(a.args["items"][0]["item_name"], STEW_ITEM)
         self.assertLessEqual(a.args["items"][0]["count"], STEW_BATCH)
 
+    def test_a_full_pack_withholds_the_brew(self) -> None:
+        # Live, run (tick 450-452): the pantry carried bowl, red and brown, yet the pack was
+        # 36/36 and the server answered `[CRAFT_EXECUTION_FAILED] ... needs inventory room to
+        # store 1 mushroom_stew (36/36 slots)` three ticks running. `mushroom_stew` does not
+        # stack, and the server reserves the output slot before it spends the ingredients, so a
+        # brew that would free its own slots is still refused. The brew is off the offer and off
+        # the resolve until a slot opens - `drop_junk` the oracle's verdict throughout.
+        g = self._pantry(bowl=1, red_mushroom=1, brown_mushroom=1)
+        g.slots_used = INVENTORY_SLOTS
+        self.assertNotIn("craft_stew", candidates(g))
+        self.assertIsNone(resolve("craft_stew", g))
+
+    def test_a_full_pack_does_not_walk_the_stew_either(self) -> None:
+        # Nothing brews and the one mushroom still missing is in the scan, but the walk fetches no
+        # slot: a full pack offers `drop_junk`, not a pick that `collect_block` would refuse.
+        g = self._pantry(bowl=1, red_mushroom=1)
+        g.resources = {"brown_mushroom": [BlockHit("brown_mushroom", "brown_mushroom",
+                                                   7, 63, 14, 11.0)]}
+        g.slots_used = INVENTORY_SLOTS
+        self.assertNotIn("craft_stew", candidates(g))
+
+    def test_one_free_slot_still_brews(self) -> None:
+        # The output needs a single slot, so 35/36 is room enough: the brew comes back the moment
+        # the pack is a hair short of full.
+        g = self._pantry(bowl=1, red_mushroom=1, brown_mushroom=1)
+        g.slots_used = INVENTORY_SLOTS - 1
+        self.assertIn("craft_stew", candidates(g))
+        a = resolve("craft_stew", g)
+        self.assertEqual(a.tool, "craft_item")
+        self.assertEqual(a.args["items"][0]["item_name"], STEW_ITEM)
+
     def test_a_short_pantry_picks_the_shortfall_instead_of_asking_for_the_batch(self) -> None:
         # run170 it32-35: one red and one brown carried, the offer asked for `STEW_BATCH` (two)
         # and the server answered `[CRAFT_MATERIALS_MISSING] brown_mushroom x1, red_mushroom x1`
