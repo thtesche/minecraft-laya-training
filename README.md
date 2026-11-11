@@ -188,6 +188,6 @@ Tests: `uv run pytest tests/ -q` (1755 tests) — the same command the pre-commi
 
 ## License
 
-The agent code in this repository is [MIT licensed](LICENSE). The published Laya checkpoints and
-training corpora on the Hub carry their own license (`apache-2.0`), inherited from the
-[`convaiinnovations/laya`](https://huggingface.co/convaiinnovations/laya) base model.
+[Apache License 2.0](LICENSE) throughout — the agent code in this repository as well as the
+published Laya checkpoints and training corpora on the Hub, consistent with the
+[`convaiinnovations/laya`](https://huggingface.co/convaiinnovations/laya) base model they derive from.
