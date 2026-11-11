@@ -1787,7 +1787,8 @@ class Agent:
                     return {"action": relief, "note": f"stall preselect -> {relief.label}"}
                 self._stall_escalations += 1
                 alt, chosen, _ = self._escalate(
-                    gs, "stall_loop", decision.action_label, state.get("iteration", 0))
+                    gs, "stall_loop", decision.action_label, state.get("iteration", 0),
+                    exclude=frozenset({decision.action_label}) | set(gs.stuck_labels))
                 if alt is not None and chosen != decision.action_label:
                     return {"action": alt, "escalated": True, "note": f"stall -> {chosen}"}
             return {"action": action}
@@ -1819,7 +1820,7 @@ class Agent:
         return None
 
     def _escalate(self, gs, trigger: str, unresolved_label: str | None,
-                  iteration: int) -> tuple[Any, str | None, dict | None]:
+                  iteration: int, exclude: frozenset = frozenset()) -> tuple[Any, str | None, dict | None]:
         """Ask System 2 for a way out, run the first proposed step that resolves, record the call.
 
         Returns `(action, chosen_label, raw_plan)`: the concrete action to run (or None), the label
@@ -1827,6 +1828,12 @@ class Agent:
         the decision log so the older readers and the report keep working; the full brief that was
         sent, the plan and whether it resolved go to the System-2 side-file, where the escalations
         are scored on their own (`mlaya.analysis`).
+
+        `exclude` drops plan steps that are not a way out of *this* stall: the stall guard already
+        withholds the looping label, so a plan that opens with it (live, run223 it310: System 2's
+        own fix led with `collect_drops`, the very label the stall had dropped) would otherwise be
+        taken as `chosen`, spend an escalation, and run the loop for another tick. Skipping those
+        steps keeps the first *different* step the model offered.
         """
         allowed = list(candidates(gs))
         trajectory = trajectory_digest(self.history)
@@ -1841,11 +1848,23 @@ class Agent:
         steps = steps if isinstance(steps, list) else []
         chosen: str | None = None
         action = None
+        # The excluded labels (the looping label and the stuck set) are a *preference*, not a ban:
+        # the first resolvable step that is a real way out wins, but if the model offered nothing
+        # else that resolves, the loop still runs the echoed label as before - the worst case is
+        # the very action it would have run anyway (`exclude` only spares the wasted detour).
         for label in steps:
+            if label in exclude:
+                continue
             built = resolve(label, gs)
             if built is not None:
                 chosen, action = label, built
                 break
+        if action is None:
+            for label in steps:
+                built = resolve(label, gs)
+                if built is not None:
+                    chosen, action = label, built
+                    break
         self.log.append({"stage": "escalation", "iteration": iteration, "trigger": trigger,
                          "label": unresolved_label, "plan": plan, "steps": steps,
                          "chosen": chosen})

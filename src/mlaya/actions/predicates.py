@@ -2034,6 +2034,16 @@ def _nether_departure_ready(gs: GameState) -> bool:
     (live, run30: fully stocked, portal burning, bot 40 m off in a hole, `enter_portal` never
     offered and no step willing to walk it home).
 
+    The bed at the base is a *requirement* of the crossing, not only an assumption: a death in the
+    Nether respawns at the last bed, and without one laid the respawn drops at the world spawn, a
+    long walk from the base (live, run223: the lava death at it250 landed 85 blocks off, the bed
+    never laid because `enter_portal` won the tick over `place_bed`). `place_bed` only lays the bed
+    *after* the gate lights - laid earlier it falls in the open frame and `light_portal` fails on it
+    (`_expedition_ready`) - so the bed and the crossing share the post-lighting window, and gating
+    the departure on `_bed_at_base` holds `enter_portal` until `place_bed` has run. The same shape
+    as the chest gate (`8298a43`): a haul one blaze could take back is not carried out an unprepared
+    door.
+
     The gold helmet counts whether it is in the pack or already worn, not through
     `_all_nether_prep_steps`. That list drops any step whose material it cannot reach *right now*,
     so a bot with no coal has no gold step in it, the empty list reads as "prep done", and the
@@ -2061,7 +2071,8 @@ def _nether_departure_ready(gs: GameState) -> bool:
     return (nether_expedition_open(gs) and not _nether_haul_home(gs)
             and _overworld(gs) and _portal_lit(gs) and _expedition_ready(gs)
             and (_has(gs.inventory, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM))
-            and _nether_food_secured(gs) and _pack_room_for_haul(gs))
+            and _nether_food_secured(gs) and _pack_room_for_haul(gs)
+            and _bed_at_base(gs))
 
 
 def _exit_portal_cell(gs: GameState) -> tuple[int, int, int] | None:
@@ -2317,14 +2328,33 @@ def _supply_drop_in_reach(gs: GameState) -> bool:
     return _supply_drop(gs) is not None
 
 
+def _nearest_loaded_drop(gs: GameState) -> float | None:
+    """Distance to the closest loaded dropped item, or None when nothing is loaded.
+
+    `gs.drops` counts kills, not reach: the reflex kills a mob and the bot walks on, so the item
+    the kill left can be a long walk back. This reads the one number the sweep actually needs -
+    how far the nearest loaded item entity lies - from the scan that already carries it.
+    """
+    dists = [d for _, _, d, _ in gs.dropped_items if d is not None]
+    return min(dists) if dists else None
+
+
 def _drops_to_collect(gs: GameState) -> bool:
     """Whether `collect_drops` has anything the carried pack can actually take.
 
-    A fresh kill's drops are not named, so that sweep needs a free slot; a supply drop is checked
-    item by item in `_supply_drop`. Live, run217: a pinned pack and one loaded arrow entity let the
-    reaction own 289 ticks in a row.
+    A fresh kill's drops are not named, so that sweep needs a free slot *and* a loaded item inside
+    the sweep's own reach: `gs.drops` counts kills, not reachable items, so a kill a hundred blocks
+    back still reads as one. Live, run223 it46-389: ten sweeps on drops 34-107 blocks away answered
+    `[NO_MATCHING_ITEMS]`, every sweep on a drop within seven blocks succeeded. A supply drop is
+    checked item by item in `_supply_drop`; an unnamed kill with nothing loaded yet (`near is None`)
+    still gets its one tick - the server reported the kill, the item entity is only not scanned.
     """
-    return _supply_drop(gs) is not None or (gs.drops > 0 and gs.slots_used < INVENTORY_SLOTS)
+    if _supply_drop(gs) is not None:
+        return True
+    if gs.slots_used >= INVENTORY_SLOTS:
+        return False
+    near = _nearest_loaded_drop(gs)
+    return gs.drops > 0 and (near is None or near <= DROP_SWEEP_RADIUS)
 
 
 def _skeletons_in_reach(gs: GameState) -> int:
@@ -3162,6 +3192,12 @@ def _chest_candidates(gs: GameState) -> list[tuple[int, int, int]]:
             taken.add(tuple(station))
     taken |= set(gs.overflow_skip)
     taken |= set(gs.placement_refused)
+    if gs.blocked_cell is not None:
+        # The server refused this exact cell and named a diggable block in it: `make_room` clears
+        # it, but naming it again before that dig has run is one `[PLACE_TARGET_OCCUPIED]` per tick
+        # (live, run223 it305-331). Keep it out of the picker until the dig frees it; a cell that
+        # cannot be cleared is already in `placement_refused` above.
+        taken.add(tuple(gs.blocked_cell))
     return [(bx + dx, by + 1, bz + dz)
             for dx, dz in (CHEST_SITE_FIRST,) + STORAGE_SITES
             if (bx + dx, by + 1, bz + dz) not in taken]

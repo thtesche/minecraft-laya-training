@@ -581,7 +581,8 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
                if gs.end_portal_active
                else f"walk to the confirmed end portal frame at {x},{y},{z} to fill its sockets")
         return Action(label, "navigate", {"x": x, "y": y, "z": z,
-                                         "range": STRONGHOLD_ARRIVAL_RANGE}, why)
+                                         "range": STRONGHOLD_ARRIVAL_RANGE,
+                                         "dig": True, "scaffold": True}, why)
     if label == "activate_end_portal":
         if not _at_stronghold(gs) or gs.end_portal_active:
             return None

@@ -810,6 +810,16 @@ def candidates(gs: GameState) -> list[str]:
     # --- Home base storage ---
     if (gs.base is not None and not _chest_ready(gs) and not gs.chest_blocked
             and _chest_site(gs) is not None):
+        if gs.blocked_cell is not None and tuple(gs.blocked_cell) not in gs.placement_refused:
+            # A chest placement the terrain just refused at a diggable cell (`[PLACE_TARGET_OCCUPIED]`,
+            # leaves or dirt): dig it first, so the chest lands on the layout's own spot next tick
+            # rather than 25 ticks later behind the maintenance steps that otherwise win the ticks
+            # (live, run223 it305-331: the recovery worked, but only after craft_furnace, mine_gold,
+            # smelt_gold... took the twenty-five ticks between). Nothing safety-critical waits below
+            # this point (the reflex and the danger gate own survival), so forcing the one dig here is
+            # safe; the dig clears `blocked_cell` and the next tick resumes the normal offer.
+            out.append("make_room")
+            return out
         if _has(inv, CHEST_ITEM) and _at_base(gs):
             out.append("place_chest")
         elif table and not _has(inv, CHEST_ITEM) and _plank_units(inv) >= CHEST_PLANKS:
@@ -2069,7 +2079,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if gs.base is None or gs.chest_blocked or not _has(inv, CHEST_ITEM):
             return None
         cell = _chest_site(gs)
-        if cell is None:
+        if cell is None or (gs.blocked_cell is not None and cell == tuple(gs.blocked_cell)):
+            # `_chest_site` already skips a cell the server refused (`_chest_candidates`); this is the
+            # belt to that suspenders, so a refused cell is never named again even if the picker is
+            # reached another way. The dig (`make_room`) frees it, then the placement retries.
             return None
         cx, cy, cz = cell
         if not _chest_ready(gs):

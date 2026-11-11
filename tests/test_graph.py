@@ -531,6 +531,28 @@ class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent._stall_escalations, 1)
         self.assertEqual(agent.system2_log.records[-1]["chosen"], "explore")
 
+    async def test_a_plan_opening_with_the_stuck_label_skips_to_the_next_step(self) -> None:
+        # Live, run223 it310: the stall dropped `collect_drops`, and System 2's own fix opened with
+        # `collect_drops` - the very label the guard had just withheld. The old loop took that first
+        # resolvable step as `chosen`, spent an escalation and ran the loop one more no-progress
+        # tick. The looping label is excluded, so the first *different* step the plan offers runs.
+        agent = self._agent()
+        agent._stall_dropped = {"collect_drops": STALL_ESCALATE_REPEATS}
+        stuck = Action("collect_drops", "pick_up_items", {"radius": 16}, "sweep")
+        food = Action("take_stored_food", "take_from_chest", {}, "grab the banked food")
+        with mock.patch.object(graph, "candidates",
+                               return_value=["collect_drops", "take_stored_food"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: stuck if lbl == "collect_drops"
+                               else food if lbl == "take_stored_food" else None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": ["collect_drops", "take_stored_food"]}):
+            out = await agent._guard(self._state("collect_drops"))
+        self.assertIs(out["action"], food)
+        self.assertTrue(out["escalated"])
+        self.assertEqual(out["note"], "stall -> take_stored_food")
+        self.assertEqual(agent.system2_log.records[-1]["chosen"], "take_stored_food")
+
     async def test_below_the_repeat_threshold_no_escalation(self) -> None:
         agent = self._agent()
         agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS - 1}

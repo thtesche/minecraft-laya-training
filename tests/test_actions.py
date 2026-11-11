@@ -1002,6 +1002,22 @@ class EndSupplyTest(unittest.TestCase):
         a = resolve("collect_drops", g)
         self.assertEqual(a.args, {"radius": 16})
 
+    def test_a_fresh_kill_whose_drop_is_loaded_out_of_reach_is_not_swept(self) -> None:
+        # Live, run223 it46-389: the reflex killed a mob, the bot walked on, and `gs.drops` still
+        # read one while the dropped entity lay 34-107 blocks back. Ten radius-16 sweeps on those
+        # far drops answered `[NO_MATCHING_ITEMS]`; only a loaded item inside the sweep's reach is
+        # worth the walk. A near kill (<= the radius) still sweeps.
+        from mlaya.actions.constants import DROP_SWEEP_RADIUS
+        g = self._lull()
+        g.drops = 1
+        g.dropped_items = [("rotten_flesh", 2, DROP_SWEEP_RADIUS + 8.0,
+                            (40.0, 64.0, 5.0))]
+        self.assertNotIn("collect_drops", candidates(g))
+        self.assertIsNone(resolve("collect_drops", g))
+        g.dropped_items = [("rotten_flesh", 2, 6.0, (6.0, 64.0, 5.0))]
+        self.assertIn("collect_drops", candidates(g))
+        self.assertEqual(resolve("collect_drops", g).args, {"radius": 16})
+
     def test_a_finished_arrow_reserve_leaves_arrow_drops_alone(self) -> None:
         from mlaya.actions import END_ARROWS
         g = self._lull(arrow=END_ARROWS)
@@ -3850,6 +3866,53 @@ class HomeBaseTest(unittest.TestCase):
         a = resolve("place_chest", g)
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-198, -46, -96))
 
+    def test_a_diggable_blocked_cell_is_kept_out_of_the_chest_picker(self) -> None:
+        # Fix 3a. The server refused the layout's own cell at a diggable block (`blocked_cell`,
+        # not yet in `placement_refused`): `make_room` will clear it, but naming it again before
+        # the dig is one `[PLACE_TARGET_OCCUPIED]` per tick (live, run223 it305-331). The picker
+        # skips it so nothing re-targets the occupied cell while the dig is pending.
+        g = self._home(self._geared(chest=1))
+        self.assertEqual(_chest_site(g), (-197, -46, -97))
+        g.blocked_cell = (-197, -46, -97)
+        self.assertNotIn((-197, -46, -97), _chest_candidates(g))
+        self.assertEqual(_chest_site(g), (-197, -46, -95))
+
+    def test_a_diggable_blocked_cell_forces_the_dig_before_any_chest_step(self) -> None:
+        # Fix 3b. `make_room` is never otherwise on the base offer (it is only a resolve-builder),
+        # so a chest cell blocked by a diggable block used to wait out the maintenance steps -
+        # craft_furnace, mine_gold, smelt_gold took the twenty-five ticks before the recovery ran
+        # (live, run223 it305-331). With a diggable `blocked_cell` the dig is forced first and the
+        # offer returns there, so the chest lands on the layout's own cell the next tick.
+        g = self._home(self._geared(chest=1))
+        g.blocked_cell = (-197, -46, -97)
+        cand = candidates(g)
+        self.assertEqual(cand[-1], "make_room")
+        self.assertNotIn("place_chest", cand)
+        self.assertIsNotNone(resolve("make_room", g))
+
+    def test_a_blocked_cell_the_dig_cannot_clear_still_lets_the_chain_move_on(self) -> None:
+        # The other side of Fix 3b: once the refused cell is in `placement_refused` (the dig could
+        # not clear it), the make_room-first branch stands down and the picker's reroute (Fix 3a /
+        # the existing chain) takes the chest to the next free cell.
+        g = self._home(self._geared(chest=1))
+        g.blocked_cell = (-197, -46, -97)
+        g.placement_refused = frozenset({(-197, -46, -97)})
+        cand = candidates(g)
+        self.assertNotIn("make_room", cand)
+        self.assertIn("place_chest", cand)
+        a = resolve("place_chest", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -95))
+
+    def test_place_chest_never_names_the_blocked_cell_even_if_the_picker_is_bypassed(self) -> None:
+        # Fix 3c, belt-and-suspenders to 3a: should the picker ever hand back the blocked cell
+        # (reached another way), `place_chest` still refuses to name it - the dig frees it first.
+        from unittest import mock
+        import mlaya.actions.planner as planner
+        g = self._home(self._geared(chest=1))
+        g.blocked_cell = (-197, -46, -97)
+        with mock.patch.object(planner, "_chest_site", return_value=(-197, -46, -97)):
+            self.assertIsNone(resolve("place_chest", g))
+
     def test_every_refused_cell_closes_the_chain_without_the_flag(self) -> None:
         # run188: the base anchor sat on a one-block shelf. The layout's own cell refused, the
         # picker moved on, and the chain stays open until every site beside the base is refused -
@@ -5819,6 +5882,20 @@ class NetherExpeditionTest(unittest.TestCase):
         a = resolve("leave_nether", g)
         self.assertNotIn("allow_low_supplies", a.args)
 
+    def test_the_first_crossing_waits_for_a_bed_at_the_base(self) -> None:
+        # Fix 4. A death in the Nether respawns at the last bed; without one laid the respawn
+        # drops at world spawn, a long walk from the base (live, run223: the lava death landed 85
+        # blocks off, the bed never laid because `enter_portal` won the tick over `place_bed`).
+        # `place_bed` can only lay the bed after the gate lights (earlier it falls in the open
+        # frame), so the bed and the crossing share the post-lighting window: the departure waits
+        # for `_bed_at_base` and `place_bed` gets its tick first.
+        g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=64)
+        g.resources = {k: v for k, v in g.resources.items() if k != "white_bed"}
+        g.bed_pos = None
+        g.inventory.pop("white_bed", None)
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertIsNone(resolve("enter_portal", g))
+
     def test_the_gate_can_open_even_without_cobblestone(self) -> None:
         # Cobblestone is no longer required; the bot can enter the portal with any amount.
         g = self._home(flint_and_steel=1, bow=1, arrow=16, cobblestone=12)
@@ -6724,6 +6801,9 @@ class PiglinBarterTest(unittest.TestCase):
         base.update(inv)
         g = with_chest(at_home(lit_portal(geared(**base))))
         g.food = 20.0
+        # The respawn bed is laid at the base: a crossing is only departure-ready with the bed
+        # down (Fix 4, run223), and this prep lull is past that point.
+        g.bed_pos = g.base
         g.resources = {**(g.resources or {}),
                        "gold_ore": [BlockHit("gold_ore", "gold_ore", -200, 20, -100, 40.0)]}
         return g
@@ -6955,6 +7035,9 @@ class StrongholdPhaseTest(unittest.TestCase):
         g.food = 20.0
         g.dimension = self.OVERWORLD
         g.mobs = list(mobs)
+        # The respawn bed laid at the base: a crossing is only departure-ready with it down (Fix 4,
+        # run223), and this starting state is already home from the first Nether trip.
+        g.bed_pos = self.BASE
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                   *self.GATE, 2.0)]}
         return g
@@ -7404,6 +7487,11 @@ class StrongholdFrameAddressTest(unittest.TestCase):
         self.assertEqual(a.tool, "navigate")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FRAME)
         self.assertEqual(a.args["range"], STRONGHOLD_ARRIVAL_RANGE)
+        # Fix 5. The stronghold walk digs and scaffolds its way through, as `place_bed_stronghold`
+        # and twenty other planner navigations already do: a frame buried behind stone or across a
+        # ravine is reached rather than refused mid-route and read as a stall.
+        self.assertTrue(a.args["dig"])
+        self.assertTrue(a.args["scaffold"])
 
     def test_a_frame_loaded_in_a_far_chunk_is_not_underfoot(self) -> None:
         # The run173 tick: twelve frame blocks in loaded chunks, nothing within the scan, and no
@@ -8318,6 +8406,9 @@ class RodDemandSizedToTheFrameTest(unittest.TestCase):
         g = at_home(geared(**stock), base=self.BASE)
         g.chest_pos = self.CHEST
         g.dimension = "minecraft:overworld"
+        # The respawn bed laid at the base: a crossing is only departure-ready with it down (Fix 4,
+        # run223); the rod top-up the class tests is a re-crossing, well past the first.
+        g.bed_pos = self.BASE
         g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
                                                   *self.GATE, 2.0)]}
         return g
