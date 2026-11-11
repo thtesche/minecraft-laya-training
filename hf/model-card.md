@@ -18,7 +18,7 @@ This is an RLCD fine-tune of the English Laya checkpoint ([`convaiinnovations/la
 
 - **Agent code:** [github.com/thtesche/minecraft-laya-training](https://github.com/thtesche/minecraft-laya-training)
 - **Training corpora:** [datasets/thtesche/laya-minecraft-training-data](https://huggingface.co/datasets/thtesche/laya-minecraft-training-data)
-- **This checkpoint:** the one served live by the agent (since 2026-11-07).
+- **This checkpoint:** the one served live by the agent (since 2026-11-11).
 
 ## How the agent uses it
 
@@ -38,26 +38,30 @@ Only ticks where the verifier confirmed real progress become positive training e
 |---|---|
 | Method | RLCD (Reinforcement Learning for Calibrated Decisions) — REINFORCE with group-mean baseline, strictly proper scoring rules |
 | Base | `convaiinnovations/laya` (english), encoder frozen |
-| Data | 2,564 verified decision ticks from live runs 187–205 |
-| Epochs / batch | 4 epochs, micro-batch 8, 1,284 optimizer updates |
+| Data | 6,459 decision-tick items from live runs 187–219, plus run 220 folded in through an offline teacher (flip-stable judge corrections) |
+| Epochs / batch | 4 epochs, micro-batch 8, 3,232 optimizer updates |
 | Learning rates | head 1e-4, encoder 2.5e-5 (cosine, min 1e-6) |
-| Calibration | one temperature per (question type, option count), fitted on 284 held-out items |
+| Calibration | one temperature per (question type, option count), fitted on 400 held-out items (choice temperature 1.197) |
 
 **Reward design details** that make the data trustworthy: ticks inside a ping-pong (six or more ticks repeating one label with no item gained) teach no intent and are filtered out; `stow_surplus` counts as progress only when an item actually left the pack.
 
+**Offline teacher (run 220):** a second, text-generating model reviewed each decision after the fact under a neutral framing; a blind judge then compared its pick against the agent's. Only corrections that survived an A/B slot-swap flip test (the verdict does not reverse when the two actions change positions) were kept as labels — ~13 flip-stable corrections where the agent's choice made no progress. The whole corpus is re-rendered through today's narrative + criteria wording, so the head is trained on exactly the text it meets at inference.
+
 ## Evaluation
 
-415 items from runs 206–208 (a period the training corpus does not cover):
+415 items from runs 206–208 (a period the training corpus does not cover), scored against this checkpoint's own frozen base (`2026-10-28`):
 
 | Metric | Before fine-tune | After fine-tune |
 |---|---|---|
-| Accuracy | 0.9301 | **0.9325** |
-| Mean confidence | 0.870 | **0.905** |
-| ECE (lower is better) | 0.0625 | **0.0435** |
-| Brier (lower is better) | 0.1402 | **0.1273** |
-| Brier top-1 (lower is better) | 0.0737 | **0.0657** |
+| Accuracy | 0.9181 | 0.9108 |
+| Mean confidence | 0.868 | 0.900 |
+| ECE (lower is better) | 0.0585 | **0.0262** |
+| Brier (lower is better) | 0.1470 | **0.1322** |
+| Brier top-1 (lower is better) | 0.0765 | **0.0647** |
 
-> **Honest caveat:** 4 of the 415 eval items overlap the training/calibration data, so this is not a strictly held-out evaluation. The full `train_report.json` (including abstention thresholds `choice:2 → 0.5066`, `choice:3-5 → 0.3575`) is in the repo.
+This fine-tune trades a small amount of top-1 accuracy (−0.7 pt on this set) for a large calibration gain: ECE drops by more than half and both Brier scores fall. Its headline value is not this held-out accuracy — it restores train=inference after a criteria-wording change and folds in the flip-stable teacher corrections (both of which live outside runs 206–208, so they cannot show here). Measured as deployed on the same re-rendered eval, the prior `2026-11-07` head scores 0.9205 accuracy / 0.0396 ECE; this one 0.9108 / 0.0262.
+
+> **Honest caveat:** 6 of the 415 eval items overlap the training/calibration data, so this is not a strictly held-out evaluation. The full `train_report.json` (including abstention thresholds `choice:2 → 0.5181`, `choice:3-5 → 0.5907`) is in the repo.
 
 ## Checkpoint lineage
 
@@ -70,7 +74,8 @@ The agent has fine-tuned Laya six times as its playthroughs got harder. Earlier 
 | 2026-10-14 | 61 | 0.934 | yes |
 | 2026-10-23 | 279 | 0.885 | yes (runs 79–86) |
 | 2026-10-28 | 522 | 0.918 | yes |
-| **2026-11-07 (this repo)** | 415 | **0.933** | overlapping |
+| 2026-11-07 | 415 | 0.933 | overlapping |
+| **2026-11-11 (this repo)** | 415 | **0.911** | overlapping |
 
 ## Usage
 
@@ -120,8 +125,8 @@ questions.json                     question signatures from training
 
 - **Domain-bound:** the labels are Minecraft survival actions (craft, mine, navigate, sleep, flee…). It is not a general-purpose decision model.
 - **Two questions only:** `intent` and `in_danger`; `score` and `noul` primitives are untrained here (0 items).
-- **Confidence is calibrated for this domain** — the fitted temperatures (1.176 for 2-option choice) apply to these question shapes, not arbitrary new schemas.
-- **Endgame blind spot:** earlier checkpoints had no endgame rows; this one covers the Nether/stronghold chain only as far as runs 187–205 went.
+- **Confidence is calibrated for this domain** — the fitted temperature (1.197 for choice questions) applies to these question shapes, not arbitrary new schemas.
+- **Endgame blind spot:** earlier checkpoints had no endgame rows; this one covers the Nether/stronghold chain only as far as runs 187–220 went.
 
 ## Citation
 

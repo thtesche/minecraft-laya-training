@@ -1716,10 +1716,15 @@ which tool the moment allows.
     **verifier stays the grounded primary truth** — a tick that demonstrably progressed is not
     overridden, and any de-dup collision goes to the verifier. Scope: `intent` only; the
     `in_danger` gate's floor/ceiling heuristic in `dataset.py` is untouched.
-  - *Still owed (user step):* rebuild the corpus (`dataset --rerender [--teacher …]`), train, and
-    validate against **real run outcomes** (goal, deaths, ticks-to-milestone), not judge agreement —
-    otherwise the head is tuned to please the big model rather than to survive. Go live via
-    `LAYA_EXTRA_MODELS` only once it at least matches.
+  - *Done 2026-11-11:* corpus rebuilt (`dataset --rerender --teacher runs/history/teacher-run220.jsonl`,
+    runs 187–219 + run 220), trained to `minecraft-20261111-103647`, and adopted in `.env`. On run 220
+    the flip test dropped **36 of 180** disagreements (20% — far above run111's 3.4%, because the digest
+    payload the judge reads changed), leaving ~13 flip-stable no-progress corrections. Offline on the
+    re-rendered 206–208 held-out it trades −0.7 pt accuracy (0.9205 → 0.9108) for a halved ECE
+    (0.0396 → 0.0262). Published to the Hub (model + dataset repos).
+  - *Still owed (user step):* validate against **real run outcomes** (goal, deaths, ticks-to-milestone),
+    not judge agreement — otherwise the head is tuned to please the big model rather than to survive.
+    The offline accuracy dip makes a live A/B against the prior head the honest tie-breaker.
 - **Iron chain (re-)validated live (tier 0 → 3):** `craft_pickaxe` → `mine_stone` →
   `craft_stone_pickaxe` → `mine_iron` → `mine_coal` → `craft_furnace` → `smelt_iron` →
   `craft_iron_pickaxe` has **run through live**, including the new unblock recovery

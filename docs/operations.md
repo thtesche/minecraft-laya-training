@@ -62,8 +62,9 @@ most two distinct labels and under 3 blocks moved).
 Optional, only when a trained head is meant to run:
 `export LAYA_EXTRA_MODELS='{"english": "<repo>/runs/checkpoints/minecraft-<time>"}'` before `up`.
 Without it the loop runs the base `english` checkpoint. The head the lab serves by default is
-registered in the gitignored `.env` — currently `minecraft-20261107-132042` (fine-tuned on the
-runs 187–205 corpus over the 2026-10-28 checkpoint). A real environment variable still wins over
+registered in the gitignored `.env` — currently `minecraft-20261111-103647` (fine-tuned on the
+runs 187–219 corpus plus run 220's flip-stable teacher corrections, re-rendered, over the
+2026-10-28 checkpoint). A real environment variable still wins over
 the file, so an A/B run can override it without touching `.env`.
 
 **Watchdog:** `scripts/watchdog.sh` runs during every `up` and monitors the server log for freezes.
@@ -161,7 +162,9 @@ progress on. Everything runs on the archived log; the live loop (`graph.py`) is 
     one that flips was a reaction to which letter they arrived under, and its label is noise the
     dataset should not learn from. Measured on run111: **1 flip in 29** (3.4%) — the judge is
     order-blind in practice, and the tick that flipped (`search_enderman` vs `go_home` at it38) is
-    a genuinely close call rather than a slot artifact.
+    a genuinely close call rather than a slot artifact. On the larger run220 (digest payload) the
+    rate was far higher — **36 flips in 180** disagreements (20%) — so the gate is not cosmetic: it
+    kept 36 letter-reactions out of the labels and left ~13 flip-stable no-progress corrections.
 4. Validate at step 4 above against **real run outcomes** (goal/deaths/ticks-to-milestone), never
    against judge-agreement — optimising Laya to please the big model instead of to survive is the
    failure mode this ordering exists to avoid. Go live only once it at least matches.

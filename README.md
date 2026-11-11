@@ -156,7 +156,7 @@ ticks repeating one label or alternating two with no item gained — teach no in
 
 The served checkpoint and the training corpora are public:
 
-- **[thtesche/laya-minecraft-english](https://huggingface.co/thtesche/laya-minecraft-english)** — the current checkpoint (2026-11-07), full model card, lineage of all six fine-tunes
+- **[thtesche/laya-minecraft-english](https://huggingface.co/thtesche/laya-minecraft-english)** — the current checkpoint (2026-11-11), full model card, lineage of all seven fine-tunes
 - **[datasets/thtesche/laya-minecraft-training-data](https://huggingface.co/datasets/thtesche/laya-minecraft-training-data)** — every train/eval JSONL with schema and reward semantics
 
 A Hub id is a valid `LAYA_EXTRA_MODELS` source, so the loop can run straight from the Hub:
