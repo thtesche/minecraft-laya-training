@@ -333,12 +333,36 @@ Das ist eine Goal-Definition, kein Filter — ich lasse sie, bis du sagst, ob da
 
 ## Validierung nach dem Lauf
 
-| Metrik | Run 223 | Ziel |
-|--------|---------|------|
-| `collect_drops`-Refusals | 10 | ≤ 2 |
-| Eskalationen mit `chosen == unresolved` | 1 von 4 | 0 |
-| Eskalations-Budget verbraucht ohne Wirkung | 1 von 3 | 0 |
-| `place_chest` nach `[PLACE_TARGET_OCCUPIED]` bis zum Erfolg | 26 Ticks | ≤ 2 |
-| `travel_to_stronghold`-Timeouts | 21 | ≤ 3 |
-| `end_portal_active` | nie erreicht | erreicht |
-| `still_ratio` | 0.062 | ≤ 0.06 |
+Run 223 lief bis it600 (Stop: `limit`), 1 Tod (Lava, it248). Die Tabelle unten ist
+nach dem Lauf-Ende abgeglichen (2026-11-11 18:15, `runs/history/report-run223.md`):
+die Plan-Spalte war ein Snapshot bei ~it346, die Endwerte liegen auf fast allen
+Zeilen höher — die „Run 223"-Werte sind jetzt die Baseline, die der **nächste** Lauf
+(mit den gelandeten Fixes) unterbieten muss.
+
+| Metrik | Plan-Snapshot ~it346 | Run 223 final | Ziel nächster Lauf | Fix |
+|--------|---------|---------|------|-----|
+| `collect_drops`-Refusals (`NO_MATCHING_ITEMS`+`NO_CONFIRMED_PICKUP`) | 10 | 17 | ≤ 2 | 2 |
+| Eskalationen mit `chosen == unresolved` | 1 von 4 | 2 von 5 (it310, it345) | 0 | 1 |
+| Stall-Eskalations-Budget ohne Wirkung | 1 von 3 | 2 von 3 | 0 | 1 |
+| `place_chest` nach `[PLACE_TARGET_OCCUPIED]` bis zum Erfolg | 26 Ticks | 26 Ticks (1×, it305→331) | ≤ 2 | 3 |
+| `travel_to_stronghold`-Timeouts (`NAVIGATION_STOPPED`/`HOSTILE_SETTLED`/`BODY_HELD`) | 21 | 29 | ≤ 3 | 5 |
+| `end_portal_active` | nie erreicht | nie erreicht (chain closed False; `stronghold_estimated` erst it461, dann Loops bis it600) | erreicht | 1+5 |
+| `still_ratio` | 0.062 (falsch gemessen) | 0.19 (19 % Stillstand) | — lose, kein Fix zielt darauf | — |
+
+### Was der Lauf über die Fixes sagt
+
+- **Fix 5 ist der größte Hebel.** `NAVIGATION_STOPPED` sprang gegenüber der Baseline
+  (run219) von 1 auf 33, davon 27 auf `travel_to_stronghold` — die mit Abstand
+  größte Refusal-Klasse. `stronghold_estimated` fiel erst it461, danach verbrannte
+  der Lauf die Rest-Ticks in `leave_nether`- (it440–463) und `explore`-Loops
+  (it483–507), bis das 600er-Limit griff. Der Dig/Scaffold-Walk zielt genau auf
+  diese Timeouts.
+- **Fix 1 bestätigt.** Beide `collect_drops`-Stall-Eskalationen (it310, it345)
+  echoten das Loop-Label und verbrannten je eine Eskalation wirkungslos — genau der
+  Pfad, den der Exclude-Filter jetzt überspringt.
+- **Fix 4 bestätigt.** `bed_at_base` fiel erst it88 (Eskalation nötig, um die
+  `sleep`-Schleife zu brechen), die Lava-Tod-Episode war it248 — das Bett lag da
+  schon, aber die `BED_SLEEP_REJECTED ×17` zeigen, wie zäh das Bett-Legen ohne die
+  erzwungene Reihenfolge war.
+- **Fix 2 belegt.** `NO_MATCHING_ITEMS` auf `collect_drops` lief auf 15–16 hoch; die
+  Reach-Filter-Fälle sind die Drops, die der Reflex auf Distanz erlegte.
