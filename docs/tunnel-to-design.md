@@ -131,11 +131,19 @@ From the confirmed frame `(fx, _, fz)`, pick the nearest land cell:
 - Read `frontier_chunks.surface_water_fraction` from the bot DB. Candidate chunks are
   those with `surface_water_fraction == 0` (fully dry), ordered by horizontal distance to
   `(fx, fz)`, within `max_shore_distance`.
-- **Dependency to verify:** that the MCP host actually populates
-  `frontier_chunks.surface_water_fraction` for loaded chunks at runtime, and that it is
-  fresh near the frame. If not populated, fall back to a `view_blocks` surface scan
-  outward from above the frame until a dry standable column is found. (This fallback is
-  slower but self-contained.)
+- **Verified (2026-11-12):** the host does populate `surface_water_fraction`
+  (`bot-data/frontier.ts` `scanAndRecord` → `measureSurfaceWaterFraction`: the fraction of
+  the 256 surface cells whose highest non-air block is water/bubble, so `== 0` is exactly
+  "fully dry surface"). **But** it is written once per chunk, the first time that chunk is
+  *loaded and scanned* (`INSERT ... ON CONFLICT (chunk_key) DO NOTHING`), and never
+  updated. So the table only covers chunks the bot has actually observed. When `tunnel_to`
+  triggers from the ocean surface ~108 blocks from shore, the shore chunk is **not
+  guaranteed** to be recorded yet (it depends on render distance and the `locate_stronghold`
+  approach path).
+- Therefore the `view_blocks` fallback is **not a backstop but the primary path whenever the
+  nearest shore is unobserved**: scan the surface outward from above the frame until a dry
+  standable column is found. Use the DB query first (cheap, and `locate_stronghold`'s trek
+  often has loaded nearby land); on an empty/too-far result, fall back to the scan.
 - The mouth is the dry standable surface cell at the chosen chunk closest to the frame on
   the straight line toward it. For seed `97996358` this resolves to the south shore chunk
   `(-312,-1720)` (water 0%, d≈108), matching the hand-pilot.
@@ -281,14 +289,25 @@ added later as regression.
   classifies a seeded lava box as a hard reroute; silverfish over budget flips the break-in
   face.
 
-## 11. Open dependencies to verify before coding
+## 11. Dependencies — verification status (checked 2026-11-12, static code read)
 
-1. `frontier_chunks.surface_water_fraction` is populated by the MCP host at runtime and
-   fresh near the frame (else use the §5.1 `view_blocks` fallback).
-2. `view_blocks` box limits (`half_width ≤ 4`, `half_height ≤ 3`) are enough headroom for
-   the deep-segment scan — confirm against the host's current `view_blocks` contract.
-3. The `navigate` dig-hop with `{ dig: true, scaffold: true, range: 1 }` keeps liquid-breach
-   guards active on a descending diagonal (validated by hand; confirm the guards fire the
-   same way under the action's programmatic calls).
-4. Landmark store shape — sibling table vs. columns (§7) — against the host's store
-   conventions at implementation time.
+1. **`surface_water_fraction` populated — ✅ with a caveat.** Written by
+   `bot-data/frontier.ts` per observed chunk, `== 0` means fully dry surface. But it is
+   insert-once (`ON CONFLICT DO NOTHING`), so it covers only chunks the bot has loaded —
+   the nearest shore is not guaranteed present at trigger time. The §5.1 `view_blocks`
+   fallback is consequently load-bearing, not optional. Resolved in §5.1.
+2. **`view_blocks` box limits — ✅ exactly as assumed.** `src/actions/view-blocks/contract.ts`:
+   `MAX_BOX_HALF_WIDTH = 4`, `MAX_BOX_HALF_HEIGHT = 3` (a 9×9×7 box). The action also offers
+   `find` (nearest blocks of named kinds, anywhere loaded) and `cells` (≤32 exact cells) —
+   `find: ["lava", "infested_stone_bricks"]` is a cleaner hazard probe than a box for the
+   "is there lava anywhere near this hop" question, worth using alongside the box.
+3. **`navigate` dig-hop liquid guards — ⚠️ validated by hand-pilot, re-confirm under
+   programmatic calls.** The dry staircase was carved by hand with
+   `{ dig: true, scaffold: true, range: 1 }` and the guards held (memory
+   `shore-diagonal-staircase-validated`). Not statically re-provable without a live run,
+   which collides with the active `--fresh` run on this seed — confirm during the seeded
+   test once the run is stopped.
+4. **Landmark store shape — ✅ sibling table confirmed viable.** `StrongholdThrows`
+   (`throw-store.ts`) is keyed `(bot_id, dimension, search_id)` with begin/observe/finish
+   transactions; a sibling `stronghold_landmarks(bot_id, dimension, search_id, kind,
+   position_json, created_at)` mirrors it cleanly and is the recommended shape (§7).
