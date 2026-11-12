@@ -159,7 +159,10 @@ A straight 3-D line from the mouth to the target. A* over the full descent explo
   without placing a tower; the liquid-breach guards in
   `navigation/mineflayer/movement-policy.ts` keep each hop dry.
 - Target a ~1:1 diagonal (one block out per one block down) so the staircase self-supports
-  and stays walkable both ways — the hand-pilot slope.
+  and stays walkable both ways — the hand-pilot slope. The 1-block-per-step drop is also
+  what keeps each hop under the policy's `DEFAULT_MAXIMUM_DROP = 3` (unassisted descent cap
+  without a water bucket); a steeper or vertical descent would exceed it, which is exactly
+  why vertical runs get ladders (§2).
 
 ### 5.3 Auto-y (foliage / headroom retry)
 
@@ -197,7 +200,7 @@ adjacent to it if the exact interior is occupied. Record it as `arrived` / `port
 
 | Hazard | Policy | Behaviour |
 | --- | --- | --- |
-| **Lava** | Hard guard | Never breach into or under lava. If a scan finds lava on the planned hop, reroute (shift the waypoint, re-slope) ; if no dry route exists within budget, abort safely and record `touchedLava: false`. Never a "cross a little lava" path. |
+| **Lava** | Hard guard | Never breach into or under lava. If a scan finds lava on the planned hop, reroute (shift the waypoint, re-slope) ; if no dry route exists within budget, abort safely and record `touchedLava: false`. Never a "cross a little lava" path. **Already enforced by the movement policy** (`AVOID_BLOCKS` + `lavaFlowsInto` refuse standing in/beside lava; `opensIntoLiquid` refuses breaking into it) — the `view_blocks` pre-scan is a *routing-quality* guard that reroutes before a hop dead-ends on that refusal, not the last line of safety. |
 | **Silverfish** | Soft preference | Prefer a non-infested break-in face. Accept up to `silverfish_budget` (default 4) infested breaks if the dry route needs them; the host's hostile-mob reflex handles spawned silverfish. Each accepted block is recorded in `hazards`. |
 | **Water** | Hard guard | The staircase is dry by construction; the liquid-breach guards keep every hop dry. `touchedWater: true` on any breach is a failure, not a nuisance. (Swimming the open ocean *to* the mouth is separate and allowed; the dig starts at the dry mouth.) |
 
@@ -301,12 +304,17 @@ added later as regression.
    `find` (nearest blocks of named kinds, anywhere loaded) and `cells` (≤32 exact cells) —
    `find: ["lava", "infested_stone_bricks"]` is a cleaner hazard probe than a box for the
    "is there lava anywhere near this hop" question, worth using alongside the box.
-3. **`navigate` dig-hop liquid guards — ⚠️ validated by hand-pilot, re-confirm under
-   programmatic calls.** The dry staircase was carved by hand with
-   `{ dig: true, scaffold: true, range: 1 }` and the guards held (memory
-   `shore-diagonal-staircase-validated`). Not statically re-provable without a live run,
-   which collides with the active `--fresh` run on this seed — confirm during the seeded
-   test once the run is stopped.
+3. **`navigate` dig-hop liquid guards — ✅ closed statically.** The guard is
+   `opensIntoLiquid` → `OPENS_INTO_LIQUID` in `navigation/mineflayer/movement-policy.ts`,
+   a callback on the single `MovementPolicy` every `navigate` call uses. It decides on block
+   state + world geometry only — there is no hand-vs-programmatic path, so the hand-pilot
+   proof carries over. Critically, `evaluateBreak` applies `opensIntoLiquid` **last, even to
+   a requested break** (`dig: true`): if removing a cell would let water or lava in, the dig
+   is refused regardless of the caller asking for it. That is the mechanism that keeps the
+   staircase dry, and it holds for the action's calls identically. Lava is doubly guarded:
+   `AVOID_BLOCKS` + `lavaFlowsInto` refuse *standing* in/next-to lava, `opensIntoLiquid`
+   refuses *breaking* into it. (The seeded test still exercises it end-to-end, but the
+   invariant no longer rests on an unverified assumption.)
 4. **Landmark store shape — ✅ sibling table confirmed viable.** `StrongholdThrows`
    (`throw-store.ts`) is keyed `(bot_id, dimension, search_id)` with begin/observe/finish
    transactions; a sibling `stronghold_landmarks(bot_id, dimension, search_id, kind,
