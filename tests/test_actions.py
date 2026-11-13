@@ -8518,6 +8518,24 @@ class RodDemandSizedToTheFrameTest(unittest.TestCase):
         self.assertEqual(_eyes_owed(g), 8)
         self.assertEqual(_rods_target(g), 4)
 
+    def test_a_rod_past_the_powder_the_eyes_need_is_spare(self) -> None:
+        # run231 it365-437 and run232 it4-22: sixteen powder in the pack, sixteen eyes owed, one
+        # rod still carried. `craft_blaze_powder` has nothing left to do, so the rod is not a
+        # haul - and the pearl wave gets its gate back instead of holding `wait` for a hundred
+        # ticks at the base.
+        g = self._home(blaze_rod=1, blaze_powder=16)
+        g.chests_full = [self.CHEST]              # the base lid is full, as run231 found it
+        self.assertEqual(_powder_target(g), 16)
+        self.assertFalse(_nether_haul_home(g))
+        self.assertNotIn("craft_blaze_powder", candidates(g))
+        self.assertIn("enter_portal", candidates(g))
+        self._assert_every_offer_resolves(g)
+
+    def _assert_every_offer_resolves(self, g: GameState) -> None:
+        for label in candidates(g):
+            self.assertIsNotNone(resolve(label, g), f"{label} offered but unresolvable")
+
+
     def test_banked_powder_pays_for_the_eyes(self) -> None:
         g = self._home()
         g.powder_stowed = True
@@ -8586,6 +8604,63 @@ class RodDemandSizedToTheFrameTest(unittest.TestCase):
         g.inventory["ender_eye"] = 12
         self.assertIn("locate_stronghold", candidates(g))
 
+
+class WaveThatCannotLaunchRoamsTest(unittest.TestCase):
+    """A pearl wave the base cannot launch roams for the pearl instead of holding the tick.
+
+    Live, run231 it365-437 and run232 it4-22: at the base with the powder banked, sixteen eyes
+    owed and no enderman within reach, the offer was `wait` alone. The Overworld roam opens only
+    after `PEARL_WAVE_MAX_TRIPS` trips, so a wave the departure gate will never open strands the
+    rest of the budget on an empty list. The trip count is a promise about the future; the gate
+    is the present.
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-196, -46, -98)
+    GATE = (-195, -46, -98)
+
+    def _home(self, **inv) -> GameState:
+        stock = dict(crafting_table=1, cobblestone=64, cooked_mutton=64, white_bed=1,
+                     diamond_pickaxe=2, blaze_powder=16)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.health = 20.0
+        g.food = 20.0
+        g.chest_pos = self.CHEST
+        g.dimension = "minecraft:overworld"
+        g.bed_pos = self.BASE
+        g.powder_stowed = True
+        g.nether_entered = True
+        g.frame_complete = True
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  *self.GATE, 2.0)]}
+        return g
+
+    def test_a_blocked_wave_roams_rather_than_waits(self) -> None:
+        from mlaya.actions import _nether_departure_ready
+        g = self._home()                          # no gold helmet: the crossing gate stays shut
+        g.chests_full = [self.CHEST]              # the base lid is full, as in run231
+        self.assertFalse(_nether_departure_ready(g))
+        self.assertTrue(_search_enderman_wanted(g))
+        out = candidates(g)
+        self.assertIn("search_enderman", out)
+        self.assertNotIn("wait", out)
+        self.assertEqual(resolve("search_enderman", g).tool, "explore_frontier")
+
+    def test_a_launchable_wave_still_crosses(self) -> None:
+        from mlaya.actions import _nether_departure_ready
+        g = self._home(golden_helmet=1, blaze_powder=0)
+        self.assertTrue(_nether_departure_ready(g))
+        self.assertFalse(_search_enderman_wanted(g))
+        self.assertIn("enter_portal", candidates(g))
+
+    def test_a_pack_with_no_room_does_not_roam(self) -> None:
+        from mlaya.actions import _nether_departure_ready
+        g = self._home()
+        g.chests_full = [self.CHEST]
+        g.slots_used = INVENTORY_SLOTS
+        self.assertFalse(_nether_departure_ready(g))
+        self.assertFalse(_search_enderman_wanted(g))
 
 class PowderInPackIsEyeFuelTest(unittest.TestCase):
     """The deposit and the withdraw offered on the same tick: a lid crossed both ways.

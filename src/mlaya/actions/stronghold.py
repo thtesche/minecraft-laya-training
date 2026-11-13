@@ -110,6 +110,13 @@ def _search_enderman_wanted(gs: GameState) -> bool:
     pearls come from the Nether, and an Overworld roam here is the off-base drift that laundered
     Laya's "walk away from the full base" picks into verifier positives (the reason this path was
     moved into the Nether at all).
+
+    The trip count is a promise about the future; the departure gate is the present. When the gate
+    will not open at all - the wave is wanted, but something in it cannot be satisfied - waiting
+    for trip five is waiting for nothing. Live, run231 it365-437 and run232 it4-22: at the base,
+    sixteen powder banked, sixteen eyes owed, no pearl in reach, the offer was `wait` alone. A bot
+    at its own base with room in the pack and a gate that cannot open roams for the pearl instead
+    of holding the tick.
     """
     inv = gs.inventory
     if (_ender_pearls(inv) >= _eyes_owed(gs) or _enderman_in_reach(gs)
@@ -120,7 +127,10 @@ def _search_enderman_wanted(gs: GameState) -> bool:
         # stall count is what ends a wave that can find no route at all (`PEARL_MARCH_STALL_LIMIT`).
         return (gs.nether_travel < NETHER_PEARL_SEARCH_M
                 and int(getattr(gs, "explore_stalls", 0) or 0) < PEARL_MARCH_STALL_LIMIT)
-    return gs.pearl_wave_trips >= PEARL_WAVE_MAX_TRIPS
+    if gs.pearl_wave_trips >= PEARL_WAVE_MAX_TRIPS:
+        return True
+    return (_at_base(gs) and gs.slots_used < INVENTORY_SLOTS
+            and not _nether_departure_ready(gs))
 
 
 def _scaffold_short(gs: GameState) -> bool:

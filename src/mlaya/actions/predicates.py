@@ -1435,6 +1435,12 @@ def _nether_haul_home(gs: GameState) -> bool:
     `blaze_rod`, `craft_blaze_powder` wanted nine rods before it would craft, `stow_blaze_powder`
     had no powder to deposit, and `_nether_departure_ready` read the leftover as a haul still on
     its way in - ten `wait` ticks at (-10.4, 70, -51.5) with a burning gate and a complete kit.
+
+    The same shape came back in run231 and run232 with the powder already in the pack: sixteen
+    powder banked, sixteen eyes owed, one rod still carried. `craft_blaze_powder` is not on the
+    offer - the pack already holds the whole `_powder_target` - so the rod can never be processed,
+    and it held the pearl wave's departure gate shut for seventy-two ticks at the base with only
+    `wait` to choose from. A rod is a haul only while the chain still has work for it.
     """
     inv = gs.inventory
     rods, powder = _blaze_rods(inv), _blaze_powder(inv)
@@ -1453,7 +1459,8 @@ def _nether_haul_home(gs: GameState) -> bool:
     # eye-fuel rule would never let happen.
     return ((powder > 0 and not _powder_is_eye_fuel(gs)
             and _chest_ready(gs) and _storage_target(gs) is not None)
-            or (rods > 0 and _has(inv, "crafting_table")))
+            or (rods > 0 and _has(inv, "crafting_table")
+                and powder < _powder_target(gs)))
 
 
 def _nether_topup_wanted(gs: GameState) -> bool:
