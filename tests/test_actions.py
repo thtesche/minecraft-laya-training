@@ -2253,6 +2253,49 @@ class NetherGateTest(unittest.TestCase):
         self.assertIn((a.args["x"], a.args["z"]), [(-10, -4), (-12, -4), (-11, -3), (-11, -5)])
         self.assertTrue(a.args["dig"] and a.args["scaffold"])
 
+    def test_approach_lava_walks_back_to_a_pond_the_scan_lost(self) -> None:
+        # Live, run227 it76-147: seven obsidian carried, five still owed, and the base scan listed
+        # no lava at all - the pond the run made its obsidian at was out of `POUR_REACH`. With no
+        # source and no flow in the listing `_lava_walk_target` answers None, the obsidian chain
+        # has no step, and the offer fell to the `explore`/`go_home` fallback for 72 ticks. The
+        # cell the scan last saw is that pond's address, and walking back to it re-loads the source.
+        g = self._geared(water_bucket=1, obsidian=7, flint=4, cobblestone=60,
+                         coal=1, raw_iron=1, iron_ingot=1)
+        g.base = (-51, 72, 176)
+        g.pos = (-49.48, 72.0, 176.46)
+        g.resources = {}
+        g.lava_seen = (-55, -16, 83)
+        offered = candidates(g)
+        self.assertIn("approach_lava", offered)
+        self.assertNotIn("mine_obsidian", offered)
+        a = resolve("approach_lava", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-55, -16, 83))
+
+    def test_a_walk_back_needs_a_memory_of_the_pond(self) -> None:
+        # Without the remembered cell there is nothing to aim at, so the step stays out rather
+        # than sending the bot nowhere.
+        g = self._geared(water_bucket=1, obsidian=7, flint=4, cobblestone=60,
+                         coal=1, raw_iron=1, iron_ingot=1)
+        g.base = (-51, 72, 176)
+        g.pos = (-49.48, 72.0, 176.46)
+        g.resources = {}
+        self.assertNotIn("approach_lava", candidates(g))
+        self.assertIsNone(resolve("approach_lava", g))
+
+    def test_a_retired_pond_is_not_walked_back_to(self) -> None:
+        # `lava_retired` retires a pool after fruitless walks; remembering its cell must not undo
+        # that, or the chain reopens the loop the retirement closed.
+        g = self._geared(water_bucket=1, obsidian=7, flint=4, cobblestone=60,
+                         coal=1, raw_iron=1, iron_ingot=1)
+        g.base = (-51, 72, 176)
+        g.pos = (-49.48, 72.0, 176.46)
+        g.resources = {}
+        g.lava_seen = (-55, -16, 83)
+        g.lava_retired = frozenset({(-55, -16, 83)})
+        self.assertNotIn("approach_lava", candidates(g))
+        self.assertIsNone(resolve("approach_lava", g))
+
     def test_approach_lava_yields_to_a_source_in_the_listing(self) -> None:
         # With a pour-able source in the scan the walk is already what `mine_obsidian` does;
         # offering both would hand Laya two names for one move.

@@ -172,6 +172,18 @@ ORBIT_WINDOW = 12
 ORBIT_WALK = 36.0
 ORBIT_RATIO = 5.0
 
+# The bounce guard, the cross-label twin of the orbit guard. `_track_orbit` reads one label's own
+# trail, so a ping-pong built out of *two* labels slips through it: live, run227 it76-147, 72
+# ticks trading `explore` and `go_home` between (-49.5, 72, 176.5) and (-64.4, 70, 200.4) - 1886
+# blocks walked, nothing gained. Each label's trail is a single cell (path 0), so no per-label
+# guard can see it; summed over every tick the same window walks 336 and ends 28 from where it
+# began. The tether home that produced the bounce is withheld, so the bot stays out and the
+# frontier it walks keeps moving.
+BOUNCE_WINDOW = 12
+BOUNCE_WALK = 36.0
+BOUNCE_RATIO = 5.0
+BOUNCE_LABELS = ("go_home",)
+
 # How long the run may spend walking back to the chest it last kept before it stops pretending
 # that cell is its base. A long walk is the normal case (the live one was 300 m), so this is
 # generous, but it is not unbounded: an anchor the bot cannot reach would stand between it and
@@ -412,6 +424,16 @@ class Agent:
     # beside yet". `_note_lava_walk` rebinds a fresh dict, so the default is never mutated.
     _lava_walked: dict[tuple[int, int, int], int] = {}
 
+    # The feet-cells of the last ticks across *every* label, the bounce guard's trail
+    # (`_track_bounce`). Class default for the same reason as `_lava_walked`: a stub agent built
+    # with `Agent.__new__` reads it, and an empty list is exactly "no tick has been counted yet".
+    # `_track_bounce` rebinds a fresh list, so the shared default is never written.
+    _bounce_trail: list[tuple[float, float, float]] = []
+
+    # The nearest lava cell the scan ever listed, kept after the scan loses it (`_note_lava_seen`).
+    # Class default for the same reason as `_lava_walked`: None is exactly "no lava has been seen".
+    _lava_seen: tuple[int, int, int] | None = None
+
     # Fruitless walks per lava pool and the pools retired by them, with the ticks left. The same
     # class-default reason as `_lava_walked`: an empty dict is exactly "no walk has failed yet".
     # `_note_lava_tries` rebinds fresh dicts, so the defaults are never mutated.
@@ -565,6 +587,10 @@ class Agent:
         # ended on, capped at `ORBIT_WINDOW`. Separate again - a bounce over the same cells is
         # neither a refusal nor a wander nor an idle tick, so it must not disturb the other counts.
         self._orbit_path: dict[str, list[tuple[float, float, float]]] = {}
+        # The bounce guard's trail across *all* labels (`_track_bounce`), capped at
+        # `BOUNCE_WINDOW`. Its own list again: a two-label ping-pong is invisible to every
+        # per-label trail, so it cannot be read out of `_orbit_path`.
+        self._bounce_trail: list[tuple[float, float, float]] = []
         # The remembered chest a lost base is walked back to, and the decisions left to get there
         # (see `_walk_home_to_memory`/`_settle_home_anchor` and `HOME_ANCHOR_TICKS`).
         self._home_anchor: tuple[int, int, int] | None = None
@@ -915,6 +941,7 @@ class Agent:
         gs.rescue_skip = frozenset(self._rescue_skip)
         gs.lava_walked = frozenset(self._lava_walked)
         gs.lava_retired = frozenset(self._lava_retired)
+        gs.lava_seen = self._lava_seen
         gs.stuck_labels = frozenset(self._stuck_off)
         gs.recover_written_off = frozenset(self._recover_written_off)
         gs.boxed_in = self._boxed[1] >= BOXED_REPEATS
@@ -2588,6 +2615,65 @@ class Agent:
                          "label": label, "walked": round(path, 1),
                          "net": round(net, 1), "ticks": STUCK_COOLDOWN})
 
+    def _note_lava_seen(self, gs) -> None:
+        """Remember the nearest lava cell the scan listed, so the walk back to it can be offered.
+
+        A lava source only enters the scan within `POUR_REACH` of the body. A bot that walked away
+        from the pond it made its obsidian at reads "no lava anywhere", and with no obsidian in the
+        scan either the whole obsidian chain has no step left (live, run227 it76-147: five blocks
+        still owed, nothing offered, 72 ticks of `explore`/`go_home`). The last cell the scan saw
+        is the address of that pond, and walking back to it re-loads the source.
+        """
+        hits = (gs.resources or {}).get("lava") or []
+        if not hits or gs.pos is None:
+            return
+        nearest = min(hits, key=lambda h: math.dist(h.pos, gs.pos))
+        cell = (int(nearest.pos[0]), int(nearest.pos[1]), int(nearest.pos[2]))
+        if self._lava_seen is None or math.dist(cell, gs.pos) < math.dist(self._lava_seen, gs.pos):
+            self._lava_seen = cell
+
+    def _track_bounce(self, label: str, delta: dict,
+                      pos: tuple[float, float, float] | None) -> None:
+        """Withhold the fallback's tether home when the run walks without getting anywhere.
+
+        `_track_orbit` measures one label's own trail, so a bounce built out of *two* labels is
+        invisible to it: `go_home` ends on the base cell every time it is offered and `explore` on
+        the frontier cell, and neither trail on its own ever sums to `ORBIT_WALK`. This reads the
+        feet-cells of every tick. A window that walked `BOUNCE_WALK` and ended within
+        `BOUNCE_RATIO` of where it began is a bounce whatever the labels were, and the label that
+        pulls the bot back is the one that turns two one-way steps into a round trip.
+
+        A tick that gains inventory or crosses a dimension is real progress and starts the window
+        over, exactly as the orbit guard reads it, so a bot working a vein in place is never caught.
+        """
+        if label in PASS_TIME_LABELS:
+            self._bounce_trail = []
+            return
+        if pos is None:
+            return
+        if _yielded(delta) or (delta or {}).get("dimension_changed"):
+            self._bounce_trail = []
+            return
+        trail = list(self._bounce_trail)
+        trail.append((float(pos[0]), float(pos[1]), float(pos[2])))
+        if len(trail) > BOUNCE_WINDOW:
+            del trail[0]
+        self._bounce_trail = trail
+        if len(trail) < BOUNCE_WINDOW:
+            return
+        path = sum(math.dist(trail[i], trail[i + 1]) for i in range(len(trail) - 1))
+        net = math.dist(trail[0], trail[-1])
+        if path < BOUNCE_WALK or net >= path / BOUNCE_RATIO:
+            return
+        self._bounce_trail = []
+        for lbl in BOUNCE_LABELS:
+            self._stuck_off[lbl] = STUCK_COOLDOWN
+            self._stall_dropped = {**self._stall_dropped,
+                                   lbl: self._stall_dropped.get(lbl, 0) + 1}
+        self.log.append({"stage": "policy", "reason": "bounce_offer_dropped",
+                        "labels": list(BOUNCE_LABELS), "walked": round(path, 1),
+                        "net": round(net, 1), "ticks": STUCK_COOLDOWN})
+
     def _note_surface(self, action, ok: bool, text: str | None,
                       pos: tuple[float, float, float] | None) -> None:
         """Learn the surface cell from a `surface_up` probe or climb.
@@ -3661,6 +3747,8 @@ class Agent:
         self._track_wander(action.label, res, after, delta)
         self._track_idle(action.label, delta)
         self._track_orbit(action.label, delta, after.pos)
+        self._note_lava_seen(after)
+        self._track_bounce(action.label, delta, after.pos)
         self._refresh_after(after)
         record = {
             "stage": "action",

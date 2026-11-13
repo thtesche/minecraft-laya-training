@@ -507,6 +507,17 @@ def candidates(gs: GameState) -> list[str]:
             # lava the scan *can* see is what reopens it. Once a source is in the listing the dig
             # walks to it itself, so the walk yields to `mine_obsidian`.
             out.append("approach_lava")
+        elif (_frame_needs_obsidian(gs, inv) and has_water and gs.lava_seen is not None
+              and not _obsidian_within_reach(gs)
+              and _lava_pour_target(gs) is None and _lava_cast_pool(gs) is None
+              and not any(_dist(gs.lava_seen, r) <= LAVA_POOL_RADIUS
+                         for r in gs.lava_retired)):
+            # The scan holds no lava at all: the pond the run made its obsidian at is out of
+            # range, so `_lava_walk_target` has nothing to aim at and the chain has no step. The
+            # cell the scan last listed is that pond's address, and walking back to it is what
+            # re-loads the source (live, run227 it76-147: five blocks still owed, no lava in the
+            # scan, 72 ticks of `explore`/`go_home` between the base and a frontier cell 28 m out).
+            out.append("approach_lava")
         # The obsidian gate here means "the frame's obsidian is secured before iron is spent on the
         # igniter" - either carried for a build still to come, or already standing in the frame. A
         # restart onto a world whose frame a previous run finished (`_frame_started_at_base`) carries
@@ -1263,6 +1274,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                 or _lava_cast_pool(gs) is not None):
             return None
         stance = _lava_walk_target(gs)
+        if stance is None and gs.lava_seen is not None and not any(
+                _dist(gs.lava_seen, r) <= LAVA_POOL_RADIUS for r in gs.lava_retired):
+            # No lava in the scan: the pond the run made its obsidian at is out of range. The
+            # remembered cell is its address, and the walk back is what loads the source. The
+            # retirement check is the same one `candidates` applies, so the two gates cannot
+            # disagree and hand Laya a label `resolve` then refuses.
+            stance = gs.lava_seen
         if stance is None:
             return None
         sx, sy, sz = stance

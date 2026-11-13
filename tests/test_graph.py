@@ -22,7 +22,8 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
                           tech_tree_complete, LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_STOP, BOXED_REPEATS, DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
+from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_STOP, BOXED_REPEATS, BOUNCE_WINDOW, BOUNCE_LABELS,
+                         DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
                          LAVA_WALK_COOLDOWN, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
                          ORBIT_WINDOW, PORTAL_INTENT_TICKS, STALL_ESCALATE_REPEATS, STUCK_COOLDOWN, STUCK_REPEATS,
                          WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
@@ -2145,6 +2146,107 @@ class OrbitGuardTest(unittest.TestCase):
         for _ in range(ORBIT_WINDOW * 2):
             agent._track_orbit("explore", self._nothing(), None)
         self.assertEqual(agent._stuck_off, {})
+
+
+class BounceGuardTest(unittest.TestCase):
+    """A two-label ping-pong is invisible to every per-label guard, so it needs its own.
+
+    Live, run227 it76-147: 72 ticks trading `explore` and `go_home` between (-49.5, 72, 176.5) and
+    (-64.4, 70, 200.4) - 1886 blocks walked, nothing gained, five obsidian still owed. Each label's
+    own trail is a single cell, so `_track_orbit` never sums to `ORBIT_WALK`; the step succeeds, so
+    `_track_stuck` has no code, and the body moves, so `_track_idle` and `_track_wander` are blind.
+    """
+
+    # The live round trip: base and frontier cell, 28.25 blocks apart, visited alternately.
+    CELL_A = (-49.48, 72.0, 176.46)
+    CELL_B = (-64.37, 70.0, 200.38)
+
+    def _agent(self):
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
+        agent.bed_pos = None
+        agent._raised = []
+        agent._pearl_wave_trips = 0
+        agent._nether_landmarks = []
+        agent._orbit_path = {}
+        agent._bounce_trail = []
+        agent._stuck_off = {}
+        agent.log = []
+        return agent
+
+    @staticmethod
+    def _nothing() -> dict:
+        return {"inventory_delta": {}, "armor_delta": [], "offhand_delta": [],
+                "food_delta": 0, "pos_delta": 28.25, "phase_changed": False,
+                "dimension_changed": False}
+
+    def _bounce(self, agent, n):
+        for i in range(n):
+            label = "explore" if i % 2 == 0 else "go_home"
+            agent._track_bounce(label, self._nothing(),
+                                self.CELL_A if i % 2 == 0 else self.CELL_B)
+
+    def test_a_two_label_bounce_withholds_the_walk_home(self) -> None:
+        agent = self._agent()
+        self._bounce(agent, BOUNCE_WINDOW)
+        self.assertEqual(agent._stuck_off.get("go_home"), STUCK_COOLDOWN)
+        self.assertEqual([r["reason"] for r in agent.log], ["bounce_offer_dropped"])
+
+    def test_the_per_label_guard_does_not_see_it(self) -> None:
+        # The same 72 ticks through `_track_orbit`: each label's trail is one cell, so the guard
+        # that was supposed to catch this never fills. This is why the bounce guard exists.
+        agent = self._agent()
+        for i in range(BOUNCE_WINDOW * 2):
+            label = "explore" if i % 2 == 0 else "go_home"
+            agent._track_orbit(label, self._nothing(),
+                               self.CELL_A if i % 2 == 0 else self.CELL_B)
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_the_window_has_to_fill_before_it_fires(self) -> None:
+        agent = self._agent()
+        self._bounce(agent, BOUNCE_WINDOW - 1)
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_a_straight_march_is_left_alone(self) -> None:
+        # Every tick steps further along the same heading: the window walks far and ends far, so
+        # the frontier roam the obsidian search depends on passes.
+        agent = self._agent()
+        for i in range(BOUNCE_WINDOW * 2):
+            agent._track_bounce("explore", self._nothing(), (float(i * 20), 72.0, 0.0))
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_a_tick_that_gains_inventory_starts_the_window_over(self) -> None:
+        agent = self._agent()
+        for i in range(BOUNCE_WINDOW - 1):
+            agent._track_bounce("mine_obsidian", self._nothing(),
+                                self.CELL_A if i % 2 == 0 else self.CELL_B)
+        delta = self._nothing()
+        delta["inventory_delta"] = {"obsidian": 1}
+        agent._track_bounce("mine_obsidian", delta, self.CELL_B)
+        self.assertEqual(agent._bounce_trail, [])
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_the_steps_that_pass_time_are_exempt(self) -> None:
+        for label in PASS_TIME_LABELS:
+            agent = self._agent()
+            for i in range(BOUNCE_WINDOW * 2):
+                agent._track_bounce(label, self._nothing(),
+                                    self.CELL_A if i % 2 == 0 else self.CELL_B)
+            self.assertEqual(agent._stuck_off, {}, label)
+
+    def test_no_position_is_no_evidence(self) -> None:
+        agent = self._agent()
+        for _ in range(BOUNCE_WINDOW * 2):
+            agent._track_bounce("explore", self._nothing(), None)
+        self.assertEqual(agent._stuck_off, {})
+
+    def test_the_guard_names_the_labels_it_withholds(self) -> None:
+        # The offer is broken by the tether home, not by the walk out: withholding `explore` too
+        # would leave the bot with nothing but `wait`.
+        self.assertEqual(BOUNCE_LABELS, ("go_home",))
 
 
 class FurnaceDrainReadTest(unittest.TestCase):

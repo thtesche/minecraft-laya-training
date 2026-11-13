@@ -1039,6 +1039,13 @@ class GameState:
     # ticks from is what ends the loop (live, run213 it101-141). Keyed by the walk's target cell;
     # `_lava_retired` groups by `LAVA_POOL_RADIUS`. A countdown, so the pool returns.
     lava_retired: frozenset = frozenset()
+    # The nearest lava cell the scan ever listed, kept after the scan loses it. A lava source only
+    # enters the scan within `POUR_REACH` of the body, so a bot that walked off the pond it made
+    # its obsidian at reads "no lava anywhere" and the obsidian chain has no step left at all
+    # (live, run227 it76-147: five blocks still owed, nothing offered, 72 ticks of
+    # `explore`/`go_home`). The remembered cell is the address of that pond; walking back to it
+    # re-loads the source the pour step needs.
+    lava_seen: tuple[int, int, int] | None = None
     # A `drop_junk` the terrain refused to give a disposal pit for (`[DROP_HOLE_UNAVAILABLE]`):
     # from then on the drop goes onto the open ground instead of into a dug hole. Both free the
     # slots the relief is for, and the open drop cannot fail, so the loop cannot stall on it.
