@@ -101,12 +101,12 @@ RECOVER_UNREACHABLE_REPEATS = 3
 BOXED_NODES = 200
 BOXED_CLOSEST_M = 5.0
 BOXED_REPEATS = 3
-# `dig_out` rotates through the four sides (`planner`), one per try. A refused dig turns to the
-# next side too, not only one that went through, so one unreachable wall is not dug at forever;
-# after this many refusals from the one cell every side has been tried round and the pocket is
-# judged undiggable from here, so the latch drops and the tick is freed for the rest of the
-# ladder (live run101 it6-181: 176 refused digs at one east wall, the budget spent on a tunnel
-# the build reach would never give).
+# `dig_out` rotates through the six sides (`planner`): four horizontal, plus up and down. A
+# refused dig turns to the next side too, not only one that went through, so one unreachable wall
+# is not dug at forever; after this many tries every side has been gone round at least once and
+# the pocket is judged undiggable from here, so the latch drops and the tick is freed for the rest
+# of the ladder (live run101 it6-181: 176 refused digs at one east wall, the budget spent on a
+# tunnel the build reach would never give).
 DIG_OUT_MAX_TRIES = 8
 _NO_PATH = re.compile(r"no path found after \d+ ms compute; visited (\d+) nodes"
                       r"(?:, generated \d+)?; closest node was (-?\d+),(-?\d+),(-?\d+)")

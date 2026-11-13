@@ -1988,16 +1988,26 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return None
         mx, my, mz = (math.floor(v) for v in gs.pos)
         # Toward the base first, where one is anchored; each further try at the same spot turns
-        # to the next side, so a wall that will not give is not dug at twice.
-        sides = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        # to the next side, so a wall that will not give is not dug at twice. Up and down are
+        # sides too: a pocket sealed on the four horizontal faces but open above -- a body that
+        # fell into a column, or one respawned under a block -- has no corridor to dig sideways,
+        # and while the latch holds the tick nothing else gets a turn (`Agent._note_boxed`).
+        sides = [(1, 0, 0), (0, 0, 1), (-1, 0, 0), (0, 0, -1), (0, 1, 0), (0, -1, 0)]
         if gs.base is not None:
-            bx, bz = gs.base[0] - mx, gs.base[2] - mz
-            sides.sort(key=lambda d: -(d[0] * bx + d[1] * bz))
-        dx, dz = sides[gs.dig_out_try % len(sides)]
-        # Feet and head height, three cells long: a corridor the bot walks out along, short
-        # enough to dig by hand (the shut-in bot of run90 carried no tool at all).
-        cells = [{"x": mx + dx * k, "y": my + h, "z": mz + dz * k, "block_name": "air"}
-                 for k in (1, 2, 3) for h in (0, 1)]
+            bx, by, bz = gs.base[0] - mx, gs.base[1] - my, gs.base[2] - mz
+            sides.sort(key=lambda d: -(d[0] * bx + d[1] * by + d[2] * bz))
+        dx, dy, dz = sides[gs.dig_out_try % len(sides)]
+        if dy:
+            # A one-wide shaft: three cells above the head, or three below the floor. The climb
+            # back is the pathfinder's, which scaffolds the column from the policy's
+            # `scaffold_blocks` (survival.py).
+            cells = [{"x": mx, "y": my + dy * k, "z": mz, "block_name": "air"}
+                     for k in ((2, 3, 4) if dy > 0 else (1, 2, 3))]
+        else:
+            # Feet and head height, three cells long: a corridor the bot walks out along, short
+            # enough to dig by hand (the shut-in bot of run90 carried no tool at all).
+            cells = [{"x": mx + dx * k, "y": my + h, "z": mz + dz * k, "block_name": "air"}
+                     for k in (1, 2, 3) for h in (0, 1)]
         return Action(label, "build_structure", {"blocks": cells},
                       "dig a short tunnel out of the pocket the pathfinder cannot leave")
     if label == "surface_up":

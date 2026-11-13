@@ -10622,11 +10622,30 @@ class DigOutTest(unittest.TestCase):
 
     def test_each_further_try_turns_to_another_side(self) -> None:
         sides = set()
-        for attempt in range(4):
+        for attempt in range(6):
             g = gs(pos=(0.5, 64.0, 0.5), boxed_in=True, dig_out_try=attempt)
             first = resolve("dig_out", g).args["blocks"][0]
-            sides.add((first["x"], first["z"]))
-        self.assertEqual(sides, {(1, 0), (0, 1), (-1, 0), (0, -1)})
+            sides.add((first["x"], first["y"], first["z"]))
+        self.assertEqual(sides, {(1, 64, 0), (0, 64, 1), (-1, 64, 0), (0, 64, -1),
+                                 (0, 66, 0), (0, 63, 0)})
+
+    def test_the_up_and_down_sides_are_shafts_beyond_the_body(self) -> None:
+        # A pocket sealed on the four horizontal faces but open above or below has no corridor to
+        # dig sideways. The up shaft starts above the head cell, the down shaft under the floor:
+        # the dig never asks for a cell the body itself occupies.
+        up = resolve("dig_out", gs(pos=(0.5, 64.0, 0.5), boxed_in=True, dig_out_try=4))
+        self.assertEqual({(c["x"], c["y"], c["z"]) for c in up.args["blocks"]},
+                         {(0, 66, 0), (0, 67, 0), (0, 68, 0)})
+        down = resolve("dig_out", gs(pos=(0.5, 64.0, 0.5), boxed_in=True, dig_out_try=5))
+        self.assertEqual({(c["x"], c["y"], c["z"]) for c in down.args["blocks"]},
+                         {(0, 63, 0), (0, 62, 0), (0, 61, 0)})
+
+    def test_a_base_above_the_bot_digs_up_first(self) -> None:
+        # The tunnel runs toward the anchor in three dimensions, not just in the x/z plane: a bot
+        # buried below its base digs up before it digs east.
+        g = gs(pos=(0.5, 64.0, 0.5), boxed_in=True, base=(1, 70, 0))
+        cells = resolve("dig_out", g).args["blocks"]
+        self.assertTrue(all(c["x"] == 0 and c["z"] == 0 and c["y"] > 64 for c in cells))
 
 
 class FlattenHomeBaseTest(unittest.TestCase):
