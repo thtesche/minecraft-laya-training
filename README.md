@@ -103,7 +103,7 @@ The lab is the everyday entry point — it starts the Docker world, the MCP host
 `bot-run` branch, the run, and writes the report when the run ends:
 
 ```bash
-./scripts/lab.sh up --n 600 --fresh     # fresh world + ledger, then a run
+./scripts/lab.sh up --n 1000 --fresh    # fresh world + ledger, then a run
 ./scripts/lab.sh status                 # world, host, run, last tick as JSON
 ./scripts/lab.sh report 187             # the finished run's report
 ./scripts/lab.sh down                   # stop run, host, world

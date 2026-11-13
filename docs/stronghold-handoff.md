@@ -136,7 +136,7 @@ label must search the **raw** stores for powder itself — mirror
 - Behavior-preserving discipline: the refactor was a pure move; this phase adds
   wiring only — the server owns all endgame mechanics (`locate_stronghold`,
   `activate_portal`, etc.). The agent never implements client-side mechanics.
-- No live runs or hot-patching; the lab (`./scripts/lab.sh up [--n 600] [--fresh]`) starts the
+- No live runs or hot-patching; the lab (`./scripts/lab.sh up [--n 1000] [--fresh]`) starts the
   Docker world and the MCP host, and a run only begins on the user's word.
 - The phase is offered **only** once `tech_tree_complete` AND
   `nether_expedition_complete` both hold. It no longer stops at an **activated end portal**: since

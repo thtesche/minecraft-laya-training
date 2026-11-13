@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The lab's lifecycle: world (Docker), MCP host (bun), run (mlaya), viewer (node), report (analyze).
 #
-#   ./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   start world, host, viewer, run
+#   ./scripts/lab.sh up [--n 1000] [--fresh] [--ignore-goal]  start world, host, viewer, run
 #   ./scripts/lab.sh up --no-viewer                           the same, without the live view
 #   ./scripts/lab.sh status                                    JSON: world, viewer, host, run, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
@@ -149,10 +149,17 @@ start_host() {
     nc -z -w 1 127.0.0.1 "$MCP_PORT" 2>/dev/null || break
     sleep 1
   done
+  # NAV_FAILURE_TIMEOUT_MS / NAV_PRIMARY_TIMEOUT_MS raise the pathfinder's inline
+  # search budgets for a run, to test whether more compute clears the long-route
+  # `search timed out ... no path` stops. Unset, the host keeps its own defaults.
+  local search_flags=()
+  [[ -n "${NAV_FAILURE_TIMEOUT_MS:-}" ]] && search_flags+=(--search-failure-timeout-ms "$NAV_FAILURE_TIMEOUT_MS")
+  [[ -n "${NAV_PRIMARY_TIMEOUT_MS:-}" ]] && search_flags+=(--search-primary-timeout-ms "$NAV_PRIMARY_TIMEOUT_MS")
   (cd "$MCP_REPO" && bun src/server/host.ts --minecraft-host 127.0.0.1 \
     --minecraft-port "$MC_PORT" --username MineAI --version 1.21.4 \
-    --data-root "$MCP_DATA_ROOT" \
+    --data-root "$MCP_DATA_ROOT" "${search_flags[@]}" \
     > "$REPO/runs/mcp.log" 2>&1 &)
+  [[ ${#search_flags[@]} -gt 0 ]] && log "MCP host search budgets overridden: ${search_flags[*]}"
   echo "$MCP_DATA_ROOT" > "$STATE/host_args"
   log "MCP host starting from $MCP_BRANCH @ $(mcp_commit) (log: runs/mcp.log)"
 }
@@ -253,13 +260,13 @@ report_run() {
 }
 
 cmd_up() {
-  n=600
+  n=1000
   fresh=0
   ignore_goal=0
   no_viewer=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --n) n="${2:-600}"; shift 2 ;;
+      --n) n="${2:-1000}"; shift 2 ;;
       --n=*) n="${1#--n=}"; shift ;;
       --fresh) fresh=1; shift ;;
       --ignore-goal) ignore_goal=1; shift ;;

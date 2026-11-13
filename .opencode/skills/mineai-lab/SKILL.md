@@ -9,7 +9,7 @@ The lab is one command with a handful of verbs. Everything else in this skill is
 around them.
 
 ```bash
-./scripts/lab.sh up [--n 600] [--fresh] [--ignore-goal]   # world + host + viewer + run
+./scripts/lab.sh up [--n 1000] [--fresh] [--ignore-goal]   # world + host + viewer + run
 ./scripts/lab.sh up --no-viewer                           # the same, without the live view
 ./scripts/lab.sh status                                   # JSON: world, viewer, host, run, last tick
 ./scripts/lab.sh report [run number]                      # the report a finished run writes itself
