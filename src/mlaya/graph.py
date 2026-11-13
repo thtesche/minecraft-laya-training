@@ -3614,7 +3614,7 @@ class Agent:
         elif "CONTAINER_BATCH_INCOMPLETE" in text:
             self._stow_blocked = True
 
-    def _note_bed(self, action, ok: bool, res=None) -> None:
+    def _note_bed(self, action, ok: bool, res=None, before=None) -> None:
         """Remember the bed cell the `sleep` server used, and forget one taken out of the world.
 
         The bed block *is* the respawn point, and it is the only place the server ever names it:
@@ -3623,9 +3623,20 @@ class Agent:
         the cell the server tried to click -- which is exactly what the reach step needs next tick.
         A `take_bed` that succeeded removed the bed, so a cell remembered against it would keep
         `_bed_at_base` true over an empty space.
+
+        But `take_bed` collects the *nearest* standing bed, and a leftover from an earlier run
+        taken 180 m off base is not the gate bed: forgetting the latch for it drops
+        `bed_at_base` for a tick over a bed that still stands (live, run228 it304-305). The
+        latch is only cleared when the bed the scan saw nearest is the remembered one, or when
+        the scan saw no bed at all and the cell cannot be told apart.
         """
         if action.label == "take_bed" and ok:
-            self.bed_pos = None
+            if self.bed_pos is not None:
+                hits = (before.resources.get("white_bed") or []) if before is not None else []
+                nearest = min(hits, key=lambda h: h.distance) if hits else None
+                if nearest is None or (abs(nearest.x - self.bed_pos[0]) <= 1
+                                       and abs(nearest.z - self.bed_pos[2]) <= 1):
+                    self.bed_pos = None
             return
         if action.label != "place_bed" or action.tool != "sleep":
             return
@@ -3703,7 +3714,7 @@ class Agent:
         self._note_explore(action, _ok, _text)
         self._note_frame_cells(action, _ok, _text)
         self._note_place(action, _ok, _text)
-        self._note_bed(action, _ok, res)
+        self._note_bed(action, _ok, res, before)
         self._note_recover(before, action, _ok, _text)
         # Opened before the action runs: the rescue has to be down on the *next* tick, while the
         # crossing settles and the teleport fires.

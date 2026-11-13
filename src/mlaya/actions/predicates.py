@@ -1035,7 +1035,13 @@ def _bed_at_base(gs: GameState) -> bool:
     (live, run121 it80, 280 m from the anchor). `_adopt_bed` forgets the cell the moment the bot
     is back at the base and the scan finds no bed there, so a taken-up or broken bed cannot keep
     this true.
+
+    Before the run has a base there is no base to be *at*: a bed the scan loads then is an
+    earlier run's leftover, not the milestone (live, run228 it0-4: the run227 bed 28 m from the
+    spawn read as `bed_at_base` until `establish_base` anchored the box and the flag flipped).
     """
+    if gs.base is None:
+        return False
     if gs.bed_pos is not None and _in_base_box(gs, gs.bed_pos):
         return True
     return _bed_placed(gs) and not _bed_off_base(gs) and not _bed_bad_spot(gs)

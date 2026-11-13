@@ -1750,6 +1750,9 @@ class TechTreeCompleteTest(unittest.TestCase):
 
     def _complete(self, **overrides) -> GameState:
         base = dict(
+            # `_bed_at_base` needs the anchor the bed belongs to: the gate the `_gate` blocks
+            # stand beside is the base's own, so the completion world carries its anchor too.
+            base=(-270, 64, -57),
             tools={"pickaxe": "diamond", "sword": "diamond"},
             # The Nether prep is banked too: a bow with arrows and the deep cobblestone stack
             # (`_nether_prep_steps`), so the completion gate is satisfied.
@@ -3237,6 +3240,26 @@ class NetherGateTest(unittest.TestCase):
         agent._note_bed(SimpleNamespace(label="take_bed", tool="collect_block", args={}),
                         True, None)
         self.assertIsNone(agent.bed_pos)
+
+    def test_a_bed_loaded_before_the_base_is_not_at_it(self) -> None:
+        # run228 it0-4: the run227 bed stood 28 m from the spawn before `establish_base`
+        # anchored the box, so `bed_at_base` read true from the scan and flipped the moment
+        # the base landed. Without an anchor there is no base a bed can be at.
+        g = GameState(pos=(-65.1, 70.0, 201.3))
+        g.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -51, 72, 177, 28.4)]}
+        self.assertFalse(_bed_at_base(g))
+
+    def test_a_leftover_bed_taken_off_base_keeps_the_gate_bed(self) -> None:
+        # run228 it304: the bot took the run227 bed 180 m from the base while the gate bed
+        # still stood beside the frame; the latch must not forget the standing gate bed.
+        from mlaya.graph import Agent
+        agent = Agent.__new__(Agent)
+        agent.bed_pos = (-65, 70, 199)
+        before = GameState(base=(-64, 69, 198), pos=(-55.5, 71.0, 19.6))
+        before.resources = {"white_bed": [BlockHit("white_bed", "white_bed", -51, 72, 177, 28.4)]}
+        agent._note_bed(SimpleNamespace(label="take_bed", tool="collect_block", args={}),
+                        True, None, before)
+        self.assertEqual(agent.bed_pos, (-65, 70, 199))
 
     def test_the_sleep_response_names_the_bed_it_clicked(self) -> None:
         # The bed block is the respawn point, and the `sleep` answer is the only place the server

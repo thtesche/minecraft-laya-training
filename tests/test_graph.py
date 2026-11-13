@@ -3848,7 +3848,8 @@ class GoalStopTest(unittest.TestCase):
     def _complete() -> GameState:
         # The full overworld goal: diamond kit worn, shield off-hand, the portal lit and the gate
         # bed laid clear of it, and the Nether prep banked (bow + arrows + the cobblestone stack).
-        return gs(tools={"pickaxe": "diamond", "sword": "diamond"},
+        return gs(base=(-270, 64, -57),
+                  tools={"pickaxe": "diamond", "sword": "diamond"},
                   inventory={"diamond_sword": 1, "bow": 1, "arrow": 16, "cobblestone": 64},
                   armor={slot: {"item": f"diamond_{slot}"}
                          for slot in ("helmet", "chestplate", "leggings", "boots")},
@@ -3959,7 +3960,9 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._pearl_wave_trips = 0
         agent._nether_landmarks = []
         agent.settings = Settings()
-        agent.base = None
+        # The run's own base: `_inject` carries the agent's anchor into the state, and
+        # `_bed_at_base` needs it to tell the gate bed from a leftover.
+        agent.base = self.BASE
         agent.surface = None
         agent.chest_pos = None
         agent._extra_chests = []
