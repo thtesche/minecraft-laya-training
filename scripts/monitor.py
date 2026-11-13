@@ -131,9 +131,28 @@ def main():
         if len(pickaxe) >= 5:
             print(f"CRAFT_PICKAXE STALL: {len(pickaxe)} ticks with CRAFTING_TABLE_REQUIRED")
 
-        deaths = [a for a in acts if a["state"].get("last_death")]
+        # `last_death` stays in the state after a death, so counting ticks that carry it counts
+        # every tick since the death, and two deaths with the same cause collapse into one entry
+        # (run228: two lava deaths at the same Nether pond). The respawn signature is the pack
+        # going empty: a tick whose item total falls to near zero from a stocked one.
+        deaths = []
+        prev_total = None
+        prev_dim = None
+        for a in acts:
+            st = a["state"]
+            total = sum((st.get("inventory") or {}).values())
+            if prev_total is not None and total <= 10 and prev_total >= 20:
+                # The tick that carries the death already respawned, so its dimension is the
+                # world the bot came back to; the world it died in is the one before.
+                deaths.append((a.get("iteration"), st.get("last_death"), prev_dim,
+                              st.get("death_pos")))
+            prev_total = total
+            prev_dim = st.get("dimension")
         if deaths:
             print(f"DEATHS: {len(deaths)}")
+            for it, cause, dim, pos in deaths:
+                pos = tuple(round(v, 1) for v in (pos or ()))
+                print(f"  it{it} in {dim} at {pos}: {cause}")
 
         top = Counter(a.get("label") for a in acts).most_common(6)
         print("top labels:", ", ".join(f"{l} {c}" for l, c in top))
