@@ -64,6 +64,22 @@ and is left for the vertical-shaft extension.)
 This doc specifies `tunnel_to` as a standalone action with its own contract, callable
 directly for the seeded test; the `locate_stronghold` branch is the production caller.
 
+**Built (Option A — advisory next-step).** Rather than a compound call, `locate_stronghold`
+stays a discrete step and recommends the next one, mirroring its existing `estimate→locate`
+`next` hint. On a confirmed frame it sets a nullable result field
+
+```ts
+reachByTunnel: { searchId: string; target: Point; descentBlocks: number } | null
+```
+
+populated only when all three conditions hold: the loop's `verticalEyeDescent` flag (a local
+throw that sank ~straight down), `overWater(bot)` (feet or the cell below is water), and
+`descentBlocks > 20` (`TUNNEL_TRIGGER_DESCENT`). When set, `formatResult` appends an advisory
+pointing the agent at `tunnel_to` with the shared `search_id`; the catalogue description notes
+the handoff too. Null when the frame is reachable on foot (the under-land case), left for the
+vertical-shaft extension. Covered by two unit tests (deep-water → flagged, dry-land → null) in
+`locate-stronghold.test.ts`; the actions stay decoupled, each a single step.
+
 ## 4. Action contract
 
 ```ts
