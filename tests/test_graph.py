@@ -7035,10 +7035,21 @@ class ShutInTest(unittest.TestCase):
     # the count instead of raising it.
     STUCK = ("[NAVIGATION_STOPPED] Pathfinder stopped: repeated_movement_failure: "
              "Server confirmation deadline elapsed.")
+    # run228 it321: refused 3.3 m from the feet cell after 12 nodes, the pocket the bot respawned
+    # into after a lava death.
+    RUN228 = ("[NAVIGATION_STOPPED] Pathfinder stopped: no path found after 0 ms compute; "
+              "visited 12 nodes, generated 12; closest node was -52,33,5")
 
     class _Action:
         def __init__(self, label: str) -> None:
             self.label = label
+
+    @staticmethod
+    def _dig(dug: int):
+        """The settled `build_structure` answer a `dig_out` comes back with: an audit, no text."""
+        return SimpleNamespace(ok=True, text="",
+                               data={"structure": {"cells": 6, "placed": 0, "dug": dug,
+                                                   "correct": 6, "left": [], "missing": []}})
 
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
@@ -7116,6 +7127,74 @@ class ShutInTest(unittest.TestCase):
             self.assertTrue(agent._boxed[1] >= BOXED_REPEATS)   # still shut in, dig_out still owns the tick
         # Every side tried round and none gave: the latch drops so the rest of the ladder runs.
         agent._note_boxed(here, self._Action("dig_out"), False, refused)
+        self.assertEqual((agent._boxed, agent._dig_out_tries), ((None, 0), 0))
+
+    def test_a_dig_that_broke_nothing_keeps_the_tunnel(self) -> None:
+        # run228 it321-326: respawned in a pocket at (-49,32,5), `get_wood` refused, `dig_out`
+        # came back ok with `dug: 0` and nothing moved, and that ok dropped the latch for one
+        # tick. The refused walk got the tick back, refused again, and every other tick of the
+        # six was a refusal. A dig that cleared no cell -- the corridor it asked for was already
+        # air -- changed the pocket no more than the refusal before it, so the tunnel keeps the
+        # tick and turns to the next side.
+        agent = self._agent()
+        here = gs(pos=(-48.33, 32.0, 5.52))
+        for _ in range(BOXED_REPEATS):
+            agent._note_boxed(here, self._Action("get_wood"), False, self.RUN228)
+        self.assertTrue(agent._boxed[1] >= BOXED_REPEATS)
+        for n in range(1, 4):
+            agent._note_boxed(here, self._Action("dig_out"), True, "", self._dig(0),
+                              {"pos_delta": 0.0, "inventory_delta": {}})
+            self.assertEqual(agent._dig_out_tries, n)   # the side still turns
+            self.assertTrue(agent._boxed[1] >= BOXED_REPEATS)   # dig_out still owns the tick
+        self.assertEqual(agent._boxed, ((-49, 32, 5), BOXED_REPEATS))
+
+    def test_a_dig_that_broke_blocks_hands_the_walk_back(self) -> None:
+        agent = self._agent()
+        here = gs(pos=(-48.33, 32.0, 5.52))
+        agent._boxed = ((-49, 32, 5), BOXED_REPEATS)
+        agent._note_boxed(here, self._Action("dig_out"), True, "", self._dig(4),
+                          {"pos_delta": 0.0, "inventory_delta": {}})
+        self.assertEqual((agent._boxed[1], agent._dig_out_tries), (BOXED_REPEATS - 1, 1))
+        # One more refusal from the same cell and the tunnel is back on the tick.
+        agent._note_boxed(here, self._Action("get_wood"), False, self.RUN228)
+        self.assertEqual(agent._boxed[1], BOXED_REPEATS)
+
+    def test_a_dig_that_filled_the_pack_counts_as_a_change(self) -> None:
+        # The audit says nothing was cleared, but blocks landed in the pack: cells did break,
+        # and the walk gets its turn. A body that left the cell is read by the cell check itself.
+        agent = self._agent()
+        here = gs(pos=(-48.33, 32.0, 5.52))
+        agent._boxed = ((-49, 32, 5), BOXED_REPEATS)
+        agent._note_boxed(here, self._Action("dig_out"), True, "", self._dig(0),
+                          {"pos_delta": 0.0, "inventory_delta": {"gravel": 3}})
+        self.assertEqual(agent._boxed[1], BOXED_REPEATS - 1)
+
+    def test_a_dig_with_no_audit_keeps_the_release_it_always_had(self) -> None:
+        # The count is the only read that says whether a cell broke: a dig that cleared air moves
+        # nobody and fills nothing, so a silent delta is not a failed dig. Without the audit the
+        # tick keeps the benefit of the doubt.
+        agent = self._agent()
+        here = gs(pos=(182.5, 70.0, 181.5))
+        agent._boxed = ((182, 70, 181), BOXED_REPEATS)
+        agent._note_boxed(here, self._Action("dig_out"), True, "",
+                          SimpleNamespace(ok=True, text="", data=None),
+                          {"pos_delta": 0.0, "inventory_delta": {}})
+        self.assertEqual((agent._boxed[1], agent._dig_out_tries), (BOXED_REPEATS - 1, 1))
+
+    def test_silent_digs_still_release_after_every_side_gave(self) -> None:
+        # The escape hatch is unchanged: a pocket nothing can dig is handed back after
+        # DIG_OUT_MAX_TRIES tries so `make_room`, `explore` and System 2 get a turn, rather than
+        # the run spending its whole budget on a wall that will not give.
+        agent = self._agent()
+        here = gs(pos=(-48.33, 32.0, 5.52))
+        agent._boxed = ((-49, 32, 5), BOXED_REPEATS)
+        for n in range(1, DIG_OUT_MAX_TRIES):
+            agent._note_boxed(here, self._Action("dig_out"), True, "", self._dig(0),
+                              {"pos_delta": 0.0, "inventory_delta": {}})
+            self.assertEqual(agent._dig_out_tries, n)
+            self.assertTrue(agent._boxed[1] >= BOXED_REPEATS)
+        agent._note_boxed(here, self._Action("dig_out"), True, "", self._dig(0),
+                          {"pos_delta": 0.0, "inventory_delta": {}})
         self.assertEqual((agent._boxed, agent._dig_out_tries), ((None, 0), 0))
 
     def test_work_done_in_place_keeps_the_count(self) -> None:

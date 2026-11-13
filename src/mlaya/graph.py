@@ -313,6 +313,27 @@ def _yielded(delta: dict | None) -> bool:
             or bool(delta.get("armor_delta")) or bool(delta.get("offhand_delta")))
 
 
+def _dig_changed_world(res, delta: dict | None) -> bool:
+    """Whether a `dig_out` that came back ok actually broke anything.
+
+    `dig_out` is a `build_structure` call for air, and its audit counts the cells it cleared:
+    `dug: 0` is a corridor that was already open, a tick in which the pocket changed not at all.
+    The count has to come from the payload -- a settled foreground answer arrives as structured
+    JSON and the result text is empty (live, run228 it322, it324, it326: three `ok` digs, empty
+    text, `pos_delta 0.0`, empty `inventory_delta`). The "Broke N matching blocks" line belongs to
+    `collect_block`, not to a build, so reading it here would find nothing.
+
+    Without the count there is no evidence either way: clearing cells to air moves nobody and
+    fills nothing, so a silent delta is not a failed dig. An unreadable audit keeps the release
+    the dig always had. The pack is the second read when the count is there: blocks that came in
+    are blocks that broke.
+    """
+    dug = _find(getattr(res, "data", None), "dug")
+    if isinstance(dug, bool) or not isinstance(dug, (int, float)):
+        return True
+    return int(dug) > 0 or _yielded(delta)
+
+
 def _fail_code(text: str | None) -> str | None:
     """The tool-result code that identifies a refusal, for the stuck-offer guard.
 
@@ -3534,15 +3555,20 @@ class Agent:
         if any(code in (text or "") for code in RECOVER_FINAL_CODES):
             self._recover_written_off.add(cell)
 
-    def _note_boxed(self, gs, action, ok: bool, text: str | None) -> None:
+    def _note_boxed(self, gs, action, ok: bool, text: str | None,
+                    res=None, delta: dict | None = None) -> None:
         """Count the walks refused from one cell because the bot is shut in (`shut_in`).
 
         Any label counts: whatever walks fails the same way from a pocket. The body leaving the
         cell, or a walk whose `no path` search ran far, starts over; a step that works where it
         stands (a craft, a meal, a pickup, or a tick the reflex interrupted) says nothing about
-        the pocket and leaves the count as it was. A `dig_out` that ran leaves the count one
-        short, so a single further refusal from the same cell digs the next side at once instead
-        of after three more failed walks.
+        the pocket and leaves the count as it was. A `dig_out` that broke blocks leaves the count
+        one short, so a single further refusal from the same cell digs the next side at once
+        instead of after three more failed walks. A `dig_out` that broke nothing -- every cell it
+        was asked to clear already air -- changes the pocket no more than the refusal before it,
+        so the count stays and the tunnel keeps the tick (live, run228 it321-326: three `ok`
+        digs with `dug: 0` each handed the tick back to a walk that refused again, every other
+        tick a refusal).
 
         `gs` is the state *after* the action, and it has to be: the refusal names the cell the
         pathfinder started from, which is where the body ended up, not where the tick began.
@@ -3559,7 +3585,15 @@ class Agent:
         if action.label == "dig_out":
             if ok:
                 self._dig_out_tries += 1
-                self._boxed = (cell, BOXED_REPEATS - 1)
+                if _dig_changed_world(res, delta):
+                    self._boxed = (cell, BOXED_REPEATS - 1)
+                elif self._dig_out_tries >= DIG_OUT_MAX_TRIES:
+                    # Every side tried round and none broke anything: the pocket cannot be dug
+                    # out of from here, the same release a refused dig gives.
+                    self._boxed = (None, 0)
+                    self._dig_out_tries = 0
+                else:
+                    self._boxed = (cell, BOXED_REPEATS)
                 return
             # A dig_out that could not even start -- `[BUILD_INCOMPLETE] ... no path found after
             # 0 ms; visited 1 node` -- means the build reach cannot touch *this* side's cells from
@@ -3723,16 +3757,16 @@ class Agent:
         self._note_result(action, _ok, res)
         await self._hold_wait(action, _ok)
         after = await self._observe()
+        delta = vmod.diff(before, after)
         # After the observation, not before: the `no path found` refusal names the cell the walk
         # started from, which is where the action left the body (see `_note_boxed`).
-        self._note_boxed(after, action, _ok, _text)
+        self._note_boxed(after, action, _ok, _text, res, delta)
         self._note_heading(before.pos, after.pos)
         # `surface_up` answers itself through the position it lands on (a resolved probe) or
         # through the height the server names when it refuses to guess (an ambiguous column);
         # both are read here, after the observation, and gate `establish_base` next tick.
         self._note_surface(action, _ok, _text, after.pos)
         await self._rearm_policy(after)
-        delta = vmod.diff(before, after)
         self._note_held(res, before, after)
         self._note_lava_tries(action, delta)
         busy_owner = self._note_body_busy(action, res)
