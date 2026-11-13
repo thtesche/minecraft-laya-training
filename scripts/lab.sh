@@ -155,9 +155,12 @@ start_host() {
   local search_flags=()
   [[ -n "${NAV_FAILURE_TIMEOUT_MS:-}" ]] && search_flags+=(--search-failure-timeout-ms "$NAV_FAILURE_TIMEOUT_MS")
   [[ -n "${NAV_PRIMARY_TIMEOUT_MS:-}" ]] && search_flags+=(--search-primary-timeout-ms "$NAV_PRIMARY_TIMEOUT_MS")
+  # `${arr[@]}` on an empty array is an unbound variable in bash 3.2 (the macOS default)
+  # under `set -u`, so the host would never start when no search budgets are overridden.
+  # The `${arr[@]+...}` form expands to nothing when the array is empty in every bash.
   (cd "$MCP_REPO" && bun src/server/host.ts --minecraft-host 127.0.0.1 \
     --minecraft-port "$MC_PORT" --username MineAI --version 1.21.4 \
-    --data-root "$MCP_DATA_ROOT" "${search_flags[@]}" \
+    --data-root "$MCP_DATA_ROOT" ${search_flags[@]+"${search_flags[@]}"} \
     > "$REPO/runs/mcp.log" 2>&1 &)
   [[ ${#search_flags[@]} -gt 0 ]] && log "MCP host search budgets overridden: ${search_flags[*]}"
   echo "$MCP_DATA_ROOT" > "$STATE/host_args"
