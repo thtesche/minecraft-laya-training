@@ -150,10 +150,12 @@ start_host() {
     sleep 1
   done
   # NAV_FAILURE_TIMEOUT_MS / NAV_PRIMARY_TIMEOUT_MS raise the pathfinder's inline
-  # search budgets for a run, to test whether more compute clears the long-route
-  # `search timed out ... no path` stops. Unset, the host keeps its own defaults.
-  local search_flags=()
-  [[ -n "${NAV_FAILURE_TIMEOUT_MS:-}" ]] && search_flags+=(--search-failure-timeout-ms "$NAV_FAILURE_TIMEOUT_MS")
+  # search budgets for a run, to clear the long-route `search timed out ... no path`
+  # stops. The failure timeout is the one that fires those stops (the host default is
+  # 2000 ms, "search timed out after 2000 ms"); the lab lifts it to 4000 ms so the
+  # sparse long-distance searches get twice the compute before they give up. Either
+  # var overrides its default; the primary timeout is left at the host default unless set.
+  local search_flags=(--search-failure-timeout-ms "${NAV_FAILURE_TIMEOUT_MS:-4000}")
   [[ -n "${NAV_PRIMARY_TIMEOUT_MS:-}" ]] && search_flags+=(--search-primary-timeout-ms "$NAV_PRIMARY_TIMEOUT_MS")
   # `${arr[@]}` on an empty array is an unbound variable in bash 3.2 (the macOS default)
   # under `set -u`, so the host would never start when no search budgets are overridden.
@@ -162,7 +164,7 @@ start_host() {
     --minecraft-port "$MC_PORT" --username MineAI --version 1.21.4 \
     --data-root "$MCP_DATA_ROOT" ${search_flags[@]+"${search_flags[@]}"} \
     > "$REPO/runs/mcp.log" 2>&1 &)
-  [[ ${#search_flags[@]} -gt 0 ]] && log "MCP host search budgets overridden: ${search_flags[*]}"
+  log "MCP host search budgets: ${search_flags[*]}"
   echo "$MCP_DATA_ROOT" > "$STATE/host_args"
   log "MCP host starting from $MCP_BRANCH @ $(mcp_commit) (log: runs/mcp.log)"
 }
