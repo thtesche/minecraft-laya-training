@@ -3,6 +3,7 @@
 #
 #   ./scripts/lab.sh up [--n 1000] [--fresh] [--ignore-goal]  start world, host, viewer, run
 #   ./scripts/lab.sh up --no-viewer                           the same, without the live view
+#   ./scripts/lab.sh up --fresh --no-run                       setup only (world/host/viewer/probe), no mlaya loop
 #   ./scripts/lab.sh status                                    JSON: world, viewer, host, run, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
 #   ./scripts/lab.sh report [run number]                        write the finished run's report
@@ -269,6 +270,7 @@ cmd_up() {
   fresh=0
   ignore_goal=0
   no_viewer=0
+  no_run=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --n) n="${2:-1000}"; shift 2 ;;
@@ -276,6 +278,7 @@ cmd_up() {
       --fresh) fresh=1; shift ;;
       --ignore-goal) ignore_goal=1; shift ;;
       --no-viewer) no_viewer=1; shift ;;
+      --no-run) no_run=1; shift ;;
       *) log "unknown argument: $1"; return 1 ;;
     esac
   done
@@ -355,6 +358,13 @@ cmd_up() {
   if ! "$PY" -m mlaya.cli probe; then
     log "probe failed - the host is not usable, the run is not started"
     return 1
+  fi
+
+  # --no-run stops here: world, host, viewer and probe are up, but the mlaya loop is not
+  # started. The host stands ready for any MCP client to drive the bot directly.
+  if [[ $no_run == 1 ]]; then
+    log "--no-run: setup complete, no mlaya loop started - the host is ready for MCP clients on 127.0.0.1:$MCP_PORT"
+    return 0
   fi
 
   run_no=$(next_run_number)
