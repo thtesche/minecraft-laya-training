@@ -229,12 +229,19 @@ def progress_of(gs, durable: DurableFacts | None = None) -> Progress:
     bed_durable = anchor is not None and any(
         abs(x - (anchor[0] + 0.5)) <= GATE_CHEST_RADIUS and abs(z - (anchor[2] + 0.5)) <= GATE_CHEST_RADIUS
         for x, _, z in d.bed_cells)
+    # The live latch of a bed the bot laid is worth a milestone only when it sits at the anchor:
+    # a bed_pos remembered ~900 blocks away (laid beside an earlier base, run244) latched the
+    # milestone True wherever the bot stood. With no anchor to measure against the latch cannot
+    # place the bed, so it does not count - the same rule the ledger path already follows.
+    bed_latched = (gs.bed_pos is not None and anchor is not None
+                   and abs(gs.bed_pos[0] - (anchor[0] + 0.5)) <= GATE_CHEST_RADIUS
+                   and abs(gs.bed_pos[2] - (anchor[2] + 0.5)) <= GATE_CHEST_RADIUS)
     if bed_durable:
         mark("bed_at_base", True, "ledger")
     elif _bed_at_base(gs):
         mark("bed_at_base", True, "scan")
     else:
-        mark("bed_at_base", gs.bed_pos is not None, "latch" if gs.bed_pos is not None else "default")
+        mark("bed_at_base", bed_latched, "latch" if bed_latched else "default")
 
     # --- The kit and the prep: only the pack can answer these, and it answers every tick. ---
     mark("kit_worn", _gear_ready(gs), "scan")

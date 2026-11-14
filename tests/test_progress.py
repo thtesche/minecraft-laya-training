@@ -196,6 +196,15 @@ class PrecedenceTest(unittest.TestCase):
         self.assertFalse(progress.progress_of(perception.GameState(),
                                              progress.DurableFacts(bed_cells=((-9, 70, -48),))).bed_at_base)
 
+    def test_a_latched_bed_counts_only_at_the_base(self) -> None:
+        base = (-9, 70, -52)
+        near = perception.GameState(base=base, bed_pos=(-9, 70, -48))
+        self.assertTrue(progress.progress_of(near).bed_at_base)
+        far = perception.GameState(base=base, bed_pos=(400, 69, 400))
+        self.assertFalse(progress.progress_of(far).bed_at_base)
+        # With no anchor the latch cannot place the bed, so it does not count.
+        self.assertFalse(progress.progress_of(perception.GameState(bed_pos=(-9, 70, -48))).bed_at_base)
+
     def test_the_eyes_owed_are_sized_on_the_frame_the_world_reports(self) -> None:
         # A frame that arrived with five eyes seated owes seven, not twelve: the rod haul and the
         # pearl waves are sized on this number.
