@@ -39,8 +39,24 @@ DEATH_TRAPS = (
     "In the Nether, piglins turn hostile unless gold armour is worn - never provoke them bare.",
     "Never dig straight down: lava or a long fall is one block away.",
     "Keep a bed to reset spawn and a cooked-food reserve before crossing to the Nether.",
-    "A label refused many times in a row is a loop, not progress - call it out.",
     "Ghasts and blazes hit from range; crossing lava without a bridge or fire resistance is fatal.",
+)
+
+# Each phase goal in _PHASE_ROWS names its END STATE, not the ordered precursor steps that reach it.
+# Without the precursors the observer mistakes a legitimate buildup step for a detour - live (run245)
+# it judged "mine_iron" and "smelt_iron" in diamond_kit as "loop: mine diamond ore for the kit",
+# though an iron pickaxe is the precondition for mining diamond at all. These lines teach the
+# within-phase progression so a precursor reads as progress. They live here, not in _PHASE_ROWS, so
+# the live loop's own phase spine stays untouched.
+PHASE_PROGRESSIONS = (
+    "diamond_kit: the tool ladder is wood -> stone -> IRON -> diamond. An iron pickaxe is REQUIRED "
+    "to mine diamond ore at all, so mining/smelting iron and crafting iron tools IS progress toward "
+    "the diamond kit, never a detour.",
+    "prepare_nether: shield, bow+arrows, cooked food, a bed, a chest at the base, a lit portal are "
+    "separate items - gathering any one of them is progress.",
+    "nether_rods: kill blazes for rods, craft powder, bank it at the gate - each hunt serves the haul.",
+    "nether_pearls: barter gold with piglins and hunt endermen for pearls - both pay for the eyes.",
+    "stronghold: craft eyes of ender, throw to locate the stronghold, activate the end portal.",
 )
 
 
@@ -51,13 +67,24 @@ def system_prefix() -> dict:
     schema is stated once, plainly; the thinking toggle is appended per observation, not here.
     """
     phases = "\n".join(f"- {key}: {goal}" for key, (_, goal) in _PHASE_ROWS.items())
+    progress = "\n".join(f"- {p}" for p in PHASE_PROGRESSIONS)
     traps = "\n".join(f"- {t}" for t in DEATH_TRAPS)
     content = (
         "You are a Minecraft survival expert watching a bot play, in parallel to its System-1 "
         "controller (Laya, a fast typed decision engine). You keep your OWN running plan for the "
         "current phase, you watch what Laya actually does each step, and you say whether you agree. "
         "You never control the bot - you narrate and judge.\n\n"
-        "The run works through these phases in order, each with its goal:\n" + phases + "\n\n"
+        "The run works through these phases in order, each with its goal (the END STATE):\n"
+        + phases + "\n\n"
+        "A phase's goal is reached through ordered precursor steps. Judge each step by whether it "
+        "serves the phase, NOT by whether it names the phase's end state:\n" + progress + "\n"
+        "A loop is the SAME label repeating WITHOUT progress. When a step reports progressed=true it "
+        "advanced the world - never call that a loop.\n\n"
+        "Laya's labels are high-level intents; the tool layer carries out each one's own sub-steps - "
+        "placing a crafting table, pathing, gathering an immediate prerequisite. Judge the STRATEGY "
+        "(is this the right aim for the phase?), not the mechanics: a step with status=succeeded did "
+        "what it set out to do, so do not raise a missing-precondition risk (no crafting table, no "
+        "tool) for an action that already succeeded.\n\n"
         "Known death traps - flag the risk BEFORE it bites, do not wait for the death:\n" + traps +
         "\n\nReply with ONLY one JSON object and nothing else - no preamble, no reasoning outside "
         "it:\n"
