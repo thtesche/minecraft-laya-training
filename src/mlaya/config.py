@@ -49,6 +49,31 @@ class JudgeConfig(BaseModel):
     base_url: str = "http://192.168.0.109:8080/v1"
 
 
+class ObserverConfig(BaseModel):
+    # The parallel observer: a persistent LLM that narrates and judges the run in parallel to Laya,
+    # read-only, never touching the bot. It keeps ONE append-only "story" conversation so the Strata
+    # prefix cache stays warm tick after tick (scripts/cache_probe.py: a branch caches 0, an append
+    # reuses the whole prior prompt). The ceilings below are the generous ones from the Strata model
+    # definition in OpenChamber (context 200k / input 185k / output 16384, reasoning high) - the live
+    # System-2 `[llm]` stays at its own, tighter budget.
+    model: str = "qwen3.8-flash-next-q2_0"
+    api_key_env: str = "STRATA_API_KEY"
+    base_url: str = "http://192.168.0.109:8080/v1"
+    max_tokens: int = 16_384          # the model's output ceiling, for the full-reasoning event turns
+    # Routine /no_think ticks still write a full JSON verdict; the smoke test saw them reach ~480
+    # completion tokens and a 512 cap truncated the JSON mid-reply (an unparseable verdict). This
+    # leaves headroom without inviting the model to ramble past the terse note the prompt asks for.
+    routine_max_tokens: int = 1_024
+    context_tokens: int = 200_000     # the model's context window
+    input_budget: int = 185_000       # fold the oldest story turns into a summary before this
+    reasoning_effort: str = "high"    # for the full-reasoning event turns; routine ticks run /no_think
+    log_path: str = "runs/observer.jsonl"
+    # How far behind the decisions log the tailer may fall before routine ticks are sampled rather
+    # than each observed (events - phase change, escalation, stall, death - are never skipped).
+    max_lag: int = 8
+    poll_s: float = 1.0
+
+
 class MCPConfig(BaseModel):
     url: str = "http://localhost:25575/mcp"
     health_url: str = "http://localhost:25575/health"
@@ -122,6 +147,7 @@ class LoopConfig(BaseModel):
 class Settings(BaseModel):
     llm: LLMConfig = LLMConfig()
     judge: JudgeConfig = JudgeConfig()
+    observer: ObserverConfig = ObserverConfig()
     mcp: MCPConfig = MCPConfig()
     laya: LayaConfig = LayaConfig()
     loop: LoopConfig = LoopConfig()
@@ -136,6 +162,13 @@ class Settings(BaseModel):
 
     def judge_api_key(self) -> str | None:
         return os.environ.get(self.judge.api_key_env)
+
+    def observer_api_key(self) -> str | None:
+        return os.environ.get(self.observer.api_key_env)
+
+    def observer_log_path(self) -> Path:
+        p = Path(self.observer.log_path)
+        return p if p.is_absolute() else ROOT / p
 
     def log_path(self) -> Path:
         p = Path(self.loop.log_path)

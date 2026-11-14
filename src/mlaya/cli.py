@@ -250,6 +250,82 @@ def cmd_teacher(args) -> int:
     return 0
 
 
+def _tail_lines(path: Path, offset: int) -> tuple[list[str], int]:
+    """Complete (newline-terminated) lines from `offset`; a half-written last line is left for next
+    poll. Returns `(lines, new_offset)`; a shrunk file (the run archived its log) resets to 0."""
+    size = path.stat().st_size
+    if size < offset:
+        offset = 0
+    with path.open("rb") as f:
+        f.seek(offset)
+        chunk = f.read()
+    nl = chunk.rfind(b"\n")
+    if nl == -1:
+        return [], offset
+    complete = chunk[: nl + 1]
+    lines = complete.decode("utf-8", errors="replace").splitlines()
+    return lines, offset + len(complete)
+
+
+def cmd_observe(args) -> int:
+    """Run the parallel observer: narrate and judge the run alongside Laya, read-only.
+
+    Replay mode walks an archived log once (offline, for testing the story); follow mode tails the
+    live decisions log until stopped. Either way it writes one judgment per observation to
+    `runs/observer.jsonl` and never touches the bot or any log the loop reads.
+    """
+    from . import observer as obs_mod
+
+    settings = load_settings()
+    log = _resolve(args.log) if args.log else settings.log_path()
+    out = settings.observer_log_path()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    key = settings.observer_api_key()
+    llm_fn = obs_mod.make_llm_fn(settings.observer, key)
+
+    def sink(record: dict) -> None:
+        with out.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+    observer = obs_mod.Observer(settings.observer, llm_fn, sink)
+    print(json.dumps({"observer": "start", "log": str(log), "out": str(out),
+                      "key": "set" if key else f"MISSING ({settings.observer.api_key_env})",
+                      "mode": "replay" if args.replay else "follow"}), flush=True)
+
+    written = 0
+    if args.replay:
+        from . import analysis
+        for rec in analysis.read_records(log):
+            if observer.ingest(rec) is not None:
+                written += 1
+        print(json.dumps({"observer": "done", "judgments": written}, default=str))
+        return 0
+
+    offset = 0
+    try:
+        while True:
+            if not log.exists():
+                time.sleep(settings.observer.poll_s)
+                continue
+            lines, offset = _tail_lines(log, offset)
+            sampled = len(lines) > settings.observer.max_lag
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if observer.ingest(rec, sampled=sampled) is not None:
+                    written += 1
+            if not lines:
+                time.sleep(settings.observer.poll_s)
+    except KeyboardInterrupt:
+        print(json.dumps({"observer": "stopped", "judgments": written}, default=str))
+    return 0
+
+
 def cmd_analyze(args) -> int:
     """Turn a run log into a defect report: refusals, stalls, movement, milestones, diff."""
     from . import analysis
@@ -413,6 +489,13 @@ def main(argv: list[str] | None = None) -> int:
                      help="the run's own log carrying the end JSON (default: newest runs/run*.log)")
     ana.add_argument("--out", default="", help="markdown report path (default runs/report-<log>.md)")
 
+    obs = sub.add_parser("observe", help="run the parallel observer: narrate and judge the run "
+                                         "alongside Laya, read-only (replay an archived log or "
+                                         "follow the live one)")
+    obs.add_argument("--log", default="", help="decisions log (default: the configured log)")
+    obs.add_argument("--replay", action="store_true",
+                     help="walk the log once offline instead of following it live")
+
     trn = sub.add_parser("train", help="fine-tune a Laya checkpoint head on the dataset")
     trn.add_argument("--data", default="", help="training JSONL (default data/train.jsonl)")
     trn.add_argument("--base", default="",
@@ -441,6 +524,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_dataset(args)
     if cmd == "analyze":
         return cmd_analyze(args)
+    if cmd == "observe":
+        return cmd_observe(args)
     if cmd == "teacher":
         return cmd_teacher(args)
     if cmd == "train":
