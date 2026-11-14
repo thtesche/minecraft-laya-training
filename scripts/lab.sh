@@ -4,7 +4,8 @@
 #   ./scripts/lab.sh up [--n 1000] [--fresh] [--ignore-goal]  start world, host, viewer, run
 #   ./scripts/lab.sh up --no-viewer                           the same, without the live view
 #   ./scripts/lab.sh up --fresh --no-run                       setup only (world/host/viewer/probe), no mlaya loop
-#   ./scripts/lab.sh status                                    JSON: world, viewer, host, run, last tick
+#   ./scripts/lab.sh up --observe                              also run the read-only observer sidecar (-> runs/observer.jsonl)
+#   ./scripts/lab.sh status                                    JSON: world, viewer, host, run, observer, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
 #   ./scripts/lab.sh report [run number]                        write the finished run's report
 #   ./scripts/lab.sh dataset [flags]                            fine-tuning corpus from every archived run
@@ -208,6 +209,16 @@ stop_viewer() {
   fi
 }
 
+# Stop the parallel observer if --observe started one. A no-op when its pid file is absent, so it
+# is safe to call unconditionally from both the post-run subshell and `down`.
+stop_observer() {
+  if [[ -f "$STATE/observe.pid" ]]; then
+    kill "$(cat "$STATE/observe.pid")" 2>/dev/null
+    rm -f "$STATE/observe.pid"
+    log "observer stopped"
+  fi
+}
+
 next_run_number() {  max=0
   for f in "$REPO"/runs/run*.log "$REPO"/runs/history/decisions-run*.jsonl; do
     n=$(basename "$f" | sed -n 's/.*run\([0-9]*\).*/\1/p')
@@ -271,6 +282,7 @@ cmd_up() {
   ignore_goal=0
   no_viewer=0
   no_run=0
+  observe=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --n) n="${2:-1000}"; shift 2 ;;
@@ -279,6 +291,7 @@ cmd_up() {
       --ignore-goal) ignore_goal=1; shift ;;
       --no-viewer) no_viewer=1; shift ;;
       --no-run) no_run=1; shift ;;
+      --observe) observe=1; shift ;;
       *) log "unknown argument: $1"; return 1 ;;
     esac
   done
@@ -378,6 +391,13 @@ cmd_up() {
     mv "$REPO/runs/system2.jsonl" "$REPO/runs/history/system2-run$((run_no - 1)).jsonl"
     log "previous System-2 log archived to runs/history/system2-run$((run_no - 1)).jsonl"
   fi
+  # The observer's side-file rides along the same way, so a run's parallel narration archives with
+  # its decision log (`mlaya.analysis` can join the two by iteration). Only with --observe, which is
+  # opt-in: the sidecar reads the live log and talks to Strata, so it is not on by default.
+  if [[ $observe == 1 && -f "$REPO/runs/observer.jsonl" ]]; then
+    mv "$REPO/runs/observer.jsonl" "$REPO/runs/history/observer-run$((run_no - 1)).jsonl"
+    log "previous observer log archived to runs/history/observer-run$((run_no - 1)).jsonl"
+  fi
 
   touch "$REPO/runs/decisions.jsonl"
   args=(-n "$n")
@@ -388,9 +408,19 @@ cmd_up() {
   echo "$run_pid" > "$STATE/run.pid"
   echo "$run_no" > "$STATE/run_number"
   touch "$STATE/lock"
+  # The parallel observer, opt-in: a read-only sidecar that follows the live decision log and
+  # narrates/judges the run alongside Laya, writing runs/observer.jsonl. It touches neither the bot
+  # nor any log the loop reads, so it rides outside the run and the watchdog, and is stopped with
+  # the run below. Its own stdout goes to runs/observe-run$run_no.log.
+  if [[ $observe == 1 ]]; then
+    nohup "$PY" -m mlaya.cli observe > "$REPO/runs/observe-run$run_no.log" 2>&1 &
+    echo $! > "$STATE/observe.pid"
+    log "observer started (read-only) -> runs/observer.jsonl, runs/observe-run$run_no.log"
+  fi
   # The report writes itself once the run's process is gone: nobody has to remember to ask
-  # for the analysis, and the next `up` can diff against it straight away.
-  ( while kill -0 "$run_pid" 2>/dev/null; do sleep 5; done; report_run "$run_no" ) &
+  # for the analysis, and the next `up` can diff against it straight away. The observer is stopped
+  # here too, so a finished run leaves no sidecar tailing an idle log (a no-op without --observe).
+  ( while kill -0 "$run_pid" 2>/dev/null; do sleep 5; done; report_run "$run_no"; stop_observer ) &
   echo $! > "$STATE/report.pid"
   # Watchdog monitors the server log for freezes (Can't keep up) and aborts the run.
   "$REPO/scripts/watchdog.sh" "$run_no" "$REPO/infra/world/logs/latest.log" "$STATE" &
@@ -465,6 +495,20 @@ if len(actions) >= 6:
 
 run_no = (state / "run_number").read_text().strip() if (state / "run_number").exists() else ""
 
+# The parallel observer (opt-in --observe): running flag, how many verdicts it has written, and its
+# last call so status shows whether the sidecar is keeping up and what it last judged.
+observer = {"running": pid_alive(state / "observe.pid")}
+obs_log = repo / "runs" / "observer.jsonl"
+if obs_log.exists():
+    obs_rows = [r for r in (json.loads(l) for l in obs_log.read_text().splitlines() if l.strip())]
+    observer["judgments"] = len(obs_rows)
+    if obs_rows:
+        last_obs = obs_rows[-1]
+        observer["last"] = {"iteration": last_obs.get("iteration"),
+                            "phase": last_obs.get("phase"),
+                            "event": last_obs.get("event"),
+                            "verdict": last_obs.get("verdict")}
+
 # The viewer reports itself through --state, so status can tell "the process is alive" apart
 # from "LayaView is actually in the world with a camera on the bot".
 viewer = {"running": pid_alive(state / "viewer.pid"), "url": f"http://localhost:{viewer_port}"}
@@ -500,6 +544,7 @@ print(json.dumps({
             "dimension": state_.get("dimension"),
             "ticks": len(records),
             "anomalies": anomalies},
+    "observer": observer,
     "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
 }, indent=2, ensure_ascii=False, default=str))
 EOF
@@ -551,6 +596,7 @@ cmd_down() {
   if run_up; then
     kill "$(cat "$STATE/run.pid")" 2>/dev/null
     kill "$(cat "$STATE/watchdog.pid")" 2>/dev/null
+    stop_observer
     rm -f "$STATE/run.pid" "$STATE/report.pid" "$STATE/watchdog.pid" "$STATE/lock"
     log "run stopped"
   fi
