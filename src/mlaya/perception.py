@@ -990,6 +990,11 @@ class GameState:
     # Injected by the loop (perception cannot know it) and carried into every decision so the
     # base-relative steps have one fixed point that survives the bot wandering off to mine.
     base: tuple[int, int, int] | None = None
+    # Whether this run wants the pre-diamond iron armour set (default off). A run-level flag, so
+    # the loop injects it like `base` above (graph._inject, from config.laya.iron_armor). When
+    # false the combat kit is the iron sword and shield only and the dive for diamond happens
+    # without iron body armour; see actions._combat_ready and the planner's armour step.
+    want_iron_armor: bool = False
     # The placed chest at the base, remembered from `place_chest` so `use_container` can name
     # its exact coordinates without a second block scan.
     chest_pos: tuple[int, int, int] | None = None

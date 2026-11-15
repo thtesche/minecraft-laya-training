@@ -2,6 +2,7 @@
 # The lab's lifecycle: world (Docker), MCP host (bun), run (mlaya), viewer (node), report (analyze).
 #
 #   ./scripts/lab.sh up [--n 1000] [--fresh] [--ignore-goal]  start world, host, viewer, run
+#   ./scripts/lab.sh up --iron-armor                          craft the iron armour set before diamond (default: skip it)
 #   ./scripts/lab.sh up --no-viewer                           the same, without the live view
 #   ./scripts/lab.sh up --fresh --no-run                       setup only (world/host/viewer/probe), no mlaya loop
 #   ./scripts/lab.sh up --observe                              also run the read-only observer sidecar (-> runs/observer.jsonl)
@@ -280,6 +281,7 @@ cmd_up() {
   n=1000
   fresh=0
   ignore_goal=0
+  iron_armor=0
   no_viewer=0
   no_run=0
   observe=0
@@ -289,6 +291,7 @@ cmd_up() {
       --n=*) n="${1#--n=}"; shift ;;
       --fresh) fresh=1; shift ;;
       --ignore-goal) ignore_goal=1; shift ;;
+      --iron-armor) iron_armor=1; shift ;;
       --no-viewer) no_viewer=1; shift ;;
       --no-run) no_run=1; shift ;;
       --observe) observe=1; shift ;;
@@ -402,6 +405,7 @@ cmd_up() {
   touch "$REPO/runs/decisions.jsonl"
   args=(-n "$n")
   [[ $ignore_goal == 1 ]] && args+=(--ignore-goal)
+  [[ $iron_armor == 1 ]] && args+=(--iron-armor)
   cd "$REPO"
   nohup "$PY" -m mlaya.cli run "${args[@]}" > "$REPO/runs/run$run_no.log" 2>&1 &
   run_pid=$!

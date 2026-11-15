@@ -78,6 +78,8 @@ async def cmd_run(args) -> int:
     settings.loop.max_iterations = iterations
     if getattr(args, "ignore_goal", False):
         settings.loop.stop_when_complete = False
+    if getattr(args, "iron_armor", False):
+        settings.laya.iron_armor = True
     await _health(settings)
     try:
         async with MCPExecutor(settings.mcp) as executor:
@@ -440,6 +442,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("-n", "--iterations", type=int, default=0)
     run.add_argument("--ignore-goal", action="store_true",
                      help="keep looping past a completed tech tree (dataset collection)")
+    run.add_argument("--iron-armor", action="store_true",
+                     help="craft the pre-diamond iron armour set before diving for diamond "
+                          "(default: dive behind the iron sword and shield, wear diamond armour)")
     pol = sub.add_parser("policy", help="show/apply the server survival policy")
     pol.add_argument("--apply", action="store_true", help="apply a policy stage")
     pol.add_argument("--preset", choices=["base", "hunt"], default="base",

@@ -480,8 +480,15 @@ class Agent:
     _stall_dropped: dict[str, int] = {}
     _stall_escalations: int = 0
 
+    # Whether this run wants the pre-diamond iron armour set, from `config.laya.iron_armor` (the
+    # `--iron-armor` flag), injected onto every GameState (`_inject`). Class default for the same
+    # reason as `_durable`: a stub agent built with `Agent.__new__` reads it through `_inject`, and
+    # False is exactly the default "no iron armour, dive for diamond behind the sword and shield".
+    _want_iron_armor: bool = False
+
     def __init__(self, settings: Settings, executor):
         self.settings = settings
+        self._want_iron_armor = settings.laya.iron_armor
         self.mcp = executor
         self.brain = Brain(settings.laya)
         self.log = MemoryLog(settings.log_path())
@@ -941,6 +948,7 @@ class Agent:
         """Carry the loop-owned facts perception cannot see into the GameState."""
         self._adopt_homebase(gs)
         gs.base = self.base
+        gs.want_iron_armor = self._want_iron_armor
         gs.surface = self.surface
         gs.surface_wet = frozenset(self._surface_wet)
         gs.chest_pos = self.chest_pos

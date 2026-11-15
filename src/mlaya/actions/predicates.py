@@ -609,17 +609,21 @@ def _has_iron_sword(gs: GameState) -> bool:
 
 
 def _combat_ready(gs: GameState) -> bool:
-    """The pre-diamond safety kit: a sword, a shield and armour on every slot.
+    """The pre-diamond safety kit: an iron sword, a shield and - only when the run asks for it
+    (`gs.want_iron_armor`, the `--iron-armor` flag) - iron armour on every slot.
 
-    `mine_diamond` is gated on this, so the bot never dives to y<16 for diamonds unarmed and
-    unarmoured again (live, run12: a naked dive died to a zombie and a creeper, and the dropped
-    gear was lost to the despawn). The pieces are iron, which is the only pre-diamond sword and
-    armour the tree crafts.
+    `mine_diamond` is gated on this, so the bot never dives to y<16 for diamonds unarmed again
+    (live, run12: a naked dive died to a zombie and a creeper, and the dropped gear was lost to
+    the despawn). The sword and shield are always required; the iron armour is opt-in, since the
+    run wears diamond armour once the diamonds are mined and the iron set in between cost run246
+    most of its budget.
     """
     if not _has_iron_sword(gs):
         return False
     if not _has_shield(gs):
         return False
+    if not gs.want_iron_armor:
+        return True
     return all(_armor_slot_covered(gs, slot) for slot, _ in IRON_ARMOR)
 
 
@@ -4113,9 +4117,12 @@ def _combat_iron_missing(gs: GameState) -> int:
         need += SHIELD_IRON
     if not _has_iron_sword(gs):
         need += IRON_SWORD_INGOTS
-    for slot, cost in IRON_ARMOR:
-        if not _armor_slot_covered(gs, slot):
-            need += cost
+    # Only quarry iron for armour when the run wants the iron set; otherwise the pickaxe, sword
+    # and shield are all the iron the pre-diamond kit needs (`--iron-armor` adds the set back).
+    if gs.want_iron_armor:
+        for slot, cost in IRON_ARMOR:
+            if not _armor_slot_covered(gs, slot):
+                need += cost
     return need
 
 

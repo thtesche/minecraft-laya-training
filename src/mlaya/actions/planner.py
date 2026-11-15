@@ -389,14 +389,16 @@ def candidates(gs: GameState) -> list[str]:
             out.append("craft_shield")
         if _has(inv, SHIELD_ITEM) and not _offhand(gs, SHIELD_ITEM):
             out.append("equip_shield")
-        # The rest of the pre-diamond combat kit: an iron sword and a full iron armour set, so the
-        # dive to the diamonds is not the unarmed, unarmoured trip that got the bot killed (live,
-        # run12). Gated behind the iron pickaxe, like the shield, so it never spends the first
-        # ingots that pickaxe needs; the armour is built one piece at a time, most protection first.
+        # The rest of the pre-diamond combat kit: an iron sword, and - only when the run asks for
+        # it (`--iron-armor`) - a full iron armour set, so the dive to the diamonds is not the
+        # unarmed trip that got the bot killed (live, run12). Gated behind the iron pickaxe, like
+        # the shield, so it never spends the first ingots that pickaxe needs; the armour is built
+        # one piece at a time, most protection first. The sword is always wanted; the iron armour
+        # is opt-in, since diamond armour follows the dig and the iron set cost run246 its budget.
         if (table and tier >= IRON_PICK_TIER and not _has_iron_sword(gs)
                 and iron >= IRON_SWORD_INGOTS and _can_sticks(inv, logs, planks)):
             out.append("craft_iron_sword")
-        iron_armor_nxt = _next_iron_armor_item(gs)
+        iron_armor_nxt = _next_iron_armor_item(gs) if gs.want_iron_armor else None
         if (table and tier >= IRON_PICK_TIER and iron_armor_nxt is not None
                 and iron >= iron_armor_nxt[1]):
             out.append("craft_" + iron_armor_nxt[0])

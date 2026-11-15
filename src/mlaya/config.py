@@ -101,6 +101,13 @@ class LayaConfig(BaseModel):
     # (a JSON object {name: source}); a name that matches a built-in re-points it,
     # which is how a fine-tune is served under `english` with no code change.
     extra_models: dict[str, Any] = {}
+    # Craft the pre-diamond iron armour set before the first diamond dive. Default off: early runs
+    # died to mobs without it, which is why the kit used to be mandatory - but with the diamond
+    # armour that follows, the detour cost a run most of its budget (run246 reached diamond only at
+    # the buzzer). Off, the kit is the iron sword and shield only and the dive goes behind those,
+    # then the run wears diamond armour. Turned on per run by `--iron-armor` (cli.cmd_run), injected
+    # onto the GameState by the loop (graph._inject), read by actions._combat_ready and the planner.
+    iron_armor: bool = False
 
 
 class TrainConfig(BaseModel):

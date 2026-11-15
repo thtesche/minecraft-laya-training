@@ -1650,12 +1650,23 @@ class ShieldTest(unittest.TestCase):
         self.assertNotIn("get_wood", candidates(g))
 
     def test_missing_combat_pieces_pull_iron(self) -> None:
-        # The kit (shield, sword, armour) is the reason to dig iron once the pickaxe exists; the
-        # mine is capped to one batch, so a 27-ingot goal is not a single unbounded dig.
+        # With --iron-armor the kit (shield, sword, armour) is the reason to dig iron once the
+        # pickaxe exists; the mine is capped to one batch, so a 27-ingot goal is not a single
+        # unbounded dig. (Default-off, the armour drops out of the goal - see the test below.)
         g = gs(tools={"pickaxe": "diamond"},
                inventory={"crafting_table": 1, "oak_planks": 6}, resources=_ore("iron_ore"))
+        g.want_iron_armor = True
         self.assertIn("mine_iron", candidates(g))
         self.assertEqual(resolve("mine_iron", g).args["count"], 8)
+
+    def test_default_pulls_iron_only_for_the_sword_and_shield(self) -> None:
+        # Default (no --iron-armor): the pre-diamond kit is the iron sword and shield, so the iron
+        # goal after the pickaxe is just their ingots (2 + 1 = 3), not the armour set's 24 more.
+        g = gs(tools={"pickaxe": "diamond"},
+               inventory={"crafting_table": 1, "oak_planks": 6}, resources=_ore("iron_ore"))
+        self.assertFalse(g.want_iron_armor)
+        self.assertIn("mine_iron", candidates(g))
+        self.assertEqual(resolve("mine_iron", g).args["count"], 3)
 
     def test_complete_combat_kit_does_not_quarry_iron(self) -> None:
         g = gs(tools={"pickaxe": "diamond"},
@@ -1674,7 +1685,9 @@ class CombatKitTest(unittest.TestCase):
     def _ready(self, **inv):
         base = {"crafting_table": 1, "iron_ingot": 8, "stick": 2}
         base.update(inv)
-        return gs(tools={"pickaxe": "iron"}, inventory=base)
+        g = gs(tools={"pickaxe": "iron"}, inventory=base)
+        g.want_iron_armor = True  # this class covers the opt-in iron-armour kit (`--iron-armor`)
+        return g
 
     def test_iron_sword_needs_the_pickaxe_and_two_ingots(self) -> None:
         g = self._ready()
@@ -1724,9 +1737,32 @@ class CombatKitTest(unittest.TestCase):
     def test_partial_kit_still_blocks_the_diamond_dive(self) -> None:
         g = gs(tools={"pickaxe": "iron"}, inventory={"iron_sword": 1},
                resources=_ore("diamond_ore"))
+        g.want_iron_armor = True  # the dive-blocks-on-partial-armour rule is the opt-in path
         g.offhand = "shield"
         g.armor = {slot: {"item": f"iron_{slot}"}
                    for slot in ("chestplate", "leggings", "boots")}  # no helmet yet
+        self.assertNotIn("mine_diamond", candidates(g))
+
+    def test_default_skips_iron_armour_and_dives_behind_sword_and_shield(self) -> None:
+        # Default (no --iron-armor): the combat kit is the iron sword and shield only. With those
+        # in hand the diamond dive is allowed without iron body armour, and no armour craft is
+        # offered even with the ingots for it - the run wears diamond armour after the dig instead.
+        g = gs(tools={"pickaxe": "iron"},
+               inventory={"crafting_table": 1, "iron_ingot": 24, "iron_sword": 1},
+               resources=_ore("diamond_ore"))
+        g.offhand = "shield"
+        self.assertFalse(g.want_iron_armor)
+        self.assertNotIn("craft_iron_chestplate", candidates(g))
+        self.assertIn("mine_diamond", candidates(g))
+
+    def test_iron_armor_flag_restores_the_set_and_its_gate(self) -> None:
+        # With --iron-armor the armour comes back and again gates the dive until the set is worn.
+        g = gs(tools={"pickaxe": "iron"},
+               inventory={"crafting_table": 1, "iron_ingot": 24, "iron_sword": 1},
+               resources=_ore("diamond_ore"))
+        g.offhand = "shield"
+        g.want_iron_armor = True
+        self.assertIn("craft_iron_chestplate", candidates(g))
         self.assertNotIn("mine_diamond", candidates(g))
 
 
