@@ -3355,17 +3355,39 @@ def _smoker_worth_placing(gs: GameState) -> bool:
 
 
 def _smoker_craft_ready(gs: GameState) -> bool:
-    """The server's smoker recipe: four logs *and* a carried furnace - and a second furnace.
+    """The server's smoker recipe: four logs *and* a carried furnace - and a station left over.
 
     "four planks and a coal" was never a smoker: live, run78 offered the craft with one log
     carried and the server answered `[CRAFT_MATERIALS_MISSING] oak_log x3` - the recipe wants
-    four logs plus one furnace, and that furnace is a material too. Requiring a second carried
-    furnace is not greed but the cook chain: with the recipe's furnace consumed, the station
-    for `cook_food` and the iron of `smelt_iron` is gone with it.
+    four logs plus one furnace, and that furnace is a material too. What the recipe must not
+    take away is the station `cook_food` and `smelt_iron` run on, hence `SMOKER_FURNACES` total.
+
+    Total, not carried. The old reading demanded two furnaces *in the pack*, and no run can ever
+    hold two: `craft_furnace` is offered only while no furnace is reachable, so the one furnace a
+    run makes ends up standing at the base and the carried count is zero from then on. Live,
+    run247: one furnace carried for 51 of 62 ticks, never a second, never a smoker. A furnace
+    that stands is a station the recipe cannot eat, so it counts.
     """
     inv = gs.inventory
+    carried = inv.get("furnace", 0)
     return (_has(inv, "crafting_table") and _logs(inv) >= SMOKER_LOGS
-            and inv.get("furnace", 0) >= SMOKER_FURNACES)
+            and carried >= 1
+            and carried + (1 if gs.furnace_pos is not None else 0) >= SMOKER_FURNACES)
+
+
+def _smoker_furnace_owed(gs: GameState) -> bool:
+    """Whether the smoker recipe still needs a furnace the pack does not have.
+
+    The other half of the same accounting: the recipe consumes a carried furnace, and the run
+    crafts exactly one, which `place_furnace` stands at the base. With nothing left in hand the
+    craft is blocked for the rest of the run, so the second furnace has to be made on purpose -
+    but only when the rest of the recipe is already in hand, so the cobble and the tick are not
+    spent on a facility the run cannot use yet.
+    """
+    inv = gs.inventory
+    return (gs.furnace_pos is not None and gs.smoker_pos is None and _at_base(gs)
+            and not _has(inv, "smoker") and inv.get("furnace", 0) == 0
+            and _logs(inv) >= SMOKER_LOGS and _first_cookable(inv) is not None)
 
 
 def _furnace_worth_placing(gs: GameState) -> bool:
@@ -3427,17 +3449,18 @@ def _furnace_room(gs: GameState, item: str | None = None, count: int = 1) -> boo
 
 
 def _smelt_room(gs: GameState, item: str, capacity: int | None = None,
-                wanted: int | None = None) -> bool:
+                wanted: int | None = None, batch: int = SMELT_BATCH) -> bool:
     """`_furnace_room` for one named smelt, sized exactly as the resolve will size it.
 
     The count is the one `resolve` will request - the carried stack, the fuel's furnace capacity,
     and how much of the output the run still wants - so the offer never opens a smelt the action
-    then has to refuse.
+    then has to refuse. `batch` is the resolve's per-action cap: `SMELT_BATCH` for ore, the larger
+    `COOK_BATCH` for food, passed by the caller so the two stay in step.
     """
     carried = int(gs.inventory.get(item, 0))
     if carried <= 0:
         return False
-    count = min(carried, SMELT_BATCH)
+    count = min(carried, batch)
     if capacity is not None:
         count = min(count, capacity)
     if wanted is not None:

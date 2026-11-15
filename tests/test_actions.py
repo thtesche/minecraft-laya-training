@@ -567,11 +567,35 @@ class FoodChainTest(unittest.TestCase):
         self.assertEqual(a.args["food_name"], "cooked_beef")
 
     def test_cook_raw_meat_with_furnace(self) -> None:
-        g = gs(inventory={"furnace": 1, "coal": 1, "beef": 2})
+        # Geared: cooking is held until the diamond kit is done (`_gear_ready`), so the mechanic
+        # is tested from the state that is actually allowed to cook.
+        g = geared(furnace=1, coal=1, beef=2)
         a = resolve("cook_food", g)
         self.assertEqual(a.tool, "smelt_item")
         self.assertEqual(a.args["item_name"], "beef")
         self.assertEqual(a.args["fuel_item_name"], "coal")
+
+    def test_no_cooking_before_the_diamond_kit(self) -> None:
+        # Cooking is Nether-prep, not the pre-diamond grind: before the kit is done
+        # (`_gear_ready`) the bot carries raw meat uncooked rather than loop at the furnace. Live,
+        # run247 it14-26 cooked its stock three at a time while the first diamond waited until
+        # it29. Raw meat already counts in the reserve (`PROVISIONS`), so nothing is lost by
+        # waiting and the reflex eats raw on the `always` policy.
+        g = gs(inventory={"furnace": 1, "coal": 3, "beef": 5},
+               mobs=[("cow", "animal", 1, 9.0)])
+        self.assertNotIn("cook_food", candidates(g))
+        self.assertIsNone(resolve("cook_food", g))
+        # The same pack, kit done, cooks.
+        ready = geared(furnace=1, coal=3, beef=5)
+        ready.mobs = [("cow", "animal", 1, 9.0)]
+        self.assertIn("cook_food", candidates(ready))
+
+    def test_coal_cooks_a_full_batch_at_once(self) -> None:
+        # Cooking has its own larger cap (`COOK_BATCH`): the hunt already banked the meat, so the
+        # lull should clear it in a few actions, not loop three at a time (run247 cooked ~21 meat
+        # three at a time). One coal unit smelts eight, so a coal cook loads eight.
+        a = resolve("cook_food", geared(furnace=1, coal=1, beef=20))
+        self.assertEqual(a.args["count"], 8)
 
     def test_cook_with_wood_fuel_in_the_nether_lull(self) -> None:
         # After the portal is lit the daytime lull is food-prep time: raw meat cooks on any
@@ -4648,7 +4672,7 @@ class BaseFurnaceTest(unittest.TestCase):
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -99))
 
     def test_cook_food_places_a_temporary_furnace_without_a_base_one(self) -> None:
-        a = resolve("cook_food", gs(inventory={"furnace": 1, "coal": 1, "beef": 2}))
+        a = resolve("cook_food", geared(furnace=1, coal=1, beef=2))
         self.assertTrue(a.args["temporary_workstation"])
         self.assertNotIn("x", a.args)
 
@@ -4687,7 +4711,7 @@ class BaseFurnaceTest(unittest.TestCase):
         g.slots_used = 36
         self.assertIn("cook_food", candidates(g))          # both beef go in, the slot is freed
         g.inventory["beef"] = 9
-        self.assertNotIn("cook_food", candidates(g))       # 3 of 9 stay in the pack: no room
+        self.assertNotIn("cook_food", candidates(g))       # 1 of 9 stays in the pack: no room
         self.assertIsNone(resolve("cook_food", g))
         g.slots_used = 35
         self.assertIn("cook_food", candidates(g))
@@ -9406,13 +9430,43 @@ class SmokerBesideTheFurnaceTest(unittest.TestCase):
         self.assertEqual(a.tool, "craft_item")
         self.assertEqual(a.args["items"], [{"item_name": "smoker"}])
 
-    def test_one_carried_furnace_is_eaten_by_the_recipe_so_is_not_enough(self) -> None:
-        # The furnace in the recipe is a material. With one furnace the smoker would stand
-        # where the cook chain's station stood, so the craft that makes cooking faster takes
-        # away the station cooking needs. Only the second furnace makes it a gain.
+    def test_a_standing_furnace_is_the_station_the_recipe_leaves_behind(self) -> None:
+        # The furnace in the recipe is a material, so the craft must leave a station behind - but
+        # a furnace *standing* at the base is already one. Requiring two in the pack made the
+        # smoker unreachable for every run: the run crafts one furnace and `place_furnace` stands
+        # it there, so the carried count is zero from then on (live, run247: one furnace for 51
+        # of 62 ticks, never a second, never a smoker).
         g = self._base_with_raw_meat(beef=12, furnace=1)
+        self.assertIn("craft_smoker", candidates(g))
+        a = resolve("craft_smoker", g)
+        self.assertEqual(a.args["items"], [{"item_name": "smoker"}])
+
+    def test_one_furnace_and_no_station_is_still_not_enough(self) -> None:
+        # With nothing standing, the recipe's furnace would be the only station cooking has.
+        g = self._base_with_raw_meat(beef=12, furnace=1)
+        g.furnace_pos = None
         self.assertNotIn("craft_smoker", candidates(g))
         self.assertIsNone(resolve("craft_smoker", g))
+
+    def test_the_second_furnace_is_crafted_for_the_recipe(self) -> None:
+        # The other half of the accounting: the base furnace stands, the pack is empty, so the
+        # craft that the old gate suppressed forever is offered again - exactly when the recipe
+        # can run, and not before.
+        g = self._base_with_raw_meat(beef=12, cobblestone=40)
+        self.assertIn("craft_furnace", candidates(g))
+        a = resolve("craft_furnace", g)
+        self.assertEqual(a.args["items"], [{"item_name": "furnace"}])
+        g.inventory["furnace"] = 1                  # the craft produced it
+        self.assertIn("craft_smoker", candidates(g))
+        self.assertNotIn("craft_furnace", candidates(g))   # one in hand is enough now
+
+    def test_no_second_furnace_before_the_recipe_can_run(self) -> None:
+        # No meat, or no logs: the cobble is not spent on a facility the run cannot use yet.
+        g = self._base_with_raw_meat(cobblestone=40)
+        self.assertNotIn("craft_furnace", candidates(g))
+        g = self._base_with_raw_meat(beef=12, cobblestone=40)
+        g.inventory["oak_log"] = 3
+        self.assertNotIn("craft_furnace", candidates(g))
 
     def test_the_recipe_wants_logs_and_a_planks_hoard_does_not_answer_for_them(self) -> None:
         # run78 carried oak_log 1 and the server named `oak_log x3` missing - four logs are

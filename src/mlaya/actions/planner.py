@@ -151,11 +151,15 @@ def candidates(gs: GameState) -> list[str]:
     raw_meat = _first_cookable(inv)
     cook_fuel = _furnace_fuel(inv)
     if ((_has(inv, "furnace") or _furnace_ready(gs)) and raw_meat and not eating
-            and _smelt_room(gs, raw_meat, cook_fuel[1] if cook_fuel else None)
+            and _smelt_room(gs, raw_meat, cook_fuel[1] if cook_fuel else None, batch=COOK_BATCH)
             and _food_source_in_reach(gs)):
-        # Cook raw meat so it feeds far more hunger. Outside the Nether lull only coal/charcoal
-        # may be spent on it (as before, so it never steals wood from the chain); during the lull
-        # any carried fuel does, so a bot with raw meat and wood still cooks.
+        # Cook raw meat so it feeds far more hunger - but only once the diamond kit is done
+        # (`_gear_ready`). Cooking is Nether-prep, not survival: the reflex eats raw on the
+        # `always` food policy, and raw meat already counts in the reserve (`PROVISIONS`), so
+        # nothing is lost by carrying it uncooked through the tool-and-diamond grind. Before the
+        # kit it is a dawdle - run247 it14-26 cooked its way through its stock three at a time
+        # while the first diamond waited until it29. From the kit onward coal/charcoal may be
+        # spent (as before, never stealing wood from the chain); wood waits for the lull.
         #
         # The step needs a source in reach, by the same rule as `_food_reserve_met`. Cooking
         # turns one raw item into one cooked one and both count the same in `_edible_count`, so
@@ -165,7 +169,7 @@ def candidates(gs: GameState) -> list[str]:
         # thing it was actually short of (live, run34: a bow it could not rebuild, no spider
         # within 24 m, and `candidates: ['cook_food']` with nothing else on it).
         fuel = _furnace_fuel(inv)
-        if fuel is not None and _cooking_reach(gs):
+        if fuel is not None and _cooking_reach(gs) and _gear_ready(gs):
             if fuel[0] in ("coal", "charcoal"):
                 out.append("cook_food")
             elif _nether_idle(gs) and _provisioned(gs) < _food_goal(gs):
@@ -330,7 +334,12 @@ def candidates(gs: GameState) -> list[str]:
             out.append("craft_table")
         if tier >= 1 and tier < STONE_PICK_TIER and table and cobble >= 3 and _can_sticks(inv, logs, planks):
             out.append("craft_stone_pickaxe")
-        if tier >= 1 and table and not furnace and cobble >= 8:
+        if tier >= 1 and table and cobble >= 8 and (not furnace or _smoker_furnace_owed(gs)):
+            # The second half is not greed: the smoker's recipe eats a carried furnace, and the
+            # run's only furnace is the one `place_furnace` stood at the base. Without this the
+            # craft is offered exactly once per run and the smoker is never built (live, run247:
+            # one furnace carried, no second, no smoker). It fires only when the rest of the
+            # recipe is already in hand, so it cannot become a cobble farm.
             out.append("craft_furnace")
         if (tier >= 1 and table and gs.smoker_pos is None and _at_base(gs)
                 and _smoker_craft_ready(gs) and _first_cookable(inv) is not None):
@@ -1902,6 +1911,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # workstation it could not carry.
         if not _cooking_reach(gs):
             return None
+        # Cooking is held until the diamond kit is done (`_gear_ready`): it is Nether-prep, not
+        # the pre-diamond grind. Mirrors the offer gate so the two cannot drift.
+        if not _gear_ready(gs):
+            return None
         station = _cooking_station(gs)
         # Outside the lull only coal/charcoal may be spent (never wood the chain still wants).
         if fuel[0] not in ("coal", "charcoal") and not _nether_idle(gs):
@@ -1912,7 +1925,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                 and _provisioned(gs) >= _food_goal(gs)):
             return None
         fuel_name, capacity = fuel
-        count = min(inv.get(raw, 0), SMELT_BATCH, capacity)
+        count = min(inv.get(raw, 0), COOK_BATCH, capacity)
         # Sized to the count the cook actually requests: the raw stack that leaves the pack for
         # the furnace is the slot the cooked output lands in.
         if count < 1 or not _furnace_room(gs, raw, count):

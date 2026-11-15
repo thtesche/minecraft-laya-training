@@ -21,7 +21,7 @@ CRITERIA: dict[str, str] = {
     "craft_stone_pickaxe": "craft a stone pickaxe at a crafting table from cobblestone and sticks",
     "mine_iron": "mine iron ore for raw iron using the stone pickaxe the bot carries",
     "mine_coal": "mine coal ore to use as furnace fuel",
-    "craft_smoker": "craft a smoker from the carried furnace and four logs, so food is cooked at double speed at the base; a second carried furnace stays behind as the workstation",
+    "craft_smoker": "craft a smoker from the carried furnace and four logs, so food is cooked at double speed at the base; the furnace standing there stays as the workstation for ore",
     "place_smoker": "stand the carried smoker beside the furnace at the base, so cooking reuses it",
     "craft_furnace": "craft a furnace at a crafting table from eight cobblestone",
     "smelt_iron": "smelt raw iron into iron ingots in the furnace the bot carries; one pass loads at most 3 raw iron onto one coal",
@@ -208,6 +208,13 @@ IRON_MINE_BATCH = 8
 # One `smelt_item` puts at most this many of a stack into the furnace. The room test has to use
 # the same number as the resolve, or the offer and the action disagree.
 SMELT_BATCH = 3
+# Cooking gets a larger cap of its own. The raw meat is already gathered (the hunt banks it), so a
+# cook in the Nether-prep lull is not interleaved with mining the way iron smelting is - it should
+# clear the stock in a few actions, not thirty (run247 cooked ~21 meat three at a time). One coal
+# unit smelts eight (`_furnace_fuel`), and a furnace at ~10 s/item cooks eight in ~80 s, well
+# inside the action wait budget (a smoker halves it); so eight is one coal's worth per action.
+# Wood is unaffected - its capacity of one binds before this cap does.
+COOK_BATCH = 8
 
 # Overworld -> Nether gate. A portal frame is ten obsidian with four cobblestone corners; the
 # server's `build_structure portal_frame` builds exactly that from a carried stack, so the
@@ -503,7 +510,11 @@ _GEAR_KEEP = ("golden_helmet",)
 # is how a full pack sheds surplus blocks without scattering them on the ground.
 CHEST_ITEM = "chest"
 SMOKER_LOGS = 4        # the server's smoker recipe: four logs *and* one carried furnace
-SMOKER_FURNACES = 2    # one goes into the craft; the second stays as station for cook and iron
+# Furnaces the base needs *in total*, not in the pack: one is consumed by the recipe, one stays
+# as the station for `cook_food` and `smelt_iron`. Counting them as carried was the reason the
+# smoker never got built - the run crafts exactly one furnace, and once it is stood at the base
+# the carried count is zero forever.
+SMOKER_FURNACES = 2
 CHEST_PLANKS = 8
 # The overflow cells of the base's storage network, in the order they are filled: behind and
 # beside the main chest at `(bx, by+1, bz+1)`, marching in +z -- away from the furnace and the
