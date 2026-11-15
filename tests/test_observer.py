@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 from mlaya.config import ObserverConfig
-from mlaya.observer import Observer, _parse_verdict
+from mlaya.observer import Observer, _gear_line, _parse_verdict, system_prefix
 
 
 def _rec(stage="action", it=0, phase="diamond_kit", label="get_wood",
@@ -167,6 +167,82 @@ class ParseVerdictTest(unittest.TestCase):
         v = _parse_verdict(leak)
         self.assertIsNone(v["agree"])
         self.assertTrue(v["note"])                               # the text is kept, not lost
+
+
+class PrefixTest(unittest.TestCase):
+    """What the judge is taught before it ever sees a tick - the prefix is where a false flag
+    either starts or stops."""
+
+    def test_the_shield_is_taught_as_kit_work(self) -> None:
+        # Live, run247: `risk="unnecessary detour", note="Shield is not part of diamond kit."` -
+        # the phase line named the kit without the shield, so the judge invented a detour for the
+        # one item the departure gate requires.
+        content = system_prefix()["content"]
+        self.assertIn("shield", content)
+        self.assertIn("off-hand", content)
+
+    def test_the_gear_field_is_taught(self) -> None:
+        content = system_prefix()["content"]
+        self.assertIn("`gear`", content)
+        self.assertIn("durability", content)
+
+
+class GearLineTest(unittest.TestCase):
+    """The judge reads the kit's real state - the shield in the off-hand, the armour worn, a tool
+    wearing out - instead of inferring it from the label stream (the run247 shield false-flag)."""
+
+    STATE = {
+        "armor": {
+            "helmet": {"tier": "diamond", "item": "diamond_helmet", "left": 330, "max": 363},
+            "chestplate": {"tier": "diamond", "item": "diamond_chestplate",
+                           "left": 680, "max": 680},
+        },
+        "tool_meta": {
+            "pickaxe": {"tier": "diamond", "item": "diamond_pickaxe", "left": 300, "max": 1561},
+            "sword": {"tier": "iron", "item": "iron_sword", "left": 100, "max": 250},
+        },
+        "offhand": "shield",
+    }
+
+    def test_worn_gear_and_durability_are_read(self) -> None:
+        g = _gear_line(self.STATE)
+        self.assertEqual(g["offhand"], "shield")
+        self.assertEqual(g["armor"]["helmet"], "diamond 91%")       # 330/363
+        self.assertEqual(g["armor"]["chestplate"], "diamond 100%")
+        self.assertEqual(g["tools"]["pickaxe"], "diamond 19%")      # 300/1561
+        self.assertEqual(g["tools"]["sword"], "iron 40%")           # 100/250
+
+    def test_a_missing_shield_shows_as_null_not_omitted(self) -> None:
+        # The other half of the fix: with armour on but no shield the judge should see the gap,
+        # not an absence it has to guess at.
+        g = _gear_line({"armor": self.STATE["armor"], "offhand": None})
+        self.assertIn("offhand", g)
+        self.assertIsNone(g["offhand"])
+
+    def test_a_stateless_record_adds_no_gear(self) -> None:
+        self.assertIsNone(_gear_line({}))
+        self.assertIsNone(_gear_line(None))
+
+    def test_the_observation_carries_the_gear(self) -> None:
+        rec = {"iteration": 5, "stage": "action", "label": "fill_bucket",
+               "candidates": ["fill_bucket"], "progressed": True, "status": "ok",
+               "narrative": "", "state": self.STATE}
+        with mock.patch("mlaya.observer._phase_of", lambda r: "prepare_nether"):
+            payload = Observer.observation(rec, None)
+        self.assertEqual(payload["gear"]["offhand"], "shield")
+        self.assertEqual(payload["gear"]["armor"]["helmet"], "diamond 91%")
+
+    def test_the_logged_verdict_carries_the_gear_too(self) -> None:
+        # The payload is not archived - only the verdict and its telemetry - so the record the
+        # Phase-3 join reads has to carry the gear the judge was shown, or a gear-aware judgment
+        # can never be audited against the world it was made from.
+        rec = {"iteration": 5, "stage": "action", "label": "fill_bucket",
+               "candidates": ["fill_bucket"], "progressed": True, "status": "ok",
+               "narrative": "", "state": self.STATE, "_phase": "prepare_nether"}
+        with mock.patch("mlaya.observer._phase_of", lambda r: r.get("_phase")):
+            obs, _calls, out = _observer()
+            res = obs.ingest(rec)
+        self.assertEqual(res["gear"]["tools"]["sword"], "iron 40%")
 
 
 if __name__ == "__main__":

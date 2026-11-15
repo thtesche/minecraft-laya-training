@@ -51,7 +51,9 @@ DEATH_TRAPS = (
 PHASE_PROGRESSIONS = (
     "diamond_kit: the tool ladder is wood -> stone -> IRON -> diamond. An iron pickaxe is REQUIRED "
     "to mine diamond ore at all, so mining/smelting iron and crafting iron tools IS progress toward "
-    "the diamond kit, never a detour.",
+    "the diamond kit, never a detour. The shield belongs to the same kit: the run is not allowed to "
+    "leave the base without one, so crafting it and keeping it in the off-hand is kit work, not a "
+    "side quest - and body armour is optional, so a kit without it is still a kit.",
     "prepare_nether: shield, bow+arrows, cooked food, a bed, a chest at the base, a lit portal are "
     "separate items - gathering any one of them is progress.",
     "nether_rods: kill blazes for rods, craft powder, bank it at the gate - each hunt serves the haul.",
@@ -85,6 +87,11 @@ def system_prefix() -> dict:
         "(is this the right aim for the phase?), not the mechanics: a step with status=succeeded did "
         "what it set out to do, so do not raise a missing-precondition risk (no crafting table, no "
         "tool) for an action that already succeeded.\n\n"
+        "Each observation may carry `gear`: the armour worn per slot and the pickaxe and sword "
+        "held, each with its durability in %, plus the off-hand item (a shield, or null). Read it "
+        "before you judge the kit - never flag acquiring or 'focusing on' a piece the gear already "
+        "shows worn or held; a shield in the off-hand IS the kit's shield. A piece the phase still "
+        "needs worn down to a low durability (roughly <=20%) is a real risk worth the note.\n\n"
         "Known death traps - flag the risk BEFORE it bites, do not wait for the death:\n" + traps +
         "\n\nReply with ONLY one JSON object and nothing else - no preamble, no reasoning outside "
         "it:\n"
@@ -100,6 +107,50 @@ def system_prefix() -> dict:
 def _phase_of(rec: dict) -> str | None:
     state = rec.get("state")
     return phase_brief(state)[0] if isinstance(state, dict) and state else None
+
+
+def _gear_line(state: dict | None) -> dict | None:
+    """What the bot wears and holds, with durability in %, so the judge reads the kit's real
+    state instead of inferring it from the action stream.
+
+    Without it the observer judged the kit blind: live (run247) it told the bot to "focus on
+    shield" and flagged a step as a detour while the shield sat in the off-hand the whole time,
+    and it could never see a tool wearing out before it broke. `None` for a stateless record so
+    nothing is added when there is nothing to say.
+    """
+    if not isinstance(state, dict):
+        return None
+
+    def worn_pct(meta: dict) -> str:
+        left, mx = meta.get("left"), meta.get("max")
+        if isinstance(left, (int, float)) and isinstance(mx, (int, float)) and mx > 0:
+            return f" {left / mx * 100:.0f}%"
+        return ""
+
+    gear: dict[str, Any] = {}
+    armor = state.get("armor") or {}
+    worn = {cls: f"{meta.get('tier')}{worn_pct(meta)}"
+            for cls, meta in armor.items()
+            if isinstance(meta, dict) and meta.get("tier") and meta.get("tier") != "none"}
+    if worn:
+        gear["armor"] = worn
+    tool_meta = state.get("tool_meta") or {}
+    tools = state.get("tools") or {}
+    held = {}
+    for cls in ("pickaxe", "sword"):
+        meta = tool_meta.get(cls)
+        meta = meta if isinstance(meta, dict) else {}
+        tier = meta.get("tier") or tools.get(cls)
+        if tier and tier != "none":
+            held[cls] = f"{tier}{worn_pct(meta)}"
+    if held:
+        gear["tools"] = held
+    # The off-hand is the whole point of the shield false-flag, so it rides along whenever there
+    # is any gear at all - "offhand": null then says the shield is genuinely missing.
+    offhand = state.get("offhand")
+    if offhand or gear:
+        gear["offhand"] = offhand
+    return gear or None
 
 
 @dataclass
@@ -199,6 +250,9 @@ class Observer:
             "status": rec.get("status"),
             "situation": (rec.get("narrative") or "")[:360],
         }
+        gear = _gear_line(rec.get("state"))
+        if gear:
+            payload["gear"] = gear
         if event:
             payload["event"] = event
         return payload
@@ -241,6 +295,10 @@ class Observer:
             "reasoned": think,
             "laya_label": rec.get("label"),
             "progressed": rec.get("progressed"),
+            # The gear the judge was shown, logged with the verdict: without it the Phase-3 join
+            # cannot tell a gear-aware judgment from a guess, because the payload itself is not
+            # archived (only the verdict and its telemetry are).
+            "gear": obs.get("gear"),
             "verdict": verdict,
             "telemetry": tel,
         }
