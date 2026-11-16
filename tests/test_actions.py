@@ -19,7 +19,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                           _eyes_owed, _flat_ground_near, _frame_empty, _food_source_in_reach,
                           _nether_haul_home,
                            _nether_topup_wanted, _nether_food_secured,
-                          _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_target, _rods_target,
+                          _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_needs_securing, _powder_target, _rods_target,
                           _frame_needs_obsidian, _furnace_site, _gold_reserve_short, _known_footings,
                           _centre,
                           _hoard_surplus, _idle_off_base, _gear_ready, _nether_prep_steps,
@@ -8580,15 +8580,22 @@ class RodDemandSizedToTheFrameTest(unittest.TestCase):
 
     def test_a_rod_past_the_powder_the_eyes_need_is_spare(self) -> None:
         # run231 it365-437 and run232 it4-22: sixteen powder in the pack, sixteen eyes owed, one
-        # rod still carried. `craft_blaze_powder` has nothing left to do, so the rod is not a
-        # haul - and the pearl wave gets its gate back instead of holding `wait` for a hundred
-        # ticks at the base.
+        # rod still carried. `craft_blaze_powder` has nothing left to do, so the rod is not a haul
+        # and the bot does not idle at `wait`. The base lid is full, and a full network used to let
+        # the pearl wave cross with the powder still in the pack - for want of any way to relieve
+        # the lid. run255 it298+ showed the cost of that: a death on the enderman hunt would drop
+        # the whole haul and re-run the fortress trip. The crossing now holds
+        # (`_powder_needs_securing`) and raises an overflow chest instead, so `stow_blaze_powder`
+        # gets a lid before the wave leaves - the `wait` the old fix feared is still gone, now
+        # spent on `get_wood` rather than on the unbanked crossing.
         g = self._home(blaze_rod=1, blaze_powder=16)
         g.chests_full = [self.CHEST]              # the base lid is full, as run231 found it
         self.assertEqual(_powder_target(g), 16)
         self.assertFalse(_nether_haul_home(g))
         self.assertNotIn("craft_blaze_powder", candidates(g))
-        self.assertIn("enter_portal", candidates(g))
+        self.assertTrue(_powder_needs_securing(g))
+        self.assertNotIn("enter_portal", candidates(g))
+        self.assertIn("get_wood", candidates(g))  # the overflow chest's planks, not an idle wait
         self._assert_every_offer_resolves(g)
 
     def _assert_every_offer_resolves(self, g: GameState) -> None:
@@ -8847,6 +8854,106 @@ class PowderIsBankedAtTheLidTest(unittest.TestCase):
         g.nether_entered = True
         g.pos = (72.5, 71.0, 311.4)
         self.assertIn("go_home", candidates(g))
+
+
+class PowderIsSecuredBeforeThePearlWaveTest(unittest.TestCase):
+    """The pearl wave must not carry unbanked powder into the enderman hunt.
+
+    Live, run255 it298+: the first Nether trip came home with sixteen blaze powder, the only base
+    chest stood full (27/27), and `stow_blaze_powder` cannot deposit into a full network - so the
+    powder rode the pack while `drop_junk` shed junk past it and `mine_gold_reserve` prepped the
+    piglin barter. The next crossing would have carried the whole haul down to the first blaze that
+    killed the bot, and the fortress trip - the most dangerous stretch of the run - would have had
+    to run again. The waves exist precisely to keep that haul home; a full chest silently defeated
+    them. The crossing now holds (`_powder_needs_securing`) until an overflow chest has made room,
+    and the hold lifts the moment the powder is banked, is the next eye, or proves unbankable.
+    """
+
+    BASE = (-197, -47, -98)
+    GATE = (-195, -46, -98)
+    CHEST = (-197, -46, -97)
+
+    def _home(self, **inv) -> GameState:
+        """The bot at its base, gate lit, expedition banked - crossing-ready but for the powder."""
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, golden_helmet=1,
+                     cooked_mutton=64, white_bed=1, diamond_pickaxe=2, bowl=1)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.chest_pos = self.CHEST
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                   *self.GATE, 2.0)],
+                       "obsidian": [BlockHit("obsidian", "obsidian", -195, -46, -98, 2.0)],
+                       "white_bed": [BlockHit("white_bed", "white_bed", -197, -46, -100, 2.5)]}
+        g.dimension = "minecraft:overworld"
+        return g
+
+    def test_banked_powder_lets_the_wave_leave(self) -> None:
+        # The control: once the haul stands in the chest the crossing is open for the pearl wave.
+        g = self._home()
+        g.powder_stowed = True
+        self.assertFalse(_powder_needs_securing(g))
+        self.assertIn("enter_portal", candidates(g))
+
+    def test_a_full_chest_holds_the_crossing(self) -> None:
+        g = self._home(blaze_powder=16, oak_log=2)
+        g.chests_full = [self.CHEST]
+        self.assertTrue(_powder_needs_securing(g))
+        self.assertNotIn("enter_portal", candidates(g))
+
+    def test_the_relief_chest_is_forced_before_the_crossing(self) -> None:
+        # Planks in the pack: the overflow chest is built now, and it owns the tick (the same force
+        # a near-full pack gets), so `stow_blaze_powder` has a roomy lid next.
+        g = self._home(blaze_powder=16, oak_log=2)
+        g.chests_full = [self.CHEST]
+        cand = candidates(g)
+        self.assertIn("craft_chest", cand)
+        self.assertNotIn("enter_portal", cand)
+
+    def test_no_planks_gathers_wood_for_the_overflow_chest(self) -> None:
+        # `chest_short` only ever cut wood for the *first* chest; the overflow owed its planks too.
+        g = self._home(blaze_powder=16)
+        for plank in ("oak_log", "oak_planks", "acacia_planks", "spruce_planks",
+                      "birch_planks", "dark_oak_planks", "jungle_planks"):
+            g.inventory.pop(plank, None)
+        g.chests_full = [self.CHEST]
+        cand = candidates(g)
+        self.assertIn("get_wood", cand)
+        self.assertNotIn("enter_portal", cand)
+
+    def test_powder_that_is_the_next_eye_is_not_held(self) -> None:
+        # run126/run212: a pearl in hand makes the powder the next eye, not a haul to bank. The
+        # phase gate keeps that case open, so securing must stand down or the eyes never craft.
+        g = self._home(blaze_powder=4, ender_pearl=1, crafting_table=1)
+        g.chests_full = [self.CHEST]
+        self.assertTrue(_powder_is_eye_fuel(g))
+        self.assertFalse(_powder_needs_securing(g))
+
+    def test_an_unbuildable_overflow_does_not_deadlock_the_crossing(self) -> None:
+        # The deadlock escape: ground that refused a second chest (`chest_blocked`) cannot hold the
+        # powder, so the wave leaves rather than wait forever for a chest that will never stand.
+        g = self._home(blaze_powder=16, oak_log=2)
+        g.chests_full = [self.CHEST]
+        g.chest_blocked = True
+        self.assertFalse(_powder_needs_securing(g))
+        self.assertIn("enter_portal", candidates(g))
+
+    def test_a_world_without_wood_does_not_deadlock_the_crossing(self) -> None:
+        # The other escape: once `get_wood` has been given up on, no overflow chest can ever be
+        # built, so holding the crossing would spend the budget at the base (the run42 shape).
+        g = self._home(blaze_powder=16)
+        for plank in ("oak_log", "oak_planks", "acacia_planks", "spruce_planks",
+                      "birch_planks", "dark_oak_planks", "jungle_planks"):
+            g.inventory.pop(plank, None)
+        g.chests_full = [self.CHEST]
+        g.stuck_labels = {"get_wood"}
+        self.assertFalse(_powder_needs_securing(g))
+        self.assertIn("enter_portal", candidates(g))
+
+    def test_a_roomy_network_leaves_the_deposit_to_the_stow(self) -> None:
+        # Not a securing problem at all: a chest with room is `stow_blaze_powder`'s own job, and the
+        # hold must not fire there (it would block the very lid that empties the pack).
+        g = self._home(blaze_powder=16)
+        self.assertFalse(_powder_needs_securing(g))
 
 
 class DiamondsForTheSparePickaxeTest(unittest.TestCase):

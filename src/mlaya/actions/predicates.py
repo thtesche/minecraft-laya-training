@@ -3240,6 +3240,47 @@ def _overflow_site(gs: GameState) -> tuple[int, int, int] | None:
     return _chest_site(gs)
 
 
+def _overflow_buildable(gs: GameState) -> bool:
+    """Whether a second base chest can still be raised to relieve a full network.
+
+    A cell to stand it on, and the means to make one: a chest already in the pack, the eight planks
+    a craft costs, or the wood to cut them (`get_wood` not yet given up on). The ground's refusal
+    (`chest_blocked`) and a world out of trees are the two escapes that keep a full network from
+    deadlocking the run - the same shape `_base_storage_ready` gives the first chest.
+    """
+    inv = gs.inventory
+    if gs.chest_blocked or _overflow_site(gs) is None:
+        return False
+    if _has(inv, CHEST_ITEM) or _plank_units(inv) >= CHEST_PLANKS:
+        return True
+    return "get_wood" not in gs.stuck_labels
+
+
+def _powder_needs_securing(gs: GameState) -> bool:
+    """Unbanked blaze powder at the base that a chest could hold, with the network full through.
+
+    The pearl wave exists to keep the hard-won blaze haul out of the enderman hunt, where one death
+    drops the whole pack and re-runs the fortress trip. Live, run255 it298+: sixteen powder rode the
+    base while the only chest stood full, `drop_junk` shed junk past it, and the next crossing would
+    have carried the powder down unbanked - the very loss the waves were built to prevent.
+    `stow_blaze_powder` cannot deposit into a full network, so this holds the crossing until an
+    overflow chest has made room.
+
+    False - and so no hold, no deadlock - when the powder is already safe (`powder_stowed`), is the
+    next eye the pack can spend (`_powder_is_eye_fuel`, the run126/run212 case the phase gate keeps
+    open), the network still has room (`stow_blaze_powder` owns that deposit), or no second chest can
+    be built at all (`_overflow_buildable`).
+    """
+    inv = gs.inventory
+    if not _overworld(gs) or _blaze_powder(inv) <= 0:
+        return False
+    if gs.powder_stowed or _powder_is_eye_fuel(gs):
+        return False
+    if not _chest_ready(gs) or not _storage_full(gs):
+        return False
+    return _overflow_buildable(gs)
+
+
 def _near_cell(gs: GameState, cell: tuple[int, int, int],
                reach: float = STORAGE_REACH) -> bool:
     """Whether the bot stands over a cell's centre close enough to work it directly.

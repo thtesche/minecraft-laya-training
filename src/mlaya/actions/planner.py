@@ -312,6 +312,15 @@ def candidates(gs: GameState) -> list[str]:
                        and (gs.slots_used >= INVENTORY_NEAR_FULL or _nether_idle(gs)))
         if chest_short:
             need_planks = max(need_planks, CHEST_PLANKS)
+        # A full network and unbanked powder to secure (`_powder_needs_securing`) owes the planks
+        # for the *overflow* chest, which `chest_short` above never covers - it only builds the
+        # first chest (`not _chest_ready`). Without this the crossing holds for a second chest the
+        # pack can never pay for, and no step gathers the wood (run255: the only chest full, sixteen
+        # powder in the pack, `get_wood` never on offer).
+        overflow_short = (_powder_needs_securing(gs) and not _has(inv, CHEST_ITEM)
+                          and _plank_units(inv) < CHEST_PLANKS)
+        if overflow_short:
+            need_planks = max(need_planks, CHEST_PLANKS)
         # The stew bowl is the last wood the lull owes: the Nether has no trees, so the bowl a
         # stew comes back from has to be carried in. A pack out of planks cannot craft it, and
         # without this the bowl step would simply drop out of `_all_nether_prep_steps` and the
@@ -321,7 +330,8 @@ def candidates(gs: GameState) -> list[str]:
         if (gs.phase != "night" and _nether_idle(gs) and not _has(inv, BOWL_ITEM)
                 and _plank_units(inv) < 3):
             need_planks = max(need_planks, 3)
-        if _overworld(gs) and ((logs == 0 and planks < need_planks) or shield_short or chest_short):
+        if _overworld(gs) and ((logs == 0 and planks < need_planks) or shield_short
+                               or chest_short or overflow_short):
             # Overworld only, like `craft_bed` and `place_bed`: the Nether has no trees, so a chop-a-tree
             # step can never succeed there and burns every tick it is offered. The bed chain is what
             # asks for wood most often (wool in the pack, no bed yet), which is why it kept winning the
@@ -766,11 +776,17 @@ def candidates(gs: GameState) -> list[str]:
                 # next step is the digging - asked for in the offer, where it is visible, instead
                 # of leaving an unbuildable label to be escalated away by System 2 every tick.
                 out.append("mine_diamond")
-            if _at_base(gs) and _nether_departure_ready(gs):
+            if _at_base(gs) and _nether_departure_ready(gs) and not _powder_needs_securing(gs):
                 # The gold helmet goes on at the base, before the crossing - a diamond helmet
                 # worn into the Nether leaves the bot piglin-exposed until it swaps down there
                 # (live, run99: the swap came six Nether ticks after each entry). Offered ahead of
                 # `enter_portal` so the helmet is on the head before the bot steps through.
+                #
+                # Unbanked powder at a full chest holds the crossing (`_powder_needs_securing`):
+                # a pearl wave that carried the haul down would drop it to the first blaze that
+                # killed the bot and re-run the whole fortress trip (run255 it298+). The storage
+                # relief below raises the overflow chest so `stow_blaze_powder` can bank it first;
+                # the hold lifts the moment the powder is safe or proves unbankable.
                 if _gold_helmet_needed(gs):
                     out.append("swap_to_gold_helmet")
                 out.append("enter_portal")
@@ -868,7 +884,8 @@ def candidates(gs: GameState) -> list[str]:
         # beside `enter_portal` and the crossing took the tick sixteen times, so `powder_stowed`
         # never latched, the pearl wave stayed shut and the run spent its iterations walking
         # through its own gate. The stuck guard keeps a refused site from owning the run.
-        if relief and gs.slots_used >= INVENTORY_NEAR_FULL and relief not in gs.stuck_labels:
+        if (relief and relief not in gs.stuck_labels
+                and (gs.slots_used >= INVENTORY_NEAR_FULL or _powder_needs_securing(gs))):
             return [relief]
         if relief:
             out.append(relief)
