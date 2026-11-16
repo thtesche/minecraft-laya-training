@@ -558,6 +558,26 @@ class StorageNetworkParseTest(unittest.TestCase):
         self.assertEqual(rebuilt.unread, 445)
         self.assertIn("Unread notifications (445): hostile: target died", rebuilt.narrative())
 
+    def test_the_surface_probe_survives_the_log_round_trip(self) -> None:
+        # The narrative names the probe's proof ("open sky above" vs. "not confirmed"), and
+        # `dataset --rerender` rebuilds it from the logged state - so the cell and the wet
+        # columns have to come back through JSON as the same hashable tuples the loop holds.
+        import json as jsonlib
+        g = GameState(health=20.0, food=20.0)
+        g.pos = (-7.5, 63.0, 60.5)
+        g.on_ground = True
+        g.surface = (-8, 63, 60)
+        g.surface_wet = frozenset({(5, -115)})
+        rebuilt = GameState.from_state(jsonlib.loads(jsonlib.dumps(g.as_state())))
+        self.assertEqual(rebuilt.surface, (-8, 63, 60))
+        self.assertEqual(rebuilt.surface_wet, frozenset({(5, -115)}))
+        self.assertIn("open sky above", rebuilt.narrative())
+        # A torn cell from an old log or a hand-written fixture leaves nothing proven, rather
+        # than a short list `_at_surface` would later try to unpack.
+        self.assertIsNone(GameState.from_state({"surface": []}).surface)
+        self.assertIsNone(GameState.from_state({"surface": [5, 70]}).surface)
+        self.assertEqual(GameState.from_state({"surface": [5, 70, 5]}).surface, (5, 70, 5))
+
     def test_an_old_log_yields_an_empty_network_not_a_crash(self) -> None:
         # run79's own entries predate the fields: defaults, not guesses.
         g = GameState.from_state({"chest_pos": [0, 71, 1]})
@@ -765,7 +785,9 @@ class RelativeNarrativeTest(unittest.TestCase):
         surface = GameState(health=20.0, food=20.0)
         surface.pos = (0.0, 63.0, 0.0)
         surface.on_ground = True
-        self.assertIn("At the surface (standing on solid floor)", surface.narrative())
+        # No probed cell for this column: altitude alone is not proof of open sky.
+        self.assertIn("At surface altitude (standing on solid floor, open sky not confirmed)",
+                      surface.narrative())
 
         mid = GameState(health=20.0, food=20.0)
         mid.pos = (0.0, 30.0, 0.0)
@@ -776,6 +798,33 @@ class RelativeNarrativeTest(unittest.TestCase):
         deep.pos = (0.0, -38.0, 0.0)
         deep.in_water = True
         self.assertIn("Deep underground (in water)", deep.narrative())
+
+    def test_the_surface_band_separates_altitude_from_a_probed_column(self) -> None:
+        # run252 it40: y=63 in a mountainside read "at the surface" while `surface_up` was
+        # re-probing a column `cook_food` had just stepped onto. The observer read altitude as
+        # "already out"; only the probed cell for this column is proof of open sky.
+        gs = GameState(health=20.0, food=20.0)
+        gs.pos = (-7.5, 63.0, 60.5)
+        gs.on_ground = True
+        self.assertIn("At surface altitude (standing on solid floor, open sky not confirmed)",
+                      gs.narrative())
+        gs.surface = (-8, 63, 60)  # the column the bot stands in
+        self.assertIn("At the surface (standing on solid floor, open sky above)", gs.narrative())
+        gs.surface = (-9, 63, 59)  # a cell learned for another column proves nothing here
+        self.assertIn("At surface altitude", gs.narrative())
+
+        # The proof clause belongs to the Overworld alone: the Nether has a bedrock ceiling and
+        # the End no surface to climb to, so there the band stays what it always was.
+        nether = GameState(health=20.0, food=20.0)
+        nether.pos = (239.41, 47.92, -79.5)
+        nether.dimension = "minecraft:the_nether"
+        nether.on_ground = True
+        self.assertIn("At the surface (standing on solid floor)", nether.narrative())
+        end = GameState(health=20.0, food=20.0)
+        end.pos = (100.0, 60.0, 100.0)
+        end.dimension = "minecraft:the_end"
+        end.on_ground = True
+        self.assertIn("At the surface (standing on solid floor)", end.narrative())
 
     def test_the_nether_floor_is_not_read_as_underground(self) -> None:
         # run112d, iteration 205: the bot on the open Nether floor at y=47.92 was described to the
@@ -891,7 +940,7 @@ class RelativeNarrativeTest(unittest.TestCase):
         gs.pos = (1234.0, 72.0, -987.0)
         gs.on_ground = True
         text = gs.narrative()
-        self.assertIn("At the surface (standing on solid floor)", text)
+        self.assertIn("At surface altitude (standing on solid floor, open sky not confirmed)", text)
         self.assertNotIn("x=", text)
         self.assertNotIn("z=", text)
         self.assertNotIn("y=", text)

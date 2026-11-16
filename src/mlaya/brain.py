@@ -377,6 +377,37 @@ def _failure_diagnostics(state: dict) -> dict:
     return diag
 
 
+def escalation_payload(
+    state: dict,
+    history: list[dict],
+    failure: dict,
+    allowed_labels: list[str],
+    trajectory: dict | None = None,
+) -> dict:
+    """The System-2 escalation brief: the raw state, the rendered situation, and the catalogue.
+
+    `situation` is the same sentence System 1 decides on (`_review_situation`), so the depth band
+    (altitude vs. probed open sky), the pack and the nearby mobs are stated rather than re-derived
+    from `position`/`on_ground`/`inventory`. The raw view stays beside it for the fields the
+    narrative deliberately drops. Kept separate from the call so the brief - the part that shapes
+    the answer - is testable without a model behind it.
+    """
+    payload = {
+        "state": _system2_state_view(state),
+        "situation": _review_situation(state),
+        "failure": {**failure, "diagnostics": _failure_diagnostics(state)},
+        # All actions with descriptions, plus which are currently ready.
+        "actions": {
+            label: {"description": CRITERIA.get(label, ""), "ready": label in allowed_labels}
+            for label in CRITERIA
+        },
+        "recent_history": history[-8:],
+    }
+    if trajectory is not None:
+        payload["trajectory"] = trajectory
+    return payload
+
+
 def escalate_to_system2(
     cfg: LLMConfig,
     api_key: str | None,
@@ -395,7 +426,9 @@ def escalate_to_system2(
     System 2 sees all available actions, not just the currently-ready ones, so it can propose
     a sequence that achieves preconditions before executing the stuck label, and the `failure`
     brief carries the computed reason (pack fullness, nearest drop) so the model is not left to
-    reverse-engineer why the stuck label keeps refusing.
+    reverse-engineer why the stuck label keeps refusing. `situation` carries the sentence System 1
+    reads, so the depth band (altitude vs. probed open sky), the pack and the nearby mobs are
+    stated instead of re-derived from the raw state.
     """
     if not api_key:
         return {"error": f"missing {cfg.api_key_env}"}
@@ -413,8 +446,10 @@ def escalate_to_system2(
             f"{phase_persona(state)}. The run phase is `{phase_slug}`: {phase_goal} "
             "You are the Minecraft expert advising this bot on its "
             "next move. Its own controller is stuck: read `failure` (which names the stuck label and "
-            "the computed reason it keeps refusing), the `trajectory` of what it has been doing, and "
-            "what each entry in `actions` does. "
+            "the computed reason it keeps refusing), the `trajectory` of what it has been doing, the "
+            "`situation` (the same rendered reading Laya gets - where it is, what it carries, what is "
+            "nearby, and whether open sky is confirmed for its column), and what each entry in "
+            "`actions` does. "
             "Some actions are immediately available (ready: true), others need preconditions met first. "
             "Propose the shortest ordered sequence of actions that breaks the impasse, "
             "including setup steps if needed. The sequence may include actions that are not currently "
@@ -424,20 +459,9 @@ def escalate_to_system2(
             '{"plan": [<action labels, best first>], "goal": <short string>, '
             '"note": <why this breaks the loop, short>}.'
         )
-        failure = {**failure, "diagnostics": _failure_diagnostics(state)}
-        payload = {
-            "state": _system2_state_view(state),
-            "failure": failure,
-            # All actions with descriptions, plus which are currently ready.
-            "actions": {
-                label: {"description": CRITERIA.get(label, ""), "ready": label in allowed_labels}
-                for label in CRITERIA
-            },
-            "recent_history": history[-8:],
-        }
-        if trajectory is not None:
-            payload["trajectory"] = trajectory
-        user = json.dumps(payload, ensure_ascii=False)
+        user = json.dumps(
+            escalation_payload(state, history, failure, allowed_labels, trajectory),
+            ensure_ascii=False)
         r = client.chat.completions.create(
             model=cfg.model,
             # Reasoning model: thinking tokens are emitted before the JSON (the local

@@ -1406,6 +1406,16 @@ class GameState:
             "chest_above": list(self.chest_above) if self.chest_above else None,
             "chest_above_name": self.chest_above_name,
             "base_adopted": self.base_adopted,
+            # The surface probe's own facts. `surface` is the open-sky cell `surface_up` learned
+            # for one column, `surface_wet` the columns whose probe answered water. Both live on
+            # the GameState but were never logged, so no prompt and no replay could see why
+            # `surface_up` was still offered while the narrative said "at the surface" (live,
+            # run252 it40: y=63 in a mountainside after `cook_food` stepped onto a new column,
+            # so the probe legitimately re-ran - and the observer read the altitude band as
+            # "already out"). Logging them also keeps `from_state().narrative()` honest, because
+            # the narrative now names the proof the loop holds (see `narrative`).
+            "surface": list(self.surface) if self.surface is not None else None,
+            "surface_wet": [list(cell) for cell in sorted(self.surface_wet)],
             "furnace_pos": self.furnace_pos,
             "smoker_pos": self.smoker_pos,
             "bed_pos": self.bed_pos,
@@ -1531,6 +1541,12 @@ class GameState:
             value = getattr(gs, field)
             if isinstance(value, (list, tuple)) and len(value) == 3:
                 setattr(gs, field, tuple(int(v) for v in value))
+        # The surface cell is read on its own rather than through the loop above: a tick logged
+        # before the field existed, or a fixture with a torn cell, must leave `surface` None, not
+        # a short list that `_at_surface` would later try to unpack.
+        cell = data.get("surface")
+        gs.surface = (int(cell[0]), int(cell[1]), int(cell[2])) \
+            if isinstance(cell, (list, tuple)) and len(cell) == 3 else None
         if gs.warped_forest is not None:
             # (heading, distance, chunk_x, chunk_z) as logged; the cells stay ints, the bearings
             # floats, so a replayed tick reads the same as the live one.
@@ -1542,6 +1558,12 @@ class GameState:
                 setattr(gs, field, tuple(float(v) for v in value))
         gs.powder_cells = tuple(tuple(cell) for cell in gs.powder_cells)
         gs.nether_landmarks = frozenset(tuple(cell) for cell in gs.nether_landmarks)
+        # The wet columns are (x, z) pairs; a torn entry from an old log drops rather than guesses,
+        # exactly like the other network cells above.
+        gs.surface_wet = frozenset(
+            (int(cell[0]), int(cell[1]))
+            for cell in (data.get("surface_wet") or ())
+            if isinstance(cell, (list, tuple)) and len(cell) == 2)
         gs.pos = data.get("position")
         gs.inventory = dict(data.get("inventory") or {})
         gs.furnace_contents = dict(data.get("furnace_contents") or {})
@@ -1626,7 +1648,23 @@ class GameState:
             # survives, read against the frame of the dimension the bot is in (the Overworld's
             # bedrock ~-64 / sea level ~63 / diamond line, the Nether's own shell floor); `as_state`
             # still logs the absolute position.
-            parts.append(f"{_depth_band(y, self.dimension)} ({where})")
+            band = _depth_band(y, self.dimension)
+            # "at the surface" is an altitude band (y >= SURFACE_Y), not proof of open sky: a bot
+            # inside a mountain at y=63 reads as "at the surface" while its own column has never
+            # been probed (live, run252 it40, where the observer answered "Already at surface;
+            # stop repeating" to a `surface_up` that was re-probing a new column). Name the proof
+            # the loop actually holds - the probed surface cell for this column - so altitude and
+            # "under open sky" stay two different statements. Only the Overworld has that probe:
+            # the Nether is a shell with a bedrock ceiling and the End has no surface to climb to.
+            dim = str(self.dimension or "").lower()
+            if band == "at the surface" and not _in_nether_dimension(dim) and "end" not in dim:
+                from .actions import _at_surface  # lazy: `actions` imports this module
+                if _at_surface(self):
+                    where += ", open sky above"
+                else:
+                    band = "at surface altitude"
+                    where += ", open sky not confirmed"
+            parts.append(f"{band} ({where})")
         if self.base:
             bx, by, bz = self.base
             at_base = (self.pos and abs(self.pos[0] - (bx + 0.5)) <= 4

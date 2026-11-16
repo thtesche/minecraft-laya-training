@@ -7,7 +7,8 @@ from mlaya.actions import _must_eat
 from mlaya.brain import (DANGER_BAND_NOTE, DANGER_DEFER_HEALTH, DANGER_DEFER_M, DANGER_QID,
                         DEFER_QUIET_TICKS, INTENT_QID, Brain, _failure_diagnostics, _plan_steps,
                         _review_situation, _system2_state_view, danger_matters,
-                        escalate_to_system2, review_payload, trajectory_digest)
+                        escalate_to_system2, escalation_payload, review_payload,
+                        trajectory_digest)
 
 
 class _Router:
@@ -223,6 +224,50 @@ class EscalateContractTest(unittest.TestCase):
             SimpleNamespace(api_key_env="STRATA_API_KEY"), None,
             {"phase": "early"}, [], {"trigger": "unresolved_label"}, ["get_wood"])
         self.assertEqual(out, {"error": "missing STRATA_API_KEY"})
+
+
+class EscalationPayloadTest(unittest.TestCase):
+    """The escalation brief carries the sentence System 1 reads, not only the raw state.
+
+    run252 it40: System 2's prompt had `position: [-7.5, 63.0, 60.5]` and `on_ground: true`
+    and nothing that said "at surface altitude, open sky not confirmed" - the observer read
+    the altitude band as "already out" while `surface_up` was re-probing a new column.
+    """
+
+    def _state(self) -> dict:
+        return {
+            "health": 20.0, "food": 20.0, "phase": "day", "raining": False,
+            "position": [-7.5, 63.0, 60.5], "on_ground": True, "in_water": False,
+            "dimension": "overworld", "inventory": {"cobblestone": 20}, "tools": {},
+            "armor": {}, "hostiles": [], "base": None, "chest_pos": None, "slots_used": 3,
+            "surface": None, "surface_wet": [],
+        }
+
+    def test_the_brief_carries_the_situation_laya_reads(self) -> None:
+        payload = escalation_payload(self._state(), [], {"trigger": "stall"}, ["surface_up"])
+        self.assertIn("At surface altitude (standing on solid floor, open sky not confirmed)",
+                      payload["situation"])
+
+    def test_a_probed_surface_reads_as_open_sky(self) -> None:
+        state = self._state()
+        state["surface"] = [-8, 63, 60]
+        payload = escalation_payload(state, [], {}, ["surface_up"])
+        self.assertIn("open sky above", payload["situation"])
+        self.assertEqual(payload["state"]["surface"], [-8, 63, 60])
+
+    def test_the_raw_state_and_the_catalogue_stay_beside_it(self) -> None:
+        payload = escalation_payload(self._state(), [{"stage": "action"}] * 12,
+                                     {"label": "surface_up"}, ["surface_up"])
+        self.assertEqual(payload["state"]["position"], [-7.5, 63.0, 60.5])
+        self.assertTrue(payload["actions"]["surface_up"]["ready"])
+        self.assertFalse(payload["actions"]["mine_diamond"]["ready"])
+        self.assertEqual(len(payload["recent_history"]), 8)
+        self.assertIn("diagnostics", payload["failure"])
+
+    def test_the_trajectory_is_attached_when_passed(self) -> None:
+        payload = escalation_payload(self._state(), [], {}, ["surface_up"],
+                                     trajectory={"window": 3})
+        self.assertEqual(payload["trajectory"], {"window": 3})
 
 
 class System2StateViewTest(unittest.TestCase):

@@ -1697,6 +1697,12 @@ which tool the moment allows.
     per-world random and carry no transferable signal — the head would only *learn to ignore* them,
     the same reasoning that deleted the `players nearby` line. The distance word is unified to
     `blocks` (1 block = 1 m), no legend sentence — the head learns the scale from consistent data.
+    In the Overworld the surface band is split by the proof the loop holds: "at surface altitude
+    (… open sky not confirmed)" until `_at_surface` proves the probed cell is the bot's own
+    column, then "at the surface (… open sky above)". `as_state` now logs `surface` and
+    `surface_wet`, so a re-rendered tick reads the same proof (run252 it40: y=63 in a mountainside
+    read as "at the surface" while `surface_up` was re-probing the column `cook_food` had just
+    stepped onto; the observer answered "Already at surface; stop repeating").
     `as_state` stays **absolute** (diagnosis, S2 rebuild, `from_state`). **Retrofittable:** the log
     stores both `narrative` and `state`, so `dataset --rerender` (`dataset.render_narrative` =
     `GameState.from_state(state).narrative()`) rebuilds a whole archived corpus in the new wording
@@ -2011,7 +2017,15 @@ which tool the moment allows.
   next tick climbs with `dig`/`scaffold` to exactly this cell (measured live: from `y = -15`
   to `y = 74` in ~92 s, 12 cobblestone scaffold). If the column changes, it is checked anew (another
   column can lie dozens of blocks higher/lower); a failed *ascent* leaves the cell standing
-  and is simply repeated. **A column the server names water is a dead end (run142, live):** a
+  and is simply repeated. **Altitude is not "outside" (run252, live):** the probe cell lives on the
+  GameState and is now logged (`as_state.surface`, plus `surface_wet`); before that no prompt and
+  no replay could say why `surface_up` was still on offer while the narrative read "at the
+  surface". Live run252 it40: y=63 in a mountainside after `cook_food` had stepped onto a new
+  column, so the probe legitimately re-ran, and the observer answered "Already at surface; stop
+  repeating". The narrative now says "at surface altitude (… open sky not confirmed)" until
+  `_at_surface` proves the bot is in the probed column, and `brain.escalation_payload` carries
+  that same sentence into System 2 as `situation`. **A column the server names water is a dead
+  end (run142, live):** a
    height-less `navigate` resolves the top of the bot's own column, and when that top is a fluid
    the server's shore search reaches only 8 blocks, so it refuses with `[NAVIGATION_TARGET_WATER]
    The ground at x, z is water …` and the body never moves. Re-probing the same column answers

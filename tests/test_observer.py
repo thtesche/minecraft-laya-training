@@ -232,6 +232,21 @@ class GearLineTest(unittest.TestCase):
         self.assertEqual(payload["gear"]["offhand"], "shield")
         self.assertEqual(payload["gear"]["armor"]["helmet"], "diamond 91%")
 
+    def test_the_situation_slice_keeps_the_surface_proof(self) -> None:
+        # The judge's `situation` is the narrative cut to 360 characters. run252 it40 read
+        # "Already at surface" from the altitude band alone; the longer proof sentence has to
+        # still fit inside the slice, or the loop flag returns.
+        rec = {"iteration": 40, "stage": "action", "label": "surface_up",
+               "candidates": ["surface_up"], "progressed": False, "status": "succeeded",
+               "narrative": ("You are a Minecraft player preparing for the nether. Milestones: "
+                            "no gate burns yet, no bed is laid, no blaze powder is banked, the "
+                            "end portal frame holds 0 of 12 eyes. In the overworld. Health is full. "
+                            "Hunger 16/20, not regenerating. It is daytime. At surface altitude "
+                            "(standing on solid floor, open sky not confirmed). Inventory: empty.")}
+        payload = Observer.observation(rec, None)
+        self.assertIn("open sky not confirmed", payload["situation"])
+        self.assertLessEqual(len(payload["situation"]), 360)
+
     def test_the_logged_verdict_carries_the_gear_too(self) -> None:
         # The payload is not archived - only the verdict and its telemetry - so the record the
         # Phase-3 join reads has to carry the gear the judge was shown, or a gear-aware judgment

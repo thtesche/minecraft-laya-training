@@ -222,7 +222,7 @@ class RenderNarrativeTest(unittest.TestCase):
     def test_a_tick_with_state_is_rerendered(self):
         rec = {"narrative": "old absolute wording x=1, y=2, z=3",
                "state": {"health": 20.0, "food": 20.0, "position": [1000.0, 72.0, -500.0],
-                         "on_ground": True, "hostiles": []}}
+                         "surface": [1000, 72, -500], "on_ground": True, "hostiles": []}}
         out = ds.render_narrative(rec)
         self.assertIn("At the surface", out)
         self.assertNotIn("x=", out)
@@ -235,7 +235,7 @@ class RenderNarrativeTest(unittest.TestCase):
         # backlog, not just the position and the base.
         rec = {"narrative": "whatever was logged",
                "state": {"health": 20.0, "food": 20.0, "position": [10.0, 60.0, 10.0],
-                         "on_ground": True, "hostiles": [], "unread": 3,
+                         "surface": [10, 60, 10], "on_ground": True, "hostiles": [], "unread": 3,
                          "notifications": ["lava: dry footing"]}}
         out = ds.render_narrative(rec)
         self.assertIn("Unread notifications (3): lava: dry footing", out)
@@ -245,7 +245,7 @@ class RenderNarrativeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             rec = _rec("old absolute x=5", ["mine_stone", "get_wood"], "mine_stone")
             rec["state"] = {"health": 20.0, "food": 20.0, "position": [5.0, 70.0, 5.0],
-                            "on_ground": True, "hostiles": []}
+                            "surface": [5, 70, 5], "on_ground": True, "hostiles": []}
             p = _write(Path(d), [rec])
             plain = ds.build_rows(p)
             rerendered = ds.build_rows(p, rerender=True)
@@ -404,7 +404,7 @@ class TeacherSourceTest(unittest.TestCase):
         # Side-file hashes the canonical re-rendered narrative, so the join holds whether or not
         # the dataset itself is built with rerender.
         state = {"health": 20.0, "food": 20.0, "position": [5.0, 70.0, 5.0],
-                 "on_ground": True, "hostiles": []}
+                 "surface": [5, 70, 5], "on_ground": True, "hostiles": []}
         with tempfile.TemporaryDirectory() as d:
             rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
                              progressed=False, narrative="old absolute x=5", state=state)
