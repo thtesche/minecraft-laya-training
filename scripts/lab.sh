@@ -220,6 +220,66 @@ stop_observer() {
   fi
 }
 
+# Has the observer written a verdict for the run's last judged tick? The observer tails the live
+# decision log a few seconds behind and each verdict is an LLM call, so it is the decision log's
+# last action/defer/escalation iteration the observer must reach; everything else it never writes
+# a verdict for. Exit 0 once its last-written iteration has caught that target (or there is nothing
+# to judge yet), 1 while it is still behind.
+observer_caught_up() {
+  "$PY" - "$REPO/runs/decisions.jsonl" "$REPO/runs/observer.jsonl" <<'PY'
+import json, sys
+
+
+def last_iteration(path, stages=None):
+    last = None
+    try:
+        handle = open(path, encoding="utf-8")
+    except OSError:
+        return None
+    with handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if stages is not None and rec.get("stage") not in stages:
+                continue
+            it = rec.get("iteration")
+            if isinstance(it, int):
+                last = it
+    return last
+
+
+target = last_iteration(sys.argv[1], {"action", "defer", "escalation"})
+written = last_iteration(sys.argv[2])
+sys.exit(0 if target is None or (written is not None and written >= target) else 1)
+PY
+}
+
+# Let the observer finish judging the run's tail before the report reads its log and the sidecar is
+# stopped. Reporting or killing it the instant the run ends truncated the archived observer log
+# against the decisions it was judging -- the join in `mlaya.analysis` then showed fewer judgments
+# than ticks for no real reason, and the dropped verdicts were the run's last and most telling ones
+# (a death, the final stall). Poll until it catches up or a generous bound passes; each verdict is
+# a multi-second call, so the bound is in minutes. A no-op without --observe.
+wait_observer_drained() {
+  [[ $observe == 1 && -f "$STATE/observe.pid" ]] || return 0
+  local pid deadline
+  pid=$(cat "$STATE/observe.pid")
+  deadline=$(( $(date +%s) + 180 ))
+  while kill -0 "$pid" 2>/dev/null; do
+    observer_caught_up && break
+    if [[ $(date +%s) -ge $deadline ]]; then
+      log "observer drain timed out after 180s; reporting what it has written"
+      break
+    fi
+    sleep 2
+  done
+}
+
 next_run_number() {  max=0
   for f in "$REPO"/runs/run*.log "$REPO"/runs/history/decisions-run*.jsonl; do
     n=$(basename "$f" | sed -n 's/.*run\([0-9]*\).*/\1/p')
@@ -421,10 +481,12 @@ cmd_up() {
     echo $! > "$STATE/observe.pid"
     log "observer started (read-only) -> runs/observer.jsonl, runs/observe-run$run_no.log"
   fi
-  # The report writes itself once the run's process is gone: nobody has to remember to ask
-  # for the analysis, and the next `up` can diff against it straight away. The observer is stopped
-  # here too, so a finished run leaves no sidecar tailing an idle log (a no-op without --observe).
-  ( while kill -0 "$run_pid" 2>/dev/null; do sleep 5; done; report_run "$run_no"; stop_observer ) &
+  # The report writes itself once the run's process is gone: nobody has to remember to ask for the
+  # analysis, and the next `up` can diff against it straight away. The observer is drained first so
+  # its last verdicts land, then stopped so no write races the report's read, and only then is the
+  # report produced against a settled pair of logs (a no-op without --observe).
+  ( while kill -0 "$run_pid" 2>/dev/null; do sleep 5; done
+    wait_observer_drained; stop_observer; report_run "$run_no" ) &
   echo $! > "$STATE/report.pid"
   # Watchdog monitors the server log for freezes (Can't keep up) and aborts the run.
   "$REPO/scripts/watchdog.sh" "$run_no" "$REPO/infra/world/logs/latest.log" "$STATE" &
