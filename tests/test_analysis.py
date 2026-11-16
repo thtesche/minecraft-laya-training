@@ -473,5 +473,98 @@ class TestCompare(unittest.TestCase):
         self.assertEqual(diff["deltas"]["water.adrift_ticks"], -10)
 
 
+def verdict(iteration: int, label: str, *, agree=True, risk=None, note="", gear=None,
+            reasoned=False, cached=1000, prompt=1200, latency=5.0, phase="diamond_kit",
+            progressed=True) -> dict:
+    """One observer verdict, shaped like a line of `runs/observer.jsonl`."""
+    return {
+        "ts": 1000 + iteration,
+        "iteration": iteration,
+        "phase": phase,
+        "event": None,
+        "reasoned": reasoned,
+        "laya_label": label,
+        "progressed": progressed,
+        "gear": gear,
+        "verdict": {"phase": phase, "agree": agree, "risk": risk, "note": note},
+        "telemetry": {"prompt_tokens": prompt, "cached_tokens": cached,
+                      "fresh_tokens": prompt - cached, "completion_tokens": 100,
+                      "latency_s": latency, "reasoned": reasoned},
+    }
+
+
+class TestObserverJoin(unittest.TestCase):
+    def test_no_observer_log_leaves_the_section_out(self):
+        report = analysis.summarize(MOVING)
+        self.assertIsNone(report["observer"])
+        self.assertNotIn("## Observer", analysis.to_markdown(report))
+
+    def test_cache_reuse_counts_cold_ticks_apart(self):
+        # The first verdict of a run caches nothing; the rest reuse the warm prefix. The hit rate
+        # is the share of the whole run's prompt tokens that came back, not a per-tick average.
+        obs = [verdict(0, "get_wood", cached=0, prompt=1000, reasoned=True),
+               verdict(1, "craft_pickaxe", cached=900, prompt=1100),
+               verdict(2, "mine_iron", cached=950, prompt=1150)]
+        cache = analysis.join_observer(MOVING, obs)["cache"]
+        self.assertEqual(cache["cold_ticks"], 1)
+        self.assertEqual(cache["cached_tokens"], 1850)
+        self.assertEqual(cache["hit_rate"], round(1850 / 3250, 3))
+
+    def test_latency_splits_reasoned_from_routine(self):
+        obs = [verdict(0, "a", reasoned=True, latency=10.0),
+               verdict(1, "b", latency=2.0),
+               verdict(2, "c", latency=4.0)]
+        lat = analysis.join_observer(MOVING, obs)["latency"]
+        self.assertEqual(lat["reasoned_mean_s"], 10.0)
+        self.assertEqual(lat["routine_mean_s"], 3.0)
+        self.assertEqual(lat["max_s"], 10.0)
+
+    def test_a_disagreement_is_joined_to_the_tick_it_judged(self):
+        # The observer logs its judgment; the decision log holds the outcome. The join pairs them
+        # so a disagreement carries the refusal code the action actually hit.
+        records = [action(5, "surface_up", status="failed",
+                          text="[NAVIGATION_STOPPED] no path", progressed=False)]
+        obs = [verdict(5, "surface_up", agree=False, risk="failed action",
+                       note="Surfacing is needed", progressed=False)]
+        joined = analysis.join_observer(records, obs)
+        agr = joined["agreement"]
+        self.assertEqual(agr["disagree"], 1)
+        self.assertEqual(agr["disagree_rate"], 1.0)
+        detail = agr["detail"][0]
+        self.assertEqual(detail["code"], "NAVIGATION_STOPPED")
+        self.assertFalse(detail["progressed"])
+        self.assertEqual(detail["risk"], "failed action")
+
+    def test_a_named_loop_is_borne_out_only_when_the_tick_made_no_progress(self):
+        # A loop the judge named on a tick that did not progress is a call the loop bears out; the
+        # same risk on a tick that advanced the world is a likely false flag and is not counted.
+        records = [action(1, "mine_obsidian", status="succeeded", progressed=False),
+                   action(2, "cook_food", status="succeeded", progressed=True)]
+        obs = [verdict(1, "mine_obsidian", agree=False, risk="loop: no progress", progressed=False),
+               verdict(2, "cook_food", agree=False, risk="loop: cook repeats", progressed=True)]
+        stalls = analysis.join_observer(records, obs)["stalls"]
+        self.assertEqual(stalls["flagged"], 2)
+        self.assertEqual(stalls["borne_out"], 1)
+        self.assertEqual(stalls["labels"], ["cook_food", "mine_obsidian"])
+
+    def test_gear_visibility_separates_a_seeing_judge_from_a_blind_one(self):
+        blind = [verdict(i, "x", gear=None) for i in range(4)]
+        self.assertEqual(analysis.join_observer(MOVING, blind)["gear"]["ratio"], 0.0)
+        seeing = [verdict(i, "x", gear={"tools": {"pickaxe": "diamond 90%"}}) for i in range(4)]
+        g = analysis.join_observer(MOVING, seeing)["gear"]
+        self.assertEqual(g["shown"], 4)
+        self.assertEqual(g["ratio"], 1.0)
+
+    def test_the_section_reaches_the_markdown(self):
+        obs = [verdict(0, "get_wood", cached=0, prompt=1000),
+               verdict(1, "hunt_food", agree=False, risk="side quest",
+                       note="not kit work", gear={"offhand": "shield"})]
+        report = analysis.summarize(MOVING, None, obs)
+        text = analysis.to_markdown(report)
+        self.assertIn("## Observer", text)
+        self.assertIn("gear visibility", text)
+        self.assertIn("side quest", text)
+
+
 if __name__ == "__main__":
     unittest.main()

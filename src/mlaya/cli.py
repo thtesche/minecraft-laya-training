@@ -343,8 +343,20 @@ def cmd_analyze(args) -> int:
         candidates = sorted((ROOT / "runs").glob("run*.log"), key=lambda p: p.stat().st_mtime)
         run_log = candidates[-1] if candidates else None
 
+    # The observer verdict log that goes with this run, so the report can join the parallel
+    # judge's cache reuse, latency, disagreements and gear visibility to the decisions it judged.
+    # `--observer` names it outright; otherwise it is the sibling of the decisions log (the two are
+    # archived as `decisions-runNN.jsonl` / `observer-runNN.jsonl`, live as the configured paths).
+    if args.observer:
+        obs_log = _resolve(args.observer)
+    elif "decisions" in log.name:
+        obs_log = log.with_name(log.name.replace("decisions", "observer"))
+    else:
+        obs_log = settings.observer_log_path()
+    observer_records = analysis.read_records(obs_log) if obs_log.exists() else None
+
     records = analysis.read_records(log)
-    report = analysis.summarize(records, run_log)
+    report = analysis.summarize(records, run_log, observer_records)
 
     diff = None
     if args.baseline:
@@ -492,6 +504,9 @@ def main(argv: list[str] | None = None) -> int:
                      help="an earlier run's log to compare against (runs/history/decisions-runNN.jsonl)")
     ana.add_argument("--run-log", default="",
                      help="the run's own log carrying the end JSON (default: newest runs/run*.log)")
+    ana.add_argument("--observer", default="",
+                     help="the parallel observer's verdict log to join (default: the decisions "
+                          "log's sibling observer-runNN.jsonl, or the configured observer log)")
     ana.add_argument("--out", default="", help="markdown report path (default runs/report-<log>.md)")
 
     obs = sub.add_parser("observe", help="run the parallel observer: narrate and judge the run "

@@ -241,7 +241,8 @@ def _loops(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(loops, key=lambda e: -e["ticks"])
 
 
-def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dict[str, Any]:
+def summarize(records: list[dict[str, Any]], run_log: Path | None = None,
+              observer_records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     actions = [r for r in records if r.get("stage") == "action"]
     defers = [r for r in records if r.get("stage") == "defer"]
     policies = [r for r in records if r.get("stage") == "policy"]
@@ -418,10 +419,12 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
     )[:10]
 
     death_causes = _death_causes(records)
+    observer = join_observer(records, observer_records) if observer_records else None
 
     return {
         "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
         "end": _end_from_run_log(run_log),
+        "observer": observer,
         "ticks": {"action": len(actions), "defer": len(defers), "policy": len(policies)},
         "progress": {
             "progressed": sum(1 for r in actions if r.get("progressed")),
@@ -521,6 +524,137 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None) -> dic
              "status": r.get("status"), "text": str(r.get("text") or "")[:160]}
             for r in waste
         ],
+    }
+
+
+# A verdict names a loop or a stall in its `risk` string with one of these words; the join reads
+# them to pair the judge's loop-call against whether the tick it flagged actually progressed.
+LOOP_WORDS = ("loop", "stall", "repeat", "stuck", "ping", "circl")
+
+
+def _pct(values: list[float], q: float) -> float | None:
+    """The q-quantile of `values` by linear interpolation; None for an empty list."""
+    if not values:
+        return None
+    s = sorted(values)
+    k = (len(s) - 1) * q
+    lo, hi = math.floor(k), math.ceil(k)
+    if lo == hi:
+        return s[int(k)]
+    return s[lo] + (s[hi] - s[lo]) * (k - lo)
+
+
+def join_observer(records: list[dict[str, Any]],
+                  observer_records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pair the parallel observer's verdicts with the decisions it was judging.
+
+    The observer writes one verdict per observation to `runs/observer.jsonl`, each carrying the
+    iteration it looked at, its telemetry (cache reuse, latency) and its judgment (agree, risk,
+    note) -- but never the action's outcome, which only the decision log holds. This join reads
+    the two side by side so the report can ask what neither log answers alone: is the prefix cache
+    actually staying warm (the whole reason the story is append-only -- a branch caches 0), how
+    long each verdict costs, where the judge disagreed or named a risk and whether the decision log
+    bears it out, and whether the judge could even see the gear it was judging (live, run247 it told
+    the bot to "focus on shield" while a shield sat in the off-hand the gear payload did not yet
+    carry). `None` when there is no observer log to join.
+    """
+    verdicts = [v for v in observer_records
+                if isinstance(v, dict) and v.get("iteration") is not None]
+    if not verdicts:
+        return None
+
+    # The decision outcome per iteration, so each verdict reads against what the loop actually did
+    # at that tick. Iterations are unique among action records, so the last write wins harmlessly.
+    outcome: dict[Any, dict[str, Any]] = {}
+    for r in records:
+        if r.get("stage") == "action" and r.get("iteration") is not None:
+            outcome[r["iteration"]] = r
+
+    def joined(v: dict[str, Any]) -> dict[str, Any]:
+        act = outcome.get(v.get("iteration")) or {}
+        codes = CODE_RE.findall(f"{act.get('text') or ''} {act.get('code') or ''}")
+        verdict = v.get("verdict") or {}
+        return {
+            "iteration": v.get("iteration"),
+            "phase": v.get("phase"),
+            "laya_label": v.get("laya_label"),
+            # The observer logs the progress it was told; the decision log is the ground truth,
+            # so the join prefers the action record and falls back to the verdict's own copy.
+            "progressed": act.get("progressed", v.get("progressed")),
+            "status": act.get("status"),
+            "code": codes[0] if codes else None,
+            "risk": verdict.get("risk"),
+            "note": verdict.get("note"),
+        }
+
+    # Telemetry. The first verdict of a run (and the one after a trim) caches nothing, so cold ticks
+    # are counted apart; `hit_rate` is the share of the whole run's prompt tokens the warm prefix
+    # returned -- the number that says whether the append-only story paid off.
+    tels = [v.get("telemetry") or {} for v in verdicts]
+    prompt_total = sum((t.get("prompt_tokens") or 0) for t in tels)
+    cached_total = sum((t.get("cached_tokens") or 0) for t in tels)
+    cold = sum(1 for t in tels if not t.get("cached_tokens"))
+    lat = [t["latency_s"] for t in tels if isinstance(t.get("latency_s"), (int, float))]
+    reasoned_lat = [t["latency_s"] for t in tels
+                    if t.get("reasoned") and isinstance(t.get("latency_s"), (int, float))]
+    routine_lat = [t["latency_s"] for t in tels
+                   if not t.get("reasoned") and isinstance(t.get("latency_s"), (int, float))]
+
+    def agree(v: dict[str, Any]) -> Any:
+        return (v.get("verdict") or {}).get("agree")
+
+    def risk(v: dict[str, Any]) -> Any:
+        return (v.get("verdict") or {}).get("risk")
+
+    agreed = sum(1 for v in verdicts if agree(v) is True)
+    disagreed = [v for v in verdicts if agree(v) is False]
+    risks = [v for v in verdicts if risk(v)]
+
+    # A loop or stall the judge named, read against the decision log: a flagged tick whose action
+    # did not progress is a call the loop bears out; one that progressed is a likely false flag.
+    flagged = [v for v in verdicts if any(w in str(risk(v) or "").lower() for w in LOOP_WORDS)]
+    borne_out = sum(1 for v in flagged if not (outcome.get(v.get("iteration")) or {}).get("progressed"))
+
+    gear_shown = sum(1 for v in verdicts if v.get("gear"))
+
+    return {
+        "judgments": len(verdicts),
+        "reasoned": sum(1 for v in verdicts if v.get("reasoned")),
+        "cache": {
+            "hit_rate": round(cached_total / prompt_total, 3) if prompt_total else None,
+            "cached_tokens": cached_total,
+            "prompt_tokens": prompt_total,
+            "cold_ticks": cold,
+        },
+        "latency": {
+            "mean_s": round(sum(lat) / len(lat), 2) if lat else None,
+            "p50_s": round(_pct(lat, 0.5), 2) if lat else None,
+            "p95_s": round(_pct(lat, 0.95), 2) if lat else None,
+            "max_s": round(max(lat), 2) if lat else None,
+            "reasoned_mean_s": round(sum(reasoned_lat) / len(reasoned_lat), 2) if reasoned_lat else None,
+            "routine_mean_s": round(sum(routine_lat) / len(routine_lat), 2) if routine_lat else None,
+        },
+        "agreement": {
+            "agree": agreed,
+            "disagree": len(disagreed),
+            "unknown": len(verdicts) - agreed - len(disagreed),
+            "disagree_rate": round(len(disagreed) / len(verdicts), 3) if verdicts else None,
+            "detail": [joined(v) for v in disagreed[:10]],
+        },
+        "risks": {
+            "count": len(risks),
+            "detail": [joined(v) for v in risks[:12]],
+        },
+        "stalls": {
+            "flagged": len(flagged),
+            "borne_out": borne_out,
+            "labels": sorted({str(v.get("laya_label")) for v in flagged}),
+        },
+        "gear": {
+            "shown": gear_shown,
+            "total": len(verdicts),
+            "ratio": round(gear_shown / len(verdicts), 3) if verdicts else None,
+        },
     }
 
 
@@ -632,6 +766,40 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
         for d in s2["calls_detail"]:
             lines.append(f"- it{d['iteration']}: `{d['unresolved']}` had no action -> "
                          f"`{d['chosen']}` — {d['goal']}")
+
+    obs = report.get("observer") or {}
+    if obs:
+        cache = obs.get("cache") or {}
+        lat = obs.get("latency") or {}
+        agr = obs.get("agreement") or {}
+        gear = obs.get("gear") or {}
+        hit = cache.get("hit_rate")
+        lines.append(f"\n## Observer ({obs['judgments']} judgments, {obs['reasoned']} reasoned)")
+        lines.append(f"- cache: {hit:.0%} prefix reuse across the run "
+                     f"({cache.get('cached_tokens')}/{cache.get('prompt_tokens')} tokens, "
+                     f"{cache.get('cold_ticks')} cold ticks)"
+                     if hit is not None else "- cache: no token telemetry")
+        lines.append(f"- latency: mean {lat.get('mean_s')}s, p95 {lat.get('p95_s')}s, max "
+                     f"{lat.get('max_s')}s (reasoned {lat.get('reasoned_mean_s')}s, routine "
+                     f"{lat.get('routine_mean_s')}s)")
+        lines.append(f"- agreement: {agr.get('agree')} agree, {agr.get('disagree')} disagree "
+                     f"({agr.get('disagree_rate'):.0%}), {agr.get('unknown')} unscored"
+                     if agr.get('disagree_rate') is not None
+                     else f"- agreement: {agr.get('agree')} agree, {agr.get('disagree')} disagree")
+        gratio = gear.get("ratio")
+        lines.append(f"- gear visibility: {gear.get('shown')}/{gear.get('total')} judgments saw "
+                     f"the worn/held gear ({gratio:.0%})"
+                     if gratio is not None else "- gear visibility: not logged")
+        stalls = obs.get("stalls") or {}
+        if stalls.get("flagged"):
+            lines.append(f"- loops/stalls flagged: {stalls['flagged']} "
+                         f"({stalls['borne_out']} borne out by a tick that did not progress) on "
+                         f"{', '.join(stalls['labels'])}")
+        for d in (obs.get("risks") or {}).get("detail", [])[:8]:
+            tail = f" [{d['code']}]" if d.get("code") else ""
+            moved = "progressed" if d.get("progressed") else f"{d.get('status') or 'no progress'}"
+            lines.append(f"- it{d['iteration']} `{d['laya_label']}` ({moved}{tail}): "
+                         f"risk \"{d['risk']}\" — {d['note']}")
 
     if report["milestones"]:
         lines.append("\n## Milestones")
