@@ -5,10 +5,11 @@ max_tokens = 4096                          # the model's output limit (reasoning
 base_url = "http://192.168.0.109:8080/v1"
 
 [judge]                                    # offline teacher path only (`mlaya teacher`), never the live loop
-model = "qwen3.8-flash-next-q2_0"          # ideally a *different* model from [llm] so it does not grade its own opinion
-api_key_env = "STRATA_API_KEY"             # same .env key as System 2 unless the judge lives elsewhere
+model = "nvidia/nemotron-3.5-super-vl:free" # OpenRouter free Nemotron 3.5 Super VL: a *different* model from [llm], so the
+                                           # judge does not grade System 2's own opinion (removes self-agreement bias)
+api_key_env = "OPENROUTER_API_KEY"         # OpenRouter key, in the gitignored .env (never in the repo)
 max_tokens = 4096
-base_url = "http://192.168.0.109:8080/v1"
+base_url = "https://openrouter.ai/api/v1"  # OpenAI-compatible endpoint
 
 [mcp]
 url = "http://localhost:25575/mcp"

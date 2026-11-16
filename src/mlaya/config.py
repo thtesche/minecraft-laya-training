@@ -40,13 +40,15 @@ class LLMConfig(BaseModel):
 class JudgeConfig(BaseModel):
     # The third LLM in the offline teacher path (`teacher.py`): it adjudicates, blind, only
     # when System 1 (Laya) and System 2 disagree. A separate model from `[llm]` is the point -
-    # a different judge removes the bias of one model grading its own earlier opinion - but it
-    # defaults to the same Strata server so the path works out of the box. The key comes from
-    # the environment (.env) like System 2's, its own env name so the two can differ.
-    model: str = "qwen3.8-flash-next-q2_0"
-    api_key_env: str = "STRATA_API_KEY"
+    # a different judge removes the bias of one model grading its own earlier opinion. The
+    # default is OpenRouter's free Nemotron 3.5 Super VL (`nvidia/nemotron-3.5-super-vl:free`), a
+    # genuinely independent model from the local Strata System 2, reached over its OpenAI-compatible
+    # endpoint. The key comes from the environment (.env, `OPENROUTER_API_KEY`); without it the
+    # judge returns "unsure" and the teacher path still runs. `config/settings.toml` overrides this.
+    model: str = "nvidia/nemotron-3.5-super-vl:free"
+    api_key_env: str = "OPENROUTER_API_KEY"
     max_tokens: int = 4096
-    base_url: str = "http://192.168.0.109:8080/v1"
+    base_url: str = "https://openrouter.ai/api/v1"
 
 
 class ObserverConfig(BaseModel):

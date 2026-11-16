@@ -39,7 +39,9 @@ from .dataset import _narrative_hash, render_narrative
 # element the live wiring provides; a test fake may return just `(label, note)` and `replay` fills
 # the reasoning with "".
 S2Fn = Callable[[dict, list[str], list[dict]], tuple]
-JudgeFn = Callable[[dict, str, str, list[str]], tuple[str | None, str | None, str]]
+# The judge is handed the same trajectory System 2 reasoned over (the prior action ticks), so the
+# blind A/B comparison is made on the same context the pick it is judging was made on.
+JudgeFn = Callable[[dict, str, str, list[str], list[dict]], tuple[str | None, str | None, str]]
 
 
 def _teachable_candidates(rec: dict) -> list[str]:
@@ -72,9 +74,11 @@ def _blind_pair(laya_label: str, s2_label: str, seed: str) -> tuple[str, str, bo
 
 
 def judge_tick(rec: dict, laya_label: str, s2_label: str, candidates: list[str],
-               judge_fn: JudgeFn, swap: bool = False) -> dict:
+               judge_fn: JudgeFn, history: list[dict] | None = None, swap: bool = False) -> dict:
     """Run the blind judge for one disagreement and map its verdict back to a concrete label.
 
+    `history` is the run up to this tick - the same trajectory System 2 read when it made the pick
+    being judged - so the judge weighs the two actions against the same context, not the bare state.
     `swap` puts the same two actions in the opposite slots. That is the flip test: a verdict that
     survives the swap is a judgement about the actions, a verdict that flips is a reaction to which
     letter they were handed under.
@@ -83,7 +87,8 @@ def judge_tick(rec: dict, laya_label: str, s2_label: str, candidates: list[str],
     a_label, b_label, a_is_laya = _blind_pair(laya_label, s2_label, narrative)
     if swap:
         a_label, b_label = b_label, a_label
-    verdict, better, note = judge_fn(rec.get("state") or {}, a_label, b_label, candidates)
+    verdict, better, note = judge_fn(rec.get("state") or {}, a_label, b_label,
+                                     candidates, history or [])
     label: str | None = None
     if verdict == "A":
         label = a_label
@@ -125,9 +130,10 @@ def replay(records: list[dict], *, s2_fn: S2Fn, judge_fn: JudgeFn,
     """Produce one judgment per teachable action tick (pure; the LLM calls are injected).
 
     `s2_fn(state, candidates, history)` returns `(label, note)` - System 2's pick among the
-    candidates (or None) and its reason. `judge_fn(state, a_label, b_label, candidates)` returns
-    `(verdict, better_action, note)`. Keeping both injectable is what lets the agreement logic,
-    the blind pairing and the verdict mapping be tested with no network.
+    candidates (or None) and its reason. `judge_fn(state, a_label, b_label, candidates, history)`
+    returns `(verdict, better_action, note)` - the judge reads the same trajectory S2 did. Keeping
+    both injectable is what lets the agreement logic, the blind pairing and the verdict mapping be
+    tested with no network.
 
     `review` restricts the LLM calls to the teachable ticks whose iteration it names (from
     `sample_teachable`); the ticks left out still feed the history S2 reads for context, they are
@@ -170,9 +176,10 @@ def replay(records: list[dict], *, s2_fn: S2Fn, judge_fn: JudgeFn,
             "judge_label": None,
             "judge_note": "",
         }
-        # The judge is spent only where there is a real disagreement to settle.
+        # The judge is spent only where there is a real disagreement to settle. It reads the same
+        # history S2 just read (the prior action ticks), passed before this tick joins it below.
         if not agree and s2_label is not None:
-            entry.update(judge_tick(rec, laya_label, s2_label, candidates, judge_fn))
+            entry.update(judge_tick(rec, laya_label, s2_label, candidates, judge_fn, history))
         out.append(entry)
         history.append(rec)
     return out
@@ -193,6 +200,16 @@ def flip_verdicts(records: list[dict], judgments: list[dict], judge_fn: JudgeFn)
     preferred one of the two in the first place.
     """
     by_iteration = {r.get("iteration"): r for r in records}
+    # The history each tick's judge saw, rebuilt exactly as `replay` accumulates it: every prior
+    # action tick, snapshotted before the tick itself joins. The swap has to be judged on the same
+    # context as the original, or a verdict change would conflate the slot flip with a context change.
+    history_by_iteration: dict[Any, list[dict]] = {}
+    hist: list[dict] = []
+    for rec in records:
+        if rec.get("stage") != "action":
+            continue
+        history_by_iteration[rec.get("iteration")] = list(hist)
+        hist.append(rec)
     out: list[dict] = []
     for j in judgments:
         if j.get("s2_label") is None or j.get("agree"):
@@ -200,8 +217,8 @@ def flip_verdicts(records: list[dict], judgments: list[dict], judge_fn: JudgeFn)
         rec = by_iteration.get(j.get("iteration"))
         if rec is None:
             continue
-        flipped = judge_tick(rec, j["laya_label"], j["s2_label"],
-                             j.get("candidates") or [], judge_fn, swap=True)
+        flipped = judge_tick(rec, j["laya_label"], j["s2_label"], j.get("candidates") or [],
+                             judge_fn, history_by_iteration.get(j.get("iteration")), swap=True)
         original = j.get("judge_label")
         new = flipped.get("judge_label")
         out.append({
@@ -245,30 +262,33 @@ def make_system2_fn(cfg: LLMConfig, api_key: str | None) -> S2Fn:
 
 
 JUDGE_SYSTEM = (
-    "You are a Minecraft survival expert judging which of two proposed next actions is better "
-    "for a bot in a given situation. You are NOT told which agent proposed which option - judge "
-    "only on the merits for surviving and progressing toward a diamond kit and the nether. "
+    "You are a Minecraft survival expert judging which of two proposed next actions, A and B, is "
+    "better for a survival bot on its way to a full diamond kit, the Nether, and the End. You are "
+    "given the run phase, a plain description of the situation, a digest of the ticks leading up to "
+    "it, and a short description of every candidate action (A and B are among them). You are NOT "
+    "told which agent proposed A or which proposed B - judge only on the merits for surviving and "
+    "progressing right now. "
     'Reply with JSON {"verdict": "A"|"B"|"neither"|"unsure", "better_action": <one allowed '
-    'label when verdict is "neither", else null>, "note": <why, short>}. Use "neither" only '
-    "when a different allowed action is clearly better than both; use \"unsure\" when you "
-    "cannot tell. Prefer \"unsure\" over a guess."
+    'candidate label when verdict is "neither", else null>, "note": <why, short>}. Use "neither" '
+    "only when a different allowed candidate action is clearly better than both; use \"unsure\" "
+    "when you cannot tell. Prefer \"unsure\" over a guess."
 )
 
 
 def make_judge_fn(cfg: JudgeConfig, api_key: str | None) -> JudgeFn:
     """A `replay` judge callable backed by its own (blind) LLM call."""
-    def judge(state: dict, a_label: str, b_label: str,
-              candidates: list[str]) -> tuple[str | None, str | None, str]:
+    def judge(state: dict, a_label: str, b_label: str, candidates: list[str],
+              history: list[dict]) -> tuple[str | None, str | None, str]:
         if not api_key:
             return "unsure", None, f"missing {cfg.api_key_env}"
         try:
             from openai import OpenAI
 
             client = OpenAI(base_url=cfg.base_url, api_key=api_key)
-            # The judge reads the same digest the reviewer does: the situation as a paragraph and a
-            # short trajectory ledger, not the raw field dump. A verdict on two candidate actions
-            # cannot use more than that, and the raw state made every judgement a 30k-token prefill.
-            brief = review_payload(state, [], candidates)
+            # The judge reads the very brief the reviewer did: the phase, the situation as a
+            # paragraph, the same trajectory ledger System 2 reasoned over, and the candidate
+            # descriptions - not the raw field dump, which made every judgement a 30k-token prefill.
+            brief = review_payload(state, history, candidates)
             brief["option_A"] = {"action": a_label, "what_it_does": CRITERIA.get(a_label, "")}
             brief["option_B"] = {"action": b_label, "what_it_does": CRITERIA.get(b_label, "")}
             r = client.chat.completions.create(

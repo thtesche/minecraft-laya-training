@@ -52,7 +52,7 @@ class ReplayTest(unittest.TestCase):
     def test_disagreement_runs_the_judge_blind_and_maps_the_verdict(self):
         seen = {}
 
-        def judge(state, a_label, b_label, candidates):
+        def judge(state, a_label, b_label, candidates, history):
             seen["pair"] = {a_label, b_label}
             # Side with mine_stone (System 2's pick) whichever slot it landed in.
             return ("A" if a_label == "mine_stone" else "B"), None, "stone"
@@ -182,7 +182,7 @@ class FlipTest(unittest.TestCase):
 
     def test_an_order_blind_judge_does_not_flip(self):
         # A judge that prefers the action, not the letter, gives the same label both ways.
-        judge = lambda s, a, b, c: (("A" if a == "mine_stone" else "B"), None, "")
+        judge = lambda s, a, b, c, h: (("A" if a == "mine_stone" else "B"), None, "")
         records, judgments = self._judged(judge)
         flips = t.flip_verdicts(records, judgments, judge)
         self.assertEqual(len(flips) == 1, True)
@@ -191,7 +191,7 @@ class FlipTest(unittest.TestCase):
         self.assertEqual(flips[0]["flip_label"], "mine_stone")
 
     def test_a_slot_bias_flips(self):
-        judge = lambda s, a, b, c: ("A", None, "A reads better")
+        judge = lambda s, a, b, c, h: ("A", None, "A reads better")
         records, judgments = self._judged(judge)
         flips = t.flip_verdicts(records, judgments, judge)
         self.assertTrue(flips[0]["flip"])
@@ -201,8 +201,8 @@ class FlipTest(unittest.TestCase):
     def test_an_unsure_flip_counts_as_a_flip(self):
         # A judge that cannot tell on the second pass cannot be trusted to have preferred
         # something on the first.
-        records, judgments = self._judged(lambda s, a, b, c: ("A", None, ""))
-        flips = t.flip_verdicts(records, judgments, lambda s, a, b, c: ("unsure", None, ""))
+        records, judgments = self._judged(lambda s, a, b, c, h: ("A", None, ""))
+        flips = t.flip_verdicts(records, judgments, lambda s, a, b, c, h: ("unsure", None, ""))
         self.assertTrue(flips[0]["flip"])
         self.assertIsNone(flips[0]["flip_label"])
 
