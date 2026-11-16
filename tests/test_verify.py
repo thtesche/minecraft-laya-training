@@ -100,6 +100,17 @@ class NetherProgressTest(unittest.TestCase):
                                     diff(gs(pos=(-7.4, 68.0, -55.6)),
                                         gs(pos=(-7.0, 68.0, -55.0)))))
 
+    def test_stow_blaze_powder_is_the_powder_leaving_the_pack(self) -> None:
+        # run253 it142-151: the walk counted as progress, so six `stow_blaze_powder` ticks that
+        # covered ~1,800 blocks home and back and banked nothing read as six working ticks.
+        walked = diff(gs(pos=(-79.5, 78.0, 55.5), inventory={"blaze_powder": 16}),
+                      gs(pos=(72.5, 71.0, 311.4), inventory={"blaze_powder": 16}))
+        self.assertGreater(walked["pos_delta"], 2)
+        self.assertFalse(progressed("stow_blaze_powder", walked, ok=True))
+        banked = diff(gs(pos=(-79.5, 78.0, 55.5), inventory={"blaze_powder": 16}),
+                      gs(pos=(-79.5, 78.0, 55.5), inventory={}))
+        self.assertTrue(progressed("stow_blaze_powder", banked, ok=True))
+
     def test_get_flint_is_the_flint_gain(self) -> None:
         self.assertTrue(progressed("get_flint", diff(gs(inventory={}),
                                                      gs(inventory={"flint": 1, "gravel": 8}))))

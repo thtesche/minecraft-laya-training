@@ -218,8 +218,10 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label == "craft_blaze_powder":
         return d["inventory_delta"].get("blaze_powder", 0) > 0
     if label == "stow_blaze_powder":
-        # The powder leaving the pack; the walk to the network chest with room is progress too.
-        return d["inventory_delta"].get("blaze_powder", 0) < 0 or (ok and (d["pos_delta"] or 0) > 2)
+        # The powder leaving the pack is the proof. The walk used to count too, and that let the
+        # stuck guard sit through run253 it142-151: six stow ticks, ~1,800 blocks covered, sixteen
+        # powder still in the pack - every one of them read as progress.
+        return d["inventory_delta"].get("blaze_powder", 0) < 0
     # The stronghold run to the eyes of ender. Each pearl action had no rule at all, so a kill that
     # dropped a pearl and a roam that loaded fresh ground both read as no progress -- the stuck
     # tracker never saw the hunt move (so a roam that was working looked stuck), and the dataset

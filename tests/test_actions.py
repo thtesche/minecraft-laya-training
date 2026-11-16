@@ -8787,6 +8787,68 @@ class PowderInPackIsEyeFuelTest(unittest.TestCase):
         self.assertFalse(_nether_haul_home(g))
 
 
+class PowderIsBankedAtTheLidTest(unittest.TestCase):
+    """The powder deposit is a lid the bot stands at, never a journey.
+
+    Live, run253 it142-151: with sixteen powder in the pack and no pearl, `stow_blaze_powder`
+    stayed on the offer wherever the bot stood, so the model spent six ticks walking 258, 298 and
+    328 blocks home to the chest and back out to the enderman hunt - ~1,800 blocks - and on
+    arrival at the lid took `stow_surplus` instead. The powder never left the pack, and `verify`
+    counted every leg as the label's own progress, so no stuck guard ever fired. The walk home is
+    `go_home`'s job; this label owns the deposit at the chest it is already beside (the same
+    reach rule the run82 fix gave `stow_surplus`).
+    """
+
+    BASE = (-197, -47, -98)
+    CHEST = (-196, -46, -98)
+    GATE = (-195, -46, -98)
+
+    def _home(self, **inv) -> GameState:
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, golden_helmet=1,
+                     cooked_mutton=64, white_bed=1, diamond_pickaxe=2)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=self.BASE)
+        g.chest_pos = self.CHEST
+        g.dimension = "minecraft:overworld"
+        g.resources = {"nether_portal": [BlockHit("nether_portal", "nether_portal",
+                                                  *self.GATE, 2.0)]}
+        return g
+
+    def test_a_walk_home_is_not_a_stow(self) -> None:
+        g = self._home(blaze_powder=16)
+        g.pos = (72.5, 71.0, 311.4)              # the run253 far end of the round trip
+        self.assertNotIn("stow_blaze_powder", candidates(g))
+        self.assertIsNone(resolve("stow_blaze_powder", g))
+
+    def test_the_deposit_runs_at_the_lid(self) -> None:
+        g = self._home(blaze_powder=16)
+        g.pos = (self.CHEST[0] + 0.5, self.CHEST[1] + 1.0, self.CHEST[2] + 0.5)
+        self.assertIn("stow_blaze_powder", candidates(g))
+        a = resolve("stow_blaze_powder", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual(a.args["operation"], "deposit")
+        self.assertEqual(a.args["items"], [{"item_name": "blaze_powder", "count": 16}])
+
+    def test_the_overflow_lid_counts_when_the_main_one_is_full(self) -> None:
+        # The same reach test the deposit aims with: the roomy cell of the network, not `chest_pos`.
+        overflow = (-197, -46, -95)
+        g = self._home(blaze_powder=16)
+        g.extra_chests = (overflow,)
+        g.chests_full = [self.CHEST]
+        g.pos = (overflow[0] + 0.5, overflow[1] + 1.0, overflow[2] + 0.5)
+        self.assertIn("stow_blaze_powder", candidates(g))
+        a = resolve("stow_blaze_powder", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), overflow)
+
+    def test_the_walk_home_is_still_offered_on_its_own(self) -> None:
+        # The errand is not dropped, only split: a bot that wandered off still comes back to a
+        # base it owes the haul to, under `go_home`.
+        g = self._home(blaze_powder=16)
+        g.nether_entered = True
+        g.pos = (72.5, 71.0, 311.4)
+        self.assertIn("go_home", candidates(g))
+
+
 class DiamondsForTheSparePickaxeTest(unittest.TestCase):
     """The two gates for `mine_diamond` asked different questions, sixty-two times.
 

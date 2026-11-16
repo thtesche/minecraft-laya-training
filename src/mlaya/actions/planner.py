@@ -798,8 +798,13 @@ def candidates(gs: GameState) -> list[str]:
                     out.append("craft_blaze_powder")
                 # Powder the eye chain can spend from the pack is not a haul to bank: offered
                 # beside `take_blaze_powder` it became a lid the model kept crossing in both
-                # directions (run125 it16-47, thirty-two ticks of the same two powder).
-                if _blaze_powder(inv) > 0 and _chest_ready(gs) and _storage_target(gs) is not None \
+                # directions (run125 it16-47, thirty-two ticks of the same two powder). And it is
+                # a deposit at the lid, never a journey: offered from anywhere, the label walked
+                # the bot home and back - 258/298/328 blocks in six ticks (run253 it142-151) -
+                # while the sixteen powder never left the pack. `go_home`/`stow_surplus` own the
+                # walk; this owns the lid the bot already stands at (`_storage_reachable`, the
+                # same rule the run82 fix gave `stow_surplus`).
+                if _blaze_powder(inv) > 0 and _chest_ready(gs) and _storage_reachable(gs) \
                         and not _powder_is_eye_fuel(gs):
                     out.append("stow_blaze_powder")
 
@@ -1751,9 +1756,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             # rather than a haul the network still owes.
             return None
         if not _near_cell(gs, cell):
-            wx, wy, wz = cell
-            return Action(label, "navigate", {"x": wx, "y": wy, "z": wz},
-                          "walk over to the chest at the portal to bank the blaze powder")
+            # A deposit only, never a walk. run253 it142-151: the label was offered from 300
+            # blocks out, so the model spent six ticks and ~1,800 blocks walking to the lid and
+            # back, took `stow_surplus` on arrival instead, and the sixteen powder never left the
+            # pack - while `verify` counted every leg as progress. The offer is gated on the same
+            # reach, so a lid out of reach is `go_home`'s business, not this label's.
+            return None
         cx, cy, cz = cell
         powder = _blaze_powder(inv)
         return Action(label, "use_container",
