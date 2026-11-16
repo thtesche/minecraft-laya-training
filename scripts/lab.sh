@@ -19,9 +19,14 @@
 # ends writes its own report -- nobody has to ask for the analysis. A watchdog monitors the
 # server log for freezes (Watchdog tick timeouts) and terminates the run if detected, preventing
 # multi-hour hangs when the server becomes unresponsive.
+# Every long-lived process (host, run, observer, watchdog, report watcher, viewer) is started in a
+# session of its own via scripts/detach.sh: the shell or app that started `up` can end, and the run
+# keeps playing. Stop a run with `lab.sh down`, never by closing its parent.
 set -uo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# `BASH_SOURCE`, not `$0`: the report watcher sources this file (`lab.sh __library`) and `$0` is
+# then the watcher's shell, while the repository is still the one this file sits in.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MCP_REPO="/Users/thtesche/VibeCoding/mine-ai-mcp"
 # The host always runs from our own server branch: the patches the runs need live there.
 MCP_BRANCH="bot-run"
@@ -37,6 +42,11 @@ COMPOSE="$REPO/infra/docker-compose.yml"
 STATE="$REPO/runs/.lab"
 OPS_KNOWN="$STATE/ops-known.json"
 PY="$REPO/.venv/bin/python"
+# Every long-lived process the lab starts goes through this: it puts the command into a session
+# of its own, so the shell, app or harness that started `up` cannot take the run down with it
+# (runs 251 and 252 died as a whole process group, five processes at once, no traceback and no
+# end JSON - see scripts/detach.sh). `$!` stays the pid of the command itself.
+DETACH="$REPO/scripts/detach.sh"
 MCP_PORT=25575
 MC_PORT=25565
 # The live view: a spectator client (LayaView) that watches the bot in the browser. It is an
@@ -163,7 +173,7 @@ start_host() {
   # `${arr[@]}` on an empty array is an unbound variable in bash 3.2 (the macOS default)
   # under `set -u`, so the host would never start when no search budgets are overridden.
   # The `${arr[@]+...}` form expands to nothing when the array is empty in every bash.
-  (cd "$MCP_REPO" && bun src/server/host.ts --minecraft-host 127.0.0.1 \
+  (cd "$MCP_REPO" && "$DETACH" bun src/server/host.ts --minecraft-host 127.0.0.1 \
     --minecraft-port "$MC_PORT" --username MineAI --version 1.21.4 \
     --data-root "$MCP_DATA_ROOT" ${search_flags[@]+"${search_flags[@]}"} \
     > "$REPO/runs/mcp.log" 2>&1 &)
@@ -195,7 +205,7 @@ start_viewer() {
   fi
   # The braces keep the command substitution's pipe closed: without them the background job
   # inherits it and `$( ... )` waits for a viewer that never exits.
-  pid=$( cd "$VIEWER" && { node viewer.mjs --host 127.0.0.1 --port "$MC_PORT" \
+  pid=$( cd "$VIEWER" && { "$DETACH" node viewer.mjs --host 127.0.0.1 --port "$MC_PORT" \
     --view-port "$VIEWER_PORT" --state "$VIEWER_STATE" > "$REPO/runs/viewer.log" 2>&1 & echo $!; } )
   echo "$pid" > "$VIEWER_PID"
   log "viewer starting as LayaView (spectator) -> http://localhost:$VIEWER_PORT, log: runs/viewer.log"
@@ -259,21 +269,46 @@ sys.exit(0 if target is None or (written is not None and written >= target) else
 PY
 }
 
+# How many verdicts the observer has written so far. The drain uses it to tell a sidecar that is
+# still working through the tail from one that has gone silent.
+observer_verdicts() {
+  wc -l < "$REPO/runs/observer.jsonl" 2>/dev/null || echo 0
+}
+
 # Let the observer finish judging the run's tail before the report reads its log and the sidecar is
 # stopped. Reporting or killing it the instant the run ends truncated the archived observer log
 # against the decisions it was judging -- the join in `mlaya.analysis` then showed fewer judgments
 # than ticks for no real reason, and the dropped verdicts were the run's last and most telling ones
-# (a death, the final stall). Poll until it catches up or a generous bound passes; each verdict is
-# a multi-second call, so the bound is in minutes. A no-op without --observe.
+# (a death, the final stall).
+#
+# Exact catch-up alone is not enough. When the tailer falls behind by more than `[observer] max_lag`
+# lines in one read, `Observer.ingest` drops routine ticks on purpose (`sampled and event is None`)
+# so the story can catch up - and a dropped tick is never written, so the last-written iteration can
+# never reach the target however long we wait. The drain therefore ends on whichever comes first:
+# the verdict for the last judgeable tick, or the sidecar going quiet for longer than its slowest
+# verdict this run (run251: 62.6s, run247: 74.5s - hence 90s), which is the honest signal that the
+# tail it did not write is not coming. A hard bound keeps a wedged sidecar from holding the report
+# forever. A no-op without --observe.
 wait_observer_drained() {
   [[ $observe == 1 && -f "$STATE/observe.pid" ]] || return 0
-  local pid deadline
+  local pid deadline quiet seen now
   pid=$(cat "$STATE/observe.pid")
-  deadline=$(( $(date +%s) + 180 ))
+  deadline=$(( $(date +%s) + 240 ))
+  quiet=$(( $(date +%s) + 90 ))
+  seen=$(observer_verdicts)
   while kill -0 "$pid" 2>/dev/null; do
     observer_caught_up && break
+    now=$(observer_verdicts)
+    if [[ $now -gt $seen ]]; then
+      # A verdict landed: the sidecar is still working the tail, so the quiet clock restarts.
+      seen=$now
+      quiet=$(( $(date +%s) + 90 ))
+    elif [[ $(date +%s) -ge $quiet ]]; then
+      log "observer quiet for 90s - the tail it skipped will not arrive; reporting what it has"
+      break
+    fi
     if [[ $(date +%s) -ge $deadline ]]; then
-      log "observer drain timed out after 180s; reporting what it has written"
+      log "observer drain timed out after 240s; reporting what it has written"
       break
     fi
     sleep 2
@@ -328,10 +363,10 @@ report_run() {
   extra=()
   [[ -f "$run_log" ]] && extra=(--run-log "$run_log")
   if [[ -f "$baseline" ]]; then
-    "$PY" -m mlaya.cli analyze --log "$log_file" "${extra[@]}" \
+    "$PY" -m mlaya.cli analyze --log "$log_file" ${extra[@]+"${extra[@]}"} \
       --baseline "$baseline" --out "$out_md" > "$out_json" 2>&1
   else
-    "$PY" -m mlaya.cli analyze --log "$log_file" "${extra[@]}" \
+    "$PY" -m mlaya.cli analyze --log "$log_file" ${extra[@]+"${extra[@]}"} \
       --out "$out_md" > "$out_json" 2>&1
   fi
   log "run $run_no reported: runs/history/report-run$run_no.md"
@@ -467,7 +502,7 @@ cmd_up() {
   [[ $ignore_goal == 1 ]] && args+=(--ignore-goal)
   [[ $iron_armor == 1 ]] && args+=(--iron-armor)
   cd "$REPO"
-  nohup "$PY" -m mlaya.cli run "${args[@]}" > "$REPO/runs/run$run_no.log" 2>&1 &
+  "$DETACH" "$PY" -m mlaya.cli run "${args[@]}" > "$REPO/runs/run$run_no.log" 2>&1 &
   run_pid=$!
   echo "$run_pid" > "$STATE/run.pid"
   echo "$run_no" > "$STATE/run_number"
@@ -477,19 +512,26 @@ cmd_up() {
   # nor any log the loop reads, so it rides outside the run and the watchdog, and is stopped with
   # the run below. Its own stdout goes to runs/observe-run$run_no.log.
   if [[ $observe == 1 ]]; then
-    nohup "$PY" -m mlaya.cli observe > "$REPO/runs/observe-run$run_no.log" 2>&1 &
+    "$DETACH" "$PY" -m mlaya.cli observe > "$REPO/runs/observe-run$run_no.log" 2>&1 &
     echo $! > "$STATE/observe.pid"
     log "observer started (read-only) -> runs/observer.jsonl, runs/observe-run$run_no.log"
   fi
   # The report writes itself once the run's process is gone: nobody has to remember to ask for the
   # analysis, and the next `up` can diff against it straight away. The observer is drained first so
   # its last verdicts land, then stopped so no write races the report's read, and only then is the
-  # report produced against a settled pair of logs (a no-op without --observe).
-  ( while kill -0 "$run_pid" 2>/dev/null; do sleep 5; done
-    wait_observer_drained; stop_observer; report_run "$run_no" ) &
+  # report produced against a settled pair of logs (a no-op without --observe). It is detached like
+  # the run itself: a session that ends while the run is still going must not cost the report, and
+  # `lab.sh` sources itself in `__library` mode so the watcher shares the same drain/report code.
+  "$DETACH" "${BASH:-/bin/bash}" -c '
+    source "$1" __library
+    observe=$2
+    run_pid=$3
+    while kill -0 "$run_pid" 2>/dev/null; do sleep 5; done
+    wait_observer_drained; stop_observer; report_run "$4"
+  ' report-watcher "$REPO/scripts/lab.sh" "$observe" "$run_pid" "$run_no" &
   echo $! > "$STATE/report.pid"
   # Watchdog monitors the server log for freezes (Can't keep up) and aborts the run.
-  "$REPO/scripts/watchdog.sh" "$run_no" "$REPO/infra/world/logs/latest.log" "$STATE" &
+  "$DETACH" "$REPO/scripts/watchdog.sh" "$run_no" "$REPO/infra/world/logs/latest.log" "$STATE" &
   echo $! > "$STATE/watchdog.pid"
   log "run $run_no started (${args[*]}) -> runs/run$run_no.log, report written on completion"
   return 0
@@ -716,7 +758,11 @@ cmd_console() {
   docker compose -f "$COMPOSE" exec world sh -c 'printf "%s\n" "$1" > /tmp/minecraft-input' sh "$*"
 }
 
+# Sourced (`source lab.sh __library`) only the definitions above are wanted: the report watcher
+# reuses `wait_observer_drained`/`stop_observer`/`report_run` from its own detached shell instead of
+# duplicating that drain logic. Every other invocation runs the command below.
 case "${1:-status}" in
+  __library) return 0 2>/dev/null || exit 0 ;;
   up) shift; cmd_up "$@" ;;
   status) cmd_status ;;
   analyze) shift; cmd_analyze "$@" ;;
