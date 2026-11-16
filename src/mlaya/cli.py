@@ -140,17 +140,29 @@ def cmd_dataset(args) -> int:
         rerender=args.rerender,
         reverify=args.reverify,
         teacher=[_resolve(p) for p in args.teacher] if args.teacher else None,
+        teacher_soft=args.teacher_soft,
+        soft_progressed_laya=args.soft_progressed_laya,
+        soft_failed_laya=args.soft_failed_laya,
     )
     train, ev = ds.split(rows, args.eval_frac, args.seed)
 
     out = _resolve(args.out)
     ds.write_jsonl(out, train)
 
-    n_danger_yes = sum(1 for r in rows if r["expected"].get(ds.DANGER_QID) == "yes")
+    n_danger_yes = sum(1 for r in rows if r.get("expected", {}).get(ds.DANGER_QID) == "yes")
+    # A soft row carries its intent as a `gold` distribution, not a one-hot `expected` label; count
+    # it under its most-weighted label so the summary still reads as a label histogram.
     labels: dict[str, int] = {}
+    soft_rows = 0
     for r in rows:
-        lab = r["expected"].get(ds.INTENT_QID)
-        labels[lab] = labels.get(lab, 0) + 1
+        lab = r.get("expected", {}).get(ds.INTENT_QID)
+        if lab is None and isinstance(r.get("gold"), dict):
+            probs = r["gold"].get(ds.INTENT_QID, {}).get("probabilities", {})
+            if probs:
+                soft_rows += 1
+                lab = max(probs, key=probs.get)
+        if lab is not None:
+            labels[lab] = labels.get(lab, 0) + 1
 
     result = {
         "logs": [str(p) for p in logs],
@@ -159,6 +171,7 @@ def cmd_dataset(args) -> int:
         "eval": len(ev),
         "train_path": str(out),
         "danger_yes": n_danger_yes,
+        "soft_rows": soft_rows,
         "intent_labels": dict(sorted(labels.items(), key=lambda kv: -kv[1])),
     }
     if ev:
@@ -483,6 +496,16 @@ def main(argv: list[str] | None = None) -> int:
     dset.add_argument("--teacher", action="append", default=[],
                       help="teacher side-file (runs/history/teacher-runNN.jsonl) as an extra "
                            "label source; repeat for several. The verifier stays primary")
+    dset.add_argument("--teacher-soft", action="store_true",
+                      help="where the blind judge sided against Laya, emit a soft `gold` target "
+                           "that devalues the disputed choice toward the judge's pick instead of a "
+                           "hard label (needs --teacher; a verifier-confirmed label stays the mode)")
+    dset.add_argument("--soft-progressed-laya", type=float, default=0.7,
+                      help="with --teacher-soft: mass kept on Laya's label when the tick verified "
+                           "progress but the judge sided against it (rest to the judge; default 0.7)")
+    dset.add_argument("--soft-failed-laya", type=float, default=0.2,
+                      help="with --teacher-soft: mass kept on Laya's label when the tick made no "
+                           "progress and the judge sided against it (default 0.2)")
 
     tch = sub.add_parser("teacher", help="replay a run log through the offline teacher path "
                                          "(System 2 + blind judge) into a side-file")
