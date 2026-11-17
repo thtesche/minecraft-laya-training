@@ -429,6 +429,11 @@ class AgentState(TypedDict, total=False):
     result: Any
     escalated: bool
     deferred: bool
+    # The observer's `better` label when this tick was force-run off it (`--use-observer-better`),
+    # else None. A declared channel so `_guard`'s value survives into `_verify`'s record (an
+    # undeclared key is dropped by the graph before the record reads it); reset to None each tick in
+    # `_decide`, like `escalated`, so a once-forced tick does not mark every record after it.
+    observer_forced: str
     note: str
     done: bool
     stop: str  # why the loop ended: "goal" (tech tree complete) or "limit"
@@ -1814,7 +1819,8 @@ class Agent:
                 target, meta = self.brain.choose_target(gs.narrative(), targets)
                 decision.target = target
                 decision.target_meta = meta
-        return {"decision": decision, "escalated": False, "deferred": False}
+        return {"decision": decision, "escalated": False, "deferred": False,
+                "observer_forced": None}
 
     async def _guard(self, state: AgentState) -> dict:
         gs = state["before"]
@@ -1885,7 +1891,8 @@ class Agent:
             # action. Placed after the deterministic unblock and stall paths so it never pre-empts
             # them.
             if self.settings.loop.use_observer_better and not decision.deferred:
-                forced = self._observer_override(gs, decision.action_label)
+                forced = self._observer_override(gs, decision.action_label,
+                                                 state.get("iteration", 0))
                 if forced is not None:
                     return forced
             return {"action": action}
@@ -1916,7 +1923,7 @@ class Agent:
             return relief
         return None
 
-    def _observer_override(self, gs, laya_label: str | None):
+    def _observer_override(self, gs, laya_label: str | None, iteration: int = 0):
         """Consume the observer's pending `better` verdict as this tick's action, or None.
 
         The in-process observer judges each executed tick in `_verify`; a disagree that named a
@@ -1942,7 +1949,7 @@ class Agent:
         else:
             self._better_forced_label, self._better_forced_n = better, 1
         self.log.append({"stage": "policy", "reason": "observer_better",
-                         "laya": laya_label, "via": better})
+                         "iteration": iteration, "laya": laya_label, "via": better})
         return {"action": built, "observer_forced": better,
                 "note": f"observer better -> {better}"}
 
@@ -1965,7 +1972,10 @@ class Agent:
         agree = verdict.get("agree") if isinstance(verdict, dict) else None
         candidates_n = record.get("candidates") or []
         laya_label = record.get("label")
-        if (agree is False and isinstance(better, str)
+        # Only an *action* tick stages an override: a defer is a danger tick the survival policy
+        # owns, so its disagreement clears any pending `better` rather than forcing an action into
+        # the danger. The same resolvable/different guard the teacher's --from-observer path uses.
+        if (record.get("stage") == "action" and agree is False and isinstance(better, str)
                 and better in candidates_n and better != laya_label):
             self._pending_better = better
         else:
@@ -2071,7 +2081,7 @@ class Agent:
 
     async def _defer(self, state: AgentState) -> dict:
         decision = state["decision"]
-        self.log.append({
+        record = {
             "stage": "defer",
             "iteration": state.get("iteration", 0),
             "state": state["before"].as_state(),
@@ -2079,8 +2089,13 @@ class Agent:
             "candidates": decision.candidates,
             "note": decision.note,
             "answers": _chosen(getattr(decision, "answers", {})),
-        })
+        }
+        self.log.append(record)
         self.history.append({"stage": "defer", "note": decision.note})
+        # The in-process observer judges defers too, so its story has no gap at a danger tick (the
+        # standalone sidecar ingests them the same way). A defer stages no override - the survival
+        # policy owns a danger tick - so `_run_observer` only clears any pending `better` here.
+        await self._run_observer(record)
         iteration = state.get("iteration", 0) + 1
         gs = state["before"]
         stop = self._stop_state(gs, iteration)

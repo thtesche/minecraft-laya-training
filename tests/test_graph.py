@@ -7547,8 +7547,8 @@ class RunObserverIngestTest(unittest.IsolatedAsyncioTestCase):
         agent.observer = SimpleNamespace(ingest=lambda rec: {"verdict": verdict})
         return agent
 
-    def _rec(self, label="gather_mushrooms", candidates=None, progressed=False):
-        return {"stage": "action", "label": label,
+    def _rec(self, label="gather_mushrooms", candidates=None, progressed=False, stage="action"):
+        return {"stage": stage, "label": label,
                 "candidates": candidates or ["gather_mushrooms", "gather_scaffold"],
                 "progressed": progressed}
 
@@ -7586,6 +7586,35 @@ class RunObserverIngestTest(unittest.IsolatedAsyncioTestCase):
         agent.observer = None
         await agent._run_observer(self._rec())
         self.assertIsNone(agent._pending_better)
+
+    async def test_a_defer_tick_stages_no_override_and_clears_pending(self) -> None:
+        # A defer is a danger tick the survival policy owns; the observer still judges it (its story
+        # has no gap) but its disagreement must not force an action into the danger.
+        agent = self._agent({"agree": False, "better": "gather_scaffold"})
+        agent._pending_better = "gather_scaffold"  # left over from the action tick before the defer
+        await agent._run_observer(self._rec(label=None, stage="defer",
+                                            candidates=["gather_mushrooms", "gather_scaffold"]))
+        self.assertIsNone(agent._pending_better)
+
+
+class AgentStateChannelsTest(unittest.TestCase):
+    """`observer_forced` must be a declared channel, or the graph drops `_guard`'s value before the
+    record reads it - the override then runs but is never marked (the first live run's silent bug).
+    """
+
+    def test_observer_forced_is_a_declared_channel(self) -> None:
+        self.assertIn("observer_forced", graph.AgentState.__annotations__)
+
+    async def _decide_resets_it(self) -> dict:
+        agent = Agent.__new__(Agent)
+        agent.brain = SimpleNamespace(decide=lambda *_a, **_k: Decision("mine_stone"))
+        return await agent._decide({"before": gs()})
+
+    def test_decide_resets_the_marker_each_tick(self) -> None:
+        # Reset in _decide, like `escalated`, so a once-forced tick does not mark every later record.
+        import asyncio as _asyncio
+        out = _asyncio.run(self._decide_resets_it())
+        self.assertIsNone(out["observer_forced"])
 
 
 if __name__ == "__main__":
