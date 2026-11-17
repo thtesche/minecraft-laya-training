@@ -1773,9 +1773,11 @@ which tool the moment allows.
     `(iteration, narrative_hash)`, carrying `teacher_source` (`observer`/`picker`) and
     `better_repeats`. `dataset.build_rows` reads it with `--teacher` as an extra label source: a
     **no-progress** teachable tick whose judge clearly sided against Laya's pick becomes a positive
-    row for the judge's label. `dataset --teacher-soft` instead emits a soft `gold` target that
-    *devalues* the disputed choice (mass kept on Laya: 0.7 when the tick verified, 0.2 when it did
-    not); `--soft-gate` picks the evidence — `judge`, `rep`, `union`, or the default `rep-veto`
+    row for the judge's label. Soft `gold` targets (`--teacher-soft`) were built and measured, then
+    removed: on the hold-out set the hedged rows cost 2.1 pp (McNemar 18/6, p = 0.023 over 574
+    items) and every lost item was an intent question — 16 lost, 2 gained, `in_danger` untouched —
+    while the hard path sat inside the run-to-run noise band. `--teacher-gate` picks the evidence —
+    `judge`, `rep`, `union`, or the default `rep-veto`
     (observer named the counter-move ≥2× and the blind judge never clearly preferred Laya's own
     action; a side-file written before `better` existed falls back to the judge gate). The
     **verifier stays the grounded primary truth** — a tick that demonstrably progressed is not

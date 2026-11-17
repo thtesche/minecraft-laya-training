@@ -173,7 +173,7 @@ def _load_teacher(teacher: Path | Iterable[Path] | None) -> tuple[dict, dict]:
     return by_hash, by_tick
 
 
-SOFT_GATES = ("rep-veto", "judge", "rep", "union")
+TEACHER_GATES = ("rep-veto", "judge", "rep", "union")
 
 
 def _teacher_label(teacher_map: tuple[dict, dict], rec: dict, narrative: str,
@@ -203,8 +203,8 @@ def _teacher_label(teacher_map: tuple[dict, dict], rec: dict, narrative: str,
     The observer is a rolling conversation, so its own earlier verdicts sit in its context:
     repetition is *not* an independent confirmation, which is why the judge keeps a veto.
     """
-    if gate not in SOFT_GATES:
-        raise ValueError(f"unknown soft gate {gate!r}, expected one of {SOFT_GATES}")
+    if gate not in TEACHER_GATES:
+        raise ValueError(f"unknown teacher gate {gate!r}, expected one of {TEACHER_GATES}")
     by_hash, by_tick = teacher_map
     if not by_hash and not by_tick:
         return None
@@ -241,22 +241,6 @@ def _teacher_label(teacher_map: tuple[dict, dict], rec: dict, narrative: str,
     if judge_stable and judge_label == laya_label:
         return None  # the blind judge, on its own, clearly preferred what Laya did
     return observer_label
-
-
-def _soft_intent_gold(laya_label: str, judge_label: str, laya_weight: float) -> dict:
-    """A soft `gold` distribution over the intent options that *devalues* Laya's choice toward the
-    judge's pick, without discarding it.
-
-    `laya.train` trains against a target distribution, and a row may carry `gold`
-    (`{"probabilities": {label: p}}`) instead of a one-hot `expected` label (`target_from_gold`
-    takes precedence over `target_from_expected`). Where the blind judge sided against Laya,
-    replacing the label outright would overrule the grounded verifier signal that confirmed the
-    tick; shifting part of the mass to the judge's label *hedges* it instead - Laya stays the mode
-    while `laya_weight > 0.5`. The two weights are re-normalised downstream.
-    """
-    if not (0.0 <= laya_weight <= 1.0):
-        raise ValueError(f"laya_weight must be in [0, 1], got {laya_weight!r}")
-    return {"probabilities": {laya_label: laya_weight, judge_label: 1.0 - laya_weight}}
 
 
 def _read_records(log_path: Path) -> list[dict]:
@@ -405,10 +389,7 @@ def build_rows(
     rerender: bool = False,
     reverify: bool = False,
     teacher: Path | Iterable[Path] | None = None,
-    teacher_soft: bool = False,
-    soft_gate: str = "rep-veto",
-    soft_progressed_laya: float = 0.7,
-    soft_failed_laya: float = 0.2,
+    teacher_gate: str = "rep-veto",
 ) -> list[dict]:
     """Turn the run log into `{state, questions, expected}` training rows.
 
@@ -433,16 +414,14 @@ def build_rows(
 
     `teacher` adds the offline teacher side-file(s) (`teacher.py`) as a second, *opinion* label
     source. It never overrides the verifier: it fills a tick only where the grounded signal
-    produced nothing - a teachable tick whose action did not progress - and the judge clearly
-    sided against Laya's choice. On any de-dup collision with a verifier row, the verifier wins.
+    produced nothing - a teachable tick whose action did not progress - and the counter-move passes
+    `teacher_gate`. On any de-dup collision with a verifier row, the verifier wins.
 
-    `teacher_soft` changes how a flip-stable judge verdict against Laya is written: instead of a
-    one-hot label it emits a soft `gold` target (`_soft_intent_gold`) that *devalues* the disputed
-    choice toward the judge's pick rather than replacing it. On a tick the verifier confirmed, Laya
-    keeps `soft_progressed_laya` of the mass (default 0.7, so the grounded label stays the mode and
-    is only hedged); on a no-progress tick the fill keeps `soft_failed_laya` (default 0.2, so the
-    judge's pick dominates but Laya's unverified choice is not driven fully to zero). Without
-    `teacher`, this is a no-op - there are no verdicts to soften.
+    There is no soft target here. Soft `gold` labels were measured on the hold-out set: the
+    hedged intent rows made the head 2.1 pp worse (McNemar 18/6, p = 0.023 over 574 items), and
+    every lost item was an intent question - 16 lost, 2 gained, `in_danger` untouched - while the
+    hard teacher path sat inside the run-to-run noise band. A label is one action or it is no
+    label.
     """
     paths = [log_path] if isinstance(log_path, (str, Path)) else list(log_path)
     records: list[dict] = []
@@ -486,10 +465,10 @@ def build_rows(
         teachable = (len(candidates) >= 2 and label in candidates and index not in loops
                      # The walk to the chest is no deposit: only an item leaving the pack is.
                      and (label != "stow_surplus" or _deposited(rec)))
-        # The judge's pick when it clearly, flip-stably sided against Laya (or None). Read once:
-        # the verifier branch uses it to *devalue* a confirmed-but-disputed choice under
-        # `teacher_soft`, the fill branch below to label a no-progress tick the verifier dropped.
-        teach = _teacher_label(teacher_map, rec, narrative, candidates, label, gate=soft_gate)
+        # The teacher's counter-move for this tick, if the gate lets it through. It is only ever
+        # used below, to label a no-progress tick the verifier dropped; a tick the verifier
+        # confirmed keeps Laya's own action whatever the teacher thinks.
+        teach = _teacher_label(teacher_map, rec, narrative, candidates, label, gate=teacher_gate)
         if teachable and (progress or include_failed):
             key = (narrative, candidates)
             if key in seen:
@@ -497,16 +476,7 @@ def build_rows(
             seen.add(key)
 
             questions: dict[str, Any] = {INTENT_QID: intent_question(list(candidates))}
-            expected: dict[str, Any] = {}
-            gold: dict[str, Any] = {}
-            # Laya's label is the verifier's own positive. With `teacher_soft` a flip-stable judge
-            # verdict against it hedges the label toward the judge's pick instead of standing hard;
-            # the mass kept on Laya depends on whether the verifier confirmed the tick.
-            if teacher_soft and teach is not None:
-                w = soft_progressed_laya if progress else soft_failed_laya
-                gold[INTENT_QID] = _soft_intent_gold(label, teach, w)
-            else:
-                expected[INTENT_QID] = label
+            expected: dict[str, Any] = {INTENT_QID: label}
             if with_danger:
                 dlabel = danger_label(state, rec.get("answers"))
                 if dlabel:
@@ -514,41 +484,31 @@ def build_rows(
                     expected[DANGER_QID] = dlabel
 
             row: dict[str, Any] = {"state": narrative, "questions": questions, "expected": expected}
-            if gold:
-                row["gold"] = gold
             rows.append(row)
             if limit and len(rows) >= limit:
                 break
             continue
 
         # Teacher fill (opinion, never over the verifier): a tick that *would* have been a
-        # verifier positive but for its action not progressing, where the blind judge clearly
-        # sided against Laya's choice. The verifier row for the same (state, candidates) wins any
-        # collision - if it was emitted above, this tick already `continue`d; here `key in seen`
-        # guards the cross-tick case. A tick Laya progressed on is deliberately not re-labelled
-        # here: the grounded signal already owns it, and the judge's "another would be better" is
-        # the weak opinion the plan holds below the verifier. Under `teacher_soft` the fill is a
-        # soft target too, so Laya's unverified choice keeps a residual instead of dropping to zero.
+        # verifier positive but for its action not progressing, where the teacher's counter-move
+        # passes the gate. The verifier row for the same (state, candidates) wins any collision -
+        # if it was emitted above, this tick already `continue`d; here `key in seen` guards the
+        # cross-tick case. A tick Laya progressed on is deliberately not re-labelled here: the
+        # grounded signal already owns it, and the teacher's "another would be better" is the weak
+        # opinion the plan holds below the verifier.
         if teachable and not progress and not include_failed and teach is not None:
             key = (narrative, candidates)
             if key not in seen:
                 seen.add(key)
                 questions = {INTENT_QID: intent_question(list(candidates))}
-                expected = {}
-                gold = {}
-                if teacher_soft:
-                    gold[INTENT_QID] = _soft_intent_gold(label, teach, soft_failed_laya)
-                else:
-                    expected[INTENT_QID] = teach
+                expected = {INTENT_QID: teach}
                 if with_danger:
                     dlabel = danger_label(state, rec.get("answers"))
                     if dlabel:
                         questions[DANGER_QID] = DANGER_Q
                         expected[DANGER_QID] = dlabel
-                row = {"state": narrative, "questions": questions, "expected": expected}
-                if gold:
-                    row["gold"] = gold
-                rows.append(row)
+                rows.append({"state": narrative, "questions": questions, "expected": expected,
+                            "source": "teacher"})
                 if limit and len(rows) >= limit:
                     break
                 continue

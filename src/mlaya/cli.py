@@ -10,9 +10,10 @@ import httpx
 
 from . import perception
 from . import survival
+from . import holdout
 from .actions import candidates, resolve
 from .config import ROOT, load_env, load_settings
-from .dataset import SOFT_GATES
+from .dataset import TEACHER_GATES
 from .graph import Agent
 from .mcp import MCPExecutor
 
@@ -139,6 +140,19 @@ def cmd_dataset(args) -> int:
     if missing:
         print(json.dumps({"error": "run log not found", "missing": missing}))
         return 2
+
+    # The hold-out contract: a registered run is never trained on. Catch it here rather than
+    # discovering it later in a score that cannot be interpreted.
+    held = {r["run"] for r in holdout.load_registry()}
+    clash = sorted({n for n in (holdout.run_of_log(p) for p in logs) if n in held})
+    if clash:
+        print(json.dumps({
+            "error": "these runs are registered as hold-out and cannot be trained on",
+            "runs": clash,
+            "hint": "mlaya holdout list",
+        }))
+        return 2
+
     rows = ds.build_rows(
         logs,
         include_failed=args.include_failed,
@@ -147,10 +161,7 @@ def cmd_dataset(args) -> int:
         rerender=args.rerender,
         reverify=args.reverify,
         teacher=[_resolve(p) for p in args.teacher] if args.teacher else None,
-        teacher_soft=args.teacher_soft,
-        soft_gate=args.soft_gate,
-        soft_progressed_laya=args.soft_progressed_laya,
-        soft_failed_laya=args.soft_failed_laya,
+        teacher_gate=args.teacher_gate,
     )
     train, ev = ds.split(rows, args.eval_frac, args.seed)
 
@@ -158,17 +169,12 @@ def cmd_dataset(args) -> int:
     ds.write_jsonl(out, train)
 
     n_danger_yes = sum(1 for r in rows if r.get("expected", {}).get(ds.DANGER_QID) == "yes")
-    # A soft row carries its intent as a `gold` distribution, not a one-hot `expected` label; count
-    # it under its most-weighted label so the summary still reads as a label histogram.
     labels: dict[str, int] = {}
-    soft_rows = 0
+    teacher_rows = 0
     for r in rows:
+        if r.get("source") == "teacher":
+            teacher_rows += 1
         lab = r.get("expected", {}).get(ds.INTENT_QID)
-        if lab is None and isinstance(r.get("gold"), dict):
-            probs = r["gold"].get(ds.INTENT_QID, {}).get("probabilities", {})
-            if probs:
-                soft_rows += 1
-                lab = max(probs, key=probs.get)
         if lab is not None:
             labels[lab] = labels.get(lab, 0) + 1
 
@@ -179,7 +185,7 @@ def cmd_dataset(args) -> int:
         "eval": len(ev),
         "train_path": str(out),
         "danger_yes": n_danger_yes,
-        "soft_rows": soft_rows,
+        "teacher_rows": teacher_rows,
         "intent_labels": dict(sorted(labels.items(), key=lambda kv: -kv[1])),
     }
     if ev:
@@ -459,6 +465,7 @@ def cmd_train(args) -> int:
         freeze_encoder=not args.train_encoder,
         shuffle_options=("choice",) if not args.no_shuffle else (),
         eval_data=eval_path,
+        seed=args.seed,
     )
 
     if args.dry_run:
@@ -485,6 +492,78 @@ def cmd_train(args) -> int:
         "register": f"LAYA_EXTRA_MODELS='{register}'",
     }, indent=2, ensure_ascii=False, default=str))
     return 0
+
+
+def cmd_holdout(args) -> int:
+    """Manage the runs that are never trained on, and score checkpoints against them (M4)."""
+    from . import holdout as ho
+
+    if args.action == "add":
+        entry = ho.add_run(args.run, _resolve(args.log) if args.log else None, args.note)
+        print(json.dumps(entry, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.action == "list":
+        print(json.dumps({"runs": ho.load_registry()}, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.action == "build":
+        out = _resolve(args.out) if args.out else ho.DEFAULT_EVAL
+        print(json.dumps(ho.build_eval(out, train=[_resolve(t) for t in args.train],
+                                       per_run=args.per_run),
+                        indent=2, ensure_ascii=False))
+        return 0
+
+    if args.action == "eval":
+        if not args.ckpt:
+            print(json.dumps({"error": "no --ckpt given"}))
+            return 2
+        print(json.dumps(ho.compare([_resolve(c) for c in args.ckpt]), indent=2, ensure_ascii=False))
+        return 0
+
+    if args.action == "train":
+        from laya.train import TrainConfig, finetune, resolve_checkpoint_dir
+
+        settings = load_settings()
+        tcfg = settings.train
+        data = _resolve(args.data if args.data else (tcfg.data_dir + "/train.jsonl"))
+        if not data.exists():
+            print(json.dumps({"error": f"dataset not found: {data}"}))
+            return 2
+        base = resolve_checkpoint_dir(_train_base(settings, args.base))
+        loss = args.loss or tcfg.loss
+        out_prefix = _resolve(args.out) if args.out else _resolve(
+            f"{tcfg.out_dir}/minecraft-holdout-candidate")
+        checkpoints, trained = [], []
+        for seed in range(args.reps):
+            out = Path(f"{out_prefix}-s{seed}")
+            cfg = TrainConfig(
+                epochs=args.epochs or tcfg.epochs,
+                micro_batch=tcfg.micro_batch,
+                grad_accum=tcfg.grad_accum,
+                loss=loss,
+                freeze_encoder=not args.train_encoder,
+                shuffle_options=("choice",) if not args.no_shuffle else (),
+                eval_data=str(ho.DEFAULT_EVAL),
+                seed=seed,
+            )
+            finetune(str(data), base, str(out), cfg, device=args.device or "auto")
+            checkpoints.append(str(out))
+            trained.append(seed)
+        scores = ho.compare([base] + checkpoints)
+        deltas = [s["accuracy"] - scores[0]["accuracy"] for s in scores[1:]]
+        print(json.dumps({
+            "data": str(data),
+            "base": base,
+            "seeds": trained,
+            "checkpoints": checkpoints,
+            "holdout_eval": str(ho.DEFAULT_EVAL),
+            "scores": scores,
+            "candidate_spread": ho.mean_sd(deltas),
+        }, indent=2, ensure_ascii=False, default=str))
+        return 0
+
+    return 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -532,21 +611,12 @@ def main(argv: list[str] | None = None) -> int:
     dset.add_argument("--teacher", action="append", default=[],
                       help="teacher side-file (runs/history/teacher-runNN.jsonl) as an extra "
                            "label source; repeat for several. The verifier stays primary")
-    dset.add_argument("--teacher-soft", action="store_true",
-                      help="where the blind judge sided against Laya, emit a soft `gold` target "
-                           "that devalues the disputed choice toward the judge's pick instead of a "
-                           "hard label (needs --teacher; a verifier-confirmed label stays the mode)")
-    dset.add_argument("--soft-gate", default="rep-veto", choices=SOFT_GATES,
-                      help="which evidence lets a teacher counter-move through to a soft label: "
-                           "rep-veto (observer named it >=2x in the run and the judge never "
-                           "preferred Laya's own action, default), judge (judge sided against Laya "
-                           "and survived the flip test), rep (repetition alone), union (either)")
-    dset.add_argument("--soft-progressed-laya", type=float, default=0.7,
-                      help="with --teacher-soft: mass kept on Laya's label when the tick verified "
-                           "progress but the judge sided against it (rest to the judge; default 0.7)")
-    dset.add_argument("--soft-failed-laya", type=float, default=0.2,
-                      help="with --teacher-soft: mass kept on Laya's label when the tick made no "
-                           "progress and the judge sided against it (default 0.2)")
+    dset.add_argument("--teacher-gate", default="rep-veto", choices=TEACHER_GATES,
+                      help="which evidence lets a teacher counter-move through to a label on a "
+                           "no-progress tick: rep-veto (observer named it >=2x in the run and the "
+                           "judge never preferred Laya's own action, default), judge (judge sided "
+                           "against Laya and survived the flip test), rep (repetition alone), "
+                           "union (either)")
 
     tch = sub.add_parser("teacher", help="replay a run log through the offline teacher path "
                                          "(System 2 + blind judge) into a side-file")
@@ -596,6 +666,11 @@ def main(argv: list[str] | None = None) -> int:
     trn.add_argument("--base", default="",
                      help="checkpoint to start from: a name or a directory (default [train] base_model)")
     trn.add_argument("--eval", default=None, help="held-out JSONL (default auto-detect)")
+    trn.add_argument("--seed", type=int, default=0,
+                     help="training seed. Note: the pipeline is not deterministic on MPS and the "
+                          "seed is not the source of the noise - the same data, config and seed "
+                          "gave 0.9369 / 0.9279 / 0.9324, while seeds 0/1/2 all gave 0.8621. "
+                          "Repeat the run (`holdout train --reps`) to measure the spread")
     trn.add_argument("--out", default="", help="checkpoint output dir")
     trn.add_argument("--epochs", type=int, default=0)
     trn.add_argument("--loss", choices=["rlcd", "soft-ce"], default="")
@@ -606,6 +681,39 @@ def main(argv: list[str] | None = None) -> int:
                      help="disable option-order augmentation for choice questions")
     trn.add_argument("--dry-run", action="store_true",
                      help="inspect the dataset and build items without loading weights")
+
+    hol = sub.add_parser("holdout", help="runs that are never trained on, and the checkpoint "
+                                         "comparison against them (M4)")
+    hol_sub = hol.add_subparsers(dest="action")
+    hadd = hol_sub.add_parser("add", help="register a finished run as hold-out")
+    hadd.add_argument("--run", type=int, required=True, help="run number (its log is auto-found)")
+    hadd.add_argument("--log", default="", help="explicit decisions log path")
+    hadd.add_argument("--note", default="", help="why this run is held out")
+    hol_sub.add_parser("list", help="show the registry")
+    hbuild = hol_sub.add_parser("build", help="write the combined hold-out eval JSONL")
+    hbuild.add_argument("--out", default="", help="default data/holdout-eval.jsonl")
+    hbuild.add_argument("--train", action="append", default=[],
+                        help="training file to check for overlap; repeat for every corpus the "
+                             "candidate checkpoints were trained on")
+    hbuild.add_argument("--per-run", type=int, default=0,
+                       help="cap rows per registered run so one long run does not dominate the "
+                           "set (0 = take all)")
+    heval = hol_sub.add_parser("eval", help="score checkpoints on the hold-out set")
+    heval.add_argument("--ckpt", action="append", default=[],
+                       help="checkpoint dir; the first is the reference for McNemar")
+    htrain = hol_sub.add_parser("train", help="train one config `reps` times and report the spread "
+                                             "against the hold-out set")
+    htrain.add_argument("--data", default="", help="training JSONL")
+    htrain.add_argument("--base", default="", help="checkpoint to start from")
+    htrain.add_argument("--loss", default="", choices=["rlcd", "soft-ce"])
+    htrain.add_argument("--reps", type=int, default=3,
+                       help="repeat runs (default 3). The seed varies, but the spread comes from "
+                           "RLCD sampling and MPS, not the seed")
+    htrain.add_argument("--epochs", type=int, default=0)
+    htrain.add_argument("--device", default="", help="auto|cpu|mps|cuda")
+    htrain.add_argument("--out", default="", help="output prefix; each seed gets -sN")
+    htrain.add_argument("--train-encoder", action="store_true")
+    htrain.add_argument("--no-shuffle", action="store_true")
 
     args = parser.parse_args(argv)
     cmd = args.cmd or "run"
@@ -625,6 +733,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_teacher(args)
     if cmd == "train":
         return cmd_train(args)
+    if cmd == "holdout":
+        return cmd_holdout(args)
     return asyncio.run(cmd_run(args))
 
 

@@ -417,8 +417,8 @@ class TeacherSourceTest(unittest.TestCase):
         self.assertIn("At the surface", rows[0]["state"])
 
 
-class SoftTeacherTest(unittest.TestCase):
-    """--teacher-soft devalues a disputed choice with a soft `gold` target, not a hard label."""
+class TeacherGateTest(unittest.TestCase):
+    """The teacher labels a no-progress tick, and only through the gate. No soft targets."""
 
     def _tick(self, iteration, candidates, label, *, progressed, narrative):
         rec = _rec(narrative, candidates, label, progressed=progressed)
@@ -440,129 +440,100 @@ class SoftTeacherTest(unittest.TestCase):
             tf.write_text(json.dumps(judge) + "\n", encoding="utf-8")
             return ds.build_rows(log, teacher=tf, **kw)
 
-    def test_progressed_disagreement_is_hedged_not_replaced(self):
-        # Verifier confirmed the tick, so Laya stays the mode (0.7) and the judge's pick is a hedge.
-        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
-        rows = self._build(rec, self._teacher(rec, "mine_stone"), teacher_soft=True)
-        self.assertEqual(len(rows), 1)
-        self.assertNotIn(INTENT_QID, rows[0].get("expected", {}))
-        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
-        self.assertAlmostEqual(probs["get_wood"], 0.7)
-        self.assertAlmostEqual(probs["mine_stone"], 0.3)
-
-    def test_without_soft_a_progressed_disagreement_stays_a_hard_laya_label(self):
-        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
-        rows = self._build(rec, self._teacher(rec, "mine_stone"))
-        self.assertEqual(rows[0]["expected"][INTENT_QID], "get_wood")
-        self.assertNotIn("gold", rows[0])
-
-    def test_no_progress_fill_is_soft_and_judge_dominant(self):
-        # The verifier dropped the tick; the judge's pick dominates (0.8) but Laya keeps a residual.
-        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=False, narrative="safe no-progress")
-        rows = self._build(rec, self._teacher(rec, "mine_stone"), teacher_soft=True)
-        self.assertEqual(len(rows), 1)
-        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
-        self.assertAlmostEqual(probs["get_wood"], 0.2)
-        self.assertAlmostEqual(probs["mine_stone"], 0.8)
-
-    def test_the_weights_are_configurable(self):
-        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
-        rows = self._build(rec, self._teacher(rec, "mine_stone"),
-                           teacher_soft=True, soft_progressed_laya=0.9)
-        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
-        self.assertAlmostEqual(probs["get_wood"], 0.9)
-        self.assertAlmostEqual(probs["mine_stone"], 0.1)
-
-    def test_soft_without_a_teacher_is_a_no_op(self):
-        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
-        with tempfile.TemporaryDirectory() as d:
-            log = _write(Path(d), [rec])
-            rows = ds.build_rows(log, teacher_soft=True)
-        self.assertEqual(rows[0]["expected"][INTENT_QID], "get_wood")
-        self.assertNotIn("gold", rows[0])
-
-    def test_a_flipped_verdict_is_not_softened(self):
-        # A slot-biased verdict carries no label (`_teacher_label` drops it), so the progressed
-        # tick stays the hard verifier positive - the flip gate guards the soft path too.
-        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
-        judge = self._teacher(rec, "mine_stone", flip_verdict="B", flip_label="get_wood", flip=True)
-        rows = self._build(rec, judge, teacher_soft=True)
-        self.assertEqual(rows[0]["expected"][INTENT_QID], "get_wood")
-        self.assertNotIn("gold", rows[0])
-
-    def test_an_out_of_range_weight_is_rejected(self):
-        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
-        with self.assertRaises(ValueError):
-            self._build(rec, self._teacher(rec, "mine_stone"),
-                        teacher_soft=True, soft_progressed_laya=1.5)
-
     def _observer_teacher(self, rec, better, repeats, judge_label=None, flip=False):
         return self._teacher(rec, judge_label,
                              teacher_source="observer", s2_label=better,
                              better_repeats=repeats, flip=flip)
 
-    def test_rep_veto_needs_the_counter_move_named_twice(self):
+    def test_a_progressed_disagreement_keeps_laya_s_own_label(self):
+        # The verifier confirmed the tick, so the teacher has nothing to say about it.
         rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
                          progressed=True, narrative="safe progressed")
-        once = self._build(rec, self._observer_teacher(rec, "mine_stone", 1), teacher_soft=True)
-        self.assertEqual(once[0]["expected"][INTENT_QID], "get_wood")
-        self.assertNotIn("gold", once[0])
-        twice = self._build(rec, self._observer_teacher(rec, "mine_stone", 2), teacher_soft=True)
-        probs = twice[0]["gold"][INTENT_QID]["probabilities"]
-        self.assertAlmostEqual(probs["get_wood"], 0.7)
-        self.assertAlmostEqual(probs["mine_stone"], 0.3)
+        rows = self._build(rec, self._observer_teacher(rec, "mine_stone", 4))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["expected"][INTENT_QID], "get_wood")
+        self.assertNotIn("gold", rows[0])
+        self.assertNotIn("source", rows[0])
+
+    def test_a_no_progress_tick_is_filled_with_the_teacher_s_action(self):
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=False, narrative="safe no-progress")
+        rows = self._build(rec, self._observer_teacher(rec, "mine_stone", 2))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["expected"][INTENT_QID], "mine_stone")
+        self.assertEqual(rows[0]["source"], "teacher")
+        self.assertNotIn("gold", rows[0])
+
+    def test_without_a_teacher_the_no_progress_tick_is_dropped(self):
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=False, narrative="safe no-progress")
+        with tempfile.TemporaryDirectory() as d:
+            log = _write(Path(d), [rec])
+            rows = ds.build_rows(log)
+        self.assertEqual(rows, [])
+
+    def test_no_row_carries_a_soft_gold_target(self):
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=False, narrative="safe no-progress")
+        rows = self._build(rec, self._observer_teacher(rec, "mine_stone", 3))
+        self.assertFalse(any("gold" in r for r in rows))
+
+    def test_a_flipped_verdict_is_not_used(self):
+        # A slot-biased verdict carries no label: the tick stays unlabelled rather than being
+        # filled with an opinion that reversed when the options were swapped.
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=False, narrative="safe no-progress")
+        judge = self._teacher(rec, "mine_stone",
+                              flip_verdict="B", flip_label="get_wood", flip=True)
+        rows = self._build(rec, judge)
+        self.assertEqual(rows, [])
+
+    def test_rep_veto_needs_the_counter_move_named_twice(self):
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=False, narrative="safe no-progress")
+        once = self._build(rec, self._observer_teacher(rec, "mine_stone", 1))
+        self.assertEqual(once, [])
+        twice = self._build(rec, self._observer_teacher(rec, "mine_stone", 2))
+        self.assertEqual(twice[0]["expected"][INTENT_QID], "mine_stone")
 
     def test_rep_veto_is_blocked_when_the_judge_prefers_laya(self):
         rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
+                         progressed=False, narrative="safe no-progress")
         rows = self._build(rec, self._observer_teacher(rec, "mine_stone", 4,
-                                                       judge_label="get_wood"), teacher_soft=True)
-        self.assertEqual(rows[0]["expected"][INTENT_QID], "get_wood")
-        self.assertNotIn("gold", rows[0])
+                                                       judge_label="get_wood"))
+        self.assertEqual(rows, [])
 
     def test_rep_veto_survives_an_unstable_judge_verdict(self):
         # The judge flipped when the slots swapped, so it has no opinion to veto with; the
         # observer's repeated, candidate-grounded counter-move still stands.
         rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
+                         progressed=False, narrative="safe no-progress")
         rows = self._build(rec, self._observer_teacher(rec, "mine_stone", 3,
-                                                       judge_label="get_wood", flip=True),
-                           teacher_soft=True)
-        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
-        self.assertAlmostEqual(probs["mine_stone"], 0.3)
+                                                       judge_label="get_wood", flip=True))
+        self.assertEqual(rows[0]["expected"][INTENT_QID], "mine_stone")
 
     def test_the_judge_gate_is_selectable(self):
         rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
+                         progressed=False, narrative="safe no-progress")
         # Named only once, so the repetition gate rejects it; the judge gate accepts it.
         entry = self._observer_teacher(rec, "mine_stone", 1, judge_label="mine_stone")
-        rows = self._build(rec, entry, teacher_soft=True, soft_gate="judge")
-        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
-        self.assertAlmostEqual(probs["mine_stone"], 0.3)
-        rows = self._build(rec, entry, teacher_soft=True, soft_gate="rep")
-        self.assertNotIn("gold", rows[0])
+        rows = self._build(rec, entry, teacher_gate="judge")
+        self.assertEqual(rows[0]["expected"][INTENT_QID], "mine_stone")
+        self.assertEqual(self._build(rec, entry, teacher_gate="rep"), [])
 
     def test_a_side_file_without_repetition_falls_back_to_the_judge(self):
         # Side-files written before the observer carried `better` have no repetition to count; the
         # default gate must not silently throw all of their labels away.
         rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
-        rows = self._build(rec, self._teacher(rec, "mine_stone"), teacher_soft=True)
-        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
-        self.assertAlmostEqual(probs["mine_stone"], 0.3)
+                         progressed=False, narrative="safe no-progress")
+        rows = self._build(rec, self._teacher(rec, "mine_stone"))
+        self.assertEqual(rows[0]["expected"][INTENT_QID], "mine_stone")
 
     def test_an_unknown_gate_is_rejected(self):
         rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
-                         progressed=True, narrative="safe progressed")
+                         progressed=False, narrative="safe no-progress")
         with self.assertRaises(ValueError):
-            self._build(rec, self._teacher(rec, "mine_stone"), teacher_soft=True, soft_gate="vibes")
+            self._build(rec, self._teacher(rec, "mine_stone"), teacher_gate="vibes")
 
 
 class SplitTest(unittest.TestCase):

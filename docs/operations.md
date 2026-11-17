@@ -196,18 +196,22 @@ inside the corpus did not travel.
 
 Two things have to be measured before a checkpoint is called better:
 
-* **Pipeline jitter.** Identical data, config and seed produced 0.9369 / 0.9279 / 0.9324 on one
-  eval file — a 0.9 pp spread, the same size as the effect under test. RLCD samples Gaussian
-  noise around the logits each step and MPS is not deterministic, so one run is one draw. The
-  seed is not the source: three runs with seeds 0, 1, 2 all landed on 0.8621, while three runs
-  with the *same* seed spread 1.15 pp. `holdout train --reps` repeats the run, not the seed.
-* **Item-level luck.** On ~90 items one item is 1 pp. `holdout eval` reports McNemar's discordant
-  counts (items A right and B wrong, and the reverse) beside the accuracy difference, so a "win"
-  of three items out of ninety reads as three items.
+* **Pipeline jitter.** Three runs on the same data, config and seed scored 0.9338 / 0.9373 /
+  0.9408 on the 574-item hold-out — a 0.70 pp spread. RLCD samples Gaussian noise around the
+  logits each step and MPS is not deterministic, so one run is one draw. The seed is not the
+  source: seeds 0, 1, 2 scored 0.9355 / 0.9390 / 0.9373, a 0.35 pp spread, *smaller* than the
+  same-seed one. `holdout train --reps` repeats the run, not the seed.
+* **Item-level luck.** On 574 items one item is 0.17 pp. `holdout eval` reports McNemar's
+  discordant counts (items A right and B wrong, and the reverse) beside the accuracy difference,
+  so a "win" of three items reads as three items, not as a trend.
 
-The registry now holds 32 runs (221–251 and 257): everything after the base checkpoint's
+A candidate has to clear the jitter, not the item count: across nine hard fine-tunes the mean
+delta against the base is −0.04 pp with a 0.24 pp standard deviation and a 0.70 pp spread — the
+teacher path is inside the noise. Only soft + soft-ce left it: −2.09 pp, McNemar 18/6, p = 0.023.
+
+The registry now holds 33 runs (221–251, 257 and 258): everything after the base checkpoint's
 training corpus, none of it in any file a candidate was trained on. `--per-run 10` caps each
-run's contribution so a 330-tick run does not outweigh a 9-tick one — 286 rows, 554 items.
+run's contribution so a 330-tick run does not outweigh a 9-tick one — 296 rows, 574 items.
 
 1. Register a finished run: `.venv/bin/python -m mlaya.cli holdout add --run 257`. The log is
    found in `runs/history/decisions-run257*.jsonl`; the live `runs/decisions.jsonl` is not a
@@ -215,7 +219,7 @@ run's contribution so a 330-tick run does not outweigh a 9-tick one — 286 rows
 2. Build the eval file: `.venv/bin/python -m mlaya.cli holdout build --per-run 10 --train
    data/train-187-220-rr.jsonl --train data/s5-rep-veto-hard.jsonl …` — repeat `--train` for
    **every** corpus any candidate was trained on. Rows whose state also appears in one of them
-   are dropped and the count reported (15 of 301 here) — a hold-out set containing training rows
+   are dropped and the count reported (15 of 311 here) — a hold-out set containing training rows
    measures nothing. No teacher is applied: the target is what the verifier confirmed Laya
    actually did.
 3. Score checkpoints: `.venv/bin/python -m mlaya.cli holdout eval --ckpt <base> --ckpt <candidate> …`
@@ -260,19 +264,19 @@ separate `--use-observer-better` override above is the opt-in live exception).
    same tick — the builder then falls back to the tick's identity (`iteration`, Laya's label,
    the eligible labels) rather than silently adding zero rows. Regenerating the side-file is still
    the right thing after a renderer change; the fallback just keeps an expensive batch usable.
-4. **Soft labels instead of replacement:** `--teacher-soft` emits a soft `gold` target that
-   *devalues* the disputed choice toward the judge's pick rather than replacing it. On a tick the
-   verifier confirmed, Laya keeps `--soft-progressed-laya` of the mass (default 0.7 — the grounded
-   label stays the mode); on a no-progress tick the fill keeps `--soft-failed-laya` (default 0.2 —
-   the judge's pick dominates but Laya's unverified choice is not driven to zero). `--soft-gate`
-   decides which evidence lets a counter-move through: `judge` (blind judge sided against Laya and
-   survived the flip test), `rep` (observer named it ≥2× in the run), `union` (either) and the
-   default `rep-veto` (it recurs and the judge never clearly preferred Laya's own action — the judge
-   may veto but need not confirm). Repetition alone is not independent proof because the observer
-   is a rolling conversation with its own earlier verdicts in context; the judge is the only model
-   with no shared context, so it keeps the veto. Side-files written before `better` existed have no
-   repetition to count and fall back to the judge gate, so no paid judgment is thrown away. On runs
-   252–254 that is 15 labels through the judge gate, 22 through `rep-veto`.
+4. **Which counter-move gets through:** `--teacher-gate` decides the evidence a teacher
+   counter-move needs to become a label on a no-progress tick: `judge` (blind judge sided against
+   Laya and survived the flip test), `rep` (observer named it ≥2× in the run), `union` (either) and
+   the default `rep-veto` (it recurs and the judge never clearly preferred Laya's own action — the
+   judge may veto but need not confirm). Repetition alone is not independent proof because the
+   observer is a rolling conversation with its own earlier verdicts in context; the judge is the
+   only model with no shared context, so it keeps the veto. Side-files written before `better`
+   existed have no repetition to count and fall back to the judge gate, so no paid judgment is
+   thrown away. On runs 252–254 that is 15 labels through the judge gate, 22 through `rep-veto`.
+   Soft `gold` targets (`--teacher-soft`) are gone: on the hold-out set the hedged rows made the
+   head 2.1 pp worse (McNemar 18/6, p = 0.023 over 574 items) and every lost item was an intent
+   question — 16 lost, 2 gained, `in_danger` untouched — while the hard path sat inside the
+   run-to-run noise band. A label is one action or it is no label.
 5. Test the blindness: `teacher --log <run log> --flip-from runs/history/teacher-runNN.jsonl`
    re-runs the blind judge with the A/B slots swapped (System 2 is not asked again; its pick is read
    from the side-file) and writes `teacher-runNN-flip.jsonl` with the two verdicts side by side. It
