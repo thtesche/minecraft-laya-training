@@ -36,8 +36,11 @@ head is trained. Run-by-run findings live in [`architecture.md`](architecture.md
 
 ## A run
 
-One command: `./scripts/lab.sh up [--n 1000] [--fresh] [--ignore-goal] [--no-viewer]`. The other
-verbs: `status` (JSON: world, viewer, host, run, last tick, anomalies), `report [run]`,
+One command: `./scripts/lab.sh up [--n 1000] [--fresh] [--ignore-goal] [--no-viewer]
+[--iron-armor] [--observe | --use-observer-better]`. `--iron-armor` opts into the pre-diamond iron
+armour set (default: skip it); `--observe` and `--use-observer-better` are the two mutually exclusive
+observer modes (see below). The other verbs: `status` (JSON: world, viewer, host, run, observer,
+last tick, anomalies), `report [run]`,
 `analyze [--baseline runs/history/…]`, `dataset [flags]`, `viewer [up|down|status]`,
 `console "op LayaView"`, `down [--run-only]`.
 
@@ -79,8 +82,9 @@ Manual start, only when the lab is not usable:
 Never patch code under a running run: a run keeps the code it started with, and a fix
 applies from the next run. A run that is stuck is stopped by the user, not by the tooling.
 When a run ends, the last line of `runs/runNN.log` is the end JSON (`iterations`, `stop`
-`goal`/`limit`/`body_held`/`body_busy`, policy; `body_held` means the server's reflex kept the
-body through two `action_wait_ms` budgets in a row, `body_busy` means it answered
+`goal`/`limit`/`body_held`/`body_busy`, policy; `body_held` means two *non-progressing*
+`action_wait_ms` budgets in a row (a reflex still inside its release budget is progress, and a reflex
+that never releases is capped separately by `BODY_HELD_LIVE_STOP = 6`), `body_busy` means it answered
 `No new action started; body owner: …` `BODY_BUSY_STOP` times running without ever handing the
 body over), and `runs/decisions.jsonl` holds one record per tick
 (`action`, `defer`, `policy` stages) with the state, the candidates, the chosen label, the result
@@ -103,12 +107,61 @@ scripts/dec.py --no-color < runs/decisions.jsonl | less                         
 named top-level keys, and a half-written record from a run still in progress is skipped with a
 note on stderr rather than ending the reader.
 
+## Parallel observer (opt-in)
+
+A second LLM watches every tick alongside Laya and writes its own judgment to `runs/observer.jsonl`.
+It is **read-only** — it tails `runs/decisions.jsonl`, never touches the bot or any log the loop
+reads — and it is **off by default** (no per-tick model call unless enabled). It is one append-only
+conversation ("story"): a branch caches 0 tokens on this endpoint, a pure extension reuses the whole
+prior prefix, so the system prefix is byte-stable for the run and the thinking toggle rides in each
+appended turn (`scripts/cache_probe.py` measured this). Routine ticks run light (`/no_think`,
+~1–3 s); full reasoning is spent only on *events* — phase change, escalation, stall (few labels and
+no progress across the recent window), death. Config: `ObserverConfig` in `config.py` (no `[observer]`
+section in `config/settings.toml` yet — add one to override): Strata `qwen3.8-flash-next-q2_0`,
+`STRATA_API_KEY`, 16 384 output tokens for events / 1 024 for
+routine turns, 185 k input budget before the oldest turns are folded into a summary, `max_lag = 8`
+ticks before routine ticks are sampled rather than each observed; events are never skipped).
+
+Two ways to run it, **never together** (both write `runs/observer.jsonl`):
+
+- `./scripts/lab.sh up --observe` — a detached **sidecar** (`mlaya.cli observe`), read-only. It
+  follows the live log until stopped; `lab.sh` drains it before the report reads the logs and
+  archives it as `runs/history/observer-runNN.jsonl` beside `decisions-runNN.jsonl`. `status`
+  reports `observer.running`, `judgments` and the last `iteration`/`phase`/`event`/`verdict`.
+- `./scripts/lab.sh up --use-observer-better` — the observer runs **in-process** in the loop
+  (`settings.loop.use_observer_better`); it writes `runs/observer.jsonl` itself, so no sidecar. On a
+  *disagree* whose `better` is one of the tick's own candidates and differs from Laya's label, that
+  label is staged and run on the **next** tick. Guarded: one-shot (cleared on read, a fresh verdict
+  sets the next), never the same alternative more than `OBSERVER_BETTER_REPEATS = 3` ticks running,
+  cleared at once by an agree or a defer (danger ticks belong to survival), and reset by progress on
+  the forced label — so the worst case is the action Laya would have run anyway. The decision record
+  carries `observer_forced` and the log a `policy` line with `reason: observer_better`, so the report
+  can tell an override from a Laya choice. It is placed after the deterministic inventory unblock
+  and stall escalation, so it never pre-empts them.
+
+Manual/replay: `mlaya observe --log runs/decisions.jsonl [--replay] [--out runs/observer.jsonl]`.
+Replay walks an archived log once; follow tails until interrupted. `--out` keeps an archived replay
+out of the live sidecar log. Each verdict line carries `ts`, `iteration`, `phase`, `event`,
+`reasoned`, `laya_label`, `progressed`, `gear`, the `verdict` object and `telemetry`. The verdict
+schema is `{"phase", "agree", "risk", "note", "better"}`; `better` is the single label from the
+tick's `candidates` that would have been the better move, or null. `gear` is the worn armour per
+slot and pickaxe/sword with durability in %, plus the off-hand — shown so the judge does not flag a
+kit it cannot see (run247 told the bot to "focus on shield" while the shield was in the off-hand
+the whole time). Note that `progressed` in this log is **copied from the action record**: for an
+`explore` tick it only means the body covered ground (`verify.moved`), not that the phase advanced
+— see the reward note in `architecture.md`.
+
+`mlaya analyze [--observer <log>]` joins the two logs by iteration; the report's `observer` block
+shows cache `hit_rate` (the payoff of the append-only story), latency split by reasoned/routine
+ticks, agreement/disagreement with the tick's real outcome, risks and stalls (`stalls.borne_out`
+counts flags whose tick did *not* progress), and how often gear was actually shown.
+
 ## A fix
 
 - **Every fix comes with tests**, written from the live state that showed the defect (the cell,
   the label, the refusal text), and the new test must fail without the fix.
 - Tests: `.venv/bin/python -m pytest -q` — that is what the pre-commit hook runs (`pytest` is in
-  the venv; `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests` gives the same 1755
+  the venv; `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests` gives the same 1967
   tests). There is no bare `python` on the machine; always `.venv/bin/python`.
 - **Commits:** small and thematic, straight on `main`, a one-line summary with a scope prefix —
   `fix(runNNN):`, `feat(end):`, `docs(operations):` — that names the live case behind it (run,
@@ -134,37 +187,103 @@ note on stderr rather than ending the reader.
    whole unseen run as held-out) shows whether the head decides better.
 5. Optional — publish to the Hub: `hf upload thtesche/laya-minecraft-english runs/checkpoints/minecraft-<time> --exclude "checkpoint_latest/*"` and refresh the card from `hf/model-card.md`. The Hub id then works directly as a `LAYA_EXTRA_MODELS` source (`{"english": "thtesche/laya-minecraft-english"}`); corpora go to the dataset repo (`hf upload thtesche/laya-minecraft-training-data data --repo-type dataset`, card in `hf/dataset-card.md`). Weights belong in a **model** repo — laya's `snapshot_download` defaults to `repo_type="model"` and cannot resolve dataset repos.
 
-## Teacher path (offline System 2 + judge)
+## Hold-out set (M4)
+
+A split drawn from the same runs the head was trained on is nearly in-distribution. Measured:
+the 252–256 corpus scored 0.9369 for a fine-tune and 0.9279 for the base checkpoint; on run257,
+a run in no training file, the same fine-tune scored 0.8764 against the base's 0.8876. The gain
+inside the corpus did not travel.
+
+Two things have to be measured before a checkpoint is called better:
+
+* **Pipeline jitter.** Identical data, config and seed produced 0.9369 / 0.9279 / 0.9324 on one
+  eval file — a 0.9 pp spread, the same size as the effect under test. RLCD samples Gaussian
+  noise around the logits each step and MPS is not deterministic, so one run is one draw. The
+  seed is not the source: three runs with seeds 0, 1, 2 all landed on 0.8621, while three runs
+  with the *same* seed spread 1.15 pp. `holdout train --reps` repeats the run, not the seed.
+* **Item-level luck.** On ~90 items one item is 1 pp. `holdout eval` reports McNemar's discordant
+  counts (items A right and B wrong, and the reverse) beside the accuracy difference, so a "win"
+  of three items out of ninety reads as three items.
+
+The registry now holds 32 runs (221–251 and 257): everything after the base checkpoint's
+training corpus, none of it in any file a candidate was trained on. `--per-run 10` caps each
+run's contribution so a 330-tick run does not outweigh a 9-tick one — 286 rows, 554 items.
+
+1. Register a finished run: `.venv/bin/python -m mlaya.cli holdout add --run 257`. The log is
+   found in `runs/history/decisions-run257*.jsonl`; the live `runs/decisions.jsonl` is not a
+   fallback, because it belongs to whichever run is running now.
+2. Build the eval file: `.venv/bin/python -m mlaya.cli holdout build --per-run 10 --train
+   data/train-187-220-rr.jsonl --train data/s5-rep-veto-hard.jsonl …` — repeat `--train` for
+   **every** corpus any candidate was trained on. Rows whose state also appears in one of them
+   are dropped and the count reported (15 of 301 here) — a hold-out set containing training rows
+   measures nothing. No teacher is applied: the target is what the verifier confirmed Laya
+   actually did.
+3. Score checkpoints: `.venv/bin/python -m mlaya.cli holdout eval --ckpt <base> --ckpt <candidate> …`
+   — the first `--ckpt` is the McNemar reference.
+4. Train a config several times: `.venv/bin/python -m mlaya.cli holdout train --data … --base …
+   --loss rlcd --reps 3` writes `<out>-s0…-sN`, scores each against the hold-out and prints
+   `candidate_spread` — the mean and standard deviation of the deltas, the number a candidate
+   has to clear.
+
+## Teacher path (System 2 + blind judge, offline or from the observer)
 
 The verifier (`progressed`) is the grounded primary label source and stays that way. The teacher
 is *opinion* and fills only the gaps the verifier leaves — disputed ticks and the no-progress
 ticks a verifier-only dataset throws away. It never overrules a tick the world showed real
-progress on. Everything runs on the archived log; the live loop (`graph.py`) is untouched.
+progress on. Everything runs on archived logs; the live loop (`graph.py`) is untouched (the
+separate `--use-observer-better` override above is the opt-in live exception).
 
-1. Review a run: `.venv/bin/python -m mlaya.cli teacher --log runs/history/decisions-runNN.jsonl`
-   → `runs/history/teacher-runNN.jsonl`. Per action tick with ≥2 eligible labels it asks System 2
-   (`[llm]`) the same question over the same candidates; on disagreement a third model — the judge
-   (`[judge]`, its own model so it does not grade its own earlier opinion) — sees both actions
-   *blind* (not told which came from S1/S2) and rules A/B/neither/unsure. Only a clear, confident
-   verdict carries a label forward. Both keys come from `.env` (`STRATA_API_KEY` by default).
-2. Fold it into a dataset: add `--teacher runs/history/teacher-runNN.jsonl` to the `dataset`
-   build (pair it with `--rerender`, as the side-file keys on the re-rendered narrative). A
-   no-progress tick whose judge clearly sided against Laya's pick becomes a positive row for the
-   judge's label; on any de-dup collision with a verifier row the verifier wins. The join hash is
-   a function of the renderer, so a side-file recorded before a wording change no longer hashes to
-   the same tick — the builder then falls back to the tick's identity (`iteration`, Laya's label,
+1. Pick the System 2 source. The original path replays it per tick:
+   `.venv/bin/python -m mlaya.cli teacher --log runs/history/decisions-runNN.jsonl`
+   asks `[llm]` (Strata `qwen3.8-flash-next-q2_0`, `STRATA_API_KEY`) the same question over the same
+   candidates on every action tick with ≥2 eligible labels — a rich run is hours at ~77 s a call.
+   Since run256 the cheaper path reuses the parallel observer, which already judged every tick:
+   `teacher --log <decisions log> --from-observer runs/history/observer-runNN.jsonl`. The observer's
+   verdict decides agreement; only its *disagreements* cost a call — to a blind picker over the
+   tick's own candidates when the verdict has no `better`, otherwise the judge adjudicates the named
+   counter-move directly. Live run256 (436 iterations): 401 verdicts, 129 disagreements, 35 with a
+   valid counter-move. Ticks the observer never covered get no judgment, so the dataset falls back
+   to the verifier's label. Both paths write `runs/history/teacher-runNN.jsonl`; the side-file
+   records `teacher_source` (`observer`/`picker`) and `better_repeats` (how often that counter-move
+   recurred in the run). `--judge-no-think` turns off the judge's reasoning chain (OpenRouter
+   `reasoning off`, ~30x faster); the local Qwen reviewer ignores `/no_think`, `thinking_budget`
+   and `enable_thinking`, so it has no such lever.
+2. On disagreement a third model — the judge (`[judge]`, OpenRouter's free
+   `nvidia/nemotron-3.5-super-vl:free`, its own model so it does not grade its own earlier opinion,
+   `OPENROUTER_API_KEY`) — sees both actions *blind* (not told which came from S1/S2) and rules
+   A/B/neither/unsure. Only a clear, confident verdict carries a label forward.
+3. Fold it into a dataset: add `--teacher runs/history/teacher-runNN.jsonl` to the `dataset`
+   build (pair it with `--rerender`, as the side-file keys on the re-rendered narrative). By default
+   a no-progress tick whose judge clearly sided against Laya's pick becomes a positive row for the
+   judge's label; on any de-dup collision with a verifier row the verifier wins. The join hash is a
+   function of the renderer, so a side-file recorded before a wording change no longer hashes to the
+   same tick — the builder then falls back to the tick's identity (`iteration`, Laya's label,
    the eligible labels) rather than silently adding zero rows. Regenerating the side-file is still
    the right thing after a renderer change; the fallback just keeps an expensive batch usable.
- 3. Test the blindness: `teacher --log <run log> --flip-from runs/history/teacher-runNN.jsonl`
-    re-judges every recorded disagreement with the blind pair's A/B slots swapped (System 2 is not
-    asked again; its pick is read from the side-file) and writes `teacher-runNN-flip.jsonl` with the
-    two verdicts side by side. A verdict that survives the swap is a judgement about the actions;
-    one that flips was a reaction to which letter they arrived under, and its label is noise the
-    dataset should not learn from. Measured on run111: **1 flip in 29** (3.4%) — the judge is
-    order-blind in practice, and the tick that flipped (`search_enderman` vs `go_home` at it38) is
-    a genuinely close call rather than a slot artifact. On the larger run220 (digest payload) the
-    rate was far higher — **36 flips in 180** disagreements (20%) — so the gate is not cosmetic: it
-    kept 36 letter-reactions out of the labels and left ~13 flip-stable no-progress corrections.
-4. Validate at step 4 above against **real run outcomes** (goal/deaths/ticks-to-milestone), never
-   against judge-agreement — optimising Laya to please the big model instead of to survive is the
-   failure mode this ordering exists to avoid. Go live only once it at least matches.
+4. **Soft labels instead of replacement:** `--teacher-soft` emits a soft `gold` target that
+   *devalues* the disputed choice toward the judge's pick rather than replacing it. On a tick the
+   verifier confirmed, Laya keeps `--soft-progressed-laya` of the mass (default 0.7 — the grounded
+   label stays the mode); on a no-progress tick the fill keeps `--soft-failed-laya` (default 0.2 —
+   the judge's pick dominates but Laya's unverified choice is not driven to zero). `--soft-gate`
+   decides which evidence lets a counter-move through: `judge` (blind judge sided against Laya and
+   survived the flip test), `rep` (observer named it ≥2× in the run), `union` (either) and the
+   default `rep-veto` (it recurs and the judge never clearly preferred Laya's own action — the judge
+   may veto but need not confirm). Repetition alone is not independent proof because the observer
+   is a rolling conversation with its own earlier verdicts in context; the judge is the only model
+   with no shared context, so it keeps the veto. Side-files written before `better` existed have no
+   repetition to count and fall back to the judge gate, so no paid judgment is thrown away. On runs
+   252–254 that is 15 labels through the judge gate, 22 through `rep-veto`.
+5. Test the blindness: `teacher --log <run log> --flip-from runs/history/teacher-runNN.jsonl`
+   re-runs the blind judge with the A/B slots swapped (System 2 is not asked again; its pick is read
+   from the side-file) and writes `teacher-runNN-flip.jsonl` with the two verdicts side by side. It
+   also writes the flip result back into the side-file, so an unstable verdict can be filtered where
+   labels are taken. A verdict that survives the swap is a judgement about the actions; one that
+   flips was a reaction to which letter they arrived under, and its label is noise the dataset
+   should not learn from. Measured on run111: **1 flip in 29** (3.4%) — the judge is order-blind in
+   practice, and the tick that flipped (`search_enderman` vs `go_home` at it38) is a genuinely close
+   call rather than a slot artifact. On the larger run220 (digest payload) the rate was far higher —
+   **36 flips in 180** disagreements (20%) — so the gate is not cosmetic: it kept 36 letter-reactions
+   out of the labels and left ~13 flip-stable no-progress corrections.
+6. Validate against **real run outcomes** (goal/deaths/ticks-to-milestone), never against
+   judge-agreement — optimising Laya to please the big model instead of to survive is the failure
+   mode this ordering exists to avoid. Go live only once it at least matches.

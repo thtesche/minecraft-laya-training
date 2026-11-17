@@ -13,6 +13,8 @@ mine-ai-MCP.
 | Language | Python ≥3.10, virtual environment via `uv` |
 | System 1 | Laya **in-process** (`laya.Router`), **zero-shot**, checkpoint `english` |
 | System 2 | Strata (local llama.cpp) `qwen3.8-flash-next-q2_0` (`max_tokens=4096`) |
+| Judge | OpenRouter `nvidia/nemotron-3.5-super-vl:free` (blind verdicts in the teacher path, `OPENROUTER_API_KEY`) |
+| Observer | Strata `qwen3.8-flash-next-q2_0`, append-only story sidecar (`STRATA_API_KEY`, 16k output tokens) — opt-in |
 | Orchestration | **LangGraph** (async, `MemorySaver`) |
 | MCP | Streamable HTTP `http://localhost:25575/mcp` |
 | Knowledge | zero-shot, in the `criteria` texts; no knowledge file |
@@ -150,8 +152,9 @@ Important implementation details:
   Armour needs **no sticks**, only the crafting table.
 - `mine_iron`/`mine_coal`/`mine_diamond` are only offered when ore is actually
   loaded within the radius (otherwise the cascade falls back to `explore`). `mine_diamond` additionally
-  needs tier ≥ iron **and the completed iron combat kit** (`_combat_ready`: iron sword + all four
-  iron pieces worn + shield in the off-hand — see the "Combat kit" section). The diamond goals come
+  needs tier ≥ iron **and `_combat_ready`**: iron sword + shield in the off-hand, plus all four iron
+  pieces worn only when the optional `--iron-armor` kit is enabled (default off — see the
+  "Combat kit" section). The diamond goals come
   from **one** source, `_next_diamond_item(gs)`
   (pickaxe 3 → sword 2, only once the diamond pickaxe stands → armour in the order
   `DIAMOND_ARMOR` = chestplate 8, leggings 7, boots 4, helmet 5, i.e. **protection per diamond** first).
@@ -173,23 +176,28 @@ Important implementation details:
   `equip` with `destination: "off-hand"` puts it there. The server reports the off-hand stack with
   `location: "off-hand"`; `GameState.offhand` reads that (the armour slots do the same), and
   `verify.diff`/`progressed` record `offhand_delta`.
-- **Iron combat kit (before the diamond run):** `craft_iron_sword` (2 ingots + stick, 3×3) and
-  `craft_iron_<slot>` (chestplate 8, leggings 7, boots 4, helmet 5 — `IRON_ARMOR`, as with the
+- **Pre-diamond combat kit (iron armour optional, `--iron-armor`, default off):** the iron sword
+  (2 ingots + stick, 3×3) and the shield are always part of the kit; the four iron armour pieces
+  (`craft_iron_<slot>` — chestplate 8, leggings 7, boots 4, helmet 5 — `IRON_ARMOR`, as with the
   diamond set **protection per ingot** first; always only the next missing piece via
-  `_next_iron_armor_item`), then `equip_armor`. `equip_armor` equips iron **and** diamond and
-  only swaps against a **better** piece (`_armor_to_wear`), otherwise the iron piece
-  displaced by the diamond piece would immediately be put back over it in the backpack. `mine_diamond` is gated behind
-  `_combat_ready` (iron sword **or better**, shield, all four slots filled with iron **or
-  better**). **Reason (live, run12):** The bot descended to the
-  diamonds (y<16) with only an iron pickaxe, met a zombie and creeper and died; the run to the death site lost the race against
-  the item despawn. The iron tier is the only sword/armour tier before diamond that the tree
-  builds. **Iron consumption:** `_iron_goal` is the only source for "how much iron is still needed". It is
-  `3` for the (replacement) pickaxe, otherwise `_combat_iron_missing` (shield 1 + sword 2 + missing
-  armour pieces), and with a completed diamond kit additionally `_portal_iron_goal` (bucket, flint and steel).
-  `mine_iron` **and** `smelt_iron` (ingots < goal) share it; `mine_iron` is capped per action at
-  `IRON_MINE_BATCH = 8`, so that an armour goal does not become a single unlimited mining
-  operation. All iron crafts are gated behind the iron pickaxe, so that they do not steal
-  the first three ingots.
+  `_next_iron_armor_item`) are built only when `gs.want_iron_armor` is set (`settings.laya.iron_armor`,
+  injected by `graph._inject`, `--iron-armor` on `lab.sh up`), then `equip_armor`. `equip_armor`
+  equips iron **and** diamond and only swaps against a **better** piece (`_armor_to_wear`), otherwise
+  the iron piece displaced by the diamond piece would immediately be put back over it in the
+  backpack. `mine_diamond` is gated behind `_combat_ready` (iron sword **or better**, shield, and —
+  only when the flag is on — all four slots filled with iron **or better**); with the default off the
+  dive goes behind sword and shield and the bot wears diamond armour afterwards.
+  **Why optional:** early runs died to mobs without the iron kit (live, run12: descended to y<16
+  with only an iron pickaxe, met a zombie and creeper and died, then lost the race to the death-site
+  drops). But with the diamond armour that follows, the detour cost most of a run's budget (run246
+  reached diamond only at the buzzer), so the full set is now opt-in. **Iron consumption:**
+  `_iron_goal` is the only source for "how much iron is still needed". It is `3` for the
+  (replacement) pickaxe, otherwise `_combat_iron_missing` (shield 1 + sword 2 + missing armour
+  pieces — the latter only when `want_iron_armor`), and with a completed diamond kit additionally
+  `_portal_iron_goal` (bucket, flint and steel). `mine_iron` **and** `smelt_iron` (ingots < goal)
+  share it; `mine_iron` is capped per action at `IRON_MINE_BATCH = 8`, so that an armour goal does
+  not become a single unlimited mining operation. All iron crafts are gated behind the iron
+  pickaxe, so that they do not steal the first three ingots.
 - `explore` is deliberately the **last fallback** and only in `candidates` when no
   productive step is possible — otherwise it dilutes the (zero-shot noisy) choice. Exception:
   in the lull after lighting the portal (see eating/auto-stop) `wait` stands in its place —
@@ -505,6 +513,21 @@ a **food acquisition** that fits "actually survive".
   read `verify.moved`: `pos_delta`, except a vertical bob in water without ground — the run115
   shape — while a scaffold climb stays travel; `escape_water` keeps its stricter swim/footing
   rule. `analysis._wasted` uses the same helper, so `still_ratio` and the reward signal agree.
+ - **`progressed` is a per-label rule, not a phase verdict (read this before judging a loop).**
+   `verify.progressed` asks what each *step* is for. Most labels prove themselves with an inventory,
+   armour or world-block delta; the travel labels prove themselves with movement only — `explore`,
+   `search_enderman`, `approach_lava`, `place_bed`'s walk, `surface_up`/`establish_base`/`go_home`,
+   `enter_portal`/`leave_nether` and `locate_stronghold` all reduce to `verify.moved(d)` (the body
+   covered > 2 blocks, with the water/footing caveat). So `progressed: true` on an `explore` tick
+   means **the bot moved**, not that the chest or portal got built: gear identical, no new item, and
+   the bot can ping-pong inside a few cells with every tick marked progressed — the exact shape the
+   orbit/wander/bounce guards in `graph.py` exist to catch (`ORBIT_WINDOW`, `WANDER_WALK`). The
+   observer prompt states the same rule to the judge (*"when a step reports progressed=true it
+   advanced the world — never call that a loop"*), so a verdict saying both `progressed: true` and
+   "Loop: explore repeats without chest/portal progress" is judging the **goal** loop, not the
+   movement: the two claims are consistent. Such a doubt is settled by the tick's
+   `delta.pos_delta`/`swim_delta`; the observer log copies `progressed` from the action record and
+   carries no position itself.
 - **Water is its own metric (run115, live):** the run report counts the ticks the state reports
   `in_water`, the longest streak, and the ticks that are **adrift** — in water with
   `swim_delta < MOVE_EPS`, a body drifting up and back down the same column while crossing no
@@ -766,7 +789,7 @@ progress. The loop now has one guard per kind of stall; each withholds the label
 | walking far, arriving nowhere | `_track_wander` | ≥ `WANDER_WALK = 80` m walked at a ratio worse than `WANDER_RATIO = 6`, `WANDER_REPEATS = 2`×; a tick that put items, armour or an off-hand hold in the pack resets the run, as in `_track_orbit` |
 | succeeding at nothing | `_track_idle` | `IDLE_REPEATS = 3` ticks with no change at all (`wait`/`sleep` exempt) |
 | a walk off dropped junk that cannot be made | `_note_step_away` | `STEP_AWAY_GIVE_UP = 3` refusals in a row |
-| a body the server's reflex will not hand back | `MCPExecutor.call` / `_note_held` | `[mcp] action_wait_ms = 300000` per call, then `[BODY_HELD]`; `BODY_HELD_STOP = 2` of them in a row end the run with `"stop": "body_held"` |
+| a body the server's reflex will not hand back | `MCPExecutor.call` / `_note_held` | `[mcp] action_wait_ms = 300000` per call, then `[BODY_HELD]`; `BODY_HELD_STOP = 2` non-progressing holds in a row end the run with `"stop": "body_held"`, but a reflex still inside its own release budget (`REFLEX_RELEASE_LIMITS`: guard 100, hold 600 ticks) is working, not deadlocked — those count only toward `BODY_HELD_LIVE_STOP = 6` |
 | a body the server refuses to hand over at once | `_note_body_busy` | `ACTION_BUSY` / `No new action started; body owner: <reflex>` (an instant refusal, no action id, no failure code); the tick is deferred by one `poll_ms`, logged as `body_busy`, and `BODY_BUSY_STOP = 20` of them in a row end the run with `"stop": "body_busy"` |
 | deferring to a reflex that does nothing | `_note_defer` | `DEFER_QUIET_TICKS = 5` quiet defers (see M3); under the health band only when nothing heals in place (`_recovery_owed`), the loop owes a meal it can eat with nothing in contact range (`_must_eat`), or the body is shut in (`boxed_in`) |
 | a death site the walk cannot reach | `_note_recover` | `RECOVER_UNREACHABLE_REPEATS = 3` `[RECOVERY_SITE_UNREACHABLE]` from one site write it off |
@@ -943,7 +966,14 @@ up to three times, so it311 came 31 minutes after it310 and it317 93 minutes aft
 drains and its own wait. A call that runs out of it returns `[BODY_HELD]` with the holder the
 last progress answer named (owner, response kind/phase, phase ticks) and status `held`, without
 resubmitting. `Agent._note_held` counts such calls in a row — a defer between them does not reset
-the count — and `BODY_HELD_STOP = 2` of them end the run with `"stop": "body_held"`. A hold that
+the count — and `BODY_HELD_STOP = 2` non-progressing holds end the run with `"stop": "body_held"`.
+A held tick whose `[BODY_HELD]` note names a survival reflex still inside its own release budget
+(`owner <reflex>, … <kind>/<phase>, <ticks> ticks`; `REFLEX_RELEASE_LIMITS` = guard 100, hold 600)
+is the reflex working, not run89's dead standoff, and is not counted toward that stop — live,
+run257 it63-65 held `mine_obsidian` three ticks behind a `fight/guard` at 38 ticks against a creeper
+2.8 m off while the bot stood in its poured water, and the reflex would have released once the water
+evaporated. A reflex that never releases is still caught, only after `BODY_HELD_LIVE_STOP = 6`
+consecutive live holds. A hold that
 moved the fight forward — a heal, a rod, a thinned pack, a block the stuck action actually put in
 the pack, or the body crossing `HELD_WALK_MIN_BLOCKS` (10) blocks of ground — breaks the streak
 instead: run151 walked its exit hop 869 -> 1043 blocks across six held ticks before the guard ended
@@ -1682,11 +1712,13 @@ which tool the moment allows.
   errors. A real accuracy gain would need a stronger signal than
   imitation (e.g. verifier reward directly) or more/more diverse runs. Both `in_danger` classes
   are represented with the defer fix; the new upper bound only caps the distant `yes`.
-- **M5 — stronger training signal (built): relative narrative + offline teacher/judge.**
+- **M5 — stronger training signal (built): relative narrative + teacher/judge + parallel observer.**
   Extends the M3+ gap above: imitating the logged choice cannot fix the choice's own errors, so
-  the head needs a signal stronger than imitation. Two parts, both **offline** — the live loop
-  (`graph.py`) is untouched, so this is a post-run analysis step, not a change to the running bot.
-  The **code** is in; the retrain + live validation are a run-the-user-owns step (below).
+  the head needs a signal stronger than imitation. The relative narrative and the teacher side-file
+  are **offline** post-run steps — the loop is untouched. The **parallel observer** is a read-only
+  sidecar that judges ticks live without touching the bot. One further piece, the in-process
+  `--use-observer-better` override, is an **opt-in** live change (default off). The **code** is in;
+  the retrain + live validation are a run-the-user-owns step (below).
   - *Relative narrative (done).* `perception.narrative()` now renders the bot, the base and the
     death site **relative**: the bot's `x/z` are dropped and `y` becomes a **depth band** against
     the frame of the dimension it is in (`_depth_band`: Overworld bedrock ≈ −64, sea level ≈ 63,
@@ -1709,16 +1741,43 @@ which tool the moment allows.
     before a retrain — training = inference. (The death clause cannot be reconstructed, its age is
     not in `as_state`, so a re-rendered death tick drops that one sentence; everything a step keys
     on survives.)
-  - *Offline teacher/judge (done).* `mlaya teacher --log …` (`teacher.py`) replays an archived log;
-    for each action tick with ≥ 2 candidates it asks System 2 (`[llm]`, via
-    `brain.escalate_to_system2`, Laya's own pick withheld so S2 is not biased) over the **same**
-    `narrative`/`candidates` and logs agreement + S2's reason. On disagreement a third model, the
-    judge (`[judge]` — its own model, so it does not grade its own earlier opinion), sees the two
-    actions **blind** (A/B order seeded by the tick's narrative hash, not told which is S1/S2) and
-    rules A/B/neither/unsure; only a clear verdict carries a label. Output:
-    `runs/history/teacher-runNN.jsonl`, keyed `(iteration, narrative_hash)`. `dataset.build_rows`
-    reads it with `--teacher` as an extra label source: a **no-progress** teachable tick whose
-    judge clearly sided against Laya's pick becomes a positive row for the judge's label. The
+  - *Parallel observer (built, opt-in).* `mlaya observe` (`observer.py`) tails `runs/decisions.jsonl`
+    and writes one verdict per observation to `runs/observer.jsonl`; it is read-only and never
+    touches the bot or a log the loop reads. One append-only story conversation (a branch caches 0,
+    an extension reuses the prefix — `scripts/cache_probe.py`), byte-stable system prefix, routine
+    ticks `/no_think`, full reasoning only on events (phase change after a 2-tick confirmation,
+    escalation, stall, death). Verdict schema `{phase, agree, risk, note, better}`; `better` names
+    one of the tick's own candidates as the move it would have preferred. Each line also carries
+    the gear it was shown (armour/tool durability %, off-hand), its `progressed` copy from the
+    action record, event/reasoned flags and cache/latency telemetry. `lab.sh up --observe` runs it as
+    a detached sidecar (drained before the report, archived as `observer-runNN.jsonl`, visible in
+    `status.observer`); `--use-observer-better` instead runs it in-process so a disagree can steer
+    the next tick — one-shot, resolvable-only, capped at `OBSERVER_BETTER_REPEATS = 3`, reset by a
+    defer or by progress on the forced label, marked `observer_forced` in the decision record.
+    `mlaya analyze --observer` joins the two logs by iteration and reports cache hit rate,
+    latency, agreement, risks/stalls (with `stalls.borne_out`) and gear visibility. Procedure and
+    the meaning of `progressed` for a travel label are in `operations.md` and the reward bullet
+    above.
+  - *Teacher/judge (done; two System 2 sources).* `mlaya teacher --log …` (`teacher.py`) has two
+    paths. The original one replays an archived log: for each action tick with ≥ 2 candidates it
+    asks System 2 (`[llm]`, via `brain.escalate_to_system2`, Laya's own pick withheld so S2 is not
+    biased) over the **same** `narrative`/`candidates` and logs agreement + S2's reason — ~77 s per
+    call, so a rich run is hours. `teacher --log … --from-observer …` (since run256) uses the live
+    observer verdict instead: it decides agreement, and only its disagreements cost a call — a blind
+    picker over the tick's own candidates when the verdict has no `better`, else the judge
+    adjudicates the named counter-move directly (live run256: 401 verdicts, 129 disagreements, 35
+    with a valid counter-move). On disagreement a third model, the judge (`[judge]` — its own model,
+    so it does not grade its own earlier opinion), sees the two actions **blind** (A/B order seeded
+    by the tick's narrative hash, not told which is S1/S2) and rules A/B/neither/unsure; only a clear
+    verdict carries a label. Output: `runs/history/teacher-runNN.jsonl`, keyed
+    `(iteration, narrative_hash)`, carrying `teacher_source` (`observer`/`picker`) and
+    `better_repeats`. `dataset.build_rows` reads it with `--teacher` as an extra label source: a
+    **no-progress** teachable tick whose judge clearly sided against Laya's pick becomes a positive
+    row for the judge's label. `dataset --teacher-soft` instead emits a soft `gold` target that
+    *devalues* the disputed choice (mass kept on Laya: 0.7 when the tick verified, 0.2 when it did
+    not); `--soft-gate` picks the evidence — `judge`, `rep`, `union`, or the default `rep-veto`
+    (observer named the counter-move ≥2× and the blind judge never clearly preferred Laya's own
+    action; a side-file written before `better` existed falls back to the judge gate). The
     **verifier stays the grounded primary truth** — a tick that demonstrably progressed is not
     overridden, and any de-dup collision goes to the verifier. Scope: `intent` only; the
     `in_danger` gate's floor/ceiling heuristic in `dataset.py` is untouched.
