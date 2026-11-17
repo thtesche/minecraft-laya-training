@@ -12,7 +12,7 @@
 // position towards MineAI in bounded steps and the server moves the spectator with it.
 //
 // Usage: node viewer.mjs [--host 127.0.0.1] [--port 25565] [--version 1.21.4]
-//          [--username LayaView] [--target MineAI] [--view-port 3006] [--view-distance 6]
+//          [--username LayaView] [--target MineAI] [--view-port 3006] [--view-distance 10]
 //          [--distance 2] [--height 1] [--first-person] [--no-commands] [--names]
 //          [--state runs/.lab/viewer-state.json]
 
@@ -31,7 +31,10 @@ const DEFAULTS = {
   username: 'LayaView',
   target: 'MineAI',
   'view-port': 3006,
-  'view-distance': 6,
+  // Chunks rendered round the camera. The server caps what it sends to LayaView at its own
+  // view-distance (server.properties, 10), so 10 is as wide as the picture gets without a
+  // world restart; asking for more only wastes work.
+  'view-distance': 10,
   'first-person': false,
   distance: 2,
   height: 1,

@@ -1669,9 +1669,9 @@ which tool the moment allows.
   stronghold) and Phase 5 (no run has entered the End at all — see the section above); (2) the
   fine-tuned head is now served live (registered in the gitignored `.env`, `ddc7753`); run213 was
   its first A/B — four milestones to the Oct-28 checkpoint's one (run188), and ahead of run210 on
-  efficiency though without its `powder_banked`; (3) the viewer's chunk window: LayaView loads at
-  `--view-distance 6`, so a bot working beyond it is not on screen — the patch in
-  `viewer/viewer.mjs` is deferred; (4) steps that leave the base (`mine_diamond`, `mine_gold`) are
+  efficiency though without its `powder_banked`; (3) the viewer's chunk window: LayaView now loads
+  at `--view-distance 10`, the server's own `view-distance` cap, so the picture is as wide as it
+  gets without a world restart (raising `server.properties` would go further, at a RAM/CPU cost); (4) steps that leave the base (`mine_diamond`, `mine_gold`) are
   still not held back by `_shed_owed`, only `mine_obsidian` is; (5) the server's
   `observed_containers` table is empty in the lab world (checked 2026-11-02), so
   `_walk_home_to_memory` cannot fire there.
