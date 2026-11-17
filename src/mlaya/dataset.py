@@ -173,18 +173,38 @@ def _load_teacher(teacher: Path | Iterable[Path] | None) -> tuple[dict, dict]:
     return by_hash, by_tick
 
 
+SOFT_GATES = ("rep-veto", "judge", "rep", "union")
+
+
 def _teacher_label(teacher_map: tuple[dict, dict], rec: dict, narrative: str,
-                   candidates: tuple[str, ...], laya_label: Any) -> str | None:
-    """The label the judge carried for this tick, if it clearly sided against Laya's choice.
+                   candidates: tuple[str, ...], laya_label: Any,
+                   gate: str = "rep-veto") -> str | None:
+    """The label the teacher carried for this tick, if the gate lets it through.
 
     The join hash is always taken over the *canonical* re-rendered narrative (what the teacher
     wrote), so a judgment is found whether or not the dataset itself was built with `rerender`.
     When that hash misses - the side-file was generated before a renderer change - the tick is
     still matched by its identity, so an expensive batch of judgments is not thrown away. Only a
-    judge label that is a real candidate here and differs from Laya's own pick counts. A verdict
-    the flip test caught reversing when the two actions swapped slots is dropped: it was about the
-    letter, not the action.
+    label that is a real candidate here and differs from Laya's own pick counts.
+
+    Two independent things can support a counter-move, and `gate` decides which are required:
+
+      * `judge` - the blind judge sided against Laya and survived the flip test (the slots swapped
+        and it still chose the same action). A verdict the flip test caught reversing was about the
+        letter, not the action, and is dropped.
+      * `rep` - the observer named this same counter-move at least twice in the run. A critique that
+        recurs across ticks is a stable read of the state, not a one-tick whim.
+
+      * `rep-veto` (default) - the counter-move recurs, and the judge never clearly preferred Laya's
+        own action. The judge need not confirm it; it can only veto it. Live: run252-254, 49
+        observer disagreements -> 15 through the judge gate, 22 through this one.
+      * `union` - either gate alone is enough.
+
+    The observer is a rolling conversation, so its own earlier verdicts sit in its context:
+    repetition is *not* an independent confirmation, which is why the judge keeps a veto.
     """
+    if gate not in SOFT_GATES:
+        raise ValueError(f"unknown soft gate {gate!r}, expected one of {SOFT_GATES}")
     by_hash, by_tick = teacher_map
     if not by_hash and not by_tick:
         return None
@@ -193,12 +213,34 @@ def _teacher_label(teacher_map: tuple[dict, dict], rec: dict, narrative: str,
                                         tuple(sorted(candidates))))
     if not j:
         return None
-    if j.get("flip"):
+
+    def usable(label: Any) -> bool:
+        return isinstance(label, str) and label in candidates and label != laya_label
+
+    judge_label = j.get("judge_label")
+    judge_stable = bool(judge_label) and not j.get("flip")
+    observer_label = j.get("s2_label") if j.get("teacher_source") in ("observer", "picker") else None
+    repeats = j.get("better_repeats")
+    repeated = int(repeats or 0) >= 2
+
+    if gate == "judge":
+        return judge_label if judge_stable and usable(judge_label) else None
+    if gate == "rep":
+        return observer_label if repeated and usable(observer_label) else None
+    if gate == "union":
+        if judge_stable and usable(judge_label):
+            return judge_label
+        return observer_label if repeated and usable(observer_label) else None
+    # rep-veto
+    if repeats is None:
+        # A side-file written before the observer carried `better` has no repetition to count, so
+        # the blind judge is the only evidence it offers - use the judge gate for those ticks.
+        return judge_label if judge_stable and usable(judge_label) else None
+    if not (repeated and usable(observer_label)):
         return None
-    jl = j.get("judge_label")
-    if isinstance(jl, str) and jl in candidates and jl != laya_label:
-        return jl
-    return None
+    if judge_stable and judge_label == laya_label:
+        return None  # the blind judge, on its own, clearly preferred what Laya did
+    return observer_label
 
 
 def _soft_intent_gold(laya_label: str, judge_label: str, laya_weight: float) -> dict:
@@ -364,6 +406,7 @@ def build_rows(
     reverify: bool = False,
     teacher: Path | Iterable[Path] | None = None,
     teacher_soft: bool = False,
+    soft_gate: str = "rep-veto",
     soft_progressed_laya: float = 0.7,
     soft_failed_laya: float = 0.2,
 ) -> list[dict]:
@@ -446,7 +489,7 @@ def build_rows(
         # The judge's pick when it clearly, flip-stably sided against Laya (or None). Read once:
         # the verifier branch uses it to *devalue* a confirmed-but-disputed choice under
         # `teacher_soft`, the fill branch below to label a no-progress tick the verifier dropped.
-        teach = _teacher_label(teacher_map, rec, narrative, candidates, label)
+        teach = _teacher_label(teacher_map, rec, narrative, candidates, label, gate=soft_gate)
         if teachable and (progress or include_failed):
             key = (narrative, candidates)
             if key in seen:

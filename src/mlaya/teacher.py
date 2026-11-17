@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections import Counter
 from typing import Any, Callable
 
 from .actions import CRITERIA
@@ -275,7 +276,7 @@ JUDGE_SYSTEM = (
 )
 
 
-def make_judge_fn(cfg: JudgeConfig, api_key: str | None) -> JudgeFn:
+def make_judge_fn(cfg: JudgeConfig, api_key: str | None, no_think: bool = False) -> JudgeFn:
     """A `replay` judge callable backed by its own (blind) LLM call."""
     def judge(state: dict, a_label: str, b_label: str, candidates: list[str],
               history: list[dict]) -> tuple[str | None, str | None, str]:
@@ -297,6 +298,13 @@ def make_judge_fn(cfg: JudgeConfig, api_key: str | None) -> JudgeFn:
                 messages=[{"role": "system", "content": JUDGE_SYSTEM},
                           {"role": "user", "content": json.dumps(brief, ensure_ascii=False)}],
                 response_format={"type": "json_object"},
+                # Nemotron is a reasoning model: left on its own it spends the whole
+                # `max_tokens` budget on a thinking chain and returns `content: null`
+                # (finish_reason "length"), which the parser reads as "unsure" - the judge
+                # silently loses every verdict. `/no_think` is Qwen-only and does nothing
+                # here, so the judge's lever is OpenRouter's `reasoning` control. It is not
+                # an OpenAI SDK parameter, so it has to ride in `extra_body`.
+                **({"extra_body": {"reasoning": {"enabled": False}}} if no_think else {}),
             )
             content = r.choices[0].message.content
             if not content:
@@ -331,9 +339,196 @@ def apply_flips(judgments: list[dict], flips: list[dict]) -> list[dict]:
     return judgments
 
 
-def run_teacher(records: list[dict], settings, sample: int = 0) -> list[dict]:
-    """Replay with the live LLMs wired from `settings`; `sample` caps the reviewed ticks (0 = all)."""
+def run_teacher(records: list[dict], settings, sample: int = 0, judge_no_think: bool = False) -> list[dict]:
+    """Replay with the live LLMs wired from `settings`; `sample` caps the reviewed ticks (0 = all).
+
+    `judge_no_think` turns off the blind judge's reasoning chain via OpenRouter's `reasoning`
+    control - measured at ~30x faster per verdict. The local Qwen reviewer has no such lever:
+    the Strata server ignores `/no_think`, `thinking_budget` and `enable_thinking`.
+    """
     s2_fn = make_system2_fn(settings.llm, settings.api_key())
-    judge_fn = make_judge_fn(settings.judge, settings.judge_api_key())
+    judge_fn = make_judge_fn(settings.judge, settings.judge_api_key(), no_think=judge_no_think)
     review = sample_teachable(records, sample) if sample else None
     return replay(records, s2_fn=s2_fn, judge_fn=judge_fn, review=review)
+
+
+# --- observer as System 2: the live verdict proposes, a picker names the alternative -----------
+
+PICKER_SYSTEM = (
+    "You are a Minecraft survival expert. A fast decision engine (Laya) chose one action at one "
+    "tick of a survival run, and a watching observer flagged that tick as questionable. You are "
+    "given the run phase, a plain description of the situation, a digest of the ticks leading up "
+    "to it, the actions that were actually available at that tick, and the observer's short "
+    "critique. Pick the single available action that best advances survival and progress right "
+    "now; if Laya's own choice is the best one, pick it. "
+    'Reply with JSON {"action": <one of the available actions>, "note": <why, short>}.'
+)
+
+
+def _pick_order(candidates: list[str], seed: str, shift: int) -> list[str]:
+    """A seeded shuffle of the candidate list - the best-of-N analogue of the blind A/B pairing.
+
+    The picker sees the candidates in shuffled order so a verdict cannot be about which action the
+    payload happened to list first; the second shuffle is the stability check, the picker's own
+    flip test.
+    """
+    order = list(candidates)
+    random.Random(f"{seed}|{shift}").shuffle(order)
+    return order
+
+
+def make_picker_fn(cfg: JudgeConfig, api_key: str | None, no_think: bool = False):
+    """A best-of-N picker over the tick's own candidates, backed by the judge model."""
+    def pick(state: dict, ordered_candidates: list[str], critique: str,
+             history: list[dict]) -> tuple[str | None, str]:
+        if not api_key:
+            return None, f"missing {cfg.api_key_env}"
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(base_url=cfg.base_url, api_key=api_key)
+            brief = review_payload(state, history, ordered_candidates)
+            brief["available_actions"] = [
+                {"action": c, "what_it_does": CRITERIA.get(c, "")} for c in ordered_candidates
+            ]
+            if critique:
+                brief["observer_critique"] = critique
+            messages = [{"role": "system", "content": PICKER_SYSTEM},
+                        {"role": "user", "content": json.dumps(brief, ensure_ascii=False)}]
+
+            def call(reasoning_off: bool):
+                return client.chat.completions.create(
+                    model=cfg.model,
+                    max_tokens=cfg.max_tokens,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    **({"extra_body": {"reasoning": {"enabled": False}} if reasoning_off else {}}),
+                )
+
+            r = call(no_think)
+            content = r.choices[0].message.content
+            # Nemotron is a reasoning model: its thinking chain can eat the whole `max_tokens`
+            # budget and return `content: null` (finish_reason "length"). That is a truncation,
+            # not a verdict - one retry with the chain off recovers the pick instead of silently
+            # dropping the tick. Measured on run253: 4 of 18 rejected disagreements were lost to
+            # exactly this, not to genuine instability.
+            if not content and not no_think:
+                r = call(True)
+                content = r.choices[0].message.content
+            if not content:
+                return None, "empty picker response"
+            data = json.loads(content)
+            action = data.get("action")
+            if not isinstance(action, str) or action not in ordered_candidates:
+                return None, f"bad pick: {action!r}"
+            return action, str(data.get("note") or "")
+        except Exception as e:  # the teacher is offline tooling; never crash the batch
+            return None, f"error: {e}"
+    return pick
+
+
+def _observer_competing(rec: dict, verdict: dict, candidates: list[str], laya_label: str,
+                       picker_fn, history: list[dict]) -> tuple[str | None, str]:
+    """The action the observer thinks Laya should have done, or None when none can be named.
+
+    The observer's own `better` field (the extended verdict schema) is preferred: it is the live
+    System 2's concrete counter-move. Older logs have no such field, so the picker names one from
+    the same candidate list - and only a pick that survives two different shuffles carries a
+    label, the same slot-bias logic the blind judge's flip test enforces.
+    """
+    better = verdict.get("better")
+    if isinstance(better, str) and better in candidates and better != laya_label:
+        return better, "observer"
+    if picker_fn is None:
+        return None, ""
+    seed = render_narrative(rec) or ""
+    critique = str(verdict.get("note") or "")
+    a, note_a = picker_fn(rec.get("state") or {}, _pick_order(candidates, seed, 0), critique, history)
+    b, _ = picker_fn(rec.get("state") or {}, _pick_order(candidates, seed, 1), critique, history)
+    if a is not None and a == b and a != laya_label:
+        return a, "picker"
+    return None, note_a
+
+
+def replay_from_observer(records: list[dict], verdicts: list[dict], *,
+                         judge_fn: JudgeFn, picker_fn=None) -> list[dict]:
+    """Side-file judgments where the live observer is System 2 instead of an offline S2 review.
+
+    The observer already watched every tick during the run - its verdict rides in the observer
+    log, so the ~77 s per tick System 2 replay is replaced by one picker call per disagreement.
+    Where the observer agrees with Laya there is nothing to adjudicate. Where it disagrees, the
+    competing action comes from its `better` field (then the blind judge and flip test adjudicate
+    it exactly as in the S2 path) or, for logs without that field, from the picker - a blind
+    best-of-N choice over the same candidates, kept only if two shuffles agree. Ticks the
+    observer never covered get no judgment, so the dataset falls back to the verifier's label.
+    """
+    by_iter = {v.get("iteration"): v for v in verdicts}
+    # How often the observer named each counter-move in this run. A critique it repeats across
+    # ticks is a stable read of the state, not a one-tick whim - the repetition is what the
+    # `rep-veto` soft-label gate counts (see `dataset._teacher_label`).
+    repeats: Counter[str] = Counter()
+    for v in verdicts:
+        verdict = v.get("verdict") or {}
+        if verdict.get("agree") is not False:
+            continue
+        better = verdict.get("better")
+        if isinstance(better, str) and better:
+            repeats[better] += 1
+    out: list[dict] = []
+    history: list[dict] = []
+    for rec in records:
+        if rec.get("stage") not in ("action", "defer"):
+            continue
+        candidates = _teachable_candidates(rec)
+        verdict_rec = by_iter.get(rec.get("iteration"))
+        if not candidates or verdict_rec is None:
+            if rec.get("stage") == "action":
+                history.append(rec)
+            continue
+        verdict = verdict_rec.get("verdict") or {}
+        laya_label = rec.get("label")
+        narrative = render_narrative(rec) or ""
+        entry: dict[str, Any] = {
+            "iteration": rec.get("iteration"),
+            "narrative_hash": _narrative_hash(narrative),
+            "candidates": candidates,
+            "laya_label": laya_label,
+            "s2_label": None,
+            "agree": False,
+            "s2_note": "",
+            "s2_reasoning": "",
+            "progressed": bool(rec.get("progressed")),
+            "teacher_source": "observer",
+            "observer_agree": verdict.get("agree"),
+            "observer_note": str(verdict.get("note") or "")[:300],
+            "observer_risk": str(verdict.get("risk") or "")[:300],
+            "judge_verdict": None,
+            "judge_label": None,
+            "judge_note": "",
+            "better_repeats": 0,
+        }
+        if verdict.get("agree") is True:
+            entry["agree"] = True
+            entry["s2_label"] = laya_label
+        elif verdict.get("agree") is False:
+            competing, source = _observer_competing(rec, verdict, candidates, laya_label,
+                                                   picker_fn, history)
+            if competing is not None:
+                entry["s2_label"] = competing
+                entry["teacher_source"] = source
+                entry["s2_note"] = str(verdict.get("note") or "")[:300]
+                if source == "observer":
+                    entry["better_repeats"] = repeats.get(competing, 0)
+                    # The observer named the counter-move itself - the blind judge and the flip
+                    # test then decide whether the disagreement carries a label, as in the S2 path.
+                    entry.update(judge_tick(rec, laya_label, competing, candidates, judge_fn, history))
+                else:
+                    # A picker pick already survived two different shuffles, which is the same
+                    # stability requirement the repetition gate counts for an observer label.
+                    entry["better_repeats"] = 2
+                    entry["judge_verdict"] = "pick"
+                    entry["judge_label"] = competing
+                    entry["judge_note"] = ""
+        out.append(entry)
+        history.append(rec)
+    return out

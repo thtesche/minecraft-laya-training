@@ -600,6 +600,10 @@ def review_with_system2(
                 "state": _system2_state_view(state),
                 "recent_history": history[-8:],
             }
+        # Measured against the live Strata server: the Qwen build there ignores `/no_think`,
+        # `thinking_budget` and `enable_thinking` - the reasoning chain stays (and gets longer),
+        # so there is no thinking lever for the reviewer. The judge's lever is OpenRouter's
+        # `reasoning` control instead, which does work (see `make_judge_fn`).
         r = client.chat.completions.create(
             model=cfg.model,
             max_tokens=cfg.max_tokens,

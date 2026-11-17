@@ -186,6 +186,13 @@ class PrefixTest(unittest.TestCase):
         self.assertIn("`gear`", content)
         self.assertIn("durability", content)
 
+    def test_the_better_field_is_taught(self) -> None:
+        # The observer-as-teacher path needs a concrete counter-move, not just a critique:
+        # a disagreement must name the better candidate or null.
+        content = system_prefix()["content"]
+        self.assertIn("`better`", content)
+        self.assertIn("candidates", content)
+
 
 class GearLineTest(unittest.TestCase):
     """The judge reads the kit's real state - the shield in the off-hand, the armour worn, a tool

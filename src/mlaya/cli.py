@@ -12,6 +12,7 @@ from . import perception
 from . import survival
 from .actions import candidates, resolve
 from .config import ROOT, load_env, load_settings
+from .dataset import SOFT_GATES
 from .graph import Agent
 from .mcp import MCPExecutor
 
@@ -141,6 +142,7 @@ def cmd_dataset(args) -> int:
         reverify=args.reverify,
         teacher=[_resolve(p) for p in args.teacher] if args.teacher else None,
         teacher_soft=args.teacher_soft,
+        soft_gate=args.soft_gate,
         soft_progressed_laya=args.soft_progressed_laya,
         soft_failed_laya=args.soft_failed_laya,
     )
@@ -218,7 +220,8 @@ def cmd_teacher(args) -> int:
             return 2
         judgments = ds._read_records(side)
         flips = tmod.flip_verdicts(records, judgments,
-                                   tmod.make_judge_fn(settings.judge, settings.judge_api_key()))
+                                   tmod.make_judge_fn(settings.judge, settings.judge_api_key(),
+                                                     no_think=args.judge_no_think))
         out = _resolve(args.out) if args.out else _teacher_out_path(log).with_name(
             _teacher_out_path(log).stem + "-flip.jsonl")
         ds.write_jsonl(out, flips)
@@ -237,7 +240,22 @@ def cmd_teacher(args) -> int:
         }, indent=2, ensure_ascii=False))
         return 0
 
-    judgments = tmod.run_teacher(records, settings, sample=args.sample)
+    if args.from_observer:
+        obs_log = _resolve(args.from_observer)
+        if not obs_log.exists():
+            print(json.dumps({"error": "observer log not found", "path": str(obs_log)}))
+            return 2
+        verdicts = ds._read_records(obs_log)
+        judgments = tmod.replay_from_observer(
+            records, verdicts,
+            judge_fn=tmod.make_judge_fn(settings.judge, settings.judge_api_key(),
+                                       no_think=args.judge_no_think),
+            picker_fn=tmod.make_picker_fn(settings.judge, settings.judge_api_key(),
+                                         no_think=args.judge_no_think),
+        )
+    else:
+        judgments = tmod.run_teacher(records, settings, sample=args.sample,
+                                     judge_no_think=args.judge_no_think)
 
     out = _resolve(args.out) if args.out else _teacher_out_path(log)
     ds.write_jsonl(out, judgments)
@@ -250,7 +268,7 @@ def cmd_teacher(args) -> int:
         if v:
             verdicts[v] = verdicts.get(v, 0) + 1
     labelled = sum(1 for j in judgments if j.get("judge_label"))
-    print(json.dumps({
+    summary = {
         "log": str(log),
         "teacher_path": str(out),
         "s2_key": s2_key,
@@ -261,7 +279,13 @@ def cmd_teacher(args) -> int:
         "disagree": disagree,
         "judge_verdicts": verdicts,
         "judge_labelled": labelled,
-    }, indent=2, ensure_ascii=False))
+    }
+    if args.from_observer:
+        summary["observer_covered"] = sum(1 for j in judgments
+                                          if j.get("teacher_source") == "observer")
+        summary["picker_named"] = sum(1 for j in judgments
+                                      if j.get("teacher_source") == "picker")
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -293,7 +317,7 @@ def cmd_observe(args) -> int:
 
     settings = load_settings()
     log = _resolve(args.log) if args.log else settings.log_path()
-    out = settings.observer_log_path()
+    out = _resolve(args.out) if args.out else settings.observer_log_path()
     out.parent.mkdir(parents=True, exist_ok=True)
     key = settings.observer_api_key()
     llm_fn = obs_mod.make_llm_fn(settings.observer, key)
@@ -500,6 +524,11 @@ def main(argv: list[str] | None = None) -> int:
                       help="where the blind judge sided against Laya, emit a soft `gold` target "
                            "that devalues the disputed choice toward the judge's pick instead of a "
                            "hard label (needs --teacher; a verifier-confirmed label stays the mode)")
+    dset.add_argument("--soft-gate", default="rep-veto", choices=SOFT_GATES,
+                      help="which evidence lets a teacher counter-move through to a soft label: "
+                           "rep-veto (observer named it >=2x in the run and the judge never "
+                           "preferred Laya's own action, default), judge (judge sided against Laya "
+                           "and survived the flip test), rep (repetition alone), union (either)")
     dset.add_argument("--soft-progressed-laya", type=float, default=0.7,
                       help="with --teacher-soft: mass kept on Laya's label when the tick verified "
                            "progress but the judge sided against it (rest to the judge; default 0.7)")
@@ -519,6 +548,14 @@ def main(argv: list[str] | None = None) -> int:
     tch.add_argument("--flip-from", default="",
                      help="instead of running the teacher, re-judge the disagreements in this "
                            "side-file with the blind pair's A/B slots swapped (the flip test)")
+    tch.add_argument("--judge-no-think", action="store_true",
+                     help="turn off the blind judge's reasoning chain (OpenRouter `reasoning off`): "
+                          "measured ~30x faster per verdict. The local Qwen reviewer has no such "
+                          "lever - the Strata server ignores /no_think")
+    tch.add_argument("--from-observer", default="",
+                     help="use the live observer log as System 2 instead of replaying S2 per tick: "
+                          "the observer's verdict decides agreement, and only its disagreements cost "
+                          "a picker call (a blind best-of-N pick over the tick's candidates)")
 
     ana = sub.add_parser("analyze", help="turn a run log into a defect report: refusals, "
                                          "stalls, movement, milestones, diff against a baseline")
@@ -538,6 +575,9 @@ def main(argv: list[str] | None = None) -> int:
     obs.add_argument("--log", default="", help="decisions log (default: the configured log)")
     obs.add_argument("--replay", action="store_true",
                      help="walk the log once offline instead of following it live")
+    obs.add_argument("--out", default="",
+                     help="observer log to write (default runs/observer.jsonl); use a distinct "
+                          "path when replaying an archived run so the live sidecar is not mixed in")
 
     trn = sub.add_parser("train", help="fine-tune a Laya checkpoint head on the dataset")
     trn.add_argument("--data", default="", help="training JSONL (default data/train.jsonl)")

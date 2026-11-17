@@ -6,6 +6,7 @@ PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 """
 from __future__ import annotations
 
+import types
 import unittest
 
 from mlaya import teacher as t
@@ -211,6 +212,232 @@ class FlipTest(unittest.TestCase):
         judgments = t.replay(records, s2_fn=lambda s, c, h: ("get_wood", ""),
                              judge_fn=lambda *a: ("A", None, ""))
         self.assertEqual(t.flip_verdicts(records, judgments, lambda *a: ("A", None, "")), [])
+
+
+class JudgeNoThinkTest(unittest.TestCase):
+    """`--judge-no-think` must reach the wire as OpenRouter `reasoning: {enabled: false}`.
+
+    The local Qwen reviewer has no thinking lever (measured: the Strata server ignores
+    `/no_think`, `thinking_budget` and `enable_thinking`), so the reviewer must not send one.
+    """
+
+    def _fake_openai(self, content: str):
+        import openai
+        captured: dict = {}
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                self._content = content
+                self._captured = captured
+                self.chat = types.SimpleNamespace(completions=self)
+
+            def create(self, **kwargs):
+                self._captured["kwargs"] = kwargs
+                message = type("Msg", (), {"content": self._content, "reasoning_content": None})()
+                choice = type("Choice", (), {"message": message})()
+                return type("Response", (), {"choices": [choice]})()
+
+        original = getattr(openai, "OpenAI", None)
+        openai.OpenAI = lambda *a, **k: FakeClient()
+        return captured, original
+
+    def _restore(self, original):
+        import openai
+        if original is not None:
+            openai.OpenAI = original
+
+    def test_the_judge_disables_reasoning_when_asked(self):
+        from mlaya.config import JudgeConfig
+        captured, orig = self._fake_openai('{"verdict": "A", "note": "ok"}')
+        try:
+            judge = t.make_judge_fn(JudgeConfig(), "key", no_think=True)
+            judge({"health": 20.0}, "get_wood", "mine_stone", ["get_wood", "mine_stone"], [])
+            self.assertEqual(captured["kwargs"].get("extra_body"), {"reasoning": {"enabled": False}})
+            self.assertNotIn("reasoning", captured["kwargs"])
+
+            judge2 = t.make_judge_fn(JudgeConfig(), "key")
+            judge2({"health": 20.0}, "get_wood", "mine_stone", ["get_wood", "mine_stone"], [])
+            self.assertNotIn("reasoning", captured["kwargs"])
+        finally:
+            self._restore(orig)
+
+    def test_the_reviewer_sends_no_think_directive(self):
+        from mlaya.brain import review_with_system2
+        from mlaya.config import LLMConfig
+        captured, orig = self._fake_openai('{"action": "get_wood", "note": "ok"}')
+        try:
+            review_with_system2(LLMConfig(), "key", {"health": 20.0}, [], ["get_wood", "mine_stone"])
+            user = captured["kwargs"]["messages"][-1]["content"]
+            self.assertNotIn("no_think", user)
+            self.assertNotIn("thinking_budget", captured["kwargs"])
+        finally:
+            self._restore(orig)
+
+
+class ObserverTeacherTest(unittest.TestCase):
+    """`replay_from_observer`: the live observer verdict is System 2, the picker names the
+    alternative. No network - both LLMs are injected callables."""
+
+    def _verdict(self, iteration, agree, better=None, note="loop", risk="loop: x"):
+        return {"iteration": iteration, "verdict": {"phase": "prep", "agree": agree,
+                                                    "risk": risk, "note": note, "better": better}}
+
+    def test_observer_agreement_needs_no_picker(self):
+        picker_calls = []
+        judg = t.replay_from_observer(
+            [_act(1, ["mine_stone", "get_wood"], "get_wood")],
+            [self._verdict(1, True)],
+            judge_fn=lambda *a: ("unsure", None, ""),
+            picker_fn=lambda *a: picker_calls.append(a) or (None, ""))
+        self.assertEqual(len(judg), 1)
+        self.assertTrue(judg[0]["agree"])
+        self.assertEqual(judg[0]["s2_label"], "get_wood")
+        self.assertEqual(picker_calls, [])
+
+    def test_a_better_field_is_adjudicated_by_the_blind_judge(self):
+        seen = {}
+
+        def judge(state, a_label, b_label, candidates, history):
+            seen["pair"] = {a_label, b_label}
+            return ("A" if a_label == "craft_bed" else "B"), None, "bed first"
+
+        judg = t.replay_from_observer(
+            [_act(1, ["surface_up", "craft_bed"], "surface_up")],
+            [self._verdict(1, False, better="craft_bed")],
+            judge_fn=judge, picker_fn=None)
+        self.assertEqual(seen["pair"], {"surface_up", "craft_bed"})
+        self.assertFalse(judg[0]["agree"])
+        self.assertEqual(judg[0]["s2_label"], "craft_bed")
+        self.assertEqual(judg[0]["teacher_source"], "observer")
+        self.assertEqual(judg[0]["judge_label"], "craft_bed")
+
+    def test_an_invalid_better_field_falls_back_to_the_picker(self):
+        def picker(state, order, critique, history):
+            return "craft_bed", "bed first"
+
+        judg = t.replay_from_observer(
+            [_act(1, ["surface_up", "craft_bed"], "surface_up")],
+            [self._verdict(1, False, better="mine_diamond")],  # not a candidate
+            judge_fn=lambda *a: ("unsure", None, ""), picker_fn=picker)
+        self.assertEqual(judg[0]["teacher_source"], "picker")
+        self.assertEqual(judg[0]["judge_label"], "craft_bed")
+        self.assertEqual(judg[0]["judge_verdict"], "pick")
+
+    def test_a_picker_pick_that_flips_with_the_order_carries_no_label(self):
+        # The picker reads the slot, not the action: it always names the first candidate it is shown.
+        def picker(state, order, critique, history):
+            return order[0], "first listed"
+
+        judg = t.replay_from_observer(
+            [_act(1, ["mine_stone", "get_wood", "craft_table"], "mine_stone")],
+            [self._verdict(1, False)],
+            judge_fn=lambda *a: ("unsure", None, ""), picker_fn=picker)
+        self.assertIsNone(judg[0]["s2_label"])
+        self.assertIsNone(judg[0]["judge_label"])
+
+    def test_a_picker_pick_of_layas_own_choice_is_no_disagreement(self):
+        def picker(state, order, critique, history):
+            return "mine_stone", "laya was right"
+
+        judg = t.replay_from_observer(
+            [_act(1, ["mine_stone", "get_wood"], "mine_stone")],
+            [self._verdict(1, False, note="detour")],
+            judge_fn=lambda *a: ("unsure", None, ""), picker_fn=picker)
+        self.assertIsNone(judg[0]["judge_label"])
+
+    def test_repeats_count_the_same_counter_move_across_the_whole_run(self):
+        # The repetition gate counts every verdict the observer wrote, including ticks the teacher
+        # path never reviewed because the filter left only one candidate there.
+        records = [_act(1, ["mine_stone", "get_wood"], "mine_stone"),
+                   _act(2, ["mine_stone", "get_wood"], "mine_stone"),
+                   _act(3, ["mine_stone"], "mine_stone"),
+                   _act(4, ["mine_stone", "get_wood"], "get_wood")]
+        verdicts = [self._verdict(1, False, better="get_wood"),
+                    self._verdict(2, False, better="get_wood"),
+                    self._verdict(3, False, better="get_wood"),   # single-candidate tick, unreviewed
+                    self._verdict(4, True)]
+        judg = t.replay_from_observer(records, verdicts,
+                                      judge_fn=lambda *a: ("unsure", None, ""), picker_fn=None)
+        self.assertEqual([j["iteration"] for j in judg], [1, 2, 4])
+        self.assertEqual([j["better_repeats"] for j in judg], [3, 3, 0])
+        self.assertFalse(judg[0]["agree"])
+
+    def test_uncovered_ticks_get_no_judgment(self):
+        judg = t.replay_from_observer(
+            [_act(1, ["mine_stone", "get_wood"], "get_wood"),
+             _act(2, ["mine_stone", "get_wood"], "get_wood")],
+            [self._verdict(1, True)],
+            judge_fn=lambda *a: ("unsure", None, ""), picker_fn=lambda *a: (None, ""))
+        self.assertEqual([j["iteration"] for j in judg], [1])
+
+    def test_the_pick_order_is_seeded_and_stable(self):
+        cands = ["mine_stone", "get_wood", "craft_table", "hunt_food"]
+        self.assertEqual(t._pick_order(cands, "seed", 0), t._pick_order(cands, "seed", 0))
+        self.assertEqual(sorted(t._pick_order(cands, "seed", 0)), sorted(cands))
+        self.assertNotEqual(t._pick_order(cands, "seed", 0), t._pick_order(cands, "seed", 1))
+
+    def _fake_openai(self, responses):
+        import openai
+        captured: list = []
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                self.i = 0
+                self.chat = types.SimpleNamespace(completions=self)
+
+            def create(self, **kwargs):
+                captured.append(kwargs)
+                content = responses[min(self.i, len(responses) - 1)]
+                self.i += 1
+                message = type("Msg", (), {"content": content})()
+                choice = type("Choice", (), {"message": message})()
+                return type("Response", (), {"choices": [choice]})()
+
+        original = getattr(openai, "OpenAI", None)
+        openai.OpenAI = lambda *a, **k: FakeClient()
+        return captured, original
+
+    def test_a_truncated_picker_reply_is_retried_without_reasoning(self):
+        # Live, run253: Nemotron's thinking chain ate the whole max_tokens budget and returned
+        # content null - four disagreements were lost to truncation, not to instability.
+        from mlaya.config import JudgeConfig
+        import openai
+        captured, orig = self._fake_openai([None, '{"action": "craft_bed", "note": "bed first"}'])
+        try:
+            pick = t.make_picker_fn(JudgeConfig(), "key")
+            action, _ = pick({"health": 20.0}, ["craft_bed", "mine_stone"], "loop", [])
+            self.assertEqual(action, "craft_bed")
+            self.assertEqual(len(captured), 2)
+            self.assertEqual(captured[1].get("extra_body"), {"reasoning": {"enabled": False}})
+        finally:
+            if orig is not None:
+                openai.OpenAI = orig
+
+    def test_an_already_reasoning_off_picker_does_not_retry(self):
+        from mlaya.config import JudgeConfig
+        import openai
+        captured = []
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                self.chat = types.SimpleNamespace(completions=self)
+
+            def create(self, **kwargs):
+                captured.append(kwargs)
+                message = type("Msg", (), {"content": '{"action": "craft_bed"}'})()
+                choice = type("Choice", (), {"message": message})()
+                return type("Response", (), {"choices": [choice]})()
+
+        orig = getattr(openai, "OpenAI", None)
+        openai.OpenAI = lambda *a, **k: FakeClient()
+        try:
+            pick = t.make_picker_fn(JudgeConfig(), "key", no_think=True)
+            action, _ = pick({"health": 20.0}, ["craft_bed", "mine_stone"], "loop", [])
+            self.assertEqual(action, "craft_bed")
+            self.assertEqual(len(captured), 1)
+        finally:
+            if orig is not None:
+                openai.OpenAI = orig
 
 
 if __name__ == "__main__":

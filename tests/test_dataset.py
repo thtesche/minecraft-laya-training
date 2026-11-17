@@ -503,6 +503,67 @@ class SoftTeacherTest(unittest.TestCase):
             self._build(rec, self._teacher(rec, "mine_stone"),
                         teacher_soft=True, soft_progressed_laya=1.5)
 
+    def _observer_teacher(self, rec, better, repeats, judge_label=None, flip=False):
+        return self._teacher(rec, judge_label,
+                             teacher_source="observer", s2_label=better,
+                             better_repeats=repeats, flip=flip)
+
+    def test_rep_veto_needs_the_counter_move_named_twice(self):
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=True, narrative="safe progressed")
+        once = self._build(rec, self._observer_teacher(rec, "mine_stone", 1), teacher_soft=True)
+        self.assertEqual(once[0]["expected"][INTENT_QID], "get_wood")
+        self.assertNotIn("gold", once[0])
+        twice = self._build(rec, self._observer_teacher(rec, "mine_stone", 2), teacher_soft=True)
+        probs = twice[0]["gold"][INTENT_QID]["probabilities"]
+        self.assertAlmostEqual(probs["get_wood"], 0.7)
+        self.assertAlmostEqual(probs["mine_stone"], 0.3)
+
+    def test_rep_veto_is_blocked_when_the_judge_prefers_laya(self):
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=True, narrative="safe progressed")
+        rows = self._build(rec, self._observer_teacher(rec, "mine_stone", 4,
+                                                       judge_label="get_wood"), teacher_soft=True)
+        self.assertEqual(rows[0]["expected"][INTENT_QID], "get_wood")
+        self.assertNotIn("gold", rows[0])
+
+    def test_rep_veto_survives_an_unstable_judge_verdict(self):
+        # The judge flipped when the slots swapped, so it has no opinion to veto with; the
+        # observer's repeated, candidate-grounded counter-move still stands.
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=True, narrative="safe progressed")
+        rows = self._build(rec, self._observer_teacher(rec, "mine_stone", 3,
+                                                       judge_label="get_wood", flip=True),
+                           teacher_soft=True)
+        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
+        self.assertAlmostEqual(probs["mine_stone"], 0.3)
+
+    def test_the_judge_gate_is_selectable(self):
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=True, narrative="safe progressed")
+        # Named only once, so the repetition gate rejects it; the judge gate accepts it.
+        entry = self._observer_teacher(rec, "mine_stone", 1, judge_label="mine_stone")
+        rows = self._build(rec, entry, teacher_soft=True, soft_gate="judge")
+        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
+        self.assertAlmostEqual(probs["mine_stone"], 0.3)
+        rows = self._build(rec, entry, teacher_soft=True, soft_gate="rep")
+        self.assertNotIn("gold", rows[0])
+
+    def test_a_side_file_without_repetition_falls_back_to_the_judge(self):
+        # Side-files written before the observer carried `better` have no repetition to count; the
+        # default gate must not silently throw all of their labels away.
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=True, narrative="safe progressed")
+        rows = self._build(rec, self._teacher(rec, "mine_stone"), teacher_soft=True)
+        probs = rows[0]["gold"][INTENT_QID]["probabilities"]
+        self.assertAlmostEqual(probs["mine_stone"], 0.3)
+
+    def test_an_unknown_gate_is_rejected(self):
+        rec = self._tick(3, ["mine_stone", "get_wood"], "get_wood",
+                         progressed=True, narrative="safe progressed")
+        with self.assertRaises(ValueError):
+            self._build(rec, self._teacher(rec, "mine_stone"), teacher_soft=True, soft_gate="vibes")
+
 
 class SplitTest(unittest.TestCase):
     def test_reproducible(self):

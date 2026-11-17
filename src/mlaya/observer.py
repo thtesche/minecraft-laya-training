@@ -93,11 +93,15 @@ def system_prefix() -> dict:
         "shows worn or held; a shield in the off-hand IS the kit's shield. A piece the phase still "
         "needs worn down to a low durability (roughly <=20%) is a real risk worth the note.\n\n"
         "Known death traps - flag the risk BEFORE it bites, do not wait for the death:\n" + traps +
-        "\n\nReply with ONLY one JSON object and nothing else - no preamble, no reasoning outside "
+        "\n\nIf you disagree, name the alternative: in `better` give the single label from the "
+        "`candidates` list that would have been the better move at this tick, or null when none of "
+        "the candidates is better than what Laya did.\n\n"
+        "Reply with ONLY one JSON object and nothing else - no preamble, no reasoning outside "
         "it:\n"
         '{"phase": <current phase slug>, "agree": true|false, '
         '"risk": null|<short string naming a danger or a loop>, '
-        '"note": <<=12 words: what you would do / why you (dis)agree>}.'
+        '"note": <<=12 words: what you would do / why you (dis)agree>, '
+        '"better": null|<one label from the candidates list>}.'
     )
     return {"role": "system", "content": content}
 
