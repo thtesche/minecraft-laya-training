@@ -10222,6 +10222,20 @@ class BankedFoodEndsTheHuntTest(unittest.TestCase):
         g.inventory["cooked_mutton"] = FOOD_BANK_KEEP
         self.assertTrue(_nether_food_secured(g))
 
+    def test_the_prep_reserve_is_the_crossing_floor(self) -> None:
+        # The lull no longer hunts deeper than a crossing carries: the prep gate sits at
+        # `NETHER_FOOD_MIN_RESERVE` (24), not the old 64. Live, run258 it79-126: the frame
+        # stood, the pack held 46 edibles, and `light_portal` never came up because the
+        # reserve wanted 64 - 47 ticks of hunting past what the trip can eat.
+        from mlaya.actions import NETHER_FOOD_RESERVE, _food_reserve_met, frame_obsidian_cells
+        self.assertEqual(NETHER_FOOD_RESERVE, NETHER_FOOD_MIN_RESERVE)
+        g = self._hungry_at_base(carried=24)
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        self.assertTrue(_food_reserve_met(g))
+        g = self._hungry_at_base(carried=23)
+        g.frame_names = {cell: "obsidian" for cell in frame_obsidian_cells(g.base)}
+        self.assertFalse(_food_reserve_met(g), "one short of the reserve, a source in reach")
+
     def test_the_withdraw_tops_the_pack_to_the_crossing_floor(self) -> None:
         # Topping the pack to `_food_goal` (64) would empty the bank again on the next tick -
         # run77's stow/withdraw shuttle. The floor is what a crossing needs carried.

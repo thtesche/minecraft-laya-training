@@ -12,7 +12,7 @@ are crafted: it is the End's reserve, not the Nether's (see `architecture.md`, "
 
 Between "the frame stands" (`build_portal`, the gate still **unlit**) and "the bot enters the
 Nether" a **preparation stage** is missing: the bot should only step through the gate once armour, tools,
-food and building material really are right. Just as with eating (see `NETHER_FOOD_RESERVE = 64`
+food and building material really are right. Just as with eating (see `NETHER_FOOD_RESERVE = 24`
 in [`architecture.md`](architecture.md)): better properly prepared than quickly in and
 losing everything. The gate is lit **only once all of this stands** (`light_portal` requires
 `_expedition_ready`: the prep done, the food reserved, a bed at hand; no hour), so the portal never burns through the preparation window beside the base —
@@ -23,7 +23,7 @@ fall into the still-open opening, which `clear_portal` cannot dig out.
 Preparation runs in **the same daytime lull** as eating (see `_nether_idle`) and is
 now part of the **auto-stop**: `tech_tree_complete` additionally requires that no preparation
 step is still open (`_all_nether_prep_steps`) **and the food reserve is banked**
-(`_food_reserve_met` → the `NETHER_FOOD_RESERVE = 64` from `_food_goal`, see below). That way
+(`_food_reserve_met` → the `NETHER_FOOD_RESERVE = 24` from `_food_goal`, see below). That way
 the run prepares itself fully instead of ending with the bed on the first night. Each step drops out of the
 list as soon as it gets no further (no spawn, no ore), and the food demand drops away as
 soon as no animal and no zombie is in reach — so an unreachable item never blocks the run.
@@ -51,7 +51,7 @@ Legend: ✅ present · 🟡 feasible (proposal) · ⛔ outside this bot's reach.
 | Sword (diamond) | ✅ `craft_diamond_sword` (worn) | done |
 | Pickaxe | ✅ `craft_diamond_pickaxe` (worn) | done |
 | Shield | ✅ `craft_shield` + `equip_shield` (offhand) | done |
-| Food (steak) | ✅ 64 × cooked meat (`NETHER_FOOD_RESERVE`) | done |
+| Food (steak) | ✅ 24 × cooked meat (`NETHER_FOOD_RESERVE`) | done |
 | Building blocks (cobblestone) | ✅ `NETHER_COBBLE = 64` in the lull | done |
 | Bow + arrows | ✅ `craft_bow` + `craft_arrows` (≥ 16) | done — server fires |
 | Axe / elytra | – / ⛔ | axe unnecessary (no wood cutting in the Nether), elytra = End |

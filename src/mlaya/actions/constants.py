@@ -639,10 +639,12 @@ FOOD_SATURATION = {
 # Minimum edible items to keep banked. 16 is the floor held through the tech tree; the Nether
 # wants far more -- hunger drains fast while sprinting and fighting there and a death drops the
 # whole pack -- so the target deepens in the daytime lull once the gate frame stands (see
-# `_food_goal`). The usual advice is 64-128 units (one to two stacks) of high-saturation food;
-# a stack of cooked meat is a single inventory slot, so 64 is cheap to carry.
+# `_food_goal`). The reserve sits at the crossing floor (`NETHER_FOOD_MIN_RESERVE`, 24): the
+# lull hunts no deeper than a trip actually carries. Live, run258 it79-126: the frame stood
+# and the pack held 46 edibles, yet `light_portal` stayed off the offer for 47 ticks because
+# the gate wanted 64 - a hunt past what the expedition can eat.
 FOOD_RESERVE = 16
-NETHER_FOOD_RESERVE = 64
+NETHER_FOOD_RESERVE = 24
 
 # Hunger floors for eating live in `perception` now, so the narrative and these gates cannot
 # drift apart: the sentence that tells the model "not regenerating" has to mean the same number

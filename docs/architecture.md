@@ -362,8 +362,8 @@ a **food acquisition** that fits "actually survive".
   frame stands, only the prep (bow, gold helmet, deep food and cobble) and the gate bed are left
   open — the bot fell into pure `explore` during the day (live in
   the from-zero run: 25 idle ticks, of which 5 × `[NAVIGATION_STOPPED]` timeouts). This lull is now used for
-  nether preparation: `_food_goal` raises the reserve target to `NETHER_FOOD_RESERVE = 64` (one
-  full shulker; live the bot had 17 edibles). The usual rule of thumb for the Nether is **64–128
+  nether preparation: `_food_goal` raises the reserve target to `NETHER_FOOD_RESERVE = 24` (the
+  crossing floor `NETHER_FOOD_MIN_RESERVE`, so the lull never hunts past what a trip carries). The usual rule of thumb for the Nether is **64–128
   units** of high-saturation food, because hunger falls faster when sprinting and fighting and death
   costs the whole inventory; a shulker of fried meat is only one inventory slot, so cheap.
   **The reserve is part of the auto-stop:** `tech_tree_complete` now requires `_food_reserve_met`
