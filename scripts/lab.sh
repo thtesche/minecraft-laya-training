@@ -6,6 +6,7 @@
 #   ./scripts/lab.sh up --no-viewer                           the same, without the live view
 #   ./scripts/lab.sh up --fresh --no-run                       setup only (world/host/viewer/probe), no mlaya loop
 #   ./scripts/lab.sh up --observe                              also run the read-only observer sidecar (-> runs/observer.jsonl)
+#   ./scripts/lab.sh up --use-observer-better                  run the observer IN the loop and take its `better` on a disagree (writes runs/observer.jsonl itself; not with --observe)
 #   ./scripts/lab.sh status                                    JSON: world, viewer, host, run, observer, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
 #   ./scripts/lab.sh report [run number]                        write the finished run's report
@@ -380,6 +381,7 @@ cmd_up() {
   no_viewer=0
   no_run=0
   observe=0
+  use_better=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --n) n="${2:-1000}"; shift 2 ;;
@@ -390,9 +392,17 @@ cmd_up() {
       --no-viewer) no_viewer=1; shift ;;
       --no-run) no_run=1; shift ;;
       --observe) observe=1; shift ;;
+      --use-observer-better) use_better=1; shift ;;
       *) log "unknown argument: $1"; return 1 ;;
     esac
   done
+
+  # Both the sidecar (--observe) and the in-loop observer (--use-observer-better) write
+  # runs/observer.jsonl; running both would have two writers race on the same file.
+  if [[ $observe == 1 && $use_better == 1 ]]; then
+    log "--observe and --use-observer-better both write runs/observer.jsonl - pick one"
+    return 1
+  fi
 
   if run_up; then
     log "a run is already running (pid $(cat "$STATE/run.pid")) - lab up refuses a second one"
@@ -492,7 +502,7 @@ cmd_up() {
   # The observer's side-file rides along the same way, so a run's parallel narration archives with
   # its decision log (`mlaya.analysis` can join the two by iteration). Only with --observe, which is
   # opt-in: the sidecar reads the live log and talks to Strata, so it is not on by default.
-  if [[ $observe == 1 && -f "$REPO/runs/observer.jsonl" ]]; then
+  if [[ ( $observe == 1 || $use_better == 1 ) && -f "$REPO/runs/observer.jsonl" ]]; then
     mv "$REPO/runs/observer.jsonl" "$REPO/runs/history/observer-run$((run_no - 1)).jsonl"
     log "previous observer log archived to runs/history/observer-run$((run_no - 1)).jsonl"
   fi
@@ -501,6 +511,7 @@ cmd_up() {
   args=(-n "$n")
   [[ $ignore_goal == 1 ]] && args+=(--ignore-goal)
   [[ $iron_armor == 1 ]] && args+=(--iron-armor)
+  [[ $use_better == 1 ]] && args+=(--use-observer-better)
   cd "$REPO"
   "$DETACH" "$PY" -m mlaya.cli run "${args[@]}" > "$REPO/runs/run$run_no.log" 2>&1 &
   run_pid=$!
