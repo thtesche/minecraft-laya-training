@@ -22,7 +22,7 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
                           tech_tree_complete, LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
 from mlaya.brain import Decision
 from mlaya.config import Settings
-from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_STOP, BOXED_REPEATS, BOUNCE_WINDOW, BOUNCE_LABELS,
+from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_LIVE_STOP, BODY_HELD_STOP, BOXED_REPEATS, BOUNCE_WINDOW, BOUNCE_LABELS,
                          DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
                          LAVA_WALK_COOLDOWN, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
                          ORBIT_WINDOW, PORTAL_INTENT_TICKS, STALL_ESCALATE_REPEATS, STUCK_COOLDOWN, STUCK_REPEATS,
@@ -6752,6 +6752,48 @@ class BodyHeldStopTest(unittest.TestCase):
             agent._note_held(held, gs(**flat), gs(**flat))
             self.assertFalse(agent._stop_state(gs(), 10)["done"])
         agent._note_held(held, gs(**flat), gs(**flat))
+        self.assertEqual(agent._stop_state(gs(), 10), {"done": True, "stop": "body_held"})
+
+    def test_a_live_reflex_hold_does_not_stop_the_run(self) -> None:
+        # run257 it63-65: `mine_obsidian` held three ticks behind a `fight/guard` at 38 ticks
+        # against a creeper 2.8 m off while the bot stood in the water it had just poured. The
+        # reflex is still inside its release budget (guard limit 100) and will hand the body back,
+        # so the run must not die on `body_held` before it does - the operator's "comes out when
+        # the water evaporates".
+        agent = self._agent()
+        flat = dict(health=20.0, inventory={}, hostiles=[("creeper", 1, 2.8)])
+        live = SimpleNamespace(status="held",
+                               text="[BODY_HELD] action x still running after the wait budget; "
+                                    "owner hostile_reflex, waited 302 s, fight/guard, 38 ticks")
+        for _ in range(BODY_HELD_STOP + 2):
+            agent._note_held(live, gs(**flat), gs(**flat))
+            self.assertFalse(agent._stop_state(gs(), 10)["done"])
+        self.assertEqual(agent._held_live, BODY_HELD_STOP + 2)
+
+    def test_a_live_reflex_that_never_releases_is_caught_by_the_live_cap(self) -> None:
+        # Patience is bounded: a reflex that keeps re-entering its phase without ever releasing is
+        # still ended, just not on the second tick.
+        agent = self._agent()
+        flat = dict(health=20.0, inventory={}, hostiles=[("creeper", 1, 2.8)])
+        live = SimpleNamespace(status="held",
+                               text="[BODY_HELD] action x still running after the wait budget; "
+                                    "owner hostile_reflex, waited 302 s, fight/guard, 38 ticks")
+        for _ in range(BODY_HELD_LIVE_STOP - 1):
+            agent._note_held(live, gs(**flat), gs(**flat))
+        self.assertFalse(agent._stop_state(gs(), 10)["done"])
+        agent._note_held(live, gs(**flat), gs(**flat))
+        self.assertEqual(agent._stop_state(gs(), 10), {"done": True, "stop": "body_held"})
+
+    def test_a_reflex_past_its_release_limit_still_stops(self) -> None:
+        # run89's three-hour fight: the hold phase has reached its 600-tick limit and still holds -
+        # the true deadlock the stop is for, not a reflex that is still working.
+        agent = self._agent()
+        flat = dict(health=20.0, inventory={}, hostiles=[("zombie", 1, 1.6)])
+        dead = SimpleNamespace(status="held",
+                               text="[BODY_HELD] action x still running after the wait budget; "
+                                    "owner hostile_reflex, waited 302 s, fight/hold, 600 ticks")
+        for _ in range(BODY_HELD_STOP):
+            agent._note_held(dead, gs(**flat), gs(**flat))
         self.assertEqual(agent._stop_state(gs(), 10), {"done": True, "stop": "body_held"})
 
     def test_a_result_that_came_back_starts_the_count_over(self) -> None:

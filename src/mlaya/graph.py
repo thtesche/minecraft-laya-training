@@ -244,6 +244,18 @@ BODY_HELD_STOP = 2
 # drift as ground made, so the streak never reached `BODY_HELD_STOP` and the run burned five minutes
 # a tick on a dig that produced nothing.
 HELD_WALK_MIN_BLOCKS = 10.0
+# A held tick whose body is owned by a survival reflex is not automatically run89's dead standoff.
+# The reflex has its own release limits - the host's volley_wait_ticks (guard) and hold_wait_ticks
+# (hold) - and hands the body back when it reaches them. A phase still inside its budget is the
+# reflex working, not a deadlock: live, run257 it63-65, `mine_obsidian` held three ticks behind a
+# `fight/guard` at 38 ticks against a creeper 2.8 m off while the bot stood in the water it had just
+# poured for the obsidian. The loop stopped the run on `body_held` before the reflex released, while
+# the operator's own read was that the bot frees itself once the poured water evaporates. Only a
+# phase that has reached its limit and still holds is the deadlock the stop is for.
+REFLEX_RELEASE_LIMITS = {"guard": 100, "hold": 600}
+# Consecutive held ticks a *live* reflex may hold across before the run ends anyway: a reflex that
+# never releases (run89's three-hour fight) is still caught, just not on the second tick.
+BODY_HELD_LIVE_STOP = 6
 # A foreground call the server refuses because one of *its* reflexes owns the body ("No new action
 # started; body owner: hostile_reflex", `ACTION_BUSY` with nothing to retrieve). Unlike
 # `[BODY_HELD]` it answers at once, so the loop can submit again every second and believe it made a
@@ -255,6 +267,18 @@ BODY_BUSY_STOP = 20
 
 # A death first seen older than this was not this run's to answer (`Agent._rearm_policy`).
 DEATH_REAPPLY_AGE_S = 90.0
+
+
+def _held_reflex_phase(text: str) -> tuple[str, int] | None:
+    """(phase, ticks) of the survival reflex holding the body, read from the `[BODY_HELD]` note.
+
+    The note ends `owner <reflex>, waited <s> s, <kind>/<phase>, <ticks> ticks`; None when it names
+    no reflex phase (the body held by the foreground action itself, not a reflex).
+    """
+    m = re.search(r"owner \w+,.*?(\w+)/(\w+), (\d+) ticks", text)
+    if not m:
+        return None
+    return m.group(2), int(m.group(3))
 
 
 def _hostile_count(gs) -> int:
@@ -681,6 +705,9 @@ class Agent:
         self._defer_quiet = 0
         # Foreground calls in a row that ended `[BODY_HELD]` (`_note_held`).
         self._held_ticks = 0
+        # Consecutive `[BODY_HELD]` ticks a *live* reflex (still inside its release budget) held
+        # across, so a reflex that never releases is still caught by `BODY_HELD_LIVE_STOP`.
+        self._held_live = 0
         # Foreground calls in a row the server refused with "body owner: <reflex>" (`_note_body_busy`).
         self._body_busy = 0
         # A `drop_junk` whose disposal pit the terrain refused (`[DROP_HOLE_UNAVAILABLE]`): while the
@@ -2301,7 +2328,8 @@ class Agent:
         or a body the server's reflexes will not hand back (`BODY_HELD_STOP`, `BODY_BUSY_STOP`)."""
         goal = self._goal_reached(gs)
         limit = iteration >= self.settings.loop.max_iterations
-        held = self._held_ticks >= BODY_HELD_STOP
+        held = (self._held_ticks >= BODY_HELD_STOP
+                or getattr(self, "_held_live", 0) >= BODY_HELD_LIVE_STOP)
         busy = getattr(self, "_body_busy", 0) >= BODY_BUSY_STOP
         return {"done": goal or limit or held or busy,
                 "stop": "goal" if goal else ("body_held" if held else
@@ -2327,6 +2355,7 @@ class Agent:
         """
         if getattr(res, "status", None) != "held":
             self._held_ticks = 0
+            self._held_live = 0
             return
         healed = (after.health or 0) > (before.health or 0)
         rods = after.inventory.get(BLAZE_ROD_ITEM, 0) > before.inventory.get(BLAZE_ROD_ITEM, 0)
@@ -2337,7 +2366,14 @@ class Agent:
                       for item, count in after.inventory.items())
         walked = (before.pos is not None and after.pos is not None
                   and math.dist(before.pos, after.pos) >= HELD_WALK_MIN_BLOCKS)
-        self._held_ticks = 0 if (healed or rods or thinned or yielded or walked) else self._held_ticks + 1
+        # A reflex still inside its own release budget is working, not deadlocked: the obsidian cast
+        # wedged behind a `fight/guard` frees itself when the reflex reaches its limit (the operator's
+        # "comes out when the water evaporates"). Only a phase at or past its limit - run89's
+        # three-hour fight - is the deadlock the stop is for.
+        phase = _held_reflex_phase(getattr(res, "text", "") or "")
+        live = phase is not None and phase[1] < REFLEX_RELEASE_LIMITS.get(phase[0], 0)
+        self._held_live = getattr(self, "_held_live", 0) + 1 if live else 0
+        self._held_ticks = 0 if (healed or rods or thinned or yielded or walked or live) else self._held_ticks + 1
 
     def _note_body_busy(self, action, res) -> str | None:
         """Count and log a tick the server refused because a reflex owns the body.
