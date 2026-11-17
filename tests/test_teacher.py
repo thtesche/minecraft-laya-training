@@ -312,7 +312,7 @@ class ObserverTeacherTest(unittest.TestCase):
         self.assertEqual(judg[0]["judge_label"], "craft_bed")
 
     def test_an_invalid_better_field_falls_back_to_the_picker(self):
-        def picker(state, order, critique, history):
+        def picker(state, order, critique, history, blocked_goal=None):
             return "craft_bed", "bed first"
 
         judg = t.replay_from_observer(
@@ -325,7 +325,7 @@ class ObserverTeacherTest(unittest.TestCase):
 
     def test_a_picker_pick_that_flips_with_the_order_carries_no_label(self):
         # The picker reads the slot, not the action: it always names the first candidate it is shown.
-        def picker(state, order, critique, history):
+        def picker(state, order, critique, history, blocked_goal=None):
             return order[0], "first listed"
 
         judg = t.replay_from_observer(
@@ -336,7 +336,7 @@ class ObserverTeacherTest(unittest.TestCase):
         self.assertIsNone(judg[0]["judge_label"])
 
     def test_a_picker_pick_of_layas_own_choice_is_no_disagreement(self):
-        def picker(state, order, critique, history):
+        def picker(state, order, critique, history, blocked_goal=None):
             return "mine_stone", "laya was right"
 
         judg = t.replay_from_observer(
@@ -409,6 +409,40 @@ class ObserverTeacherTest(unittest.TestCase):
             self.assertEqual(action, "craft_bed")
             self.assertEqual(len(captured), 2)
             self.assertEqual(captured[1].get("extra_body"), {"reasoning": {"enabled": False}})
+        finally:
+            if orig is not None:
+                openai.OpenAI = orig
+
+    def test_the_picker_forwards_the_blocked_goal_into_its_brief(self):
+        # A gated end-state action (light_portal) is not among the candidates; the picker is told
+        # why so it points at the candidate that clears the need instead of reading a loop.
+        import json
+        from mlaya.config import JudgeConfig
+        import openai
+        captured, orig = self._fake_openai(['{"action": "mine_diamond", "note": "get the spare"}'])
+        try:
+            pick = t.make_picker_fn(JudgeConfig(), "key")
+            blocked = {"action": "light_portal",
+                       "needs": ["spare diamond pickaxe missing (1/2)"]}
+            action, _ = pick({"health": 20.0}, ["cook_food", "mine_diamond"], "loop", [], blocked)
+            self.assertEqual(action, "mine_diamond")
+            brief = json.loads(captured[0]["messages"][1]["content"])
+            self.assertEqual(brief["blocked_goal"]["action"], "light_portal")
+            self.assertIn("spare diamond pickaxe missing (1/2)", brief["blocked_goal"]["needs"])
+        finally:
+            if orig is not None:
+                openai.OpenAI = orig
+
+    def test_the_picker_brief_omits_blocked_goal_when_none(self):
+        import json
+        from mlaya.config import JudgeConfig
+        import openai
+        captured, orig = self._fake_openai(['{"action": "craft_bed"}'])
+        try:
+            pick = t.make_picker_fn(JudgeConfig(), "key")
+            pick({"health": 20.0}, ["craft_bed", "mine_stone"], "loop", [])
+            brief = json.loads(captured[0]["messages"][1]["content"])
+            self.assertNotIn("blocked_goal", brief)
         finally:
             if orig is not None:
                 openai.OpenAI = orig

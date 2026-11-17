@@ -92,6 +92,13 @@ def system_prefix() -> dict:
         "before you judge the kit - never flag acquiring or 'focusing on' a piece the gear already "
         "shows worn or held; a shield in the off-hand IS the kit's shield. A piece the phase still "
         "needs worn down to a low durability (roughly <=20%) is a real risk worth the note.\n\n"
+        "Some observations carry `blocked_goal`: the phase's end-state action (e.g. lighting the "
+        "portal) that the engine is DELIBERATELY withholding this tick, with `needs` listing the "
+        "prerequisites still unmet. That action is not a legal move now and will not be in "
+        "`candidates` - so do NOT flag a loop or risk for 'never doing it', and NEVER name it in "
+        "`better`. The right move is whatever candidate advances the first unmet `needs` item; judge "
+        "Laya against that, and if a candidate clears a `needs` item while Laya chose something idle, "
+        "that candidate is the better move.\n\n"
         "Known death traps - flag the risk BEFORE it bites, do not wait for the death:\n" + traps +
         "\n\nIf you disagree, name the alternative: in `better` give the single label from the "
         "`candidates` list that would have been the better move at this tick, or null when none of "
@@ -257,6 +264,9 @@ class Observer:
         gear = _gear_line(rec.get("state"))
         if gear:
             payload["gear"] = gear
+        blocked = rec.get("blocked_goal")
+        if blocked:
+            payload["blocked_goal"] = blocked
         if event:
             payload["event"] = event
         return payload

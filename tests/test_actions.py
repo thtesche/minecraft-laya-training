@@ -65,7 +65,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                             FOOD_HUNT_RANGE_DAY, FOOD_HUNT_RANGE_NIGHT, FOOD_HUNT_RANGE_RESERVE,
                             _food_hunt_range, _food_reserve_walk_wanted,
                             _surplus_besides_keep,
-                           tech_tree_complete, WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH,
+                           tech_tree_complete, portal_lighting_blockers,
+                           WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH,
                            _chest_candidates, _chest_site, _plank_units, CHEST_PLANKS)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
                               parse_frontier_heading, parse_resources, parse_warped_forest)
@@ -2831,6 +2832,29 @@ class NetherGateTest(unittest.TestCase):
         a = resolve("light_portal", g)
         self.assertEqual(a.tool, "activate_portal")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-195, -47, -98))
+
+    def test_no_lighting_blockers_when_the_gate_is_ready(self) -> None:
+        # `light_portal` is a candidate here, so there is nothing to name: the observer hint stays
+        # empty and the observer is free to judge the lighting on its own merits.
+        g = self._expedition()
+        self.assertIn("light_portal", candidates(g))
+        self.assertEqual(portal_lighting_blockers(g), [])
+
+    def test_lighting_blocker_names_the_missing_spare_pickaxe(self) -> None:
+        # One diamond pickaxe of the two the crossing needs. `light_portal` is withheld, so the
+        # observer must be told *why* - otherwise it reads the unlit gate as a loop and demands
+        # lighting (the run258 loop). The hint names the spare pickaxe and nothing else.
+        g = self._expedition(diamond_pickaxe=1)
+        self.assertNotIn("light_portal", candidates(g))
+        blockers = portal_lighting_blockers(g)
+        self.assertEqual(len(blockers), 1)
+        self.assertIn("spare diamond pickaxe missing (1/2)", blockers[0])
+
+    def test_no_lighting_blockers_before_the_frame_is_built(self) -> None:
+        # Before any obsidian stands in the frame plane the run is still phases from lighting, so
+        # the hint stays empty rather than listing every far-off prerequisite as a next step.
+        g = self._geared()
+        self.assertEqual(portal_lighting_blockers(g), [])
 
     def test_light_portal_waits_until_a_bed_is_at_hand(self) -> None:
         # The frame stands and the flint and steel is carried, but no bed is at hand: lighting

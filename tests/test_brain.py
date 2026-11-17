@@ -331,6 +331,20 @@ class ReviewPayloadTest(unittest.TestCase):
         self.assertNotIn("state", payload)
         self.assertNotIn("recent_history", payload)
 
+    def test_a_blocked_goal_rides_beside_the_candidates(self) -> None:
+        # The gated-milestone hint is threaded through so the reviewer sees why a phase end-state
+        # action is absent from the candidates, instead of reading its absence as a loop.
+        blocked = {"action": "light_portal", "needs": ["spare diamond pickaxe missing (1/2)"]}
+        payload = review_payload(self._state(), [], ["cook_food", "mine_diamond"], blocked)
+        self.assertEqual(payload["blocked_goal"], blocked)
+        # Ordered beside the candidates (the slowly-changing block), ahead of the per-tick situation.
+        keys = list(payload)
+        self.assertLess(keys.index("blocked_goal"), keys.index("situation"))
+
+    def test_no_blocked_goal_key_without_one(self) -> None:
+        payload = review_payload(self._state(), [], ["get_wood"])
+        self.assertNotIn("blocked_goal", payload)
+
     def test_the_situation_is_the_paragraph_system_1_reads(self) -> None:
         payload = review_payload(self._state(), [], ["get_wood"])
         self.assertIn("3x oak_log", payload["situation"])

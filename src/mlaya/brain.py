@@ -530,20 +530,30 @@ def _review_situation(state: dict) -> str:
         return ""
 
 
-def review_payload(state: dict, history: list[dict], candidates: list[str]) -> dict:
+def review_payload(state: dict, history: list[dict], candidates: list[str],
+                   blocked_goal: dict | None = None) -> dict:
     """The digested brief System 2 reads for one review tick.
 
     Ordered for the server's prompt cache: the phase line, then the candidate descriptions (both
     change rarely), then the situation and the trajectory, which change every tick. Nothing in here
     is a raw field dump - the reviewer is given the reading, not the data it would have to read.
+
+    `blocked_goal`, when given, is the phase's end-state action the engine is withholding this tick
+    and the prerequisites still unmet (`graph`/`portal_lighting_blockers`). It sits beside the
+    candidates - the slowly-changing block it belongs with - so a reviewer that would otherwise read
+    an unlit gate as a loop sees why the milestone move is absent and points at the candidate that
+    clears the first unmet need instead.
     """
     phase_slug, phase_goal = phase_brief(state)
-    return {
+    payload = {
         "phase": {"name": phase_slug, "goal": phase_goal},
         "candidates": {label: CRITERIA.get(label, "") for label in candidates},
-        "situation": _review_situation(state),
-        "trajectory": trajectory_digest(history, window=REVIEW_DIGEST_WINDOW),
     }
+    if blocked_goal:
+        payload["blocked_goal"] = blocked_goal
+    payload["situation"] = _review_situation(state)
+    payload["trajectory"] = trajectory_digest(history, window=REVIEW_DIGEST_WINDOW)
+    return payload
 
 
 # The neutral review framing, apart from the escalation one on purpose. The escalation prompt

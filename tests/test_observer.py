@@ -193,6 +193,13 @@ class PrefixTest(unittest.TestCase):
         self.assertIn("`better`", content)
         self.assertIn("candidates", content)
 
+    def test_the_blocked_goal_field_is_taught(self) -> None:
+        # The gated-milestone hint has to tell the observer not to demand a withheld end state and
+        # never to name it in `better`, or it reads an unlit gate as a loop (the run258 loop).
+        content = system_prefix()["content"]
+        self.assertIn("`blocked_goal`", content)
+        self.assertIn("`needs`", content)
+
 
 class GearLineTest(unittest.TestCase):
     """The judge reads the kit's real state - the shield in the off-hand, the armour worn, a tool
@@ -238,6 +245,28 @@ class GearLineTest(unittest.TestCase):
             payload = Observer.observation(rec, None)
         self.assertEqual(payload["gear"]["offhand"], "shield")
         self.assertEqual(payload["gear"]["armor"]["helmet"], "diamond 91%")
+
+    def test_the_observation_carries_the_blocked_goal(self) -> None:
+        # The loop's lighting hint rides into the payload so the observer sees why `light_portal`
+        # is not a candidate this tick, instead of inferring a loop from its absence.
+        rec = {"iteration": 5, "stage": "action", "label": "cook_food",
+               "candidates": ["cook_food", "mine_diamond"], "progressed": True, "status": "ok",
+               "narrative": "", "state": self.STATE,
+               "blocked_goal": {"action": "light_portal",
+                                "needs": ["spare diamond pickaxe missing (1/2)"]}}
+        with mock.patch("mlaya.observer._phase_of", lambda r: "prepare_nether"):
+            payload = Observer.observation(rec, None)
+        self.assertEqual(payload["blocked_goal"]["action"], "light_portal")
+        self.assertIn("spare diamond pickaxe missing (1/2)",
+                      payload["blocked_goal"]["needs"])
+
+    def test_no_blocked_goal_key_when_absent(self) -> None:
+        rec = {"iteration": 5, "stage": "action", "label": "cook_food",
+               "candidates": ["cook_food"], "progressed": True, "status": "ok",
+               "narrative": "", "state": self.STATE}
+        with mock.patch("mlaya.observer._phase_of", lambda r: "prepare_nether"):
+            payload = Observer.observation(rec, None)
+        self.assertNotIn("blocked_goal", payload)
 
     def test_the_situation_slice_keeps_the_surface_proof(self) -> None:
         # The judge's `situation` is the narrative cut to 360 characters. run252 it40 read

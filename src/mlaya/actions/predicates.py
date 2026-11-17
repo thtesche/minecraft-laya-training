@@ -2692,6 +2692,48 @@ def _expedition_ready(gs: GameState) -> bool:
             and _base_storage_ready(gs))
 
 
+def portal_lighting_blockers(gs: GameState) -> list[str]:
+    """Why `light_portal` is not an offered move yet - the unmet lighting prerequisites, in plain words.
+
+    The observer judges toward the phase's end state (a burning gate) but is shown only the
+    candidate list, never the gate that deliberately withholds `light_portal`. Lacking that, it
+    reads "the portal is never lit" as a loop and its note demands lighting - a move the planner
+    correctly refuses while the trip is not stocked (live, the run258 loop: the observer flagged
+    "portal must be lit" for ~40 ticks while the pack still held one diamond pickaxe of the two the
+    crossing needs). Surfaced in the action record (`graph`) and read by the observer, this names
+    the real next need so the critique can point at the candidate that clears it instead.
+
+    Returns [] when the gate already burns, or before the frame build begins - until then the run
+    is still phases away from lighting and the list would be noise, not a next step.
+    """
+    if _portal_lit(gs):
+        return []
+    if not (_portal_frame_started(gs) or _frame_complete_at_base(gs)):
+        return []
+    inv = gs.inventory
+    out: list[str] = []
+    if not _gear_ready(gs):
+        out.append("diamond kit not complete and worn")
+    if not _frame_complete_at_base(gs):
+        out.append("portal frame unfinished")
+    if gs.portal_blocked:
+        out.append("a block sits in the portal opening")
+    if not _has(inv, "flint_and_steel"):
+        out.append("no flint and steel")
+    if _all_nether_prep_steps(gs):
+        out.append("nether prep steps still open")
+    if not _food_reserve_met(gs):
+        out.append("food reserve below the nether minimum")
+    if not (_bed_available(gs) or _bed_at_base(gs)):
+        out.append("no bed at hand or at the base")
+    pk = inv.get("diamond_pickaxe", 0)
+    if pk < NETHER_PICKAXES:
+        out.append(f"spare diamond pickaxe missing ({pk}/{NETHER_PICKAXES})")
+    if not _base_storage_ready(gs):
+        out.append("base chest not ready")
+    return out
+
+
 # What stays in the pack while a chest stands open behind it.
 #
 # `JUNK_ITEMS` above is a blacklist, and a blacklist can only name the rubbish it already thought

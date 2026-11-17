@@ -361,6 +361,10 @@ PICKER_SYSTEM = (
     "to it, the actions that were actually available at that tick, and the observer's short "
     "critique. Pick the single available action that best advances survival and progress right "
     "now; if Laya's own choice is the best one, pick it. "
+    "A `blocked_goal` field, when present, names the phase's end-state action the engine is "
+    "deliberately withholding this tick and the prerequisites still unmet (`needs`). That action "
+    "is NOT available and is not in the list - do not treat its absence as a loop, and prefer the "
+    "available action that advances the first unmet `needs` item. "
     'Reply with JSON {"action": <one of the available actions>, "note": <why, short>}.'
 )
 
@@ -380,14 +384,14 @@ def _pick_order(candidates: list[str], seed: str, shift: int) -> list[str]:
 def make_picker_fn(cfg: JudgeConfig, api_key: str | None, no_think: bool = False):
     """A best-of-N picker over the tick's own candidates, backed by the judge model."""
     def pick(state: dict, ordered_candidates: list[str], critique: str,
-             history: list[dict]) -> tuple[str | None, str]:
+             history: list[dict], blocked_goal: dict | None = None) -> tuple[str | None, str]:
         if not api_key:
             return None, f"missing {cfg.api_key_env}"
         try:
             from openai import OpenAI
 
             client = OpenAI(base_url=cfg.base_url, api_key=api_key)
-            brief = review_payload(state, history, ordered_candidates)
+            brief = review_payload(state, history, ordered_candidates, blocked_goal)
             brief["available_actions"] = [
                 {"action": c, "what_it_does": CRITERIA.get(c, "")} for c in ordered_candidates
             ]
@@ -443,8 +447,11 @@ def _observer_competing(rec: dict, verdict: dict, candidates: list[str], laya_la
         return None, ""
     seed = render_narrative(rec) or ""
     critique = str(verdict.get("note") or "")
-    a, note_a = picker_fn(rec.get("state") or {}, _pick_order(candidates, seed, 0), critique, history)
-    b, _ = picker_fn(rec.get("state") or {}, _pick_order(candidates, seed, 1), critique, history)
+    blocked_goal = rec.get("blocked_goal")
+    a, note_a = picker_fn(rec.get("state") or {}, _pick_order(candidates, seed, 0), critique, history,
+                          blocked_goal)
+    b, _ = picker_fn(rec.get("state") or {}, _pick_order(candidates, seed, 1), critique, history,
+                     blocked_goal)
     if a is not None and a == b and a != laya_label:
         return a, "picker"
     return None, note_a
@@ -465,7 +472,7 @@ def replay_from_observer(records: list[dict], verdicts: list[dict], *,
     by_iter = {v.get("iteration"): v for v in verdicts}
     # How often the observer named each counter-move in this run. A critique it repeats across
     # ticks is a stable read of the state, not a one-tick whim - the repetition is what the
-    # `rep-veto` soft-label gate counts (see `dataset._teacher_label`).
+    # `rep-veto` teacher gate counts (see `dataset._teacher_label`).
     repeats: Counter[str] = Counter()
     for v in verdicts:
         verdict = v.get("verdict") or {}

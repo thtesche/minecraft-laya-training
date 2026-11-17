@@ -27,6 +27,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS,
                       _portal_lit_scan, end_complete, _pearl_wave_trip,
                       LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
+from .actions.predicates import portal_lighting_blockers
 from .brain import Brain, escalate_to_system2, trajectory_digest
 from .mcp import _find
 from .memory import MemoryLog
@@ -3986,6 +3987,13 @@ class Agent:
             # The danger band rewriting a gate `yes` shows here, so the run log does not read as
             # "the gate said yes and the bot worked anyway" without a reason.
             record["note"] = state["decision"].note
+        blocked = portal_lighting_blockers(before)
+        if blocked:
+            # Why `light_portal` is not on the candidate list this tick. The observer reasons toward
+            # the phase end state (a lit gate) but sees only the candidates; without this it reads a
+            # deliberately gated milestone as a loop and demands lighting the planner refuses. Named
+            # here, the observer points at the candidate that clears the blocker instead.
+            record["blocked_goal"] = {"action": "light_portal", "needs": blocked}
         target = getattr(state["decision"], "target", None)
         if target is not None:
             record["target"] = getattr(target, "label", str(target))
