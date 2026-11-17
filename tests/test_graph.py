@@ -278,6 +278,7 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         agent._held_ticks = 0
         agent._drop_heading = None
         agent._heading = None
+        agent.settings = Settings()
         return agent
 
     async def test_first_block_digs_a_pocket(self) -> None:
@@ -7420,6 +7421,171 @@ class EndLatchTest(unittest.TestCase):
         res = SimpleNamespace(data={"combat": {"outcome": "dragon_died"}}, text="dragon_died")
         agent._note_dragon(other, True, res)
         self.assertFalse(agent._dragon_slain)
+
+
+class ObserverBetterOverrideTest(unittest.IsolatedAsyncioTestCase):
+    """On the observer's disagree the loop can take its `better` label next tick (`--use-observer-better`).
+
+    Off by default: the override block in `_guard` is gated by `loop.use_observer_better`, so the
+    rest of the suite (which builds `Settings()` with the flag off) never reaches it. On, a pending
+    `better` that still resolves and differs from Laya's pick is run instead - marked in the record
+    and the log - but only when it beats the resolvable/different/cooldown guards, so the worst case
+    stays the very action Laya would have run anyway.
+    """
+
+    class _Log:
+        def __init__(self) -> None:
+            self.records: list = []
+
+        def append(self, rec) -> None:
+            self.records.append(rec)
+
+    def _agent(self) -> Agent:
+        agent = Agent.__new__(Agent)  # bypass __init__: no Laya, no MCP session
+        agent._blocked_label = None
+        agent._stall_dropped = {}
+        agent._stall_escalations = 0
+        agent._pending_better = None
+        agent._better_forced_label = None
+        agent._better_forced_n = 0
+        agent.observer = None
+        agent.log = self._Log()
+        agent.history = []
+        agent.settings = Settings()
+        agent.settings.loop.use_observer_better = True
+        return agent
+
+    def _state(self, label: str):
+        return {"before": gs(), "decision": Decision(label), "iteration": 7}
+
+    async def test_a_pending_better_overrides_lazy_label_and_marks_the_record(self) -> None:
+        agent = self._agent()
+        agent._pending_better = "gather_scaffold"
+        laya = Action("gather_mushrooms", "collect_block", {}, "pick")
+        alt = Action("gather_scaffold", "collect_block", {"block_name": "dirt"}, "stack")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: laya if lbl == "gather_mushrooms"
+                               else alt if lbl == "gather_scaffold" else None):
+            out = await agent._guard(self._state("gather_mushrooms"))
+        self.assertIs(out["action"], alt)
+        self.assertEqual(out["observer_forced"], "gather_scaffold")
+        self.assertEqual(out["note"], "observer better -> gather_scaffold")
+        # One-shot: the pending slot is cleared, and the override is named in the log beside the
+        # stall and unblock overrides.
+        self.assertIsNone(agent._pending_better)
+        self.assertEqual(agent.log.records[-1]["reason"], "observer_better")
+        self.assertEqual(agent._better_forced_label, "gather_scaffold")
+        self.assertEqual(agent._better_forced_n, 1)
+
+    async def test_no_pending_leaves_layas_action(self) -> None:
+        agent = self._agent()
+        laya = Action("gather_mushrooms", "collect_block", {}, "pick")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: laya if lbl == "gather_mushrooms" else None):
+            out = await agent._guard(self._state("gather_mushrooms"))
+        self.assertIs(out["action"], laya)
+        self.assertNotIn("observer_forced", out)
+
+    async def test_a_better_that_echoes_layas_label_is_no_override(self) -> None:
+        agent = self._agent()
+        agent._pending_better = "gather_mushrooms"
+        laya = Action("gather_mushrooms", "collect_block", {}, "pick")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: laya if lbl == "gather_mushrooms" else None):
+            out = await agent._guard(self._state("gather_mushrooms"))
+        self.assertIs(out["action"], laya)
+        self.assertNotIn("observer_forced", out)
+
+    async def test_a_better_that_no_longer_resolves_falls_back_to_laya(self) -> None:
+        agent = self._agent()
+        agent._pending_better = "gather_scaffold"
+        laya = Action("gather_mushrooms", "collect_block", {}, "pick")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: laya if lbl == "gather_mushrooms" else None):
+            out = await agent._guard(self._state("gather_mushrooms"))
+        self.assertIs(out["action"], laya)
+        self.assertNotIn("observer_forced", out)
+
+    async def test_the_flag_off_never_overrides(self) -> None:
+        agent = self._agent()
+        agent.settings.loop.use_observer_better = False
+        agent._pending_better = "gather_scaffold"
+        laya = Action("gather_mushrooms", "collect_block", {}, "pick")
+        alt = Action("gather_scaffold", "collect_block", {}, "stack")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: laya if lbl == "gather_mushrooms"
+                               else alt if lbl == "gather_scaffold" else None):
+            out = await agent._guard(self._state("gather_mushrooms"))
+        self.assertIs(out["action"], laya)
+
+    async def test_the_cooldown_stops_forcing_the_same_label_forever(self) -> None:
+        # A wrong verdict that keeps naming the same `better` cannot pin the run: after
+        # OBSERVER_BETTER_REPEATS forced ticks the guard lets Laya's own choice through again.
+        from mlaya.graph import OBSERVER_BETTER_REPEATS
+        agent = self._agent()
+        agent._better_forced_label = "gather_scaffold"
+        agent._better_forced_n = OBSERVER_BETTER_REPEATS
+        agent._pending_better = "gather_scaffold"
+        laya = Action("gather_mushrooms", "collect_block", {}, "pick")
+        alt = Action("gather_scaffold", "collect_block", {}, "stack")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: laya if lbl == "gather_mushrooms"
+                               else alt if lbl == "gather_scaffold" else None):
+            out = await agent._guard(self._state("gather_mushrooms"))
+        self.assertIs(out["action"], laya)
+        self.assertNotIn("observer_forced", out)
+
+
+class RunObserverIngestTest(unittest.IsolatedAsyncioTestCase):
+    """`_run_observer` turns the observer's verdict into (or clears) the pending `better` override."""
+
+    def _agent(self, verdict) -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._pending_better = None
+        agent._better_forced_label = None
+        agent._better_forced_n = 0
+        agent.observer = SimpleNamespace(ingest=lambda rec: {"verdict": verdict})
+        return agent
+
+    def _rec(self, label="gather_mushrooms", candidates=None, progressed=False):
+        return {"stage": "action", "label": label,
+                "candidates": candidates or ["gather_mushrooms", "gather_scaffold"],
+                "progressed": progressed}
+
+    async def test_a_disagree_with_a_valid_better_stages_it(self) -> None:
+        agent = self._agent({"agree": False, "better": "gather_scaffold"})
+        await agent._run_observer(self._rec())
+        self.assertEqual(agent._pending_better, "gather_scaffold")
+
+    async def test_an_agree_clears_the_pending_slot(self) -> None:
+        agent = self._agent({"agree": True, "better": None})
+        agent._pending_better = "gather_scaffold"  # a stale override from an earlier tick
+        await agent._run_observer(self._rec())
+        self.assertIsNone(agent._pending_better)
+
+    async def test_a_better_outside_the_candidates_is_ignored(self) -> None:
+        agent = self._agent({"agree": False, "better": "mine_diamond"})
+        await agent._run_observer(self._rec())
+        self.assertIsNone(agent._pending_better)
+
+    async def test_a_better_echoing_layas_label_is_ignored(self) -> None:
+        agent = self._agent({"agree": False, "better": "gather_mushrooms"})
+        await agent._run_observer(self._rec())
+        self.assertIsNone(agent._pending_better)
+
+    async def test_progress_on_the_forced_label_resets_the_cooldown(self) -> None:
+        agent = self._agent({"agree": True, "better": None})
+        agent._better_forced_label = "gather_scaffold"
+        agent._better_forced_n = 2
+        await agent._run_observer(self._rec(label="gather_scaffold", progressed=True))
+        self.assertIsNone(agent._better_forced_label)
+        self.assertEqual(agent._better_forced_n, 0)
+
+    async def test_no_observer_is_a_no_op(self) -> None:
+        agent = self._agent({"agree": False, "better": "gather_scaffold"})
+        agent.observer = None
+        await agent._run_observer(self._rec())
+        self.assertIsNone(agent._pending_better)
 
 
 if __name__ == "__main__":

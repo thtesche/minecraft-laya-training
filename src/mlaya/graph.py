@@ -30,6 +30,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
 from .brain import Brain, escalate_to_system2, trajectory_digest
 from .mcp import _find
 from .memory import MemoryLog
+from .observer import Observer, make_llm_fn
 from .config import Settings
 from .targets import bed_frame_site, flat_build_site, ground_targets, step_away_cell, _clear
 
@@ -45,6 +46,13 @@ TARGET_LABELS = frozenset({"explore"})
 # paces, which is the structural case the richer escalation exists for. Capped per run by
 # `loop.max_escalations`.
 STALL_ESCALATE_REPEATS = 2
+
+# How many ticks running the observer's same `better` alternative may be force-run before the guard
+# lets Laya's own choice through again (`--use-observer-better`). A disagree the observer repeats is
+# either right - and resolved within a few forced ticks - or wrong, in which case this keeps it from
+# pinning the run into a new loop. Reset when the forced action makes progress or the alternative
+# changes (`_run_observer`).
+OBSERVER_BETTER_REPEATS = 3
 
 # A placed bed within this range of the bot means the bot is standing at a home base a previous
 # run (or a manual build) left behind: that bed's ground cell is re-adopted as `base`, so the run
@@ -486,6 +494,18 @@ class Agent:
     # False is exactly the default "no iron armour, dive for diamond behind the sword and shield".
     _want_iron_armor: bool = False
 
+    # The observer's pending `better` override and the forced-alternative cooldown
+    # (`--use-observer-better`). A disagree with a concrete alternative is stashed in `_verify` and
+    # consumed by the next `_guard`, then cleared; the label/count pair caps how many ticks running
+    # the same alternative may be forced (`OBSERVER_BETTER_REPEATS`). Class defaults for the same
+    # reason as `_stall_dropped`: a stub agent built with `Agent.__new__` reads them in `_guard`,
+    # and None/0 is exactly "no override pending, nothing forced yet". The in-process observer
+    # itself is built only when the flag is on, so off it stays None and the loop never pays a call.
+    _pending_better: str | None = None
+    _better_forced_label: str | None = None
+    _better_forced_n: int = 0
+    observer: Any = None
+
     def __init__(self, settings: Settings, executor):
         self.settings = settings
         self._want_iron_armor = settings.laya.iron_armor
@@ -497,6 +517,17 @@ class Agent:
         # scored on their own (`mlaya.analysis`). Archived per run beside `decisions.jsonl`.
         self.system2_log = MemoryLog(settings.system2_log_path())
         self.history: list[dict] = []
+        # Opt-in (`--use-observer-better`): the parallel observer, run in-process so its `better`
+        # verdict can steer the next tick rather than only the training set. Built only when the
+        # flag is on - off, it stays None and the loop never pays the per-tick call. Its verdict
+        # stream still lands in `runs/observer.jsonl` (the report and the teacher's --from-observer
+        # path read it), so with the flag on the standalone `mlaya observe` process is redundant.
+        self.observer = None
+        self.observer_log = None
+        if settings.loop.use_observer_better:
+            self.observer_log = MemoryLog(settings.observer_log_path())
+            llm_fn = make_llm_fn(settings.observer, settings.observer_api_key())
+            self.observer = Observer(settings.observer, llm_fn, self.observer_log.append)
         # The server restores default policy on death and on a dimension change; re-apply once for
         # each. The death the policy was last re-applied for (or found already old), by its server
         # timestamp, and the dimension it was last armed against.
@@ -1847,6 +1878,16 @@ class Agent:
                     exclude=frozenset({decision.action_label}) | set(gs.stuck_labels))
                 if alt is not None and chosen != decision.action_label:
                     return {"action": alt, "escalated": True, "note": f"stall -> {chosen}"}
+            # Observer `better` override (opt-in, `--use-observer-better`): on its last disagree the
+            # observer named one candidate it would rather have run. Take it this tick, but only when
+            # it resolves to a *different* action than the one Laya just built, and never the same
+            # alternative past `OBSERVER_BETTER_REPEATS` ticks running - the worst case is Laya's own
+            # action. Placed after the deterministic unblock and stall paths so it never pre-empts
+            # them.
+            if self.settings.loop.use_observer_better and not decision.deferred:
+                forced = self._observer_override(gs, decision.action_label)
+                if forced is not None:
+                    return forced
             return {"action": action}
         if decision.deferred:
             # In danger or nothing valid: the server-side survival policy owns this tick.
@@ -1874,6 +1915,63 @@ class Agent:
         if relief is not None and relief.label != unresolved_label:
             return relief
         return None
+
+    def _observer_override(self, gs, laya_label: str | None):
+        """Consume the observer's pending `better` verdict as this tick's action, or None.
+
+        The in-process observer judges each executed tick in `_verify`; a disagree that named a
+        single candidate different from Laya's choice is stashed in `_pending_better`. Here that
+        label is taken for the next tick - one-shot (cleared on read; a fresh verdict sets the
+        next) - but only when it still resolves and is not the very label Laya chose, and never the
+        same alternative past `OBSERVER_BETTER_REPEATS` ticks running (the cooldown that keeps a
+        wrong verdict from pinning the run into a new loop). The forced action is marked in the
+        decision record (`observer_forced`) so the report can tell it from a Laya choice, and a
+        `policy` line names it in the log beside the stall and unblock overrides.
+        """
+        better = self._pending_better
+        self._pending_better = None
+        if not better or better == laya_label:
+            return None
+        if self._better_forced_label == better and self._better_forced_n >= OBSERVER_BETTER_REPEATS:
+            return None
+        built = resolve(better, gs)
+        if built is None:
+            return None
+        if self._better_forced_label == better:
+            self._better_forced_n += 1
+        else:
+            self._better_forced_label, self._better_forced_n = better, 1
+        self.log.append({"stage": "policy", "reason": "observer_better",
+                         "laya": laya_label, "via": better})
+        return {"action": built, "observer_forced": better,
+                "note": f"observer better -> {better}"}
+
+    async def _run_observer(self, record: dict) -> None:
+        """Feed one executed tick to the in-process observer and stage any `better` override.
+
+        Off (`observer is None`, the default) this is a no-op. The observer's LLM call is blocking,
+        so it runs in a worker thread to keep the loop's event loop free. A disagreement becomes a
+        pending override only when its `better` is one of this tick's candidates and differs from
+        Laya's label (the same guard the teacher's --from-observer path uses); anything else clears
+        the pending slot, so a single agree ends an override at once. A forced alternative that just
+        made progress clears its cooldown, so the repeat cap never cuts off an override that is
+        actually breaking the loop.
+        """
+        if self.observer is None:
+            return
+        out = await asyncio.to_thread(self.observer.ingest, record)
+        verdict = out.get("verdict") if isinstance(out, dict) else None
+        better = verdict.get("better") if isinstance(verdict, dict) else None
+        agree = verdict.get("agree") if isinstance(verdict, dict) else None
+        candidates_n = record.get("candidates") or []
+        laya_label = record.get("label")
+        if (agree is False and isinstance(better, str)
+                and better in candidates_n and better != laya_label):
+            self._pending_better = better
+        else:
+            self._pending_better = None
+        if record.get("label") == self._better_forced_label and record.get("progressed"):
+            self._better_forced_label, self._better_forced_n = None, 0
 
     def _escalate(self, gs, trigger: str, unresolved_label: str | None,
                   iteration: int, exclude: frozenset = frozenset()) -> tuple[Any, str | None, dict | None]:
@@ -3823,6 +3921,11 @@ class Agent:
             "progressed": progressed,
             "answers": _chosen(getattr(state["decision"], "answers", {})),
         }
+        if state.get("observer_forced"):
+            # This tick ran the observer's `better` alternative, not Laya's pick. Named in the
+            # record so the report counts observer overrides apart from Laya's own choices and the
+            # System-2 escalations (which carry `escalated`).
+            record["observer_forced"] = state["observer_forced"]
         if busy_owner is not None:
             # The tick the server refused because a reflex owns the body. Named in the record so
             # the report can count them: the text carries no bracketed code, and `refusals` reads
@@ -3840,6 +3943,7 @@ class Agent:
                 record["target_meta"] = meta
         self.log.append(record)
         self.history.append(record)
+        await self._run_observer(record)
         iteration = state.get("iteration", 0) + 1
         stop = self._stop_state(after, iteration)
         # The phase boundary is written after the tick's facts are folded in, and never while the

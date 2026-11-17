@@ -81,6 +81,12 @@ async def cmd_run(args) -> int:
         settings.loop.stop_when_complete = False
     if getattr(args, "iron_armor", False):
         settings.laya.iron_armor = True
+    if getattr(args, "use_observer_better", False):
+        settings.loop.use_observer_better = True
+        if not settings.observer_api_key():
+            print(json.dumps({"warn": "use-observer-better set but "
+                             f"{settings.observer.api_key_env} is unset; the observer returns "
+                             "empty verdicts and never overrides"}))
     await _health(settings)
     try:
         async with MCPExecutor(settings.mcp) as executor:
@@ -494,6 +500,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--iron-armor", action="store_true",
                      help="craft the pre-diamond iron armour set before diving for diamond "
                           "(default: dive behind the iron sword and shield, wear diamond armour)")
+    run.add_argument("--use-observer-better", action="store_true",
+                     help="run the parallel observer in-process and, on a disagree, take its "
+                          "proposed `better` label on the next tick (default: off, the observer "
+                          "stays an out-of-process, read-only narrator). The override is capped and "
+                          "resolvable-only. With this on the loop writes runs/observer.jsonl itself, "
+                          "so do not also run the standalone `mlaya observe`")
     pol = sub.add_parser("policy", help="show/apply the server survival policy")
     pol.add_argument("--apply", action="store_true", help="apply a policy stage")
     pol.add_argument("--preset", choices=["base", "hunt"], default="base",

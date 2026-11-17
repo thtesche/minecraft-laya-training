@@ -151,6 +151,12 @@ class LoopConfig(BaseModel):
     # the two by iteration), and archived per run alongside `decisions.jsonl`.
     system2_log_path: str = "runs/system2.jsonl"
     memory_path: str = "MEMORY.md"
+    # Opt-in (`--use-observer-better`): run the parallel observer in-process and, on a disagree,
+    # take its proposed `better` label on the *next* tick instead of only logging it for the
+    # training set. Off, the observer stays an out-of-process, read-only narrator and the live loop
+    # never pays its per-tick call. The override is capped and resolvable-only (see graph._guard /
+    # _observer_override), so the worst case is the very action Laya would have run anyway.
+    use_observer_better: bool = False
 
 
 class Settings(BaseModel):
