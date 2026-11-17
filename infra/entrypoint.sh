@@ -14,6 +14,11 @@ spawn-protection=0
 max-players=4
 level-name=lab
 level-seed=$SEED
+# A headless bot has to be able to join a world that has been sitting empty during startup.
+# Minecraft 1.21.2+ parks the server thread after this many empty seconds (default 60), and a
+# mineflayer login against a parked server hangs until the host's 45 s timeout (RUNTIME_EXITED).
+# 0 disables the empty-pause so the world always answers the bot's login.
+pause-when-empty-seconds=0
 EOF
 
 # The server refuses to start without eula.txt; `EULA=true` is the lab's acceptance.
