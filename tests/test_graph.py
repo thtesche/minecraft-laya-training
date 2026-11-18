@@ -2431,13 +2431,28 @@ class BounceGuardTest(unittest.TestCase):
         self.assertEqual(agent._bounce_trail, [])
         self.assertEqual(agent._stuck_off, {})
 
-    def test_the_steps_that_pass_time_are_exempt(self) -> None:
+    def test_a_lull_that_changed_nothing_is_exempt(self) -> None:
+        # A wait or a sleep that holds the body in place is a legitimate lull: it walks neither
+        # toward the tether nor away from it, so it must not fill the window.
+        still = self._nothing()
+        still["pos_delta"] = 0.0
         for label in PASS_TIME_LABELS:
             agent = self._agent()
             for i in range(BOUNCE_WINDOW * 2):
-                agent._track_bounce(label, self._nothing(),
+                agent._track_bounce(label, still,
                                     self.CELL_A if i % 2 == 0 else self.CELL_B)
             self.assertEqual(agent._stuck_off, {}, label)
+
+    def test_a_sleep_that_walks_is_in_the_window(self) -> None:
+        # run269 it165-184: 20 ticks trading `go_home` and `sleep` between the base anchor and the
+        # gate bed's footing. `sleep` is a pass-time label, and the guard used to clear the trail on
+        # every one of them, so the window never filled and the tether home that made the round trip
+        # was never withheld. A sleep that moved the body is a walk wearing a lull's name.
+        agent = self._agent()
+        for i in range(BOUNCE_WINDOW):
+            agent._track_bounce("sleep" if i % 2 == 0 else "go_home", self._nothing(),
+                                self.CELL_A if i % 2 == 0 else self.CELL_B)
+        self.assertEqual(agent._stuck_off.get("go_home"), STUCK_COOLDOWN)
 
     def test_no_position_is_no_evidence(self) -> None:
         agent = self._agent()

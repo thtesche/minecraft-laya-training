@@ -3090,9 +3090,18 @@ class Agent:
 
         A tick that gains inventory or crosses a dimension is real progress and starts the window
         over, exactly as the orbit guard reads it, so a bot working a vein in place is never caught.
+
+        A pass-time label is exempt only when it changed nothing. A lull that holds the body in
+        place walks neither toward the tether nor away from it, so it cannot be evidence of a
+        bounce -- but `sleep` resolves to a `navigate` whenever the gate bed is out of click reach,
+        and a round trip made of `go_home` and such a sleep is exactly the shape this guard exists
+        for. Live, run269 it165-184: 20 ticks trading `go_home` and `sleep` between the base anchor
+        (-9.6, 66, 59.5) and the bed's footing (-13.6, 69, 63.35), every `sleep` a 6.34-block walk
+        and every `go_home` the walk back. Clearing the trail on every second tick kept the window
+        at two entries, so it never reached `BOUNCE_WINDOW` and the tether that made the round trip
+        was never withheld.
         """
-        if label in PASS_TIME_LABELS:
-            self._bounce_trail = []
+        if label in PASS_TIME_LABELS and (delta or {}).get("pos_delta", 0.0) < 0.5:
             return
         if pos is None:
             return
