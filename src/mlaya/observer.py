@@ -332,8 +332,9 @@ class Observer:
         """Fold the oldest story turns into a summary when the prompt nears the input budget.
 
         A trim is the one moment the prefix after the system block changes, so the cache takes a
-        one-off miss - which is why the budget is generous (185k): within one run it rarely fires.
-        The system prefix itself is never touched.
+        one-off miss - but only the kept tail re-prefills, never the byte-stable system prefix. The
+        budget (80k, well under the 185k input ceiling) is set to fold periodically rather than
+        almost-never, so the live prompt stays lean; each fold is a cheap, infrequent miss.
         """
         if (tel.get("prompt_tokens") or 0) < self.cfg.input_budget:
             return

@@ -67,7 +67,12 @@ class ObserverConfig(BaseModel):
     # leaves headroom without inviting the model to ramble past the terse note the prompt asks for.
     routine_max_tokens: int = 1_024
     context_tokens: int = 200_000     # the model's context window
-    input_budget: int = 185_000       # fold the oldest story turns into a summary before this
+    # Fold the oldest story turns into a summary before this. Set well below the model's 185k input
+    # ceiling on purpose: at ~200-250 tokens/tick a run rarely reaches 185k, so a budget up there
+    # would fold ~never and the prompt would just grow unbounded. 80k keeps the live prompt lean -
+    # it folds periodically (every ~300 teachable ticks) at the price of a few more cache misses,
+    # each cheap: only the kept tail re-prefills, the byte-stable system prefix never does.
+    input_budget: int = 80_000
     reasoning_effort: str = "high"    # for the full-reasoning event turns; routine ticks run /no_think
     log_path: str = "runs/observer.jsonl"
     # How far behind the decisions log the tailer may fall before routine ticks are sampled rather
