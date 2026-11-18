@@ -2700,6 +2700,19 @@ class NetherGateTest(unittest.TestCase):
         a = resolve("build_portal", g)
         self.assertEqual(a.args["portal_frame"], {"x": -195, "y": -46, "z": -98, "axis": "x"})
 
+    def test_build_portal_resumes_a_started_frame_without_the_igniter(self) -> None:
+        # The build normally waits for the igniter so the frame is raised last and never stands
+        # finished-but-unlightable. A *started* frame is the exception: closing an obsidian ring
+        # needs no flint and steel, and a partial frame left standing when the igniter went away
+        # (broke, dropped on a death, banked after the first crossing) could never be finished
+        # while `build_portal` stayed gated on `has_fs` - the bot looped at its own 8/10 gate with
+        # the two blocks it needed in the pack (live, run261). So the resume clause is let through
+        # without the igniter; the obsidian in the frame plane is the proof a build already ran.
+        g = self._at_home(self._geared(flint_and_steel=0, obsidian=2, cobblestone=4))
+        g.resources = {"obsidian": [BlockHit("obsidian", "obsidian", -195, -47, -98, 3.0)]}
+        self.assertIn("build_portal", candidates(g))
+        self.assertEqual(resolve("build_portal", g).tool, "build_structure")
+
     def test_a_finished_frame_is_not_rebuilt(self) -> None:
         # A build the server answers `ok` to while it spends nothing has placed every cell it
         # can: the frame stands complete. The "resume a partial frame" clause would otherwise

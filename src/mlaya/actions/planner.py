@@ -554,6 +554,14 @@ def candidates(gs: GameState) -> list[str]:
         # would otherwise keep the resume clause live on a finished frame, and the server answers
         # the no-op with a plain success, which no stuck guard counts (`gs.frame_complete`,
         # `Agent._note_build`; live, run25: 163 identical `build_portal` ticks, the bot frozen).
+        # The build normally waits for the igniter (`has_fs`), so the frame is the last thing raised
+        # and never stands finished-but-unlightable. A *started* frame is the exception: closing an
+        # obsidian ring needs no flint and steel, and a partial frame left standing when the igniter
+        # went away (broke, dropped on a death, banked after the first crossing) could never be
+        # finished otherwise - `build_portal` stayed gated on `has_fs`, so the bot looped at its own
+        # 8/10 gate while the only unblocking move, `craft_flint_and_steel`, went unpicked (live,
+        # run261: 90 ticks of base busywork at a short frame, two obsidian in the pack). So the
+        # resume clause (`_portal_frame_started`) is allowed through without the igniter.
         can_build = (obsidian >= PORTAL_OBSIDIAN
                      or (obsidian >= 1 and _portal_frame_started(gs)))
         if _at_base(gs) and has_fs and not gs.frame_complete and _frame_blocker(gs) is not None:
@@ -563,8 +571,9 @@ def candidates(gs: GameState) -> list[str]:
             # furnace on the new base's frame corner). Clearing needs no obsidian and no cobble,
             # so it stands ahead of the build gate: the cell is cleared while the pack is refilled.
             out.append("clear_frame")
-        elif (_at_base(gs) and has_fs and can_build and cobble >= PORTAL_CORNERS
-                and not gs.frame_complete):
+        elif (_at_base(gs) and can_build and cobble >= PORTAL_CORNERS
+                and not gs.frame_complete
+                and (has_fs or _portal_frame_started(gs))):
             # A block left standing in the opening (above the support layer) has to go first:
             # the frame would be built around it and `light_portal` would answer
             # `[PORTAL_NO_FRAME]` forever (live, Nether run: a bed the generic sleep laid
@@ -1383,7 +1392,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         obsidian = inv.get("obsidian", 0)
         can_build = (obsidian >= PORTAL_OBSIDIAN
                      or (obsidian >= 1 and _portal_frame_started(gs)))
-        if (site is None or not _at_base(gs) or not _has(inv, FLINT_STEEL_ITEM)
+        # The igniter gate matches the offer (see the `build_portal` candidate): a fresh frame is
+        # raised only once flint and steel is in hand, but a *started* frame resumes without it -
+        # closing the obsidian ring needs no igniter, and a partial frame whose igniter went away
+        # could never be finished otherwise (live, run261).
+        if (site is None or not _at_base(gs)
+                or not (_has(inv, FLINT_STEEL_ITEM) or _portal_frame_started(gs))
                 or _portal_lit(gs) or not can_build or gs.frame_complete
                 or inv.get("cobblestone", 0) < PORTAL_CORNERS):
             return None
