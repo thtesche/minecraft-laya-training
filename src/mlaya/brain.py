@@ -7,7 +7,8 @@ from typing import Any
 from .actions import (CRITERIA, DEFER_QUIET_TICKS, RECOVER_HEALTH, _must_eat,
                       _recovery_owed)
 from .config import LLMConfig, LayaConfig
-from .perception import INVENTORY_SLOTS, phase_brief, phase_persona
+from .observer import DEATH_TRAPS
+from .perception import INVENTORY_SLOTS, _PHASE_ROWS, phase_brief, phase_persona
 
 # Two decisions per tick, one forward pass:
 #   in_danger  - binary gate; a reliable zero-shot signal. Yes -> defer to the survival policy.
@@ -377,115 +378,216 @@ def _failure_diagnostics(state: dict) -> dict:
     return diag
 
 
-def escalation_payload(
+# --------------------------------------------------------------------------- the escalation brief
+#
+# Measured on a real escalation (run261 it166, the live Strata slot): 34,460 prompt tokens, 95.7 s
+# cold prefill, 0 cached. The brief carries its own weight - `recent_history` was eight raw decision
+# records, ~25,500 of those tokens, and the trajectory digest says the same thing in ~700. The
+# server reuses a prompt prefix only for a pure extension (`scripts/cache_probe.py`: identical
+# repeat 34,455/34,460 cached and 0.28 s; the last 500 characters changed 32,768 cached and 4.9 s),
+# so a fresh two-message conversation per escalation cannot hit the cache however stable its parts
+# are - it diverges at token 0.
+#
+# The shape that does: a byte-stable system spine (role, phase spine, traps, the action catalogue,
+# the schema) and one append-only conversation per run. The catalogue moves into the spine because
+# it never changes; each escalation appends its own brief plus what the previous plan actually did,
+# so every call after the first prefills only its tail.
+
+ESCALATION_INPUT_BUDGET = 120_000   # fold the oldest exchanges before the story gets this big
+
+
+def escalation_system() -> str:
+    """The byte-stable spine of every escalation in a run - the part the cache holds.
+
+    Built once and never edited mid-run: the phase and the tick's facts ride in the appended turn,
+    because a change at token 0 diverges the prompt and throws the whole prefix away. The action
+    catalogue belongs here for the same reason - it is the same 108 labels in every run.
+    """
+    phases = "\n".join(f"- {key}: {goal}" for key, (_, goal) in _PHASE_ROWS.items())
+    traps = "\n".join(f"- {t}" for t in DEATH_TRAPS)
+    catalogue = "\n".join(f"- {label}: {desc}" for label, desc in CRITERIA.items())
+    return (
+        "You are the Minecraft survival expert advising a survival bot whose own controller (Laya, "
+        "a fast typed decision engine) has run out of moves. You never control the bot directly: "
+        "you name the actions it can perform, in the order they should be attempted.\n\n"
+        "The run works through these phases in order, each with its goal (the END STATE):\n"
+        + phases + "\n\n"
+        "Known death traps - flag the risk before it bites:\n" + traps + "\n\n"
+        "Every action the bot can ever perform, with what it does:\n" + catalogue + "\n\n"
+        "Each escalation appends the phase, the stuck label and the computed reason it keeps "
+        "refusing (`failure`), the reading Laya itself gets (`situation`), the digest of the ticks "
+        "that led here (`trajectory`), the actions ready this tick (`ready`), and the raw state for "
+        "the fields the narrative drops. Propose the shortest ordered sequence of actions that "
+        "breaks the impasse, including setup steps: an action outside `ready` may still be the right "
+        "first move if clearing its precondition is what unblocks the stuck label. When "
+        "`previous_plan` is present it says what your last plan did - do not repeat a step that "
+        "already failed.\n\n"
+        'Reply with this JSON object: {"plan": [<action labels, best first>], '
+        '"goal": <short string>, "note": <why this breaks the loop, short>}.'
+    )
+
+
+def escalation_tail(
     state: dict,
-    history: list[dict],
     failure: dict,
     allowed_labels: list[str],
     trajectory: dict | None = None,
 ) -> dict:
-    """The System-2 escalation brief: the raw state, the rendered situation, and the catalogue.
+    """The per-tick part of the brief: everything that changes, in one appended turn.
 
     `situation` is the same sentence System 1 decides on (`_review_situation`), so the depth band
     (altitude vs. probed open sky), the pack and the nearby mobs are stated rather than re-derived
     from `position`/`on_ground`/`inventory`. The raw view stays beside it for the fields the
-    narrative deliberately drops. Kept separate from the call so the brief - the part that shapes
-    the answer - is testable without a model behind it.
+    narrative deliberately drops, and sits last so the volatile part is at the end of the turn. The
+    action catalogue is not here - it lives in the spine, which is why a tail is a few hundred
+    tokens rather than 34k. Kept separate from the call so the brief - the part that shapes the
+    answer - is testable without a model behind it.
     """
-    payload = {
-        "state": _system2_state_view(state),
-        "situation": _review_situation(state),
+    phase_slug, phase_goal = phase_brief(state)
+    tail = {
+        "phase": {"name": phase_slug, "goal": phase_goal},
+        "persona": phase_persona(state),
         "failure": {**failure, "diagnostics": _failure_diagnostics(state)},
-        # All actions with descriptions, plus which are currently ready.
-        "actions": {
-            label: {"description": CRITERIA.get(label, ""), "ready": label in allowed_labels}
-            for label in CRITERIA
-        },
-        "recent_history": history[-8:],
+        "situation": _review_situation(state),
+        "ready": sorted(allowed_labels),
+        "state": _system2_state_view(state),
     }
     if trajectory is not None:
-        payload["trajectory"] = trajectory
-    return payload
+        tail["trajectory"] = trajectory
+    return tail
+
+
+def _system2_chat(cfg: LLMConfig, api_key: str, messages: list[dict]) -> tuple[str, dict]:
+    """One completion, with the server's cache telemetry kept.
+
+    `cache_prompt=true` is the knob the probe established: without it the slot reuses its prefix
+    only on an exact repeat. The raw response is read because the OpenAI client drops llama.cpp's
+    `timings`, which is where the prefill time lives.
+    """
+    from openai import OpenAI
+
+    client = OpenAI(base_url=cfg.base_url, api_key=api_key)
+    raw = client.chat.completions.with_raw_response.create(
+        model=cfg.model,
+        # Reasoning model: thinking tokens are emitted before the JSON (the local Strata server
+        # reports them as `reasoning_content`), so the cap must leave room for both. `[llm]
+        # max_tokens` follows the model's output limit; a user can raise it if the server allows.
+        max_tokens=cfg.max_tokens,
+        messages=messages,
+        response_format={"type": "json_object"},
+        extra_body={"cache_prompt": True},
+    )
+    body = raw.http_response.json()
+    usage = body.get("usage") or {}
+    timings = body.get("timings") or {}
+    choice = (body.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    telemetry = {
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0,
+        "fresh_tokens": (usage.get("prompt_tokens") or 0)
+                        - (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0),
+        "completion_tokens": usage.get("completion_tokens"),
+        "prefill_ms": round(timings.get("prompt_ms") or 0),
+        "finish_reason": choice.get("finish_reason"),
+    }
+    return message.get("content") or "", telemetry
+
+
+@dataclass
+class System2Dialogue:
+    """One append-only conversation per run, so escalation N reuses escalation N-1's prefix.
+
+    The same trick the observer proved out: a story that only ever grows keeps the slot's KV warm,
+    and each turn prefills only what was appended. The reply's reasoning chain is not kept - only
+    the plan - because the thinking tokens are the bulk of the assistant turn and the next impasse
+    does not need them.
+    """
+
+    cfg: LLMConfig
+    api_key: str | None
+    messages: list[dict] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.messages:
+            self.messages = [{"role": "system", "content": escalation_system()}]
+
+    def turn(self, state: dict, failure: dict, allowed_labels: list[str],
+             trajectory: dict | None, outcome: dict | None) -> tuple[dict, dict]:
+        """Ask for a way out, keeping the conversation and the telemetry."""
+        brief = escalation_tail(state, failure, allowed_labels, trajectory)
+        if outcome:
+            brief["previous_plan"] = outcome
+        self.messages.append({"role": "user", "content": json.dumps(brief, ensure_ascii=False)})
+        try:
+            text, telemetry = _system2_chat(self.cfg, self.api_key, self.messages)
+        except Exception as e:  # escalation must never crash the loop
+            return {"error": str(e)}, {"error": str(e)}
+        if not text:
+            return {"error": "empty model response", "finish_reason": telemetry.get("finish_reason")}, telemetry
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = {"error": f"non-JSON model response: {text[:120]}"}
+        if not isinstance(data, dict):
+            data = {"error": f"non-object model response: {type(data).__name__}"}
+        steps = _plan_steps(data, CRITERIA.keys())
+        data["plan"] = steps
+        data["action"] = steps[0] if steps else None
+        self.messages.append({"role": "assistant",
+                             "content": json.dumps({"plan": steps, "goal": data.get("goal")},
+                                                   ensure_ascii=False)})
+        self._trim(telemetry)
+        return data, telemetry
+
+    def _trim(self, telemetry: dict) -> None:
+        """Fold the oldest exchanges when the conversation nears the input budget.
+
+        A trim is the one moment the cached prefix changes, so it is a deliberate one-off miss
+        rather than a slow drift; the spine itself is never touched.
+        """
+        if (telemetry.get("prompt_tokens") or 0) < ESCALATION_INPUT_BUDGET:
+            return
+        head, body = self.messages[0], self.messages[1:]
+        folded = [m["content"][:200] for m in body[:-6] if m.get("role") == "assistant"]
+        self.messages = [head,
+                        {"role": "user",
+                         "content": "EARLIER ESCALATIONS (folded): " + json.dumps(folded[-8:])},
+                        *body[-6:]]
 
 
 def escalate_to_system2(
     cfg: LLMConfig,
     api_key: str | None,
     state: dict,
-    history: list[dict],
     failure: dict,
     allowed_labels: list[str],
     trajectory: dict | None = None,
+    dialogue: System2Dialogue | None = None,
+    outcome: dict | None = None,
 ) -> dict | None:
     """System 2: ask a generative model for a way out when System 1 cannot act (rare).
 
     The reply is normalised so every caller reads the same shape: `plan` is the ordered list of
-    labels the model proposes (best first) and `action` is its first step, kept for the
-    offline teacher and the older log readers. `trajectory` is the digest from
-    `trajectory_digest`; passing it is what turns "pick a label" into "break this impasse".
-    System 2 sees all available actions, not just the currently-ready ones, so it can propose
-    a sequence that achieves preconditions before executing the stuck label, and the `failure`
-    brief carries the computed reason (pack fullness, nearest drop) so the model is not left to
-    reverse-engineer why the stuck label keeps refusing. `situation` carries the sentence System 1
-    reads, so the depth band (altitude vs. probed open sky), the pack and the nearby mobs are
-    stated instead of re-derived from the raw state.
+    labels the model proposes (best first) and `action` is its first step, kept for the offline
+    teacher and the older log readers; `telemetry` is what the server reported about the call.
+    `trajectory` is the digest from `trajectory_digest`; passing it is what turns "pick a label"
+    into "break this impasse". System 2 sees all available actions, not just the currently-ready
+    ones, so it can propose a sequence that achieves preconditions before executing the stuck
+    label, and the `failure` brief carries the computed reason (pack fullness, nearest drop) so
+    the model is not left to reverse-engineer why the stuck label keeps refusing. `situation`
+    carries the sentence System 1 reads, so the depth band (altitude vs. probed open sky), the pack
+    and the nearby mobs are stated instead of re-derived from the raw state.
+
+    `dialogue` is the run's append-only conversation; without one the call is a single
+    self-contained exchange (the offline teacher and the tests use that path).
     """
     if not api_key:
         return {"error": f"missing {cfg.api_key_env}"}
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(base_url=cfg.base_url, api_key=api_key)
-        phase_slug, phase_goal = phase_brief(state)
-        system = (
-            # The same phase sentence System 1 reads at the head of every state - System 2 is
-            # asked about this run, not about Minecraft in general, and should not have to
-            # re-derive mid-Nether from `state.dimension` whether the next thing is a pickaxe.
-            # The phase goal spells out the preconditions the run is working toward, so the model
-            # can tell a stuck label from a step that still serves the goal.
-            f"{phase_persona(state)}. The run phase is `{phase_slug}`: {phase_goal} "
-            "You are the Minecraft expert advising this bot on its "
-            "next move. Its own controller is stuck: read `failure` (which names the stuck label and "
-            "the computed reason it keeps refusing), the `trajectory` of what it has been doing, the "
-            "`situation` (the same rendered reading Laya gets - where it is, what it carries, what is "
-            "nearby, and whether open sky is confirmed for its column), and what each entry in "
-            "`actions` does. "
-            "Some actions are immediately available (ready: true), others need preconditions met first. "
-            "Propose the shortest ordered sequence of actions that breaks the impasse, "
-            "including setup steps if needed. The sequence may include actions that are not currently "
-            "ready, if getting them ready (e.g. shedding a full pack with drop_junk, or moving to a "
-            "distant drop) would solve the stuck label. "
-            "Reply with JSON "
-            '{"plan": [<action labels, best first>], "goal": <short string>, '
-            '"note": <why this breaks the loop, short>}.'
-        )
-        user = json.dumps(
-            escalation_payload(state, history, failure, allowed_labels, trajectory),
-            ensure_ascii=False)
-        r = client.chat.completions.create(
-            model=cfg.model,
-            # Reasoning model: thinking tokens are emitted before the JSON (the local
-            # Strata server reports them as `reasoning_content`), so the cap must leave
-            # room for both. `[llm] max_tokens` follows the model's 4096 output limit;
-            # a user can raise it if the server allows more.
-            max_tokens=cfg.max_tokens,
-            messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": user}],
-            response_format={"type": "json_object"},
-        )
-        choice = r.choices[0]
-        content = choice.message.content
-        if not content:
-            return {"error": "empty model response", "finish_reason": choice.finish_reason}
-        data = json.loads(content)
-        if not isinstance(data, dict):
-            return {"error": f"non-object model response: {type(data).__name__}"}
-        steps = _plan_steps(data, CRITERIA.keys())
-        data["plan"] = steps
-        data["action"] = steps[0] if steps else None
-        return data
-    except Exception as e:  # escalation must never crash the loop
-        return {"error": str(e)}
+    dlg = dialogue if dialogue is not None else System2Dialogue(cfg, api_key)
+    data, telemetry = dlg.turn(state, failure, allowed_labels, trajectory, outcome)
+    data["telemetry"] = telemetry
+    return data
 
 
 def _reasoning_of(message: Any) -> str:

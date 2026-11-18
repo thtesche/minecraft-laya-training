@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
-from mlaya.actions import _must_eat
+from mlaya.actions import CRITERIA, _must_eat
+from mlaya import brain
 from mlaya.brain import (DANGER_BAND_NOTE, DANGER_DEFER_HEALTH, DANGER_DEFER_M, DANGER_QID,
-                        DEFER_QUIET_TICKS, INTENT_QID, Brain, _failure_diagnostics, _plan_steps,
+                        DEFER_QUIET_TICKS, INTENT_QID, Brain, System2Dialogue,
+                        _failure_diagnostics, _plan_steps,
                         _review_situation, _system2_state_view, danger_matters,
-                        escalate_to_system2, escalation_payload, review_payload,
+                        escalate_to_system2, escalation_system, escalation_tail, review_payload,
                         trajectory_digest)
 
 
@@ -222,11 +226,11 @@ class EscalateContractTest(unittest.TestCase):
     def test_a_missing_key_is_reported_not_raised(self) -> None:
         out = escalate_to_system2(
             SimpleNamespace(api_key_env="STRATA_API_KEY"), None,
-            {"phase": "early"}, [], {"trigger": "unresolved_label"}, ["get_wood"])
+            {"phase": "early"}, {"trigger": "unresolved_label"}, ["get_wood"])
         self.assertEqual(out, {"error": "missing STRATA_API_KEY"})
 
 
-class EscalationPayloadTest(unittest.TestCase):
+class EscalationBriefTest(unittest.TestCase):
     """The escalation brief carries the sentence System 1 reads, not only the raw state.
 
     run252 it40: System 2's prompt had `position: [-7.5, 63.0, 60.5]` and `on_ground: true`
@@ -244,30 +248,95 @@ class EscalationPayloadTest(unittest.TestCase):
         }
 
     def test_the_brief_carries_the_situation_laya_reads(self) -> None:
-        payload = escalation_payload(self._state(), [], {"trigger": "stall"}, ["surface_up"])
+        tail = escalation_tail(self._state(), {"trigger": "stall"}, ["surface_up"])
         self.assertIn("At surface altitude (standing on solid floor, open sky not confirmed)",
-                      payload["situation"])
+                      tail["situation"])
 
     def test_a_probed_surface_reads_as_open_sky(self) -> None:
         state = self._state()
         state["surface"] = [-8, 63, 60]
-        payload = escalation_payload(state, [], {}, ["surface_up"])
-        self.assertIn("open sky above", payload["situation"])
-        self.assertEqual(payload["state"]["surface"], [-8, 63, 60])
+        tail = escalation_tail(state, {}, ["surface_up"])
+        self.assertIn("open sky above", tail["situation"])
+        self.assertEqual(tail["state"]["surface"], [-8, 63, 60])
 
-    def test_the_raw_state_and_the_catalogue_stay_beside_it(self) -> None:
-        payload = escalation_payload(self._state(), [{"stage": "action"}] * 12,
-                                     {"label": "surface_up"}, ["surface_up"])
-        self.assertEqual(payload["state"]["position"], [-7.5, 63.0, 60.5])
-        self.assertTrue(payload["actions"]["surface_up"]["ready"])
-        self.assertFalse(payload["actions"]["mine_diamond"]["ready"])
-        self.assertEqual(len(payload["recent_history"]), 8)
-        self.assertIn("diagnostics", payload["failure"])
+    def test_the_ready_set_replaces_the_full_catalogue(self) -> None:
+        # The 108 descriptions live in the byte-stable spine; the appended turn only names which of
+        # them are available this tick. That is the difference between a 34k-token brief and a tail.
+        tail = escalation_tail(self._state(), {"label": "surface_up"}, ["surface_up"])
+        self.assertEqual(tail["ready"], ["surface_up"])
+        self.assertNotIn("actions", tail)
+        self.assertNotIn("recent_history", tail)
+        self.assertIn("diagnostics", tail["failure"])
+        self.assertEqual(tail["phase"]["name"], "diamond_kit")
 
     def test_the_trajectory_is_attached_when_passed(self) -> None:
-        payload = escalation_payload(self._state(), [], {}, ["surface_up"],
-                                     trajectory={"window": 3})
-        self.assertEqual(payload["trajectory"], {"window": 3})
+        tail = escalation_tail(self._state(), {}, ["surface_up"], trajectory={"window": 3})
+        self.assertEqual(tail["trajectory"], {"window": 3})
+
+    def test_the_spine_is_byte_stable_and_holds_the_catalogue(self) -> None:
+        """The cached prefix must not change mid-run, so nothing tick-dependent is in it."""
+        spine = escalation_system()
+        self.assertEqual(spine, escalation_system())
+        for label, desc in CRITERIA.items():
+            self.assertIn(f"- {label}: {desc}", spine)
+        self.assertIn("death traps", spine)
+        self.assertNotIn("At surface altitude", spine)
+
+
+class System2DialogueTest(unittest.TestCase):
+    """The escalation conversation grows by appending, which is what makes the cache hit.
+
+    `scripts/cache_probe.py` measured the rule: the slot reuses its prefix only for a pure
+    extension. A conversation that is rebuilt every escalation - the old shape - prefills all
+    34k tokens cold every time.
+    """
+
+    def _state(self) -> dict:
+        return {"health": 20.0, "food": 20.0, "position": [0, 64, 0], "on_ground": True,
+                "dimension": "overworld", "inventory": {}, "tools": {}, "armor": {},
+                "hostiles": [], "base": None, "chest_pos": None, "slots_used": 1}
+
+    def test_each_turn_is_a_pure_extension_of_the_last(self) -> None:
+        seen: list[list[dict]] = []
+
+        def fake_chat(cfg, api_key, messages):
+            seen.append([dict(m) for m in messages])
+            return json.dumps({"plan": ["get_wood"], "goal": "wood", "note": "n"}), \
+                {"prompt_tokens": 1000, "cached_tokens": 900, "prefill_ms": 300}
+
+        dlg = System2Dialogue(SimpleNamespace(model="m", max_tokens=4096, base_url="u"), "key")
+        with mock.patch.object(brain, "_system2_chat", fake_chat):
+            first = dlg.turn(self._state(), {"label": "mine_stone"}, ["get_wood"], None, None)
+            second = dlg.turn(self._state(), {"label": "mine_stone"}, ["get_wood"], None,
+                              {"iteration": 3, "steps": ["get_wood"], "ran": [], "resolved": False})
+
+        self.assertEqual(seen[0], dlg.messages[:2])
+        self.assertEqual(seen[1][:len(seen[0])], seen[0])   # turn 2 starts with all of turn 1
+        self.assertEqual(seen[1][0]["content"], escalation_system())  # the spine never changes
+        self.assertEqual(first[0]["plan"], ["get_wood"])
+        self.assertEqual(first[1]["cached_tokens"], 900)
+        self.assertIn("previous_plan", json.loads(seen[1][-1]["content"]))
+
+    def test_the_reasoning_chain_is_not_kept_in_the_story(self) -> None:
+        """Only the plan rides in the assistant turn: the thinking tokens are the bulk of it."""
+        def fake_chat(cfg, api_key, messages):
+            return json.dumps({"plan": ["get_wood"], "goal": "wood"}), {"prompt_tokens": 10}
+
+        dlg = System2Dialogue(SimpleNamespace(model="m", max_tokens=4096, base_url="u"), "key")
+        with mock.patch.object(brain, "_system2_chat", fake_chat):
+            dlg.turn(self._state(), {}, ["get_wood"], None, None)
+        self.assertEqual(json.loads(dlg.messages[-1]["content"]), {"plan": ["get_wood"], "goal": "wood"})
+
+    def test_a_bad_reply_still_leaves_a_readable_plan(self) -> None:
+        def fake_chat(cfg, api_key, messages):
+            return "not json at all", {"prompt_tokens": 10}
+
+        dlg = System2Dialogue(SimpleNamespace(model="m", max_tokens=4096, base_url="u"), "key")
+        with mock.patch.object(brain, "_system2_chat", fake_chat):
+            data, _ = dlg.turn(self._state(), {}, ["get_wood"], None, None)
+        self.assertIn("error", data)
+        self.assertEqual(data["plan"], [])
+        self.assertIsNone(data["action"])
 
 
 class System2StateViewTest(unittest.TestCase):
