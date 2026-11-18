@@ -24,7 +24,7 @@ from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_LIVE_STOP, BODY_HELD_STOP, BOXED_REPEATS, BOUNCE_WINDOW, BOUNCE_LABELS,
                          DIG_OUT_MAX_TRIES, DEAD_END_REFUSALS, DEAD_END_STANDSTILL, HOME_ANCHOR_TICKS,
-                         LAVA_WALK_COOLDOWN, PLAN_LEDGER_TICKS, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
+                         LAVA_WALK_COOLDOWN, PLAN_LEDGER_TICKS, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, IDLE_ESCALATE_REPEATS, PASS_TIME_LABELS,
                          ORBIT_WINDOW, PORTAL_INTENT_TICKS, STALL_ESCALATE_REPEATS, STUCK_COOLDOWN, STUCK_REPEATS,
                          WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
@@ -729,6 +729,55 @@ class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen[1]["ran"], [{"label": "drop_junk", "status": "failed",
                                           "progressed": False}])
         self.assertTrue(seen[1]["resolved"])
+
+    async def test_a_long_lull_escalates_even_though_wait_is_never_dropped(self) -> None:
+        # The run265 deadlock: a built portal a blank plane read left unlightable, `candidates` down
+        # to `wait`. `wait` is never dropped, so `_stall_dropped` stays empty and the stall path
+        # above never fires - the idle streak escalates instead, once the lull has run long enough.
+        agent = self._agent()
+        agent._idle_wait_reps = {"wait": IDLE_ESCALATE_REPEATS}
+        waiting = Action("wait", "idle", {}, "hold")
+        light = Action("light_portal", "activate_portal", {}, "strike")
+        with mock.patch.object(graph, "candidates", return_value=["wait", "light_portal"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: waiting if lbl == "wait"
+                               else light if lbl == "light_portal" else None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": ["light_portal"], "action": "light_portal"}) as esc:
+            out = await agent._guard(self._state("wait"))
+        self.assertTrue(out["escalated"])
+        self.assertIs(out["action"], light)
+        self.assertEqual(out["note"], "idle stall -> light_portal")
+        self.assertEqual(agent._stall_escalations, 1)
+        esc.assert_called_once()
+        self.assertEqual(agent.system2_log.records[-1]["trigger"], "idle_stall")
+        self.assertEqual(agent._idle_wait_reps, {})          # the counter re-armed for the next window
+
+    async def test_a_lull_below_the_idle_threshold_does_not_escalate(self) -> None:
+        agent = self._agent()
+        agent._idle_wait_reps = {"wait": IDLE_ESCALATE_REPEATS - 1}
+        waiting = Action("wait", "idle", {}, "hold")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: waiting if lbl == "wait" else None), \
+             mock.patch.object(graph, "escalate_to_system2") as esc:
+            out = await agent._guard(self._state("wait"))
+        self.assertIs(out["action"], waiting)
+        esc.assert_not_called()
+        self.assertEqual(agent._stall_escalations, 0)
+
+    async def test_the_budget_caps_idle_escalations(self) -> None:
+        agent = self._agent()
+        agent._idle_wait_reps = {"wait": IDLE_ESCALATE_REPEATS}
+        agent._stall_escalations = agent.settings.loop.max_escalations
+        waiting = Action("wait", "idle", {}, "hold")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: waiting if lbl == "wait" else None), \
+             mock.patch.object(graph, "escalate_to_system2") as esc:
+            out = await agent._guard(self._state("wait"))
+        self.assertIs(out["action"], waiting)
+        esc.assert_not_called()
+        # The full budget leaves the streak intact; it simply never fires again.
+        self.assertEqual(agent._idle_wait_reps, {"wait": IDLE_ESCALATE_REPEATS})
 
     def _state_with(self, label: str, **kw):
         return {"before": gs(**kw), "decision": Decision(label), "iteration": 7}
@@ -1895,6 +1944,7 @@ class IdleOfferGuardTest(unittest.TestCase):
         agent._nether_landmarks = []
         agent._stuck_off = {}
         agent._idle_reps = {}
+        agent._idle_wait_reps = {}
         agent.log = []
         return agent
 
@@ -1946,14 +1996,31 @@ class IdleOfferGuardTest(unittest.TestCase):
             agent._track_idle("go_home", delta)
             self.assertEqual(agent._idle_reps, {}, delta)
 
-    def test_the_steps_that_exist_to_pass_time_are_exempt(self) -> None:
+    def test_the_steps_that_exist_to_pass_time_are_not_dropped(self) -> None:
         # A lull really does change nothing. Dropping these would end the run's waiting with
-        # nothing to do instead of waiting - the opposite of what the guard is for.
+        # nothing to do instead of waiting - the opposite of what the guard is for. The no-change
+        # streak is still counted (for the escalation path), but the label stays on the offer.
         for label in PASS_TIME_LABELS:
             agent = self._agent()
             for _ in range(IDLE_REPEATS * 3):
                 agent._track_idle(label, self._nothing())
             self.assertEqual(agent._stuck_off, {}, label)
+            self.assertNotIn(label, agent._stall_dropped)
+            self.assertEqual(agent._idle_wait_reps.get(label), IDLE_REPEATS * 3, label)
+
+    def test_a_pass_time_streak_is_cleared_by_a_change_or_a_different_label(self) -> None:
+        # Only a genuine run of the same lull builds toward the escalation: a tick that changed
+        # something re-arms it, and so does any other label running in between.
+        agent = self._agent()
+        for _ in range(5):
+            agent._track_idle("wait", self._nothing())
+        self.assertEqual(agent._idle_wait_reps, {"wait": 5})
+        agent._track_idle("wait", self._some_change(phase_changed=True))
+        self.assertEqual(agent._idle_wait_reps, {})
+        for _ in range(4):
+            agent._track_idle("wait", self._nothing())
+        agent._track_idle("mine_coal", self._nothing())
+        self.assertEqual(agent._idle_wait_reps, {})
 
     def test_a_label_already_withheld_is_not_counted_again(self) -> None:
         # Same reasoning as the other two guards: while the offer leaves a label out, its ticks

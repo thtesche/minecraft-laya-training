@@ -2855,6 +2855,30 @@ class NetherGateTest(unittest.TestCase):
         self.assertEqual(a.tool, "activate_portal")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-195, -47, -98))
 
+    def test_light_portal_fires_on_the_latch_when_the_plane_read_goes_blank(self) -> None:
+        # run265: the frame stood built (ten obsidian placed) and flint and steel was carried, but a
+        # malformed frame scan blanked the live plane read (`frame_names` empty), so
+        # `_frame_complete_at_base` read False on a finished gate. `build_portal` and the obsidian
+        # chain ride that blank on the `_frame_complete` latch; `light_portal` was left on the live
+        # read alone and fell off the offer, leaving only `wait` for 180 ticks. The latch satisfies
+        # the light gate too, so a built gate still burns through a blank scan.
+        from mlaya.actions.predicates import _frame_complete_at_base
+        g = self._expedition()
+        g.frame_names = {}                       # the blank scan
+        g.frame_complete = True                  # the latch the earlier build set
+        self.assertFalse(_frame_complete_at_base(g))
+        self.assertIn("light_portal", candidates(g))
+        self.assertEqual(resolve("light_portal", g).tool, "activate_portal")
+
+    def test_light_portal_withheld_on_a_blank_read_without_the_latch(self) -> None:
+        # The latch is what makes the blank read safe. Without it - a frame never confirmed built -
+        # a blank plane read must not offer the light, which is the run80 short-frame guard: the old
+        # `obsidian < PORTAL_OBSIDIAN` test alone fired 22 times on a still-short frame.
+        g = self._expedition()
+        g.frame_names = {}
+        g.frame_complete = False
+        self.assertNotIn("light_portal", candidates(g))
+
     def test_no_lighting_blockers_when_the_gate_is_ready(self) -> None:
         # `light_portal` is a candidate here, so there is nothing to name: the observer hint stays
         # empty and the observer is free to judge the lighting on its own merits.

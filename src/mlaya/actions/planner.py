@@ -585,13 +585,24 @@ def candidates(gs: GameState) -> list[str]:
         # "obsidian < PORTAL_OBSIDIAN" alone was not enough - live, run80 from it215: a build had
         # spent 7 of the ten blocks and gone quiet for 350 ticks, and `light_portal` fired 22
         # times on the still-short frame, the server answering `[PORTAL_NO_FRAME]` each time.
+        # The plane read alone was *also* not enough: it goes blank when the frame scan returns a
+        # malformed reply (`parse_cells` -> {}), and then `_frame_complete_at_base` reads False on a
+        # frame that stands built. `build_portal` and the obsidian chain survive that blank read on
+        # the `_frame_complete` latch (`gs.frame_complete`), but `light_portal` was left on the live
+        # read alone, so one blank scan stepped the build over *and* refused the light at once - the
+        # run265 deadlock: a built frame, flint and steel carried, 180 `wait` ticks at the dark gate
+        # with the escalation budget untouched. So the latch satisfies this gate too. It is the same
+        # proof one tick stale: it only fires from a plane read that saw all ten (or a lit portal
+        # block), and `_frame_short_at_base` undoes it the moment the frame reads short, so it never
+        # stands on the run80 short frame; `_portal_frame_started` still demands obsidian actually in
+        # the plane, so a latch set on a frame since torn down never strikes air.
         # Lighting also stands down while a stray block still sits in the opening
         # (`gs.portal_blocked`): the clear steps dig it first. And the trip must be stocked
         # (`_expedition_ready`; live, run22 walked into its own early-lit gate). There is no hour:
         # `place_bed` follows the lit gate the very next tick, by day too (live, run80: the last
         # build closed the frame late in the day, and the run ended beside a gate that never burned).
         if (_at_base(gs) and has_fs and not gs.portal_blocked
-                and _frame_complete_at_base(gs)
+                and (_frame_complete_at_base(gs) or gs.frame_complete)
                 and _portal_frame_started(gs) and _expedition_ready(gs)):
             out.append("light_portal")
     # The bed goes down at the base whatever the hour: `sleep` lays it, and by day the server
@@ -1417,8 +1428,12 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             return Action(label, "activate_portal", {"x": cell[0], "y": cell[1], "z": cell[2]},
                           "relight the Nether-side frame that went out, to open the way home")
         cell = _portal_ignite_cell(gs)
+        # The frame-complete latch stands in for the live plane read the same way it does in the
+        # `candidates` offer: a blank frame scan (`frame_names` empty) must not refuse the light on a
+        # gate the build already finished (run265). `_portal_ignite_cell` still needs a real obsidian
+        # cell to strike, so a latch set on a frame since torn down returns `cell is None` and refuses.
         if (_portal_lit(gs) or not _at_base(gs)
-                or not _frame_complete_at_base(gs) or gs.portal_blocked
+                or not (_frame_complete_at_base(gs) or gs.frame_complete) or gs.portal_blocked
                 or cell is None or not _portal_frame_started(gs) or not _expedition_ready(gs)):
             return None
         return Action(label, "activate_portal", {"x": cell[0], "y": cell[1], "z": cell[2]},

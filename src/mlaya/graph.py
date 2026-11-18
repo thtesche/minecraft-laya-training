@@ -239,6 +239,14 @@ HOME_ANCHOR_TICKS = 60
 # sleep - so exempting them keeps the guard from ending a wait with no work to do instead.
 IDLE_REPEATS = 3
 PASS_TIME_LABELS = ("wait", "sleep")
+# A pass-time label is never *dropped* from the offer (a lull is legitimate), so `_stall_dropped`
+# never fills for it and the stall escalation can never catch a run that waits forever on a
+# deadlock - the run265 shape: a built portal a blank plane read left unlightable, `candidates`
+# down to `wait` alone, 180 ticks at the dark gate, the escalation budget untouched. When a
+# pass-time label has changed nothing for this many ticks running, `_guard` asks System 2 for a way
+# out (once per window, never removing the label itself from the offer). Set at the user's own stall
+# threshold (20+ idle ticks), well clear of an ordinary daytime lull.
+IDLE_ESCALATE_REPEATS = 20
 
 # The walk off a junk dropped on open ground is a 3-block `navigate`. A refusal keeps the latch
 # set (the junk is still at the bot's feet), so a step that keeps failing - rough Nether terrain
@@ -552,6 +560,10 @@ class Agent:
     # fresh dict (never mutate in place), so the shared class default is never written.
     _stall_dropped: dict[str, int] = {}
     _stall_escalations: int = 0
+    # The pass-time idle streak the escalation path reads (`_track_idle` -> `_guard`). Class default
+    # for the same reason as `_stall_dropped`, and an empty dict is "no lull is running"; it is
+    # rebound, never mutated in place, so the shared default is never written.
+    _idle_wait_reps: dict[str, int] = {}
 
     # Whether this run wants the pre-diamond iron armour set, from `config.laya.iron_armor` (the
     # `--iron-armor` flag), injected onto every GameState (`_inject`). Class default for the same
@@ -732,6 +744,11 @@ class Agent:
         # The idle guard's own count per label (`_track_idle`), separate again: a step that
         # succeeds at nothing is neither a refusal nor a wander, and must not disturb either run.
         self._idle_reps: dict[str, int] = {}
+        # The pass-time idle streak (`_track_idle`): a `wait`/`sleep` that changes nothing, counted
+        # here where the other guards exempt it, so `_guard` can escalate past `IDLE_ESCALATE_REPEATS`
+        # without dropping the label from the offer. Holds one label at a time; any other tick clears
+        # it, so only a genuine run of the same lull builds.
+        self._idle_wait_reps: dict[str, int] = {}
         # Death cells whose recovery walk already reached them and found nothing
         # (`[NO_MATCHING_ITEMS]` and the other final codes): `_can_recover` stops offering the
         # walk there, so the bot does not stand at an emptied death site until the window runs
@@ -2031,6 +2048,33 @@ class Agent:
                     exclude=frozenset({decision.action_label}) | set(gs.stuck_labels))
                 if alt is not None and chosen != decision.action_label:
                     return {"action": alt, "escalated": True, "note": f"stall -> {chosen}"}
+            # A pass-time label never fills `_stall_dropped`, so the stall path above can never catch
+            # a run that waits forever on a deadlock - the run265 shape: a built portal a blank plane
+            # read left unlightable, `candidates` down to `wait`, 180 ticks at the dark gate, the
+            # escalation budget untouched. When a pass-time label has changed nothing for
+            # `IDLE_ESCALATE_REPEATS` ticks running (`_track_idle` counts the streak in
+            # `_idle_wait_reps`), ask System 2 for a way out: once per window (the counter re-arms),
+            # the ledger first like the stall path, and never the label itself off the offer, so a
+            # model that finds nothing better simply leaves the run waiting.
+            if (not decision.deferred
+                    and decision.action_label in PASS_TIME_LABELS
+                    and self._idle_wait_reps.get(decision.action_label, 0) >= IDLE_ESCALATE_REPEATS
+                    and self._stall_escalations < self.settings.loop.max_escalations):
+                self._idle_wait_reps = {}
+                iteration = state.get("iteration", 0)
+                led = self._ledger_action(
+                    gs, frozenset({decision.action_label}) | set(gs.stuck_labels), iteration)
+                if led is not None:
+                    self.log.append({"stage": "policy", "reason": "plan_ledger",
+                                     "iteration": iteration, "stuck": decision.action_label,
+                                     "via": led.label, "remaining": self._plan_steps})
+                    return {"action": led, "note": f"plan step -> {led.label}"}
+                self._stall_escalations += 1
+                alt, chosen, _ = self._escalate(
+                    gs, "idle_stall", decision.action_label, iteration,
+                    exclude=frozenset({decision.action_label}) | set(gs.stuck_labels))
+                if alt is not None and chosen != decision.action_label:
+                    return {"action": alt, "escalated": True, "note": f"idle stall -> {chosen}"}
             # Observer `better` override (opt-in, `--use-observer-better`): on its last disagree the
             # observer named one candidate it would rather have run. Take it this tick, but only when
             # it resolves to a *different* action than the one Laya just built, and never the same
@@ -2926,16 +2970,14 @@ class Agent:
         short walk is progress even when it is under the two blocks `place_bed` counts, so the
         position is compared exactly.
 
-        The steps whose whole purpose is to pass time are exempt, because a lull really does change
-        nothing and dropping them would end the run's waiting with nothing to do instead. Everything
-        else that succeeds and achieves nothing is a step that is not doing its job, and the window
-        is the same countdown as the other two guards so it returns on its own.
+        The steps whose whole purpose is to pass time are not *dropped*, because a lull really does
+        change nothing and withholding them would end the run's waiting with nothing to do instead.
+        But their no-change streak is still counted (`_idle_wait_reps`), so `_guard` can escalate a
+        run that waits forever on a deadlock (run265) past `IDLE_ESCALATE_REPEATS` without ever
+        taking the label off the offer. Everything else that succeeds and achieves nothing is a step
+        that is not doing its job, and the window is the same countdown as the other two guards so it
+        returns on its own.
         """
-        if label in PASS_TIME_LABELS:
-            self._idle_reps.pop(label, None)
-            return
-        if label in self._stuck_off:
-            return
         changed = (any(delta.get("inventory_delta") or {})
                    or delta.get("armor_delta") or delta.get("armor_removed")
                    or delta.get("offhand_delta") or delta.get("offhand_removed")
@@ -2943,6 +2985,18 @@ class Agent:
                    or (delta.get("pos_delta") or 0) != 0
                    or delta.get("phase_changed")
                    or delta.get("dimension_changed"))
+        if label in PASS_TIME_LABELS:
+            # Count the lull's no-change run for the escalation path; any change, or a different
+            # label next tick, re-arms it. The dict holds one label at a time.
+            self._idle_wait_reps = (
+                {label: self._idle_wait_reps.get(label, 0) + 1} if not changed else {})
+            self._idle_reps.pop(label, None)
+            return
+        # A tick spent on anything else is not the lull continuing: clear the pass-time streak so
+        # only a genuine run of the same wait reaches the escalation threshold.
+        self._idle_wait_reps = {}
+        if label in self._stuck_off:
+            return
         if changed:
             self._idle_reps.pop(label, None)
             return
