@@ -24,7 +24,7 @@ from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_LIVE_STOP, BODY_HELD_STOP, BOXED_REPEATS, BOUNCE_WINDOW, BOUNCE_LABELS,
                          DIG_OUT_MAX_TRIES, DEAD_END_REFUSALS, DEAD_END_STANDSTILL, HOME_ANCHOR_TICKS,
-                         LAVA_WALK_COOLDOWN, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
+                         LAVA_WALK_COOLDOWN, PLAN_LEDGER_TICKS, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
                          ORBIT_WINDOW, PORTAL_INTENT_TICKS, STALL_ESCALATE_REPEATS, STUCK_COOLDOWN, STUCK_REPEATS,
                          WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
                          blocked_by_surroundings, unblock_action)
@@ -613,6 +613,88 @@ class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
             out = await agent._guard(self._state_with("collect_drops", slots_used=33))
         esc.assert_called_once()
         self.assertEqual(agent._stall_escalations, 1)
+
+    async def test_the_rest_of_a_plan_runs_on_the_next_stuck_tick(self) -> None:
+        """A System-2 plan is a sequence, not a one-shot pick.
+
+        Of the 44 escalations in the last twelve runs, 39 came back with two or more steps and only
+        the first was ever run - the next impasse then paid for a whole new call. The remaining steps
+        ride in a ledger and are taken, in order, whenever the loop is stuck again.
+        """
+        agent = self._agent()
+        agent._stall_dropped = {"collect_drops": STALL_ESCALATE_REPEATS}
+        stuck = Action("collect_drops", "pick_up_items", {"radius": 16}, "sweep")
+        shed = Action("drop_junk", "drop_item", {"items": [{"item_name": "netherrack"}]}, "shed")
+        walk = Action("walk_to_drop", "navigate", {"x": 3}, "walk")
+
+        def build(lbl, g, t=None):
+            return stuck if lbl == "collect_drops" else shed if lbl == "drop_junk" \
+                else walk if lbl == "walk_to_drop" else None
+
+        with mock.patch.object(graph, "candidates", return_value=["collect_drops"]), \
+             mock.patch.object(graph, "resolve", side_effect=build), \
+             mock.patch.object(graph, "inventory_relief", return_value=None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": ["collect_drops", "drop_junk", "walk_to_drop"]}) as esc:
+            first = await agent._guard(self._state_with("collect_drops", slots_used=33))
+            second = await agent._guard(self._state_with("collect_drops", slots_used=33))
+        self.assertEqual(first["note"], "stall -> drop_junk")
+        self.assertEqual(second["note"], "plan step -> walk_to_drop")
+        esc.assert_called_once()                      # the second tick spent no model call
+        self.assertEqual(agent._stall_escalations, 1)
+        self.assertEqual(agent.log.records[-1]["reason"], "plan_ledger")
+        self.assertEqual(agent.system2_log.records[-1]["remaining"], ["walk_to_drop"])
+
+    async def test_a_ledger_step_that_no_longer_resolves_is_skipped(self) -> None:
+        agent = self._agent()
+        agent._stall_dropped = {"collect_drops": STALL_ESCALATE_REPEATS}
+        stuck = Action("collect_drops", "pick_up_items", {"radius": 16}, "sweep")
+        with mock.patch.object(graph, "candidates", return_value=["collect_drops"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: stuck if lbl == "collect_drops" else None), \
+             mock.patch.object(graph, "inventory_relief", return_value=None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": ["collect_drops", "craft_table"]}) as esc:
+            first = await agent._guard(self._state_with("collect_drops", slots_used=33))
+            second = await agent._guard(self._state_with("collect_drops", slots_used=33))
+        # `craft_table` cannot be built this tick, so the ledger offers nothing and the loop falls
+        # back to Laya's own action and pays for a real escalation. The step stays in the ledger:
+        # the plan is only dropped once every remaining step has been tried, and a step that is
+        # blocked now may resolve a tick later.
+        self.assertIs(first["action"], stuck)
+        self.assertEqual(esc.call_count, 2)
+        self.assertEqual(agent._stall_escalations, 2)
+        self.assertEqual(agent._plan_steps, ["craft_table"])
+
+    async def test_a_ledger_from_another_phase_is_dropped(self) -> None:
+        agent = self._agent()
+        agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS}
+        agent._plan_steps = ["mine_stone"]
+        agent._plan_iteration = 0
+        agent._plan_phase = "nether_rods"
+        action = Action("explore", "navigate", {}, "walk")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: action if lbl == "explore" else None), \
+             mock.patch.object(graph, "escalate_to_system2") as esc:
+            out = await agent._guard(self._state("explore"))
+        self.assertIs(out["action"], action)
+        esc.assert_called_once()
+        self.assertEqual(agent._plan_steps, [])
+
+    async def test_a_stale_ledger_expires(self) -> None:
+        agent = self._agent()
+        agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS}
+        agent._plan_steps = ["mine_stone"]
+        agent._plan_iteration = -PLAN_LEDGER_TICKS - 10
+        agent._plan_phase = perception.phase_brief(gs().as_state())[0]
+        action = Action("explore", "navigate", {}, "walk")
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: action if lbl == "explore" else None), \
+             mock.patch.object(graph, "escalate_to_system2") as esc:
+            out = await agent._guard(self._state("explore"))
+        self.assertIs(out["action"], action)
+        esc.assert_called_once()
+        self.assertEqual(agent._plan_steps, [])
 
     def _state_with(self, label: str, **kw):
         return {"before": gs(**kw), "decision": Decision(label), "iteration": 7}

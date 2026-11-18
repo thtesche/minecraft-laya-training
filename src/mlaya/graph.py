@@ -28,7 +28,7 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       _portal_lit_scan, end_complete, _pearl_wave_trip,
                       LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
 from .actions.predicates import portal_lighting_blockers
-from .brain import Brain, escalate_to_system2, trajectory_digest
+from .brain import Brain, escalate_to_system2, System2Dialogue, trajectory_digest
 from .mcp import _find
 from .memory import MemoryLog
 from .observer import Observer, make_llm_fn
@@ -54,6 +54,15 @@ STALL_ESCALATE_REPEATS = 2
 # pinning the run into a new loop. Reset when the forced action makes progress or the alternative
 # changes (`_run_observer`).
 OBSERVER_BETTER_REPEATS = 3
+
+# A System-2 plan is a sequence, but only its first step used to be run: of the 44 escalations in
+# the last twelve runs, 39 came back with two or more steps and the rest was discarded, so the next
+# impasse paid for a whole new 34k-token call. The ledger keeps the remaining steps and takes the
+# next one whenever the loop is stuck again - no model call, same `resolve()` and verifier as every
+# other action. It expires with the phase it was made for, or after this many ticks, whichever comes
+# first, so a plan from a different impasse cannot steer a later one.
+PLAN_LEDGER_MAX_STEPS = 6
+PLAN_LEDGER_TICKS = 12
 
 # A placed bed within this range of the bot means the bot is standing at a home base a previous
 # run (or a manual build) left behind: that bed's ground cell is re-adopted as `base`, so the run
@@ -561,6 +570,16 @@ class Agent:
     _better_forced_label: str | None = None
     _better_forced_n: int = 0
     observer: Any = None
+
+    # The run's System-2 conversation and the plan it last produced. Class defaults for the same
+    # reason as `_stall_dropped`: a stub agent built with `Agent.__new__` reads them in `_escalate`
+    # and `_ledger_action`, and None/[] is exactly "no escalation yet, nothing to run". The dialogue
+    # is created on the first escalation, so a run that never escalates never pays for it.
+    _system2: Any = None
+    _plan_steps: list[str] = []
+    _plan_iteration: int = 0
+    _plan_phase: str | None = None
+    _last_plan: dict | None = None
 
     def __init__(self, settings: Settings, executor):
         self.settings = settings
@@ -1996,9 +2015,19 @@ class Agent:
                     self.log.append({"stage": "policy", "reason": "stall_preselect",
                                      "stuck": decision.action_label, "via": relief.label})
                     return {"action": relief, "note": f"stall preselect -> {relief.label}"}
+                # A plan System 2 already paid for beats a second 34k-token call: run its next step
+                # before spending another escalation on the same impasse.
+                iteration = state.get("iteration", 0)
+                led = self._ledger_action(gs, frozenset({decision.action_label}) | set(gs.stuck_labels),
+                                         iteration)
+                if led is not None:
+                    self.log.append({"stage": "policy", "reason": "plan_ledger",
+                                     "iteration": iteration, "stuck": decision.action_label,
+                                     "via": led.label, "remaining": self._plan_steps})
+                    return {"action": led, "note": f"plan step -> {led.label}"}
                 self._stall_escalations += 1
                 alt, chosen, _ = self._escalate(
-                    gs, "stall_loop", decision.action_label, state.get("iteration", 0),
+                    gs, "stall_loop", decision.action_label, iteration,
                     exclude=frozenset({decision.action_label}) | set(gs.stuck_labels))
                 if alt is not None and chosen != decision.action_label:
                     return {"action": alt, "escalated": True, "note": f"stall -> {chosen}"}
@@ -2017,8 +2046,15 @@ class Agent:
         if decision.deferred:
             # In danger or nothing valid: the server-side survival policy owns this tick.
             return {"action": None, "deferred": True, "note": decision.note}
+        iteration = state.get("iteration", 0)
+        led = self._ledger_action(gs, frozenset({decision.action_label}), iteration)
+        if led is not None:
+            self.log.append({"stage": "policy", "reason": "plan_ledger",
+                             "iteration": iteration, "stuck": decision.action_label,
+                             "via": led.label, "remaining": self._plan_steps})
+            return {"action": led, "note": f"plan step -> {led.label}"}
         alt, chosen, _ = self._escalate(
-            gs, "unresolved_label", decision.action_label, state.get("iteration", 0))
+            gs, "unresolved_label", decision.action_label, iteration)
         if alt is not None:
             return {"action": alt, "escalated": True, "note": f"escalated -> {chosen}"}
         return {"action": resolve(FALLBACK_LABEL, gs), "escalated": True,
@@ -2114,6 +2150,53 @@ class Agent:
         if record.get("label") == self._better_forced_label and record.get("progressed"):
             self._better_forced_label, self._better_forced_n = None, 0
 
+    def _plan_outcome(self, iteration: int) -> dict | None:
+        """What the last System-2 plan actually did, appended to the next brief.
+
+        A model that proposed a plan has no idea whether it worked, so without this it re-offers the
+        step that already failed (run261 spent eight escalations on one impasse and resolved one).
+        Read from the decision log the loop already keeps, so it costs no extra call.
+        """
+        last = self._last_plan
+        if not last:
+            return None
+        steps = set(last["steps"])
+        ran = [{"label": r.get("label"), "status": r.get("status"),
+                "progressed": bool(r.get("progressed"))}
+               for r in self.history
+               if r.get("stage") == "action" and r.get("iteration", 0) > last["iteration"]
+               and r.get("label") in steps][-4:]
+        return {"iteration": last["iteration"], "goal": last["goal"], "steps": last["steps"],
+                "ran": ran, "resolved": last["resolved"]}
+
+    def _ledger_action(self, gs, exclude: frozenset, iteration: int) -> Any:
+        """The next step of a System-2 plan that still stands, or None.
+
+        Free: the model call was already paid for. A step is taken only when it still resolves to a
+        real action - the same `resolve()` guard every other label passes - and is not a label the
+        stall guards are already withholding. The plan dies with the phase it was made for, after
+        `PLAN_LEDGER_TICKS`, or once every remaining step has been tried, so a plan from one impasse
+        cannot steer a later one.
+        """
+        steps = self._plan_steps
+        if not steps:
+            return None
+        if iteration - self._plan_iteration > PLAN_LEDGER_TICKS:
+            self._plan_steps = []
+            return None
+        if perception.phase_brief(gs.as_state())[0] != self._plan_phase:
+            self._plan_steps = []
+            return None
+        for i, label in enumerate(steps):
+            if label in exclude:
+                continue
+            built = resolve(label, gs)
+            if built is not None:
+                self._plan_steps = steps[i + 1:]
+                return built
+        self._plan_steps = []
+        return None
+
     def _escalate(self, gs, trigger: str, unresolved_label: str | None,
                   iteration: int, exclude: frozenset = frozenset()) -> tuple[Any, str | None, dict | None]:
         """Ask System 2 for a way out, run the first proposed step that resolves, record the call.
@@ -2129,15 +2212,21 @@ class Agent:
         own fix led with `collect_drops`, the very label the stall had dropped) would otherwise be
         taken as `chosen`, spend an escalation, and run the loop for another tick. Skipping those
         steps keeps the first *different* step the model offered.
+
+        The steps after the chosen one are not discarded: they become the ledger the next stuck tick
+        reads before spending another escalation (`_ledger_action`), and the plan is appended to the
+        run's System-2 conversation, so the next call prefills only its own tail.
         """
         allowed = list(candidates(gs))
         trajectory = trajectory_digest(self.history)
         world = gs.as_state()
         still_offered = (unresolved_label in allowed) if unresolved_label else None
         failure = {"trigger": trigger, "label": unresolved_label, "still_offered": still_offered}
+        if self._system2 is None:
+            self._system2 = System2Dialogue(self.settings.llm, self.settings.api_key())
         plan = escalate_to_system2(
-            self.settings.llm, self.settings.api_key(), world, self.history,
-            failure, allowed, trajectory=trajectory,
+            self.settings.llm, self.settings.api_key(), world, failure, allowed,
+            trajectory=trajectory, dialogue=self._system2, outcome=self._plan_outcome(iteration),
         )
         steps = plan.get("plan") if isinstance(plan, dict) else None
         steps = steps if isinstance(steps, list) else []
@@ -2160,6 +2249,17 @@ class Agent:
                 if built is not None:
                     chosen, action = label, built
                     break
+        # What is left of the plan, in the order the model gave it, for the next stuck tick: the
+        # steps after the one just run, not the ones the guards had to skip on the way to it.
+        if chosen in steps:
+            self._plan_steps = steps[steps.index(chosen) + 1:][:PLAN_LEDGER_MAX_STEPS]
+        else:
+            self._plan_steps = steps[:PLAN_LEDGER_MAX_STEPS]
+        self._plan_iteration = iteration
+        self._plan_phase = perception.phase_brief(world)[0]
+        self._last_plan = {"iteration": iteration,
+                           "goal": plan.get("goal") if isinstance(plan, dict) else None,
+                           "steps": steps, "chosen": chosen, "resolved": chosen is not None}
         self.log.append({"stage": "escalation", "iteration": iteration, "trigger": trigger,
                          "label": unresolved_label, "plan": plan, "steps": steps,
                          "chosen": chosen})
@@ -2175,6 +2275,8 @@ class Agent:
             "steps": steps,
             "chosen": chosen,
             "resolved": chosen is not None,
+            "remaining": self._plan_steps,
+            "telemetry": plan.get("telemetry") if isinstance(plan, dict) else None,
         })
         return action, chosen, plan
 

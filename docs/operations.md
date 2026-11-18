@@ -158,6 +158,37 @@ shows cache `hit_rate` (the payoff of the append-only story), latency split by r
 ticks, agreement/disagreement with the tick's real outcome, risks and stalls (`stalls.borne_out`
 counts flags whose tick did *not* progress), and how often gear was actually shown.
 
+## System 2 escalation
+
+System 2 is asked only where System 1 runs out: a label the tech tree offered that `resolve` could
+not turn into a concrete action, or a label a stall guard has had to withhold
+`STALL_ESCALATE_REPEATS = 2` times. It answers with an **ordered list of labels** from the same
+108-label catalogue System 1 uses — it has no MCP access of its own and never calls a tool; the
+loop runs each proposed step through `resolve()` and the verifier like any other action.
+
+Two things changed the cost and the reach of that call:
+
+- **The brief is a conversation, not a request.** Measured on run261 it166 against the live Strata
+  slot, the old one-shot brief was **34,460 prompt tokens, 95.7 s cold prefill, 0 cached**: eight raw
+  decision records (`recent_history`) were ~25,500 of those tokens, and a fresh two-message
+  conversation diverges at token 0, so the slot's prefix cache could never be used. Now the role,
+  the phase spine, the death traps, the action catalogue and the schema sit in a **byte-stable
+  system spine**, and each escalation appends its own tail (phase, `failure`, `situation`,
+  `trajectory`, `ready`, state) plus `previous_plan` — what the last plan actually did. Same three
+  escalations of run261 replayed through `System2Dialogue`: **8,594 tokens / 24.9 s** on the first,
+  **13,413 tokens with 8,589 cached / 13.9 s** on the second, **18,237 with 13,408 cached / 14.3 s**
+  on the third. The report prints `median_prefill_ms`, `cache_hit_ratio` and `ledger_steps`.
+- **The plan is not thrown away.** Of the 44 escalations in the last twelve runs, 39 came back with
+  two or more steps and only the first was ever run. The remaining steps ride in a ledger
+  (`PLAN_LEDGER_MAX_STEPS = 6`, `PLAN_LEDGER_TICKS = 12`) and are taken, in order, whenever the loop
+  is stuck again — no model call, same `resolve()` guard as every other action. The ledger dies with
+  the phase it was made for, after the TTL, or once every remaining step has been tried. A step the
+  action layer cannot build this tick stays in the ledger and is retried later.
+
+Budget: `loop.max_escalations = 3` stall escalations per run; the ledger does not count against it.
+`runs/history/system2-runNN.jsonl` carries the brief, the plan, the chosen label, the remaining
+steps and the call's telemetry.
+
 ## A fix
 
 - **Every fix comes with tests**, written from the live state that showed the defect (the cell,

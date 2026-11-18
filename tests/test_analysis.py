@@ -329,6 +329,25 @@ class TestSystem2(unittest.TestCase):
     def test_a_run_that_never_escalates_reports_zero(self):
         self.assertEqual(analysis.summarize(MOVING)["system2"]["calls"], 0)
 
+    def test_the_cache_cost_and_the_plan_ledger_are_measured(self):
+        # The escalation conversation is append-only, so a call that prefills its whole prompt cold
+        # is the old shape; a later step of a plan already paid for costs no call at all.
+        report = analysis.summarize([
+            {"ts": 1005, "stage": "escalation", "iteration": 5, "label": "mine_diamond",
+             "plan": {"plan": ["drop_junk", "walk_to_drop"], "goal": "shed the pack"},
+             "chosen": "drop_junk",
+             "telemetry": {"prompt_tokens": 8600, "cached_tokens": 0, "prefill_ms": 24900}},
+            action(5, "drop_junk", status="succeeded", pos=1.0, progressed=True, escalated=True),
+            {"ts": 1006, "stage": "policy", "reason": "plan_ledger", "iteration": 6,
+             "stuck": "mine_diamond", "via": "walk_to_drop", "remaining": []},
+            action(6, "walk_to_drop", status="succeeded", pos=4.0, progressed=True),
+        ])
+        s2 = report["system2"]
+        self.assertEqual(s2["median_prefill_ms"], 24900)
+        self.assertEqual(s2["cache_hit_ratio"], 0.0)
+        self.assertEqual(s2["ledger_steps"], 1)
+        self.assertIn("plan step for free", analysis.to_markdown(report))
+
     def test_markdown_names_the_escalations(self):
         text = analysis.to_markdown(self.report)
         self.assertIn("System 2 escalations (2)", text)

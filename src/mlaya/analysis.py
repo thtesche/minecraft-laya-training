@@ -413,6 +413,16 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None,
         seen_unresolved.add(lbl)
     esc_by_trigger = Counter(str(e.get("trigger") or "unresolved_label") for e in escalations)
 
+    # What the calls cost. The dialogue is append-only, so a call whose `cached_tokens` is far below
+    # `prompt_tokens` means the prefix diverged - the old shape, where every escalation rebuilt the
+    # brief from scratch, prefilled all 34k tokens cold every time. `ledger_steps` counts the ticks
+    # that ran a later step of a plan already paid for instead of calling the model again.
+    esc_tel = [e.get("telemetry") for e in escalations if isinstance(e.get("telemetry"), dict)]
+    esc_prefills = sorted(t.get("prefill_ms") or 0 for t in esc_tel)
+    esc_cache_hits = [(t.get("cached_tokens") or 0) / (t.get("prompt_tokens") or 1) for t in esc_tel]
+    ledger_steps = sum(1 for r in records
+                       if r.get("stage") == "policy" and r.get("reason") == "plan_ledger")
+
     waste = sorted(
         (r for r in actions if not r.get("progressed")),
         key=lambda r: tuple(-refusals.get(c, 0) for c in CODE_RE.findall(str(r.get("text") or ""))),
@@ -467,6 +477,10 @@ def summarize(records: list[dict[str, Any]], run_log: Path | None = None,
             "fallbacks": sum(1 for e in escalations if not e.get("chosen")),
             "errors": esc_errors,
             "error_rate": round(esc_errors / esc_calls, 3) if esc_calls else None,
+            "median_prefill_ms": esc_prefills[len(esc_prefills) // 2] if esc_prefills else None,
+            "cache_hit_ratio": round(sum(esc_cache_hits) / len(esc_cache_hits), 3)
+                               if esc_cache_hits else None,
+            "ledger_steps": ledger_steps,
             "by_trigger": [{"kind": kind, "count": count}
                            for kind, count in esc_by_trigger.most_common()],
             "triggers": [{"label": label, "count": count}
@@ -760,6 +774,10 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
                      f"errors {s2['errors']} · {s2['fallbacks']} fell back to the default")
         lines.append(f"- {s2['ticks']} ticks ran on an escalated action, progress rate "
                      f"{s2['progress_rate']}")
+        if s2.get("median_prefill_ms") is not None:
+            lines.append(f"- median prompt prefill {s2['median_prefill_ms']} ms, "
+                         f"{s2['cache_hit_ratio']} of the prompt served from cache; "
+                         f"{s2['ledger_steps']} ticks ran a later plan step for free")
         if s2.get("by_trigger"):
             kinds = ", ".join(f"{t['kind']} {t['count']}" for t in s2["by_trigger"])
             lines.append(f"- by trigger: {kinds}")
