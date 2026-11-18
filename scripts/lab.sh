@@ -500,9 +500,11 @@ cmd_up() {
     log "previous System-2 log archived to runs/history/system2-run$((run_no - 1)).jsonl"
   fi
   # The observer's side-file rides along the same way, so a run's parallel narration archives with
-  # its decision log (`mlaya.analysis` can join the two by iteration). Only with --observe, which is
-  # opt-in: the sidecar reads the live log and talks to Strata, so it is not on by default.
-  if [[ ( $observe == 1 || $use_better == 1 ) && -f "$REPO/runs/observer.jsonl" ]]; then
+  # its decision log (`mlaya.analysis` can join the two by iteration). Archived whether or not the
+  # observer ran: the sidecar is opt-in, so without this the previous run's verdicts stay in the
+  # live path and status and the report read them as the current run's (live, run263: status showed
+  # run262's 86 judgments while the loop was at iteration 5).
+  if [[ -f "$REPO/runs/observer.jsonl" ]]; then
     mv "$REPO/runs/observer.jsonl" "$REPO/runs/history/observer-run$((run_no - 1)).jsonl"
     log "previous observer log archived to runs/history/observer-run$((run_no - 1)).jsonl"
   fi
