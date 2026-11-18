@@ -840,9 +840,9 @@ _PHASE_ROWS = {
                     "mine and craft a full diamond kit: diamond pickaxe and sword to hand, "
                     "diamond armour worn on all four slots."),
     "prepare_nether": (PHASE_PREP,
-                       "before crossing, finish the Nether kit: shield, a bow with arrows, a "
+                       "before crossing, finish the Nether kit: shield, a "
                        "cooked-food reserve, a bed, a chest standing at the base, and a lit "
-                       "Overworld portal."),
+                       "Nether portal."),
     "nether_rods": (PHASE_NETHER,
                     "hunt blazes at the fortress for blaze rods, turn them into powder and bank "
                     "that powder in the chest at the gate, then leave the Nether with the haul."),
