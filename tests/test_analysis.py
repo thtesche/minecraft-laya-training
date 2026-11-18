@@ -574,6 +574,26 @@ class TestObserverJoin(unittest.TestCase):
         self.assertEqual(g["shown"], 4)
         self.assertEqual(g["ratio"], 1.0)
 
+    def test_overrides_pulled_are_counted_apart_from_verdicts(self):
+        # A verdict that only names a better label changes nothing; the tick that ran it carries
+        # `observer_forced`. The `observer_better` policy line has no outcome of its own, so
+        # counting it alone reads as "0 pulled, 0 progressed" (live, run268: 10 pulled, 10
+        # progressed).
+        records = [action(1, "mine_obsidian", status="succeeded"),
+                   action(2, "craft_shield", status="succeeded")]
+        records[1]["observer_forced"] = "craft_shield"
+        obs = [verdict(1, "mine_obsidian", agree=False, note="Mine obsidian"),
+               verdict(2, "craft_shield", agree=False, note="Shield first")]
+        ovr = analysis.join_observer(records, obs)["overrides"]
+        self.assertEqual(ovr["pulled"], 1)
+        self.assertEqual(ovr["progressed"], 1)
+        self.assertEqual(ovr["labels"], ["craft_shield"])
+
+    def test_an_observer_that_never_steers_is_named_as_such(self):
+        report = analysis.summarize(MOVING, None, [verdict(0, "get_wood")])
+        self.assertEqual(report["observer"]["overrides"]["pulled"], 0)
+        self.assertIn("never steered", analysis.to_markdown(report))
+
     def test_the_section_reaches_the_markdown(self):
         obs = [verdict(0, "get_wood", cached=0, prompt=1000),
                verdict(1, "hunt_food", agree=False, risk="side quest",

@@ -631,9 +631,21 @@ def join_observer(records: list[dict[str, Any]],
 
     gear_shown = sum(1 for v in verdicts if v.get("gear"))
 
+    # Overrides the observer actually pulled. A verdict that only names a `better` label changes
+    # nothing; the tick that ran it carries `observer_forced` in the decision log. Counting the
+    # pulled ones apart from the narrated ones is what separates an observer that steers from one
+    # that watches (live, run268: 10 pulled, all 10 progressed - a raw `observer_better` policy
+    # line alone reads as "0 progressed" because it carries no outcome).
+    forced = [r for r in records if r.get("stage") == "action" and r.get("observer_forced")]
+
     return {
         "judgments": len(verdicts),
         "reasoned": sum(1 for v in verdicts if v.get("reasoned")),
+        "overrides": {
+            "pulled": len(forced),
+            "progressed": sum(1 for r in forced if r.get("progressed")),
+            "labels": sorted({str(r.get("label")) for r in forced}),
+        },
         "cache": {
             "hit_rate": round(cached_total / prompt_total, 3) if prompt_total else None,
             "cached_tokens": cached_total,
@@ -808,6 +820,12 @@ def to_markdown(report: dict[str, Any], diff: dict[str, Any] | None = None) -> s
         lines.append(f"- gear visibility: {gear.get('shown')}/{gear.get('total')} judgments saw "
                      f"the worn/held gear ({gratio:.0%})"
                      if gratio is not None else "- gear visibility: not logged")
+        ovr = obs.get("overrides") or {}
+        if ovr.get("pulled"):
+            lines.append(f"- overrides pulled: {ovr['pulled']} ({ovr['progressed']} progressed) "
+                         f"on {', '.join(ovr['labels'])}")
+        elif obs.get("judgments"):
+            lines.append("- overrides pulled: 0 - the observer narrated but never steered")
         stalls = obs.get("stalls") or {}
         if stalls.get("flagged"):
             lines.append(f"- loops/stalls flagged: {stalls['flagged']} "
