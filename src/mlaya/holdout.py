@@ -42,8 +42,19 @@ SAMPLE_SEED = 20261117
 
 # --------------------------------------------------------------------------- registry
 
-def load_registry(path: Path = REGISTRY_PATH) -> list[dict]:
+def registry_path(path: Path | None = None) -> Path:
+    """Where the registry lives, resolved when called, not when imported.
+
+    A default argument is bound at import time, so `path: Path = REGISTRY_PATH` would keep
+    reading the shipped file even after a caller or a test repoints `REGISTRY_PATH` - the
+    dataset guard would then wave through a run the registry says is held out.
+    """
+    return REGISTRY_PATH if path is None else Path(path)
+
+
+def load_registry(path: Path | None = None) -> list[dict]:
     """The registered hold-out runs, oldest first."""
+    path = registry_path(path)
     if not path.exists():
         return []
     try:
@@ -54,7 +65,8 @@ def load_registry(path: Path = REGISTRY_PATH) -> list[dict]:
     return [r for r in (runs or []) if isinstance(r, dict) and r.get("run") is not None]
 
 
-def save_registry(runs: list[dict], path: Path = REGISTRY_PATH) -> None:
+def save_registry(runs: list[dict], path: Path | None = None) -> None:
+    path = registry_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"runs": sorted(runs, key=lambda r: r["run"])}, indent=2) + "\n")
 
@@ -77,7 +89,7 @@ def run_of_log(log: Path) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def add_run(run: int, log: Path | None = None, note: str = "", path: Path = REGISTRY_PATH) -> dict:
+def add_run(run: int, log: Path | None = None, note: str = "", path: Path | None = None) -> dict:
     """Register one run as hold-out. Idempotent: re-adding updates the note and the log path."""
     log = log or run_log(run)
     runs = load_registry(path)
@@ -130,7 +142,12 @@ def overlap(train_rows: Iterable[dict], eval_rows: Iterable[dict]) -> int:
     return sum(1 for r in eval_rows if _row_sig(r) in seen)
 
 
-def build_eval(out: Path = DEFAULT_EVAL, runs: list[dict] | None = None,
+def eval_path(path: Path | None = None) -> Path:
+    """Where the hold-out eval JSONL is written, resolved when called (see `registry_path`)."""
+    return DEFAULT_EVAL if path is None else Path(path)
+
+
+def build_eval(out: Path | None = None, runs: list[dict] | None = None,
                train: Iterable[Path] | None = None, per_run: int = 0,
                seed: int = SAMPLE_SEED) -> dict:
     """Write one eval JSONL from every registered hold-out run.
@@ -175,7 +192,7 @@ def build_eval(out: Path = DEFAULT_EVAL, runs: list[dict] | None = None,
             x["run"] = r["run"]
         rows.extend(fresh)
 
-    out = Path(out)
+    out = eval_path(out)
     ds.write_jsonl(out, rows)
     return {
         "runs": used_runs,
@@ -201,7 +218,7 @@ def _load_and_score(checkpoint: str | Path) -> tuple[dict, list[bool], list[int 
                             calibration_records, evaluate_records, resolve_device,
                             uses_parallel_layout)
 
-    rows = read_data(str(DEFAULT_EVAL))
+    rows = read_data(str(eval_path()))
     model, tok, cfg = load_checkpoint(str(checkpoint))
     dev = resolve_device("auto")
     model.to(dev)

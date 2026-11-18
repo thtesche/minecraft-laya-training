@@ -184,6 +184,20 @@ class EvalBuildTest(unittest.TestCase):
             rows = ds._read_records(Path(d) / "eval.jsonl")
             self.assertEqual([r["run"] for r in rows], [257])
 
+    def test_the_default_eval_path_is_read_when_called(self):
+        """`DEFAULT_EVAL` is looked up at call time, so repointing it moves the eval file."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            log = _write(d, [_rec("safe state one", ["mine_stone", "get_wood"], "mine_stone")])
+            old = ho.DEFAULT_EVAL
+            ho.DEFAULT_EVAL = d / "holdout-eval.jsonl"
+            try:
+                res = ho.build_eval(runs=[{"run": 257, "log": str(log)}])
+            finally:
+                ho.DEFAULT_EVAL = old
+            self.assertEqual(res["eval_path"], str(d / "holdout-eval.jsonl"))
+            self.assertTrue((d / "holdout-eval.jsonl").exists())
+
 
 class DatasetGuardTest(unittest.TestCase):
     """`mlaya dataset` refuses a run the registry says is held out."""
