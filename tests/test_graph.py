@@ -696,6 +696,40 @@ class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
         esc.assert_called_once()
         self.assertEqual(agent._plan_steps, [])
 
+    async def test_the_next_call_is_told_what_the_last_plan_did(self) -> None:
+        """A plan with no feedback re-offers the step that already failed.
+
+        run261 spent eight escalations on one impasse and resolved one: the model never learned that
+        its own previous plan ran and did not work. The loop reads the outcome out of the decision
+        log it already keeps and appends it to the next brief.
+        """
+        agent = self._agent()
+        agent._stall_dropped = {"collect_drops": STALL_ESCALATE_REPEATS}
+        stuck = Action("collect_drops", "pick_up_items", {"radius": 16}, "sweep")
+        shed = Action("drop_junk", "drop_item", {"items": []}, "shed")
+        seen: list[dict | None] = []
+
+        def ask(cfg, key, state, failure, allowed, trajectory=None, dialogue=None, outcome=None):
+            seen.append(outcome)
+            return {"plan": ["collect_drops", "drop_junk"], "goal": "shed the pack"}
+
+        with mock.patch.object(graph, "candidates", return_value=["collect_drops"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: stuck if lbl == "collect_drops"
+                               else shed if lbl == "drop_junk" else None), \
+             mock.patch.object(graph, "inventory_relief", return_value=None), \
+             mock.patch.object(graph, "escalate_to_system2", side_effect=ask):
+            await agent._guard(self._state_with("collect_drops", slots_used=33))
+            agent.history.append({"stage": "action", "iteration": 8, "label": "drop_junk",
+                                  "status": "failed", "progressed": False})
+            await agent._guard(self._state_with("collect_drops", slots_used=33))
+
+        self.assertIsNone(seen[0])                                   # nothing to report yet
+        self.assertEqual(seen[1]["steps"], ["collect_drops", "drop_junk"])
+        self.assertEqual(seen[1]["ran"], [{"label": "drop_junk", "status": "failed",
+                                          "progressed": False}])
+        self.assertTrue(seen[1]["resolved"])
+
     def _state_with(self, label: str, **kw):
         return {"before": gs(**kw), "decision": Decision(label), "iteration": 7}
 

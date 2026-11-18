@@ -2150,7 +2150,7 @@ class Agent:
         if record.get("label") == self._better_forced_label and record.get("progressed"):
             self._better_forced_label, self._better_forced_n = None, 0
 
-    def _plan_outcome(self, iteration: int) -> dict | None:
+    def _plan_outcome(self) -> dict | None:
         """What the last System-2 plan actually did, appended to the next brief.
 
         A model that proposed a plan has no idea whether it worked, so without this it re-offers the
@@ -2226,7 +2226,7 @@ class Agent:
             self._system2 = System2Dialogue(self.settings.llm, self.settings.api_key())
         plan = escalate_to_system2(
             self.settings.llm, self.settings.api_key(), world, failure, allowed,
-            trajectory=trajectory, dialogue=self._system2, outcome=self._plan_outcome(iteration),
+            trajectory=trajectory, dialogue=self._system2, outcome=self._plan_outcome(),
         )
         steps = plan.get("plan") if isinstance(plan, dict) else None
         steps = steps if isinstance(steps, list) else []
