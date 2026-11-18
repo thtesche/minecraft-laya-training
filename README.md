@@ -104,10 +104,17 @@ The lab is the everyday entry point — it starts the Docker world, the MCP host
 
 ```bash
 ./scripts/lab.sh up --n 1000 --fresh    # fresh world + ledger, then a run
+./scripts/lab.sh up --no-run            # world + MCP host + viewer, no mlaya loop
+./scripts/lab.sh up --fresh --no-run    # clean world, host ready for an MCP client
 ./scripts/lab.sh status                 # world, host, run, last tick as JSON
 ./scripts/lab.sh report 187             # the finished run's report
 ./scripts/lab.sh down                   # stop run, host, world
 ```
+
+`--no-run` stops after the probe: the Docker world is up on `127.0.0.1:25565`, the host on
+`127.0.0.1:25575` with a connected bot, the viewer on `http://localhost:3006` — but no decision
+loop, watchdog, report watcher or observer sidecar is started, so an MCP client can drive the bot
+directly. Add `--no-viewer` to leave the live view out.
 
 The bare CLI, for probing and single decisions against a host that is already up:
 

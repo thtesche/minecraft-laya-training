@@ -39,7 +39,9 @@ head is trained. Run-by-run findings live in [`architecture.md`](architecture.md
 One command: `./scripts/lab.sh up [--n 1000] [--fresh] [--ignore-goal] [--no-viewer]
 [--iron-armor] [--observe | --use-observer-better]`. `--iron-armor` opts into the pre-diamond iron
 armour set (default: skip it); `--observe` and `--use-observer-better` are the two mutually exclusive
-observer modes (see below). The other verbs: `status` (JSON: world, viewer, host, run, observer,
+observer modes (see below). `--no-run` stops after the probe - world, host and viewer up, no loop,
+watchdog, report watcher or observer - which is how the lab is brought up for an MCP client to drive
+the bot by hand. The other verbs: `status` (JSON: world, viewer, host, run, observer,
 last tick, anomalies), `report [run]`,
 `analyze [--baseline runs/history/…]`, `dataset [flags]`, `viewer [up|down|status]`,
 `console "op LayaView"`, `down [--run-only]`.
