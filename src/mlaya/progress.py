@@ -32,7 +32,7 @@ from . import perception
 from .actions import (BLAZE_POWDER_ITEM, END_PORTAL_SOCKETS, ENDER_EYE_ITEM, EYE_THROW_BUFFER,
                       _all_nether_prep_steps, _bed_at_base, _frame_complete_at_base,
                       _frame_short_at_base, _food_reserve_met, _gear_ready,
-                      _nether_bank_carried, _overworld, _portal_lit_scan)
+                      _nether_bank_carried, _nether_idle, _overworld, _portal_lit_scan)
 
 # How close to the gate a chest has to stand to count as *the base's* chest when the run has not
 # adopted a base yet. The loop's own network radius is 4; a gate chest sits at base+(0,1,1), so
@@ -245,8 +245,12 @@ def progress_of(gs, durable: DurableFacts | None = None) -> Progress:
 
     # --- The kit and the prep: only the pack can answer these, and it answers every tick. ---
     mark("kit_worn", _gear_ready(gs), "scan")
-    mark("prep_done", not _all_nether_prep_steps(gs) and _nether_bank_carried(gs)
-                     and _food_reserve_met(gs), "scan")
+    # `_all_nether_prep_steps` is empty both after every prep step is banked and before the prep
+    # window opens at all (`_nether_idle` keys on the kit being done and the frame standing), so an
+    # empty list alone reads as "prep done" on a fresh world (live, run269 it0: no frame, no chest,
+    # no bowl, `prep_done` already True). The window is the same guard `_expedition_prepared` uses.
+    mark("prep_done", _nether_idle(gs) and not _all_nether_prep_steps(gs)
+                     and _nether_bank_carried(gs) and _food_reserve_met(gs), "scan")
 
     # --- The powder bank. The durable read of it is the container ledger `_note_stocked_chest`
     #     runs, which lands in the latch; a pack of powder in the Overworld is the live read. ---

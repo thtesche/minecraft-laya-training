@@ -179,6 +179,26 @@ class PrecedenceTest(unittest.TestCase):
         self.assertTrue(p.frame_complete)
         self.assertEqual(p.source["frame_complete"], "ledger")
 
+    def test_prep_is_not_done_before_the_prep_window_opens(self) -> None:
+        # `_all_nether_prep_steps` is empty both after every step is banked and before the lull
+        # opens at all, so on a fresh world the empty list read as "prep done" at it0 (live,
+        # run269: no frame, no chest, no bowl, `prep_done` already True). The frame and the kit
+        # are what make an empty step list mean "done".
+        fresh = perception.GameState(base=(0, 70, 0))
+        self.assertFalse(progress.progress_of(fresh, progress.DurableFacts()).prep_done)
+
+        geared = perception.GameState(base=(0, 70, 0),
+                                      tools={"pickaxe": "diamond", "sword": "diamond"},
+                                      inventory={"crafting_table": 1})
+        geared.armor = {slot: {"item": f"diamond_{slot}"}
+                       for slot in ("helmet", "chestplate", "leggings", "boots")}
+        geared.offhand = "shield"
+        geared.frame_names = {cell: "obsidian"
+                              for cell in perception.frame_obsidian_cells((0, 70, 0))}
+        p = progress.progress_of(geared, progress.DurableFacts())
+        self.assertTrue(p.prep_done)
+        self.assertEqual(p.source["prep_done"], "scan")
+
     def test_powder_in_the_pack_is_a_scan_and_a_latch_is_a_latch(self) -> None:
         carried = perception.GameState(dimension="minecraft:overworld",
                                        inventory={"blaze_powder": 4})
