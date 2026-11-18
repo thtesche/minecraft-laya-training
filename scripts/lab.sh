@@ -519,6 +519,16 @@ cmd_up() {
   run_pid=$!
   echo "$run_pid" > "$STATE/run.pid"
   echo "$run_no" > "$STATE/run_number"
+  # Remember which observer mode this run uses so `status` can report `observer.running` honestly:
+  # --use-observer-better runs the observer *inside* the loop process (no observe.pid), --observe
+  # starts the sidecar below. Without this marker, status only checks observe.pid and tells a run
+  # with the in-loop observer that none is running. No file = observer off.
+  rm -f "$STATE/observer_mode"
+  if [[ $use_better == 1 ]]; then
+    echo "inloop" > "$STATE/observer_mode"
+  elif [[ $observe == 1 ]]; then
+    echo "sidecar" > "$STATE/observer_mode"
+  fi
   touch "$STATE/lock"
   # The parallel observer, opt-in: a read-only sidecar that follows the live decision log and
   # narrates/judges the run alongside Laya, writing runs/observer.jsonl. It touches neither the bot
@@ -616,9 +626,14 @@ if len(actions) >= 6:
 
 run_no = (state / "run_number").read_text().strip() if (state / "run_number").exists() else ""
 
-# The parallel observer (opt-in --observe): running flag, how many verdicts it has written, and its
-# last call so status shows whether the sidecar is keeping up and what it last judged.
-observer = {"running": pid_alive(state / "observe.pid")}
+# The observer: "sidecar" (opt-in --observe, its own PID file), "inloop" (--use-observer-better,
+# running inside the loop process) or off. `running` must be true for either live mode: checking
+# only observe.pid reported "running: false" throughout run265/267 although the in-loop observer
+# was writing verdicts every tick. The in-loop mode lives exactly as long as the run process.
+observer_mode = (state / "observer_mode").read_text().strip() if (state / "observer_mode").exists() else None
+observer_pid = pid_alive(state / "observe.pid")
+observer_inloop = observer_mode == "inloop" and pid_alive(state / "run.pid")
+observer = {"running": observer_pid or observer_inloop, "mode": observer_mode}
 obs_log = repo / "runs" / "observer.jsonl"
 if obs_log.exists():
     obs_rows = [r for r in (json.loads(l) for l in obs_log.read_text().splitlines() if l.strip())]
@@ -718,7 +733,7 @@ cmd_down() {
     kill "$(cat "$STATE/run.pid")" 2>/dev/null
     kill "$(cat "$STATE/watchdog.pid")" 2>/dev/null
     stop_observer
-    rm -f "$STATE/run.pid" "$STATE/report.pid" "$STATE/watchdog.pid" "$STATE/lock"
+    rm -f "$STATE/run.pid" "$STATE/report.pid" "$STATE/watchdog.pid" "$STATE/observer_mode" "$STATE/lock"
     log "run stopped"
   fi
   if [[ ${1:-} != --run-only ]]; then
