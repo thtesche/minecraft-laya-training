@@ -7767,6 +7767,22 @@ class RunObserverIngestTest(unittest.IsolatedAsyncioTestCase):
                                             candidates=["gather_mushrooms", "gather_scaffold"]))
         self.assertIsNone(agent._pending_better)
 
+    async def test_a_still_offered_pending_survives_a_gap_tick(self) -> None:
+        # The lagging verdict is one-shot: a gap tick that re-proposes nothing (here an unofferable
+        # `better`) must not wipe a pending label that is still on the menu, or an override only ever
+        # wanted on a fraction of the ticks could never latch (live, run261: craft_flint_and_steel).
+        agent = self._agent({"agree": False, "better": "mine_diamond"})  # not in the candidates
+        agent._pending_better = "gather_scaffold"
+        await agent._run_observer(self._rec())  # candidates still hold gather_scaffold
+        self.assertEqual(agent._pending_better, "gather_scaffold")
+
+    async def test_a_pending_no_longer_offered_is_cleared(self) -> None:
+        # Once the kept label leaves the candidate menu there is nothing to force, so the slot drops.
+        agent = self._agent({"agree": False, "better": "mine_diamond"})
+        agent._pending_better = "gather_scaffold"
+        await agent._run_observer(self._rec(candidates=["gather_mushrooms", "mine_coal"]))
+        self.assertIsNone(agent._pending_better)
+
 
 class AgentStateChannelsTest(unittest.TestCase):
     """`observer_forced` must be a declared channel, or the graph drops `_guard`'s value before the

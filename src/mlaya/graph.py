@@ -2077,10 +2077,18 @@ class Agent:
         Off (`observer is None`, the default) this is a no-op. The observer's LLM call is blocking,
         so it runs in a worker thread to keep the loop's event loop free. A disagreement becomes a
         pending override only when its `better` is one of this tick's candidates and differs from
-        Laya's label (the same guard the teacher's --from-observer path uses); anything else clears
-        the pending slot, so a single agree ends an override at once. A forced alternative that just
-        made progress clears its cooldown, so the repeat cap never cuts off an override that is
-        actually breaking the loop.
+        Laya's label (the same guard the teacher's --from-observer path uses).
+
+        A staged `better` is then kept alive across intervening ticks for as long as it is still on
+        the menu: the verdict lands from the worker thread several ticks late (avg ~8s, up to
+        minutes), and the slot is one-shot, so a single gap tick that did not re-propose the label
+        used to wipe it before `_decide` could consume it - live, run261: `craft_flint_and_steel`
+        was wanted on 18 ticks and forced on none, because it was only intermittently offered and
+        every gap tick cleared the slot. What still ends an override at once: an agree (no quarrel
+        left), a defer (a danger tick the survival policy owns), or the label leaving the candidates.
+        The repeat cap (`OBSERVER_BETTER_REPEATS`) bounds how often it is actually run, and a forced
+        alternative that just made progress clears its cooldown, so the cap never cuts off an
+        override that is actually breaking the loop.
         """
         if self.observer is None:
             return
@@ -2096,6 +2104,11 @@ class Agent:
         if (record.get("stage") == "action" and agree is False and isinstance(better, str)
                 and better in candidates_n and better != laya_label):
             self._pending_better = better
+        elif (record.get("stage") == "action" and agree is not True
+              and self._pending_better is not None and self._pending_better in candidates_n):
+            # Keep the one-shot slot alive across a gap tick while the label is still offered (see
+            # the docstring): the lagging verdict would otherwise be wiped before it could be run.
+            pass
         else:
             self._pending_better = None
         if record.get("label") == self._better_forced_label and record.get("progressed"):
