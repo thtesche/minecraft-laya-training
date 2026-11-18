@@ -287,15 +287,22 @@ NETHER_RETURN_FOOD = 8.0
 # hostile_reflex` - the bot stood at 108 m from its own portal and was shot at, and the budget
 # was spent on being shot at.
 #
-# 700, because the old world measured the cost: its nearest fortress stood 580 m straight from
-# the gate at (33,34) to (-300,513), and 400 stopped a hunt that had walked the whole way there
-# and was still owed the last 180 - `nether_travel` only counts metres covered, and hostile
-# avoidance, lava detours and reflex retreats make the walked line longer than the straight one
-# anyway. A fortress per region is the vanilla promise, so a few hundred metres is the ordinary
-# price and the long cases are not rare. The budget is a floor, not a leash: a fortress loaded
-# into scan suspends the judgement, and the health and food gates end a trip that fights badly
-# long before this number matters.
-NETHER_SEARCH_M = 700.0
+# 1200, up from 700. The old number measured the cost in the world it was written for: its nearest
+# fortress stood 580 m straight from the gate at (33,34) to (-300,513), and 400 stopped a hunt that
+# had walked the whole way there and was still owed the last 180 - `nether_travel` only counts
+# metres covered, and hostile avoidance, lava detours and reflex retreats make the walked line
+# longer than the straight one anyway. A fortress per region is the vanilla promise, so a few
+# hundred metres is the ordinary price and the long cases are not rare. The budget is a floor, not
+# a leash: a fortress loaded into scan suspends the judgement, and the health and food gates end a
+# trip that fights badly long before this number matters.
+#
+# It is 1200 now for the same reason the pearl budget moved to 1500: a hunt that used to spend its
+# metres bouncing on one ledge now covers real ground (see `_retreat_heading` and `BOXED_CLOSEST_M`),
+# so the detour around a lava sea costs what it actually costs instead of reading as a stall. In the
+# current world the rod trips found their fortress within 186-235 m of the gate (run260 it91-110,
+# run253 it93, run256 it206), so the extra room is only ever spent where the fortress genuinely is
+# not in reach - and the tick backstop (`NETHER_HOPELESS_TICKS`) still ends a trip that walks nothing.
+NETHER_SEARCH_M = 1200.0
 NETHER_HOPELESS_TICKS = 120
 # How many blocks short of the exit portal the way-home walk aims. `navigate` refuses a target
 # that is an active portal cell outright (`[NAVIGATION_PORTAL_INTENT_REQUIRED] Use
