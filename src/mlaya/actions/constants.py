@@ -773,10 +773,19 @@ BARTER_PIGLIN_RANGE = 32
 # recorded warped forest sits 76-350 m out (run168: 192 warped chunks mapped, the bot stood in one
 # on 2 of ~120 Nether ticks). Every one of those trips turned home within sight of the treeline:
 # run168 it161 stood 5.5 m from a warped chunk with an enderman 28 m off and the only offer was
-# `collect_drops`, because travel had already passed 528 m. 900 m covers a round of the mapped
-# forests and still ends the trip on `PEARL_MARCH_STALL_LIMIT` if no route opens; the way home is
-# proven (five crossings in run168), so the longer leash no longer strands the wave.
-NETHER_PEARL_SEARCH_M = 900.0
+# `collect_drops`, because travel had already passed 528 m.
+#
+# 1500 m, up from 900, because the trips that spent the old budget never got near a forest. The
+# budget counts *walked* metres and a Nether path is never straight, so what 900 m bought was about
+# half that as the crow flies: run260 it148 closed the roam at 898 m of ground covered with the
+# body 495 m from its own gate, run256 it239 turned home at 475 m out, run239 it150 at 373 m - and
+# in run260 no warped forest ever loaded into the scan at all, so the search ended having never
+# seen the thing it was for. Doubling the metres doubles the strip of world sampled. The wave is
+# still bounded twice over: `PEARL_MARCH_STALL_LIMIT` ends a trip whose routes never open, and
+# `NETHER_GATE_LEASH_M` (400 m) turns a wave that already carries pearls or rods back to the gate
+# long before this number is reached - the extra ground is only ever spent with an empty pack,
+# where nothing is at risk.
+NETHER_PEARL_SEARCH_M = 1500.0
 # Marches in a row that brought the body nowhere (`[EXPLORATION_ROUTE_STOPPED]`) before the pearl
 # wave gives up on the spot and comes home. A stopped march leaves the bot standing where it was,
 # so the metre budget above cannot fill: live, run164 it159-161 asked for the same eastward bearing

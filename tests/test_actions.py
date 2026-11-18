@@ -5206,8 +5206,26 @@ class PearlMarchHeadingTest(unittest.TestCase):
         g = self._wave(heading=200.0)
         g.nether_travel = 500.0
         self.assertTrue(_search_enderman_wanted(g))
+        # 1500 m, up from 900: run260 closed its roam at it148 with 898 m of ground covered and the
+        # body 495 m from its own gate, and no warped forest ever loaded into that trip's scan.
+        g.nether_travel = 1200.0
+        self.assertTrue(_search_enderman_wanted(g))
         g.nether_travel = NETHER_PEARL_SEARCH_M
         self.assertFalse(_search_enderman_wanted(g))
+
+    def test_a_loaded_pack_beyond_the_gate_leash_stops_roaming_inside_the_budget(self) -> None:
+        # The budget is walked metres; the leash is metres from home. A wave that already carries a
+        # pearl and stands further than `NETHER_GATE_LEASH_M` from its gate stops covering ground
+        # even with budget left - run203 roamed 700 m out on a budget that never looked at distance
+        # and died there with 16 pearls and 9 rods when the return route closed under it.
+        g = self._wave(heading=200.0)
+        g.nether_travel = 600.0
+        g.inventory["ender_pearl"] = 1
+        g.nether_gate = (12.5, 66, -3.5)
+        g.pos = (12.5 + NETHER_GATE_LEASH_M + 40.0, 65.0, -3.5)
+        self.assertTrue(_search_enderman_wanted(g))
+        self.assertTrue(_nether_haul_leashed(g))
+        self.assertEqual(candidates(g), ["leave_nether"])
 
     def test_the_hunt_reaches_a_mob_at_thirty_metres(self) -> None:
         g = self._wave(heading=200.0)

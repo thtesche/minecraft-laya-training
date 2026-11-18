@@ -110,13 +110,20 @@ had put the barter inside the rods trip because "the bot is already down there")
   `PEARL_WAVE_MAX_TRIPS` (5) crossings the waves shut and the Overworld `search_enderman` roam
   becomes the fallback, so the goal is never stranded on an empty Nether.
 
-The roam is bounded in metres, not ticks, like the fortress hunt: `NETHER_PEARL_SEARCH_M` (900 m, was
-400) of ground covered. Endermen spawn in the Nether's warped forests, not at the fortress the rod
-trip targeted, so an empty stretch has to send the bot home to stow and relaunch rather than burn the
-trip wandering. The 400 m leash was too short once the way home worked: it is walked ground, about
-half that as the crow flies, and run168 turned home from the treeline on every trip (it161: 5.5 m
-from a warped chunk, an enderman at 28.1 m, budget already at 528 m). 900 m covers a round of the
-mapped forests and `PEARL_MARCH_STALL_LIMIT` still ends a trip whose route never opens.
+The roam is bounded in metres, not ticks, like the fortress hunt: `NETHER_PEARL_SEARCH_M` (1500 m,
+was 900, before that 400) of ground covered. Endermen spawn in the Nether's warped forests, not at
+the fortress the rod trip targeted, so an empty stretch has to send the bot home to stow and
+relaunch rather than burn the trip wandering. The 400 m leash was too short once the way home
+worked: it is walked ground, about half that as the crow flies, and run168 turned home from the
+treeline on every trip (it161: 5.5 m from a warped chunk, an enderman at 28.1 m, budget already at
+528 m). 900 m covers a round of the mapped forests and `PEARL_MARCH_STALL_LIMIT` still ends a trip
+whose route never opens.
+
+The 900 m budget is now 1500 m because the trips that spent it never reached a forest at all: run260
+closed its roam at it148 with 898 m of ground covered and the body 495 m from its own gate, and no
+warped chunk ever loaded into that trip's scan. Run256 turned home at 475 m out, run239 at 373 m.
+Walked metres are roughly half the straight-line reach, so 1500 m samples a strip of world about
+twice as wide as 900 m did.
 
 **The roam has a leash to the gate (`NETHER_GATE_LEASH_M`, 400 m).** Metres covered is not metres from
 home, and a Nether path is never straight. run203 walked 3998 m of ground and ended 700 m from its own

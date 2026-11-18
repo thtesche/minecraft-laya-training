@@ -1437,7 +1437,7 @@ lid and stalled on the latch that was supposed to say the haul was done.
   march sweeps the forest it stands in with one-chunk legs. Second, the trip budget was 400 m of
   *walked* ground, about 200 m as the crow flies; run168 it161 stood 5.5 m from a warped chunk with
   an enderman at 28.1 m and the only offer was `collect_drops`, because travel had already passed
-  528 m. `NETHER_PEARL_SEARCH_M` is 900 now, and `ENDERMAN_HUNT_RANGE` 32 (was 24), so an enderman
+  528 m. `NETHER_PEARL_SEARCH_M` is 1500 now (900 before that), and `ENDERMAN_HUNT_RANGE` 32 (was 24), so an enderman
   named in the scan at 24-32 m is a fight rather than scenery.
 - **A pack that reads full and a fight that is skipped.** run168 it107-108 held an enderman at
   23.9 m with 63 netherrack in the pack, and `_nether_must_return` (`slots_used >= 33`) fired
