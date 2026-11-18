@@ -137,12 +137,10 @@ class TrainConfig(BaseModel):
 
 class LoopConfig(BaseModel):
     max_iterations: int = 10
-    # Per-run budget for the *stall-loop* escalation: the new, costly trigger that asks System 2
-    # for a way out when a label keeps looping (`graph._guard`). The unresolved-label escalation
-    # is not capped by this - it is a correctness path that always has a fallback - only the
-    # chatty structural trigger is, so a run that keeps tripping the same loop cannot spend itself
-    # on the model. Until run207 this field was defined and read nowhere.
-    max_escalations: int = 3
+    # No per-run cap on System-2 escalations: every stall trigger (the stall-loop and the idle
+    # pass-time guard) asks the model whenever a label keeps looping, and the plan ledger runs the
+    # remaining steps of an already-paid plan before a new call is spent. A run that keeps tripping
+    # the same loop is now escalated every time rather than being throttled.
     hitl: bool = False
     # End the loop as soon as the overworld tech tree is complete (diamond tools + armour
     # worn + shield + lit portal + bed + the Nether prep banked), instead of walking the full

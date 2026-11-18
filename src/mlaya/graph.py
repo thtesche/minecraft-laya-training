@@ -44,8 +44,7 @@ TARGET_LABELS = frozenset({"explore"})
 # How many times a stall guard must have taken a label off the offer this run before the loop
 # escalates it to System 2 instead of running it into the same loop again. One drop is a single
 # bad patch of ground the cooldown handles on its own; this many is a label the withholding only
-# paces, which is the structural case the richer escalation exists for. Capped per run by
-# `loop.max_escalations`.
+# paces, which is the structural case the richer escalation exists for.
 STALL_ESCALATE_REPEATS = 2
 
 # How many ticks running the observer's same `better` alternative may be force-run before the guard
@@ -244,9 +243,10 @@ PASS_TIME_LABELS = ("wait", "sleep")
 # deadlock - the run265 shape: a built portal a blank plane read left unlightable, `candidates`
 # down to `wait` alone, 180 ticks at the dark gate, the escalation budget untouched. When a
 # pass-time label has changed nothing for this many ticks running, `_guard` asks System 2 for a way
-# out (once per window, never removing the label itself from the offer). Set at the user's own stall
-# threshold (20+ idle ticks), well clear of an ordinary daytime lull.
-IDLE_ESCALATE_REPEATS = 20
+# out (once per window, never removing the label itself from the offer). Set at 10 idle ticks: the
+# run265 deadlock never moved a centimetre for 180 ticks, so 10 catches it early; the cost is that a
+# genuine daytime lull can now spend one escalation before the run resumes its plan.
+IDLE_ESCALATE_REPEATS = 10
 
 # The walk off a junk dropped on open ground is a 3-block `navigate`. A refusal keeps the latch
 # set (the junk is still at the bot's feet), so a step that keeps failing - rough Nether terrain
@@ -554,10 +554,11 @@ class Agent:
     _nether_hop: tuple[tuple[int, int] | None, int] = (None, 0)
 
     # How many times each label has been taken off the offer by a stall guard this run, and how
-    # many stall-triggered escalations have been spent. Class defaults for the same reason as
-    # `_lava_walked`: a stub agent built with `Agent.__new__` reads them in `_guard` and the stall
-    # guards, and an empty dict / zero is exactly "no label has looped yet". The guards rebind a
-    # fresh dict (never mutate in place), so the shared class default is never written.
+    # many stall/idle-triggered escalations have been spent. The count is observability only: there
+    # is no longer a per-run cap, so it never gates an escalation. Class defaults for the same
+    # reason as `_lava_walked`: a stub agent built with `Agent.__new__` reads them in `_guard`, and
+    # an empty dict / zero is exactly "no label has looped yet". The guards rebind a fresh dict
+    # (never mutate in place), so the shared class default is never written.
     _stall_dropped: dict[str, int] = {}
     _stall_escalations: int = 0
     # The pass-time idle streak the escalation path reads (`_track_idle` -> `_guard`). Class default
@@ -2016,17 +2017,17 @@ class Agent:
             # offer this run again and again (`STALL_ESCALATE_REPEATS`), running it once more only
             # re-enters the loop the withholding keeps pacing rather than solving. Ask System 2 for
             # a way out instead. Its pick is used only when it resolves to a *different* label, so
-            # the worst case is the very action the loop would have run anyway, and the budget
-            # (`loop.max_escalations`) keeps a run from spending itself on the model chasing a loop.
+            # the worst case is the very action the loop would have run anyway. There is no per-run
+            # escalation budget: a run that keeps tripping the same loop is escalated every time it
+            # trips, and the plan ledger below runs the remaining steps of an already-paid plan
+            # before a new model call is spent.
             if (not decision.deferred
-                    and self._stall_dropped.get(decision.action_label, 0) >= STALL_ESCALATE_REPEATS
-                    and self._stall_escalations < self.settings.loop.max_escalations):
+                    and self._stall_dropped.get(decision.action_label, 0) >= STALL_ESCALATE_REPEATS):
                 # The clear case needs no model: a pinned pack refuses every gather, and shedding
                 # it is the universal unblock. Live, run217 it311-599: 36/36 slots and one loaded
-                # arrow let `collect_drops` refuse `[INVENTORY_FULL]` 282 times - and all three
-                # escalation budgets had already burned on an earlier, out-of-reach drop, so the
-                # real stall never reached System 2 at all. Shedding first here keeps the scarce
-                # escalations for the genuinely ambiguous impasses the model is for.
+                # arrow let `collect_drops` refuse `[INVENTORY_FULL]` 282 times. Shedding first here
+                # settles the obvious impasse deterministically and leaves the model for the
+                # genuinely ambiguous ones.
                 relief = self._preselect_fix(gs, decision.action_label)
                 if relief is not None:
                     self.log.append({"stage": "policy", "reason": "stall_preselect",
@@ -2050,16 +2051,15 @@ class Agent:
                     return {"action": alt, "escalated": True, "note": f"stall -> {chosen}"}
             # A pass-time label never fills `_stall_dropped`, so the stall path above can never catch
             # a run that waits forever on a deadlock - the run265 shape: a built portal a blank plane
-            # read left unlightable, `candidates` down to `wait`, 180 ticks at the dark gate, the
-            # escalation budget untouched. When a pass-time label has changed nothing for
+            # read left unlightable, `candidates` down to `wait`, 180 ticks at the dark gate with
+            # nothing ever reaching the model. When a pass-time label has changed nothing for
             # `IDLE_ESCALATE_REPEATS` ticks running (`_track_idle` counts the streak in
             # `_idle_wait_reps`), ask System 2 for a way out: once per window (the counter re-arms),
             # the ledger first like the stall path, and never the label itself off the offer, so a
             # model that finds nothing better simply leaves the run waiting.
             if (not decision.deferred
                     and decision.action_label in PASS_TIME_LABELS
-                    and self._idle_wait_reps.get(decision.action_label, 0) >= IDLE_ESCALATE_REPEATS
-                    and self._stall_escalations < self.settings.loop.max_escalations):
+                    and self._idle_wait_reps.get(decision.action_label, 0) >= IDLE_ESCALATE_REPEATS):
                 self._idle_wait_reps = {}
                 iteration = state.get("iteration", 0)
                 led = self._ledger_action(

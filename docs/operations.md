@@ -185,9 +185,11 @@ Two things changed the cost and the reach of that call:
   the phase it was made for, after the TTL, or once every remaining step has been tried. A step the
   action layer cannot build this tick stays in the ledger and is retried later.
 
-Budget: `loop.max_escalations = 3` stall escalations per run; the ledger does not count against it.
-`runs/history/system2-runNN.jsonl` carries the brief, the plan, the chosen label, the remaining
-steps and the call's telemetry.
+There is no per-run escalation budget: a label that keeps looping is escalated every time it trips,
+and the plan ledger runs the remaining steps of an already-paid plan before a new call is spent. A
+pass-time label (`wait`/`sleep`) that changes nothing for `IDLE_ESCALATE_REPEATS = 10` ticks running
+also escalates, once per window. `runs/history/system2-runNN.jsonl` carries the brief, the plan, the
+chosen label, the remaining steps and the call's telemetry.
 
 ## A fix
 

@@ -567,17 +567,22 @@ class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
         esc.assert_not_called()
         self.assertEqual(agent._stall_escalations, 0)
 
-    async def test_the_budget_caps_the_stall_escalations(self) -> None:
+    async def test_escalations_are_not_capped_per_run(self) -> None:
+        # There is no per-run escalation budget any more: a run that keeps tripping the same loop
+        # is escalated every time it trips, however many escalations it has already spent.
         agent = self._agent()
         agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS}
-        agent._stall_escalations = agent.settings.loop.max_escalations
-        action = Action("explore", "navigate", {}, "walk")
-        with mock.patch.object(graph, "resolve",
-                               side_effect=lambda lbl, g, t=None: action if lbl == "explore" else None), \
-             mock.patch.object(graph, "escalate_to_system2") as esc:
+        agent._stall_escalations = 99
+        alt = Action("mine_stone", "collect_block", {"block_name": "stone"}, "mine")
+        with mock.patch.object(graph, "candidates", return_value=["explore", "mine_stone"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: alt if lbl in ("explore", "mine_stone") else None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": ["mine_stone"], "action": "mine_stone"}) as esc:
             out = await agent._guard(self._state("explore"))
-        self.assertIs(out["action"], action)
-        esc.assert_not_called()
+        self.assertTrue(out["escalated"])
+        esc.assert_called_once()
+        self.assertEqual(agent._stall_escalations, 100)
 
     async def test_a_pinned_pack_sheds_first_without_spending_an_escalation(self) -> None:
         # The clear case: a full pack refuses every gather, so `inventory_relief` settles it on its
@@ -765,19 +770,24 @@ class StallEscalationTest(unittest.IsolatedAsyncioTestCase):
         esc.assert_not_called()
         self.assertEqual(agent._stall_escalations, 0)
 
-    async def test_the_budget_caps_idle_escalations(self) -> None:
+    async def test_idle_escalations_are_not_capped_per_run(self) -> None:
+        # The idle path escalates regardless of how many escalations the run has already spent.
         agent = self._agent()
         agent._idle_wait_reps = {"wait": IDLE_ESCALATE_REPEATS}
-        agent._stall_escalations = agent.settings.loop.max_escalations
+        agent._stall_escalations = 99
         waiting = Action("wait", "idle", {}, "hold")
-        with mock.patch.object(graph, "resolve",
-                               side_effect=lambda lbl, g, t=None: waiting if lbl == "wait" else None), \
-             mock.patch.object(graph, "escalate_to_system2") as esc:
+        light = Action("light_portal", "activate_portal", {}, "strike")
+        with mock.patch.object(graph, "candidates", return_value=["wait", "light_portal"]), \
+             mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: waiting if lbl == "wait"
+                               else light if lbl == "light_portal" else None), \
+             mock.patch.object(graph, "escalate_to_system2",
+                               return_value={"plan": ["light_portal"], "action": "light_portal"}) as esc:
             out = await agent._guard(self._state("wait"))
-        self.assertIs(out["action"], waiting)
-        esc.assert_not_called()
-        # The full budget leaves the streak intact; it simply never fires again.
-        self.assertEqual(agent._idle_wait_reps, {"wait": IDLE_ESCALATE_REPEATS})
+        self.assertTrue(out["escalated"])
+        esc.assert_called_once()
+        self.assertEqual(agent._stall_escalations, 100)
+        self.assertEqual(agent._idle_wait_reps, {})   # the streak re-armed for the next window
 
     def _state_with(self, label: str, **kw):
         return {"before": gs(**kw), "decision": Decision(label), "iteration": 7}
