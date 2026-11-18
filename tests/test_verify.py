@@ -155,6 +155,33 @@ class NetherProgressTest(unittest.TestCase):
                                     diff(gs(inventory={"white_bed": 1}),
                                          gs(inventory={"white_bed": 1}))))
 
+    def test_the_prep_crafts_are_their_own_gain(self) -> None:
+        # These four crafts had no rule at all, so every tick that landed its item in the pack read
+        # as wasted: live, run269 it131 `craft_pickaxe_spare` (diamond -3, stick -2,
+        # diamond_pickaxe +1) -- the very step `_expedition_ready` waits for -- and across the
+        # archived logs 93 of 95 spare-pickaxe, 55 of 65 bowl, 14 of 26 stew and 6 of 9 smoker
+        # ticks. A tick the verifier calls wasted is dropped from the corpus, so the fine-tune
+        # never sees the pack state in which the expedition is being stocked.
+        self.assertTrue(progressed("craft_pickaxe_spare",
+                                    diff(gs(inventory={"diamond": 3, "stick": 2}),
+                                        gs(inventory={"diamond_pickaxe": 1}))))
+        self.assertTrue(progressed("craft_bowl",
+                                   diff(gs(inventory={"acacia_planks": 3}),
+                                        gs(inventory={"bowl": 1}))))
+        self.assertTrue(progressed("craft_stew",
+                                   diff(gs(inventory={"red_mushroom": 1, "brown_mushroom": 1}),
+                                        gs(inventory={"mushroom_stew": 1}))))
+        self.assertTrue(progressed("craft_smoker",
+                                   diff(gs(inventory={"iron_ingot": 3}),
+                                        gs(inventory={"smoker": 1}))))
+        self.assertTrue(progressed("craft_bed_stronghold",
+                                   diff(gs(inventory={"white_wool": 3, "acacia_log": 1}),
+                                        gs(inventory={"white_bed": 1}))))
+        # Spending the material without the product landing is not the craft working.
+        self.assertFalse(progressed("craft_pickaxe_spare",
+                                    diff(gs(inventory={"diamond": 3, "stick": 2}),
+                                        gs(inventory={"stick": 0}))))
+
 
 class HomeBaseProgressTest(unittest.TestCase):
     """The base steps: movement for the walks, the chest entering/leaving the pack, and a
