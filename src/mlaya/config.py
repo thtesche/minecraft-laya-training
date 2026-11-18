@@ -73,6 +73,9 @@ class ObserverConfig(BaseModel):
     # it folds periodically (every ~300 teachable ticks) at the price of a few more cache misses,
     # each cheap: only the kept tail re-prefills, the byte-stable system prefix never does.
     input_budget: int = 80_000
+    # How many of the most recent story turns a fold keeps verbatim behind the checkpoint. The
+    # folded-away older turns are replaced by one model-written "story so far" hand-off.
+    keep_turns: int = 40
     reasoning_effort: str = "high"    # for the full-reasoning event turns; routine ticks run /no_think
     log_path: str = "runs/observer.jsonl"
     # How far behind the decisions log the tailer may fall before routine ticks are sampled rather

@@ -148,6 +148,47 @@ class TrimTest(unittest.TestCase):
         self.assertEqual(obs.messages[0]["role"], "system")
         self.assertLess(len(obs.messages), 60)                   # older turns were folded away
 
+    def test_the_fold_keeps_a_model_written_checkpoint(self) -> None:
+        # The folded turns are replaced by the model's own "story so far", not a char-truncated
+        # digest - the narrative thread the story observer lives on survives the fold.
+        cfg = ObserverConfig(input_budget=1000)
+
+        def llm(messages, reason):
+            if messages[-1]["content"].startswith("STOP judging"):
+                return ({"story": "passed diamond_kit; in prepare_nether; banking blaze powder"}, {})
+            return ({"phase": None, "agree": True, "risk": None, "note": "ok"},
+                    {"prompt_tokens": 5000})
+
+        out = []
+        obs = Observer(cfg, llm, out.append)
+        with mock.patch("mlaya.observer._phase_of", lambda r: r.get("_phase")):
+            for i in range(60):
+                obs.ingest(_rec(it=i))
+        folded = obs.messages[1]
+        self.assertEqual(folded["role"], "user")
+        self.assertIn("STORY SO FAR", folded["content"])
+        self.assertIn("banking blaze powder", folded["content"])
+
+    def test_the_fold_falls_back_when_the_checkpoint_is_empty(self) -> None:
+        # A checkpoint that returns nothing usable must not lose the thread: fall back to the
+        # char-truncated digest of the dropped verdicts, never an empty fold.
+        cfg = ObserverConfig(input_budget=1000)
+
+        def llm(messages, reason):
+            if messages[-1]["content"].startswith("STOP judging"):
+                return ({"phase": None}, {})                     # no story, no note
+            return ({"phase": None, "agree": True, "risk": None, "note": "ok"},
+                    {"prompt_tokens": 5000})
+
+        out = []
+        obs = Observer(cfg, llm, out.append)
+        with mock.patch("mlaya.observer._phase_of", lambda r: r.get("_phase")):
+            for i in range(60):
+                obs.ingest(_rec(it=i))
+        folded = obs.messages[1]
+        self.assertIn("STORY SO FAR", folded["content"])
+        self.assertIn("ok", folded["content"])                   # digest of the dropped verdicts
+
 
 class ParseVerdictTest(unittest.TestCase):
     """The reply is read as a verdict however the model dressed it - or degrades to a readable note."""

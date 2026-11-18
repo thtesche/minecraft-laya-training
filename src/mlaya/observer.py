@@ -48,6 +48,20 @@ DEATH_TRAPS = (
 # though an iron pickaxe is the precondition for mining diamond at all. These lines teach the
 # within-phase progression so a precursor reads as progress. They live here, not in _PHASE_ROWS, so
 # the live loop's own phase spine stays untouched.
+# The turn appended when the story is folded at the budget: the model writes its own hand-off
+# instead of leaving a char-truncated list of past verdicts behind. It asks for the same JSON shape
+# the verdict parser already reads (`story` field), so no second parse path is needed, and it names
+# the four things the next half of the run actually needs carried: where the run stands, what risk
+# is still open, the current plan, and the gear trend. `/think` - a fold is rare and worth real
+# reasoning. Kept here by the prompt it folds, like the prefix.
+CHECKPOINT_REQUEST = (
+    "STOP judging for one turn. The story so far is about to be folded away to save context. "
+    "Write a compact hand-off for your future self in <=120 words: the phases already passed and "
+    "where the run stands now, any risk or loop still unresolved, your current plan for this "
+    'phase, and how the gear has trended. Reply with ONLY {"story": "<the hand-off>"}. /think'
+)
+
+
 PHASE_PROGRESSIONS = (
     "diamond_kit: the tool ladder is wood -> stone -> IRON -> diamond. An iron pickaxe is REQUIRED "
     "to mine diamond ore at all, so mining/smelting iron and crafting iron tools IS progress toward "
@@ -329,24 +343,44 @@ class Observer:
             self._death = death
 
     def _trim(self, tel: dict) -> None:
-        """Fold the oldest story turns into a summary when the prompt nears the input budget.
+        """Fold the oldest story turns into one checkpoint when the prompt nears the input budget.
 
         A trim is the one moment the prefix after the system block changes, so the cache takes a
         one-off miss - but only the kept tail re-prefills, never the byte-stable system prefix. The
         budget (80k, well under the 185k input ceiling) is set to fold periodically rather than
-        almost-never, so the live prompt stays lean; each fold is a cheap, infrequent miss.
+        almost-never, so the live prompt stays lean; each fold is a cheap, infrequent miss. What is
+        folded away is replaced by a model-written `_checkpoint`, not a char-truncated digest, so
+        the narrative thread the story observer lives on survives the fold.
         """
         if (tel.get("prompt_tokens") or 0) < self.cfg.input_budget:
             return
         head = self.messages[0]
         body = self.messages[1:]
-        keep = body[-40:]
-        dropped = body[:-40]
-        summary = {"role": "user",
-                   "content": "STORY SO FAR (older turns folded): "
-                              + json.dumps([m.get("content", "")[:120] for m in dropped
-                                            if m.get("role") == "assistant"][-20:], ensure_ascii=False)}
-        self.messages = [head, summary, *keep]
+        if len(body) <= self.cfg.keep_turns:
+            return
+        keep = body[-self.cfg.keep_turns:]
+        dropped = body[:-self.cfg.keep_turns]
+        self.messages = [head, self._checkpoint(dropped), *keep]
+
+    def _checkpoint(self, dropped: list[dict]) -> dict:
+        """One model-written "story so far" turn that replaces the folded `dropped` turns.
+
+        The request rides the `head + dropped` prefix the cache already holds, so only its own
+        tokens prefill - the fold's one miss is still just the rebuilt `[head, summary, keep]` the
+        next tick diverges into. A fold must never crash the follow loop or lose the thread, so a
+        failed or empty checkpoint falls back to the char-truncated digest of the dropped verdicts.
+        """
+        story = ""
+        try:
+            req = {"role": "user", "content": CHECKPOINT_REQUEST}
+            verdict, _tel = self.llm_fn([self.messages[0], *dropped, req], True)
+            story = (verdict.get("story") or verdict.get("note") or "").strip()
+        except Exception:
+            story = ""
+        if not story:
+            story = json.dumps([m.get("content", "")[:120] for m in dropped
+                                if m.get("role") == "assistant"][-20:], ensure_ascii=False)
+        return {"role": "user", "content": "STORY SO FAR (older turns folded): " + story}
 
 
 # --- live LLM wiring (replaced by a fake in tests) ---------------------------------------------
