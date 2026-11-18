@@ -8996,6 +8996,26 @@ class PowderIsBankedAtTheLidTest(unittest.TestCase):
         g.pos = (72.5, 71.0, 311.4)
         self.assertIn("go_home", candidates(g))
 
+    def test_the_stow_owns_the_tick_while_the_pearl_wave_waits(self) -> None:
+        # run269 it192-222: sixteen powder rode the pack at the base for thirty ticks while the
+        # model took `search_enderman` (six 250-330 m round trips, no pearl) and `flatten_home_base`.
+        # The unbanked haul is what `_nether_haul_home` reads as a trip still owed, and that is the
+        # gate the pearl wave departs through - so beside the lid the deposit is not a choice.
+        g = self._home(blaze_powder=16)
+        g.nether_entered = True
+        g.pos = (self.CHEST[0] + 0.5, self.CHEST[1] + 1.0, self.CHEST[2] + 0.5)
+        self.assertTrue(_nether_pearl_wave_wanted(g))
+        self.assertEqual(candidates(g), ["stow_blaze_powder"])
+
+    def test_a_refused_lid_does_not_own_the_run(self) -> None:
+        # The early return skips the stuck filter at the end of `candidates`, so a chest the ground
+        # keeps refusing must be able to stand down, the way the storage relief does.
+        g = self._home(blaze_powder=16)
+        g.nether_entered = True
+        g.pos = (self.CHEST[0] + 0.5, self.CHEST[1] + 1.0, self.CHEST[2] + 0.5)
+        g.stuck_labels = frozenset({"stow_blaze_powder"})
+        self.assertNotIn("stow_blaze_powder", candidates(g))
+
 
 class PowderIsSecuredBeforeThePearlWaveTest(unittest.TestCase):
     """The pearl wave must not carry unbanked powder into the enderman hunt.

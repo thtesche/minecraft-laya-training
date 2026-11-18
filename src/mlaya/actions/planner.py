@@ -843,6 +843,17 @@ def candidates(gs: GameState) -> list[str]:
                 if _blaze_powder(inv) > 0 and _chest_ready(gs) and _storage_reachable(gs) \
                         and not _powder_is_eye_fuel(gs):
                     out.append("stow_blaze_powder")
+                    # While the powder rides in the pack it is a haul the network still owes, and
+                    # `_nether_haul_home` reads it that way: the pearl wave's departure gate shuts on
+                    # it, so every tick the model spends elsewhere is a tick the pearl trips cannot
+                    # start. Live, run269 it192-222: sixteen powder crafted at the base, the chest
+                    # with room, `stow_blaze_powder` on the offer nine times, and the model took
+                    # `search_enderman` (six 250-330 m round trips, no pearl) and `flatten_home_base`
+                    # instead - the milestone line it is shown says "the blaze powder is banked", so
+                    # the deposit reads as already done. The stuck guard keeps a lid the ground keeps
+                    # refusing from owning the run.
+                    if _nether_pearl_wave_wanted(gs) and "stow_blaze_powder" not in gs.stuck_labels:
+                        return ["stow_blaze_powder"]
 
     # --- The stronghold (the phase after the Nether haul) ---
     # Offered once the Nether haul stands: gather pearls, bring the banked powder back out,
