@@ -1344,6 +1344,33 @@ def _nether_search_heading(gs: GameState) -> float:
     return 270.0 if gs.pos[0] >= way_home[0] else 90.0
 
 
+def _retreat_heading(gs: GameState) -> float | None:
+    """The bearing back along the ground the bot already walked, out of a pocket.
+
+    `explore_frontier` refuses a leg whose end cell cannot be pathed and leaves the body where it
+    was. The bearing turns a quadrant per refusal, so after four of them every side of the cell
+    has been tried: live, run260 it284-470 turned a quadrant 250 times at (147,33,-1) and never
+    left it. The four sides are all walls there, but the ground the bot came in on is not - it
+    stood on it, so that column is loaded and pathable. The way out of a pocket is the way back.
+
+    The oldest trail cell that is not itself a written-off dead end is the furthest back the trip
+    remembers, and the bearing is the one the host's `unitVectorForHeading` reads as
+    `x = sin θ, z = -cos θ`.
+    """
+    if gs.pos is None or not gs.walked_trail:
+        return None
+    x, _, z = gs.pos
+    for cell in gs.walked_trail:
+        cx, cy, cz = cell
+        if cell in gs.dead_end_cells:
+            continue
+        dx, dz = cx - x, cz - z
+        if math.hypot(dx, dz) < 4.0:
+            continue
+        return round(math.degrees(math.atan2(dx, -dz)) % 360.0, 1)
+    return None
+
+
 def _clear_march_heading(gs: GameState, base: float) -> float:
     """Turn a march's bearing once per `[EXPLORATION_ROUTE_STOPPED]` in a row.
 
@@ -1355,6 +1382,11 @@ def _clear_march_heading(gs: GameState, base: float) -> float:
     quadrant (`EXPLORE_STALL_TURN`), so a blocked line is approached from another side; the turn
     count is reset by the first march that actually moves (`graph._note_explore`).
 
+    Once a full turn has been spent at one cell (`EXPLORE_STALL_TURN * stalls >= 360`), the
+    quadrants are exhausted and turning again is turning back into a wall already tried. The
+    march then aims back along the trail the bot walked in on (`_retreat_heading`), skipping the
+    cells that have already refused a route, so the pocket is left rather than paced.
+
     The turn is applied to whatever the caller aimed at, including a recorded warped forest: a
     direct line that cannot be pathed is still a line to try from another side, and the forest row
     is not lost - it wants the next approach, not the same one.
@@ -1362,6 +1394,10 @@ def _clear_march_heading(gs: GameState, base: float) -> float:
     stalls = int(getattr(gs, "explore_stalls", 0) or 0)
     if stalls <= 0:
         return base
+    if stalls * EXPLORE_STALL_TURN >= 360.0:
+        back = _retreat_heading(gs)
+        if back is not None:
+            return back
     return round((base + EXPLORE_STALL_TURN * stalls) % 360.0, 1)
 
 

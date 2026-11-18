@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 
 from mlaya.perception import BlockHit, GameState
-from mlaya.verify import diff, progressed
+from mlaya.verify import diff, exploration_reached, progressed
 
 
 def gs(**kw) -> GameState:
@@ -460,6 +460,52 @@ class MovementReadTest(unittest.TestCase):
         d = diff(gs(pos=(0.5, 62.0, 0.5), in_water=False, on_ground=False),
                  gs(pos=(0.5, 65.0, 0.5), in_water=False, on_ground=False))
         self.assertTrue(progressed("explore", d))
+
+
+class MarchProgressTest(unittest.TestCase):
+    """A failed march between two stances covers ground without reaching any of it.
+
+    Live, run260 it198-203: `[EXPLORATION_ROUTE_STOPPED]` on every tick, the body bouncing
+    between x=155 and x=172 with `pos_delta` ~16.6, and `expandedChunks: 0`. Reading that walk as
+    progress reset the stuck guard and told the observer - which repeats the loop rule verbatim -
+    it advanced the world and must not be called a loop.
+    """
+
+    @staticmethod
+    def _bounce() -> dict:
+        return diff(gs(pos=(172.0, 33.0, -1.5)), gs(pos=(155.0, 33.0, -1.5)))
+
+    def test_a_route_stopped_bounce_is_not_progress(self) -> None:
+        d = self._bounce()
+        self.assertGreater(d["pos_delta"], 2)
+        d["explore_reached"] = False
+        self.assertFalse(progressed("explore", d))
+        self.assertFalse(progressed("search_enderman", d))
+
+    def test_new_ground_is_progress_even_on_a_short_leg(self) -> None:
+        d = diff(gs(pos=(0.0, 64.0, 0.0)), gs(pos=(1.0, 64.0, 0.0)))
+        d["explore_reached"] = True
+        self.assertTrue(progressed("explore", d))
+        self.assertTrue(progressed("search_enderman", d))
+
+    def test_older_records_without_the_flag_still_read_by_movement(self) -> None:
+        # `navigate`-resolved marches and archived ticks have no server exploration report.
+        self.assertTrue(progressed("explore", self._bounce()))
+        self.assertTrue(progressed("search_enderman", self._bounce()))
+
+    def test_a_pearl_still_counts_when_the_march_reached_nothing(self) -> None:
+        d = self._bounce()
+        d["inventory_delta"] = {"ender_pearl": 1}
+        d["explore_reached"] = False
+        self.assertTrue(progressed("search_enderman", d))
+
+    def test_the_flag_is_read_from_the_frontier_result(self) -> None:
+        self.assertTrue(exploration_reached({"expandedChunks": 2, "newChunksRecorded": 2}))
+        self.assertFalse(exploration_reached({"expandedChunks": 0, "newChunksRecorded": 0}))
+        self.assertTrue(exploration_reached({"expandedChunks": 0,
+                                             "biome": {"status": "entered"}}))
+        self.assertIsNone(exploration_reached(None))
+        self.assertIsNone(exploration_reached({"status": "failed"}))
 
 
 class ArmorRemovalTest(unittest.TestCase):

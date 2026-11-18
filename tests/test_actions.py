@@ -804,12 +804,21 @@ class NetherLullWaitTest(unittest.TestCase):
         g.mobs = [("cow", "animal", 3, 300.0)]
         self.assertEqual(candidates(g), ["wait"])
 
-    def test_wait_needs_the_lit_portal(self) -> None:
+    def test_wait_needs_no_anchor_to_hold(self) -> None:
+        # `wait` is only ever offered as the last fallback, so it has to resolve: a label the
+        # planner offers and `resolve` answers with None is a tick that calls nothing (the same
+        # dead end `_way_home_known` was written for). With no lit portal and no base, the hold is
+        # the body's own cell.
         g = at_home(geared(flint_and_steel=1, cobblestone=12, white_bed=1, cooked_beef=24))
-        self.assertIsNone(resolve("wait", g))
+        a = resolve("wait", g)
+        self.assertIsNotNone(a)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]),
+                        (math.floor(g.pos[0]), math.floor(g.pos[1]), math.floor(g.pos[2])))
 
-    def test_wait_needs_the_base(self) -> None:
+    def test_wait_without_a_position_resolves_to_nothing(self) -> None:
         g = lit_portal(geared(flint_and_steel=1, cobblestone=12, white_bed=1, cooked_beef=24))
+        g.pos = None
         self.assertIsNone(resolve("wait", g))
 
 
@@ -5043,6 +5052,38 @@ class NetherFrontierHeadingTest(unittest.TestCase):
         g.explore_stalls = 1
         self.assertEqual(resolve("explore", g).args["heading"], 90.0)
 
+    def test_a_partial_turn_still_tries_the_quadrants_first(self) -> None:
+        g = self._down(147.0, heading=159.7)
+        g.explore_stalls = 2
+        g.dead_end_cells = frozenset({(147, 65, 0)})
+        g.walked_trail = ((131, 65, 0), (147, 65, 0))
+        self.assertEqual(resolve("explore", g).args["heading"], 339.7)
+
+    def test_a_full_turn_aims_back_along_the_way_in(self) -> None:
+        # Live, run260: 250 refusals at one ledge, the bearing turning a quadrant every tick into a
+        # wall it had already tried four times. Once a whole turn is spent at the cell, the march
+        # aims at the furthest trail cell that has not itself refused a route - the ground the bot
+        # walked in on, which the pathfinder can path to because the body stood there.
+        g = self._down(147.0, heading=159.7)
+        g.explore_stalls = 4
+        g.dead_end_cells = frozenset({(147, 65, 0)})
+        g.walked_trail = ((131, 65, 0), (147, 65, 0))
+        self.assertEqual(resolve("explore", g).args["heading"], 270.0)
+
+    def test_the_retreat_skips_cells_that_refused_a_route(self) -> None:
+        # Walking back into a cell that already refused a route is the same refusal next tick.
+        g = self._down(147.0, heading=159.7)
+        g.explore_stalls = 4
+        g.dead_end_cells = frozenset({(147, 65, 0), (131, 65, 0)})
+        g.walked_trail = ((147, 65, -16), (131, 65, 0), (147, 65, 0))
+        self.assertEqual(resolve("explore", g).args["heading"], 0.0)
+
+    def test_no_trail_is_no_retreat(self) -> None:
+        # Nothing walked, nothing to retreat along: the quadrant turn stays.
+        g = self._down(147.0, heading=159.7)
+        g.explore_stalls = 4
+        self.assertEqual(resolve("explore", g).args["heading"], 159.7)
+
 
 class FrontierHeadingParseTest(unittest.TestCase):
     """`frontier_navigation` arrives as `query.rows`, a list of row lists of one number."""
@@ -5618,6 +5659,27 @@ class IdleWalksHomeTest(unittest.TestCase):
         g = self._idle_off()
         g.stuck_labels = ("go_home",)
         self.assertEqual(candidates(g), ["explore"])
+
+    def test_the_fallback_does_not_re_offer_a_withheld_label(self) -> None:
+        # Live, run260: the four stall guards all write into `gs.stuck_labels`, and the last
+        # fallback put `explore` back in the offer whatever they took out - 223 ticks in that run
+        # ran a label the guards had just withheld. The fallback is filtered like the ladder above
+        # it, so a withheld march falls to holding in place instead.
+        g = self._idle_off()
+        g.dimension = "minecraft:the_nether"
+        g.stuck_labels = frozenset({"explore"})
+        self.assertEqual(candidates(g), ["wait"])
+        a = resolve("wait", g)
+        self.assertIsNotNone(a)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (100, 64, 100))
+
+    def test_every_fallback_withheld_leaves_the_offer_empty(self) -> None:
+        # Nothing left to try: the tick defers, the cooldown brings a label back, and `_stop_state`
+        # ends a run whose body has not left one cell for `DEAD_END_STANDSTILL` decisions.
+        g = self._idle_off()
+        g.dimension = "minecraft:the_nether"
+        g.stuck_labels = frozenset({"explore", "wait", "go_home"})
+        self.assertEqual(candidates(g), [])
 
     def test_a_bot_that_lost_its_shield_still_walks_home(self) -> None:
         # Live, run218 it167-243: the shield broke in the blaze fight (46 of 336 uses, gone on the
@@ -10920,7 +10982,11 @@ class DefencelessAtNightTest(unittest.TestCase):
         self.assertIsNotNone(a)
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (182, 72, 179))
         g.phase = "day"
-        self.assertIsNone(resolve("wait", g))
+        # Daylight, no lull to hold through: the hold is still a valid step, it is just no longer
+        # the one `candidates` offers.
+        a = resolve("wait", g)
+        self.assertIsNotNone(a)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (182, 72, 179))
 
     def test_a_naked_bot_at_night_chops_if_trees_are_in_reach(self) -> None:
         # Wounded and naked, but trees loaded: the bot may chop at night instead of deferring.

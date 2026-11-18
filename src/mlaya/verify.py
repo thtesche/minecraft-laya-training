@@ -81,6 +81,31 @@ def diff(before: GameState, after: GameState) -> dict:
     }
 
 
+def exploration_reached(explored: dict | None) -> bool | None:
+    """Whether an `explore_frontier` result reached new ground, or None when it carried no such report.
+
+    The server measures a march in chunks (`expandedChunks`) or in the biome it was sent to
+    (`biome.status == "entered"`), not in metres walked. A route-stopped leg can carry the body
+    seventeen blocks between two lava ledges and expand nothing at all (live, run260 it198-203:
+    `[EXPLORATION_ROUTE_STOPPED]`, `pos_delta` 16.6, `expandedChunks` 0). `None` means the action
+    resolved to something else (a `navigate` to a fortress in view), where movement is the only
+    evidence there is.
+    """
+    if not isinstance(explored, dict) or "expandedChunks" not in explored:
+        return None
+    if int(explored.get("expandedChunks") or 0) > 0:
+        return True
+    biome = explored.get("biome")
+    return bool(isinstance(biome, dict) and biome.get("status") == "entered")
+
+
+def _march_progress(d: dict) -> bool:
+    """Movement is exploration progress only when the server confirms the march reached ground."""
+    if "explore_reached" in d:
+        return bool(d["explore_reached"])
+    return moved(d)
+
+
 def moved(d: dict, minimum: float = 2.0) -> bool:
     """Whether the body covered ground, rather than drifting up and down in place.
 
@@ -232,7 +257,7 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
     if label == "hunt_enderman":
         return d["inventory_delta"].get("ender_pearl", 0) > 0
     if label == "search_enderman":
-        return d["inventory_delta"].get("ender_pearl", 0) > 0 or moved(d)
+        return d["inventory_delta"].get("ender_pearl", 0) > 0 or _march_progress(d)
     if label == "gather_scaffold":
         # The dig pays in the block the roof is built from, and `collect_block` digs only the name
         # it was given (`netherrack`), so a gain of anything else would mean a different call.
@@ -305,5 +330,5 @@ def progressed(label: str, d: dict, ok: bool = True) -> bool:
         return (any(v > 0 for v in d["inventory_delta"].values())
                 or (ok and not d["inventory_delta"]))
     if label == "explore":
-        return moved(d)
+        return _march_progress(d)
     return False

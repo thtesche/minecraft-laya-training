@@ -1235,6 +1235,18 @@ class GameState:
     # (`_clear_march_heading`) so a blocked line is approached from another side, and a pearl wave
     # that burns the whole turn budget goes home instead of marching in place.
     explore_stalls: int = 0
+    # Cells at which a march was refused a route this trip (Agent `_note_dead_end`). A leg that
+    # stopped there proved the ground beyond it is not walkable from here, so the next bearing is
+    # turned until it leaves that cell behind rather than aiming into the same dead end again
+    # (live, run260: 250 route refusals at one ledge, the heading turning a quadrant every tick
+    # and coming back to the same wall).
+    dead_end_cells: frozenset = frozenset()
+    # A breadcrumb line of the ground the body walked this trip, one waypoint every `TRAIL_STEP`
+    # blocks, oldest first (Agent `_note_dead_end`). Ground the bot already stood on is ground the
+    # pathfinder can path to, so this is the way out of a pocket: the retreat aims back along it
+    # rather than at a bearing that has already been turned four times into the same wall
+    # (live, run260 it284-470).
+    walked_trail: tuple = ()
     # Fortress landmark cells the bot has already walked onto and got nothing out of (Agent
     # `_note_landmark`): a cage whose `navigate` answered with 0 metres moved is a searched cage,
     # and offering it again next tick is the same 0-metre step (live, run104: 100+ ticks on one
@@ -1454,6 +1466,8 @@ class GameState:
             "warped_forest": self.warped_forest,
             "nether_hop_repeats": self.nether_hop_repeats,
             "explore_stalls": self.explore_stalls,
+            "dead_end_cells": [list(c) for c in self.dead_end_cells],
+            "walked_trail": [list(c) for c in self.walked_trail],
             "nether_ticks": self.nether_ticks,
             "nether_travel": self.nether_travel,
             "mobs": self.mobs,
@@ -1519,7 +1533,7 @@ class GameState:
                       "stronghold_estimated", "end_portal_active", "slept_at_stronghold",
                       "stronghold_frame", "powder_cells",
                       "powder_bank", "frame_eyes", "frontier_heading", "warped_forest",
-                      "explore_stalls", "nether_landmarks",
+                      "explore_stalls", "nether_landmarks", "dead_end_cells",
                       "dragon_id", "dragon_health", "dragon_phase", "dragon_perched",
                       "end_entered", "dragon_slain"):
             value = data.get(field)
@@ -1558,6 +1572,8 @@ class GameState:
                 setattr(gs, field, tuple(float(v) for v in value))
         gs.powder_cells = tuple(tuple(cell) for cell in gs.powder_cells)
         gs.nether_landmarks = frozenset(tuple(cell) for cell in gs.nether_landmarks)
+        gs.dead_end_cells = frozenset(tuple(cell) for cell in gs.dead_end_cells)
+        gs.walked_trail = tuple(tuple(cell) for cell in gs.walked_trail)
         # The wet columns are (x, z) pairs; a torn entry from an old log drops rather than guesses,
         # exactly like the other network cells above.
         gs.surface_wet = frozenset(

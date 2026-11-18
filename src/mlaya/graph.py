@@ -107,9 +107,35 @@ RECOVER_UNREACHABLE_REPEATS = 3
 # stands in. The pathfinder's two kinds of failure lie far apart: run90's shut-in bot answered
 # 70-78 nodes, a search that really ran out answers some 100,000. `BOXED_REPEATS` such refusals
 # from one cell hand the tick to `dig_out` (`Agent._note_boxed`).
+#
+# `BOXED_CLOSEST_M` used to be 5.0, which only catches a one-cell cage. A search that exhausts
+# itself inside 200 nodes has run out of *region*, however that region is shaped: live, run260
+# it173-470, a Nether ledge answered 140 nodes with its closest node 29 blocks off, and the bot
+# stood on it for 188 ticks with 250 route refusals while `dig_out` never got the tick. An
+# elongated pocket is the same trap as a one-cell one, and 40 m is the widest reach a 200-node
+# region can have.
 BOXED_NODES = 200
-BOXED_CLOSEST_M = 5.0
+BOXED_CLOSEST_M = 40.0
 BOXED_REPEATS = 3
+# How many cells a trip remembers as proven dead ends (`Agent._note_dead_end`), and how far back
+# along the ground the bot physically walked it may aim (`TRAIL_MEMORY`). A march refused at one
+# cell is a fact about that cell, not about the world: the way out of a pocket is the ground the
+# bot already stood on, so the retreat reads the trail it walked in rather than a bearing that has
+# already been turned four times into the same wall.
+#
+# The trail is a breadcrumb line, not a tick-by-tick record: a waypoint is written only once the
+# body has moved `TRAIL_STEP` blocks from the last one. A cell-per-tick trail would be the bounce
+# of the last 48 ticks - run260's 153↔171 shuffle - and the way back to the gate would be scrolled
+# out of it before the retreat could read it.
+DEAD_END_MEMORY = 64
+TRAIL_MEMORY = 24
+TRAIL_STEP = 32.0
+# A body that has not left one cell for `DEAD_END_STANDSTILL` decisions while `DEAD_END_REFUSALS`
+# of them were refusals is not working: every offer is refused from the same ground. run260 stood
+# on (147.54, 33, -1.46) from it284 to it470 - 188 ticks, 250 route refusals, no death - and the
+# run only ended when the harness killed it. The loop says so instead.
+DEAD_END_STANDSTILL = 60
+DEAD_END_REFUSALS = 25
 # `dig_out` rotates through the six sides (`planner`): four horizontal, plus up and down. A
 # refused dig turns to the next side too, not only one that went through, so one unreachable wall
 # is not dug at forever; after this many tries every side has been gone round at least once and
@@ -824,6 +850,16 @@ class Agent:
         # body where it was, so the next bearing would be the same wall. Turned a quadrant per
         # stall (`_clear_march_heading`) and capped for a pearl wave (`PEARL_MARCH_STALL_LIMIT`).
         self._explore_stalls = 0
+        # Cells a march or hop was refused a route from this trip, and the breadcrumb line of
+        # ground the body walked, oldest first (`_note_dead_end`). Together they are the way
+        # back: the retreat aims at the oldest waypoint that is not itself a dead end.
+        self._dead_ends: list[tuple[int, int, int]] = []
+        self._trail: list[tuple[int, int, int]] = []
+        # The cell the body has been standing on, and how long (`_note_dead_end`): the pair that
+        # ends a run that has walked nowhere (`DEAD_END_STANDSTILL`/`DEAD_END_REFUSALS`).
+        self._still_cell: tuple[int, int, int] | None = None
+        self._still_ticks = 0
+        self._still_refusals = 0
         self._nether_ticks = 0
         self._nether_travel = 0.0
         self._nether_last_pos: tuple[float, float] | None = None   # (x, z) of the last tick
@@ -1108,6 +1144,8 @@ class Agent:
         gs.powder_bank = self._powder_bank
         gs.frame_eyes = self._frame_eyes
         gs.nether_landmarks = frozenset(self._nether_landmarks)
+        gs.dead_end_cells = frozenset(getattr(self, "_dead_ends", ()))
+        gs.walked_trail = tuple(getattr(self, "_trail", ()))
         gs.end_entered = self._end_entered
         gs.dragon_slain = self._dragon_slain
         gs.end_portal_cell = self._end_portal_cell
@@ -1535,6 +1573,14 @@ class Agent:
             # Same for the cages already written off: a new trip searches a new stretch of the
             # world, and the fortress the last one stood in is not this one's target.
             self._nether_landmarks = []
+            # The trail and the dead ends are the same trip's geography. Coming back down, the bot
+            # walks a new stretch of the world; keeping the last trip's cells would aim the retreat
+            # at ground it has not stood on this time.
+            self._dead_ends = []
+            self._trail = []
+            self._still_cell = None
+            self._still_ticks = 0
+            self._still_refusals = 0
             # A stalled march is a fact about one trip's terrain; a new trip starts at the gate
             # with a new neighbourhood, so the turn budget is not spent by the last one. Only the
             # crossing clears it - an Overworld tick must keep its own count, or the roam there
@@ -1565,6 +1611,50 @@ class Agent:
         if ("EXPLORATION_ROUTE_STOPPED" in stopped or "EXPLORATION_NO_FORWARD_PROGRESS" in stopped
                 or "EXPLORATION_FAILED" in stopped):
             self._explore_stalls = stalls + 1
+
+    def _note_dead_end(self, after, action, ok: bool, text: str | None) -> None:
+        """Write down the cell a walk was refused from, and how long the body has stood on it.
+
+        Three things come out of one observation, all read off the same cell:
+
+        * the **trail** - a breadcrumb line of the ground the body walked this trip, one waypoint
+          every `TRAIL_STEP` blocks, oldest first. Ground the bot stood on is ground the pathfinder
+          can path to, so the trail is the way out of a pocket and the way back to the gate
+          (`_retreat_heading`).
+        * the **dead ends** - the cells a route was refused from. A march aimed back into one of
+          them is the same refusal next tick, so the retreat skips them.
+        * the **standstill** - decisions on one cell with no movement. run260 answered 250 route
+          refusals from (147,33,-1) over 188 ticks; nothing in the loop could call that finished.
+
+        A march that moved is not a dead end at the cell it started from, and a cell the body
+        leaves starts the count over: the pocket is the ground under the feet, not the ground the
+        tick began on (see `_note_boxed` for the same post-action reading).
+        """
+        if after.pos is None:
+            return
+        cell = _cell(after.pos)
+        if self._still_cell == cell:
+            self._still_ticks += 1
+        else:
+            self._still_cell = cell
+            self._still_ticks = 1
+            self._still_refusals = 0
+        if not ok:
+            self._still_refusals += 1
+
+        if not self._trail or math.dist(self._trail[-1], cell) >= TRAIL_STEP:
+            self._trail.append(cell)
+            if len(self._trail) > TRAIL_MEMORY:
+                self._trail.pop(0)
+
+        stopped = text or ""
+        if ("EXPLORATION_ROUTE_STOPPED" in stopped or "repeated_movement_failure" in stopped
+                or shut_in(stopped, after.pos)):
+            if cell not in self._dead_ends:
+                self._dead_ends.append(cell)
+                if len(self._dead_ends) > DEAD_END_MEMORY:
+                    # The oldest write-off is the one the bot has since walked away from.
+                    self._dead_ends.pop(0)
 
     def _note_landmark(self, action, delta: dict, after) -> None:
         """Write off a fortress landmark the search reached and found no blaze at.
@@ -2193,6 +2283,8 @@ class Agent:
         gs.powder_bank = self._powder_bank
         gs.frame_eyes = self._frame_eyes
         gs.nether_landmarks = frozenset(self._nether_landmarks)
+        gs.dead_end_cells = frozenset(getattr(self, "_dead_ends", ()))
+        gs.walked_trail = tuple(getattr(self, "_trail", ()))
         gs.end_entered = self._end_entered
         gs.dragon_slain = self._dragon_slain
         gs.end_portal_cell = self._end_portal_cell
@@ -2332,10 +2424,15 @@ class Agent:
         held = (self._held_ticks >= BODY_HELD_STOP
                 or getattr(self, "_held_live", 0) >= BODY_HELD_LIVE_STOP)
         busy = getattr(self, "_body_busy", 0) >= BODY_BUSY_STOP
-        return {"done": goal or limit or held or busy,
+        # Nothing on the ladder moves the body and every walk is refused from the same cell: the
+        # pocket is proven, and the remaining iterations would only add refusals to the report.
+        dead_end = (getattr(self, "_still_ticks", 0) >= DEAD_END_STANDSTILL
+                    and getattr(self, "_still_refusals", 0) >= DEAD_END_REFUSALS)
+        return {"done": goal or limit or held or busy or dead_end,
                 "stop": "goal" if goal else ("body_held" if held else
                                              ("body_busy" if busy else
-                                              ("limit" if limit else "")))}
+                                              ("dead_end" if dead_end else
+                                               ("limit" if limit else ""))))}
 
     def _note_held(self, res, before, after) -> None:
         """Count the foreground calls in a row that ran out of wait budget with the body held.
@@ -3916,9 +4013,19 @@ class Agent:
         await self._hold_wait(action, _ok)
         after = await self._observe()
         delta = vmod.diff(before, after)
+        # A march that reached no new ground is not progress even when the body covered metres:
+        # `explore_frontier` reports the chunks it expanded (or the biome it entered), and a
+        # route-stopped leg between two ledges walks 17 blocks with `expandedChunks: 0` (live,
+        # run260 it198-203). Without the server's own count a 17-block bounce read as progress,
+        # which reset the stuck guard and told the observer never to call the loop a loop.
+        if action.label in ("explore", "search_enderman"):
+            reached = vmod.exploration_reached(_find(getattr(res, "data", None), "explored"))
+            if reached is not None:
+                delta["explore_reached"] = reached
         # After the observation, not before: the `no path found` refusal names the cell the walk
         # started from, which is where the action left the body (see `_note_boxed`).
         self._note_boxed(after, action, _ok, _text, res, delta)
+        self._note_dead_end(after, action, _ok, _text)
         self._note_heading(before.pos, after.pos)
         # `surface_up` answers itself through the position it lands on (a resolved probe) or
         # through the height the server names when it refuses to guess (an ambiguous column);

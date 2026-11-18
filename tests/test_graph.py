@@ -23,7 +23,7 @@ from mlaya.actions import (Action, candidates, nether_expedition_complete, resol
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_LIVE_STOP, BODY_HELD_STOP, BOXED_REPEATS, BOUNCE_WINDOW, BOUNCE_LABELS,
-                         DIG_OUT_MAX_TRIES, HOME_ANCHOR_TICKS,
+                         DIG_OUT_MAX_TRIES, DEAD_END_REFUSALS, DEAD_END_STANDSTILL, HOME_ANCHOR_TICKS,
                          LAVA_WALK_COOLDOWN, RECOVER_UNREACHABLE_REPEATS, shut_in, IDLE_REPEATS, PASS_TIME_LABELS,
                          ORBIT_WINDOW, PORTAL_INTENT_TICKS, STALL_ESCALATE_REPEATS, STUCK_COOLDOWN, STUCK_REPEATS,
                          WANDER_RATIO, WANDER_REPEATS, WANDER_WALK,
@@ -1412,6 +1412,14 @@ class TickRecordTest(unittest.TestCase):
         import inspect
         src = inspect.getsource(Agent._verify)
         self.assertIn('"args": action.args', src)
+
+    def test_a_march_records_whether_it_reached_ground(self) -> None:
+        # A route-stopped `explore` walks 17 blocks without reaching any (run260 it198-203).
+        # The server's chunk/biome answer has to ride into the delta so `progressed` - and with
+        # it the stuck guard and the observer's loop rule - can tell a bounce from a march.
+        import inspect
+        src = inspect.getsource(Agent._verify)
+        self.assertIn('delta["explore_reached"] = reached', src)
 
 
 class StuckOfferTest(unittest.TestCase):
@@ -7082,6 +7090,11 @@ class ShutInTest(unittest.TestCase):
     # into after a lava death.
     RUN228 = ("[NAVIGATION_STOPPED] Pathfinder stopped: no path found after 0 ms compute; "
               "visited 12 nodes, generated 12; closest node was -52,33,5")
+    # run260 it180: a Nether ledge 18 blocks long. The search exhausted itself in 140 nodes and
+    # the closest node it reached was 29 blocks off - the ledge is the whole region, so the pocket
+    # is elongated rather than a one-cell cage.
+    RUN260 = ("[EXPLORATION_ROUTE_STOPPED] Pathfinder stopped: no path found after 1 ms compute; "
+              "visited 140 nodes, generated 148; closest node was 177,33,-2")
 
     class _Action:
         def __init__(self, label: str) -> None:
@@ -7117,6 +7130,15 @@ class ShutInTest(unittest.TestCase):
         # Few nodes but the closest one far off: a ledge to cross, not a pocket.
         self.assertFalse(shut_in("no path found after 24 ms compute; visited 402 nodes, "
                                  "generated 436; closest node was 223,100,16", (364.3, 101, -11.5)))
+
+    def test_an_elongated_ledge_is_a_pocket_too(self) -> None:
+        # `BOXED_CLOSEST_M` used to be 5.0, which only catches a cage the body cannot step out of.
+        # run260's ledge answered 140 nodes with its closest node 29 blocks off and the bot stood
+        # on it for 188 ticks: an elongated pocket is the same trap, and `dig_out` never got the
+        # tick because the latch never closed.
+        self.assertTrue(shut_in(self.RUN260, (153.68, 33.0, -1.5)))
+        # A search that ran far is still not a pocket, however far the closest node is.
+        self.assertFalse(shut_in(self.FAR, (153.68, 33.0, -1.5)))
 
     def test_three_refusals_from_one_cell_shut_the_bot_in(self) -> None:
         agent = self._agent()
@@ -7290,6 +7312,113 @@ class ShutInTest(unittest.TestCase):
         injected = agent._inject(gs(pos=(182.5, 70.0, 181.5)))
         self.assertTrue(injected.boxed_in)
         self.assertEqual(injected.dig_out_try, 2)
+
+
+class DeadEndTest(unittest.TestCase):
+    """A body that has not left one cell while every walk is refused ends the run.
+
+    run260 answered 250 route refusals from (147.54, 33, -1.46) across 188 ticks - no death, no
+    movement, no stop. `_stop_state` knew `goal`, `limit`, `body_held` and `body_busy`; a pocket is
+    none of those. The same observation writes the trail the bot walked in on and the cells that
+    refused a route out of it, which is what lets the march aim back rather than turn a quadrant
+    into a wall it has already tried four times.
+    """
+
+    RUN260 = ("[EXPLORATION_ROUTE_STOPPED] Pathfinder stopped: no path found after 1 ms compute; "
+              "visited 140 nodes, generated 148; closest node was 177,33,-2")
+
+    class _Action:
+        def __init__(self, label: str, tool: str = "explore_frontier") -> None:
+            self.label = label
+            self.tool = tool
+
+    @staticmethod
+    def _agent() -> Agent:
+        agent = Agent.__new__(Agent)
+        agent._slept_at_stronghold = False
+        agent._end_entered = False
+        agent._dragon_slain = False
+        agent._end_portal_cell = None
+        agent.bed_pos = None
+        agent._raised = []
+        agent._pearl_wave_trips = 0
+        agent._nether_landmarks = []
+        agent._dead_ends = []
+        agent._trail = []
+        agent._still_cell = None
+        agent._still_ticks = 0
+        agent._still_refusals = 0
+        agent.settings = Settings()
+        agent.settings.loop.max_iterations = 500
+        agent.settings.loop.stop_when_complete = True
+        agent._held_ticks = 0
+        return agent
+
+    def test_a_refusal_writes_the_cell_and_the_trail(self) -> None:
+        agent = self._agent()
+        agent._note_dead_end(gs(pos=(180.0, 33.0, -1.5)), self._Action("explore"), True, "")
+        agent._note_dead_end(gs(pos=(147.54, 33.0, -1.46)), self._Action("explore"), False, self.RUN260)
+        self.assertEqual(agent._trail, [(180, 33, -2), (147, 33, -2)])
+        self.assertEqual(agent._dead_ends, [(147, 33, -2)])
+        self.assertEqual((agent._still_cell, agent._still_ticks, agent._still_refusals),
+                         ((147, 33, -2), 1, 1))
+
+    def test_the_trail_is_a_breadcrumb_not_a_tick_record(self) -> None:
+        # A waypoint every `TRAIL_STEP` blocks. A cell-per-tick trail would hold run260's
+        # 153↔171 shuffle and scroll the way back to the gate out of the memory.
+        agent = self._agent()
+        for _ in range(100):
+            agent._note_dead_end(gs(pos=(147.54, 33.0, -1.46)), self._Action("explore"), False,
+                                 self.RUN260)
+        self.assertEqual(agent._trail, [(147, 33, -2)])
+
+    def test_a_walk_that_moved_is_not_written_off(self) -> None:
+        agent = self._agent()
+        agent._note_dead_end(gs(pos=(147.54, 33.0, -1.46)), self._Action("explore"), True, "")
+        self.assertEqual(agent._dead_ends, [])
+        self.assertEqual(agent._still_refusals, 0)
+
+    def test_leaving_the_cell_starts_the_count_over(self) -> None:
+        agent = self._agent()
+        for _ in range(DEAD_END_STANDSTILL - 1):
+            agent._note_dead_end(gs(pos=(147.54, 33.0, -1.46)), self._Action("explore"), False, self.RUN260)
+        agent._note_dead_end(gs(pos=(131.5, 33.0, -1.5)), self._Action("explore"), False, self.RUN260)
+        self.assertEqual((agent._still_cell, agent._still_ticks, agent._still_refusals),
+                         ((131, 33, -2), 1, 1))
+
+    def test_the_standstill_ends_the_run(self) -> None:
+        agent = self._agent()
+        here = (147.54, 33.0, -1.46)
+        for _ in range(DEAD_END_STANDSTILL):
+            agent._note_dead_end(gs(pos=here), self._Action("explore"), False, self.RUN260)
+        self.assertEqual(agent._stop_state(gs(pos=here, dimension="the_nether"), 100),
+                         {"done": True, "stop": "dead_end"})
+
+    def test_a_run_that_walks_is_not_a_dead_end(self) -> None:
+        agent = self._agent()
+        for i in range(DEAD_END_STANDSTILL + 5):
+            agent._note_dead_end(gs(pos=(150.5 + i, 33.0, -1.5)), self._Action("explore"), False,
+                                 self.RUN260)
+        self.assertFalse(agent._stop_state(gs(pos=(205.5, 33.0, -1.5), dimension="the_nether"),
+                                           100)["done"])
+
+    def test_refusals_alone_are_not_enough(self) -> None:
+        # A bot that walks but is refused at every step is working, not shut in: the standstill
+        # has to hold for the whole window, not just the refusal count.
+        agent = self._agent()
+        for i in range(DEAD_END_REFUSALS):
+            agent._note_dead_end(gs(pos=(150.5 + i, 33.0, -1.5)), self._Action("explore"), False,
+                                 self.RUN260)
+        self.assertFalse(agent._stop_state(gs(pos=(175.5, 33.0, -1.5), dimension="the_nether"),
+                                           100)["done"])
+
+    def test_inject_hands_the_memory_to_the_state(self) -> None:
+        agent = RecoverWriteOffTest._agent(RecoverWriteOffTest())
+        agent._dead_ends = [(147, 33, -2)]
+        agent._trail = [(131, 33, -2), (147, 33, -2)]
+        injected = agent._inject(gs(pos=(147.54, 33.0, -1.46), dimension="the_nether"))
+        self.assertEqual(injected.dead_end_cells, frozenset({(147, 33, -2)}))
+        self.assertEqual(injected.walked_trail, ((131, 33, -2), (147, 33, -2)))
 
 
 class SleepStrongholdLatchTest(unittest.TestCase):

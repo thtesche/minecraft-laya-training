@@ -990,14 +990,26 @@ def candidates(gs: GameState) -> list[str]:
     # fallback in the Nether (the march to the fortress) and before a base or a kit is in hand. A
     # home walk that keeps failing is stuck-listed like any other step, and then `explore` takes
     # over so the bot is not frozen pathing to a base it cannot reach.
+    # A fallback that re-adds a label the stall guards just took out of the offer is the loop the
+    # guards exist to break: `_track_stuck`, `_track_idle`, `_track_orbit` and `_track_bounce` all
+    # write into `gs.stuck_labels`, and run260 answered 223 ticks of `explore` that had just been
+    # withheld - the guards were structurally toothless for the last label on the ladder. So the
+    # fallback is filtered the same way the ladder above is. When every fallback is withheld the
+    # offer is empty and the tick defers; the cooldown (`STUCK_COOLDOWN`) brings a label back, and
+    # `_stop_state` ends a run whose body has not left one cell for `DEAD_END_STANDSTILL` ticks.
     if not out:
         if still or (_at_base(gs) and _nether_idle(gs)):
-            out.append("wait")
+            if "wait" not in gs.stuck_labels:
+                out.append("wait")
         elif (_idle_off_base(gs) and "go_home" not in gs.stuck_labels
               and not _stronghold_phase(gs)):
             out.append("go_home")
-        else:
+        elif "explore" not in gs.stuck_labels:
             out.append("explore")
+        elif "wait" not in gs.stuck_labels:
+            # The march is stuck and there is no base to hold at: standing still is still a step,
+            # and `resolve("wait")` holds the body on its own cell rather than returning None.
+            out.append("wait")
     return out
 
 
@@ -2318,6 +2330,14 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             mx, my, mz = (math.floor(v) for v in gs.pos)
             return Action(label, "navigate", {"x": mx, "y": my, "z": mz, "range": 1},
                           "hold at the stronghold bed until night, when the respawn sleep can run")
+        # Nothing to hold at: no base, no bed, night not falling. An offered label that resolves to
+        # None is a dead end the loop reads as a stall (the same lesson `_way_home_known` carries),
+        # and a navigate to the cell the body already stands on settles at once. run260's boxed bot
+        # had no base in the Nether, so `wait` was the one fallback that could not run at all.
+        if gs.pos is not None:
+            mx, my, mz = (math.floor(v) for v in gs.pos)
+            return Action(label, "navigate", {"x": mx, "y": my, "z": mz, "range": 1},
+                          "hold where the body stands while nothing else is offered")
         return None
     if label == "explore":
         if x is None or z is None:
