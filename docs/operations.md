@@ -44,7 +44,8 @@ watchdog, report watcher or observer - which is how the lab is brought up for an
 the bot by hand. The other verbs: `status` (JSON: world, viewer, host, run, observer,
 last tick, anomalies), `report [run]`,
 `analyze [--baseline runs/history/…]`, `dataset [flags]`, `viewer [up|down|status]`,
-`console "op LayaView"`, `down [--run-only]`.
+`console "op LayaView"`, `save <name> [--force]`, `restore <name>`, `saves`,
+`down [--run-only]`.
 
 The lab does the bookkeeping that used to be manual:
 
@@ -91,6 +92,34 @@ that never releases is capped separately by `BODY_HELD_LIVE_STOP = 6`), `body_bu
 body over), and `runs/decisions.jsonl` holds one record per tick
 (`action`, `defer`, `policy` stages) with the state, the candidates, the chosen label, the result
 text and the delta.
+
+### Saving and restoring a world
+
+A world is a bind-mounted folder, not a Docker volume, so a snapshot is a folder copy — but the
+world and the bot's ledger have to move **together**, or the loop reads a world its ledger does not
+match (a world that "already stands" to the server, blank to the bot). `lab.sh` keeps the two in
+step so this is one verb, not hand-copying:
+
+```bash
+./scripts/lab.sh save <name> [--force]   # stop the world, snapshot infra/world + runs/.lab/bot-data together
+./scripts/lab.sh restore <name>          # stop the world, roll both back to a snapshot
+./scripts/lab.sh saves                   # list the snapshots: when, which run, what each holds
+```
+
+- **`save`** refuses while a run is in progress (the ledger and the region files drift apart tick by
+  tick, so a snapshot taken mid-play is already inconsistent), stops the world container so the
+  server flushes its region files, then copies `infra/world/` and `runs/.lab/bot-data/` into
+  `runs/.lab/saves/<name>/` (plus a `save.json` recording the time, the run number and the MCP
+  commit). An existing name is kept unless `--force`. A world never driven by the loop has no
+  ledger yet; that empty-ledger state is recorded and restored as-is.
+- **`restore`** stops the world and lays both trees back down with `rsync --delete`, so stale chunks
+  from later play are removed, not left behind. Start from it with `lab.sh up` — **not** `--fresh`,
+  which wipes the world you just restored.
+- Snapshots live under `runs/.lab/saves/` and are gitignored (a world copy is large); a repo
+  checkout never carries one. Names are a single path segment: no slash, no leading dash.
+
+This is Strang 0 of the `prepare_end_dragon` plan: it lets a run start from a saved End-portal state
+instead of trekking ~2200 blocks there from nothing every time.
 
 ### Reading the log while it is written
 

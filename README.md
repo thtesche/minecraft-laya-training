@@ -108,6 +108,9 @@ The lab is the everyday entry point — it starts the Docker world, the MCP host
 ./scripts/lab.sh up --fresh --no-run    # clean world, host ready for an MCP client
 ./scripts/lab.sh status                 # world, host, run, last tick as JSON
 ./scripts/lab.sh report 187             # the finished run's report
+./scripts/lab.sh save portal_anchor     # snapshot world + bot ledger together (stops the world first)
+./scripts/lab.sh restore portal_anchor  # roll both back to a snapshot, then `up` (NOT --fresh)
+./scripts/lab.sh saves                  # list the snapshots
 ./scripts/lab.sh down                   # stop run, host, world
 ```
 

@@ -7,6 +7,9 @@
 #   ./scripts/lab.sh up --fresh --no-run                       setup only (world/host/viewer/probe), no mlaya loop
 #   ./scripts/lab.sh up --observe                              also run the read-only observer sidecar (-> runs/observer.jsonl)
 #   ./scripts/lab.sh up --use-observer-better                  run the observer IN the loop and take its `better` on a disagree (writes runs/observer.jsonl itself; not with --observe)
+#   ./scripts/lab.sh save <name> [--force]                     stop the world, snapshot world + bot ledger together under runs/.lab/saves/<name>
+#   ./scripts/lab.sh restore <name>                            stop the world, roll world + ledger back to a snapshot (then `lab.sh up` without --fresh)
+#   ./scripts/lab.sh saves                                      list the snapshots and what each holds
 #   ./scripts/lab.sh status                                    JSON: world, viewer, host, run, observer, last tick
 #   ./scripts/lab.sh analyze [--baseline runs/history/…]       report for the newest log
 #   ./scripts/lab.sh report [run number]                        write the finished run's report
@@ -41,6 +44,12 @@ MCP_DATA_ROOT="$REPO/runs/.lab/bot-data"
 OPS_USERS=("Sanskrita" "LayaView")
 COMPOSE="$REPO/infra/docker-compose.yml"
 STATE="$REPO/runs/.lab"
+# Where `save`/`restore` keep their anchors. Each snapshot is a folder holding a copy of the
+# world and the matching bot ledger, so a run can start from an End-portal state instead of
+# trekking there from nothing (plan prepare_end_dragon, Strang 0). Under runs/.lab so it rides
+# with the rest of the lab's own state and a repo checkout never carries a world copy.
+SAVES="$STATE/saves"
+WORLD="$REPO/infra/world"
 OPS_KNOWN="$STATE/ops-known.json"
 PY="$REPO/.venv/bin/python"
 # Every long-lived process the lab starts goes through this: it puts the command into a session
@@ -728,6 +737,153 @@ cmd_dataset() {
   "$PY" -m mlaya.cli dataset "${logs[@]}" --out "$REPO/data/train.jsonl" "$@"
 }
 
+# A snapshot name has to be a single path segment: it becomes a folder under runs/.lab/saves, so
+# a slash or a leading dash would write outside the saves dir or look like a flag.
+valid_save_name() {
+  case "$1" in
+    ""|-*|*/*|.|..) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# Copy a tree verbatim, mirror-deleting anything stale in the destination. rsync is on every macOS;
+# the `/` on the source copies the contents, not the directory itself, so src and dst line up.
+copy_tree() {
+  rsync -a --delete "$1/" "$2/"
+}
+
+# Stop the world container so the server flushes its region files before a snapshot is copied or
+# swapped. A world copied while the server is writing it is the `--fresh`-wipe hazard in reverse:
+# half-written chunks. The host and viewer are left alone - they hold no world files, only a
+# connection the next `up` re-establishes. A no-op when the world is already down.
+flush_world() {
+  if world_up; then
+    timeout 90 docker compose -f "$COMPOSE" down
+    log "world container stopped (region files flushed)"
+  fi
+}
+
+cmd_save() {
+  name=""
+  force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=1; shift ;;
+      -*) log "unknown argument: $1"; return 1 ;;
+      *) name="$1"; shift ;;
+    esac
+  done
+  if ! valid_save_name "$name"; then
+    log "usage: lab.sh save <name> [--force]   (name: no slash, no leading dash)"
+    return 1
+  fi
+  # A run writing the world is exactly the inconsistent state a snapshot must not capture: the
+  # ledger and the region files move apart tick by tick. Stop the run first, by hand, so the save
+  # is a decision and not a surprise mid-play.
+  if run_up; then
+    log "a run is in progress (pid $(cat "$STATE/run.pid")) - stop it first: lab.sh down"
+    return 1
+  fi
+  dest="$SAVES/$name"
+  if [[ -e "$dest" && $force == 0 ]]; then
+    log "snapshot '$name' already exists - pass --force to overwrite it"
+    return 1
+  fi
+  if [[ ! -d "$WORLD" ]]; then
+    log "no world at $WORLD to save - start one with lab.sh up first"
+    return 1
+  fi
+  flush_world
+  mkdir -p "$dest"
+  copy_tree "$WORLD" "$dest/world"
+  # The ledger may legitimately not exist yet (a world never driven by the loop). Copy it when it
+  # is there, and record its absence so a restore recreates that same empty-ledger start.
+  if [[ -d "$MCP_DATA_ROOT" ]]; then
+    copy_tree "$MCP_DATA_ROOT" "$dest/bot-data"
+    had_ledger=true
+  else
+    rm -rf "$dest/bot-data"
+    had_ledger=false
+  fi
+  # A little provenance beside the copy: when it was taken, which server commit the ledger was
+  # written by, and the run it came from - so `saves` can show it and a restore is traceable.
+  "$PY" - "$dest/save.json" "$name" "$had_ledger" "$(mcp_commit)" \
+         "$(cat "$STATE/run_number" 2>/dev/null)" <<'EOF'
+import json, sys, time
+path, name, had_ledger, commit, run = sys.argv[1:6]
+json.dump({"name": name, "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+           "had_ledger": had_ledger == "true", "mcp_commit": commit or None,
+           "from_run": run or None},
+          open(path, "w"), indent=2)
+open(path, "a").write("\n")
+EOF
+  log "snapshot '$name' saved -> $dest (world + $([[ $had_ledger == true ]] && echo ledger || echo 'empty ledger'))"
+  log "the world is stopped; resume play with: lab.sh up   (restore later with: lab.sh restore $name)"
+}
+
+cmd_restore() {
+  name="${1:-}"
+  if ! valid_save_name "$name"; then
+    log "usage: lab.sh restore <name>"
+    return 1
+  fi
+  src="$SAVES/$name"
+  if [[ ! -d "$src/world" ]]; then
+    log "no snapshot '$name' at $src - list them with: lab.sh saves"
+    return 1
+  fi
+  if run_up; then
+    log "a run is in progress (pid $(cat "$STATE/run.pid")) - stop it first: lab.sh down"
+    return 1
+  fi
+  flush_world
+  # World and ledger roll back together, or the loop reads a world its ledger does not match (the
+  # "diese Welt steht schon" inconsistency the plan warns of). Wipe both, then lay the snapshot
+  # down - a snapshot taken without a ledger restores to no ledger, the same empty start it had.
+  rm -rf "$WORLD"
+  mkdir -p "$WORLD"
+  copy_tree "$src/world" "$WORLD"
+  rm -rf "$MCP_DATA_ROOT"
+  if [[ -d "$src/bot-data" ]]; then
+    mkdir -p "$MCP_DATA_ROOT"
+    copy_tree "$src/bot-data" "$MCP_DATA_ROOT"
+    ledger="ledger"
+  else
+    ledger="empty ledger"
+  fi
+  log "snapshot '$name' restored (world + $ledger)"
+  log "start from it with: lab.sh up            (NOT --fresh - that wipes the world you just restored)"
+}
+
+cmd_saves() {
+  if [[ ! -d "$SAVES" ]] || [[ -z "$(ls -A "$SAVES" 2>/dev/null)" ]]; then
+    log "no snapshots yet - make one with: lab.sh save <name>"
+    return 0
+  fi
+  "$PY" - "$SAVES" <<'EOF'
+import json, os, sys
+from pathlib import Path
+saves = Path(sys.argv[1])
+rows = []
+for d in sorted(p for p in saves.iterdir() if p.is_dir()):
+    meta = {}
+    f = d / "save.json"
+    if f.exists():
+        try:
+            meta = json.load(open(f))
+        except Exception:
+            meta = {}
+    has_world = (d / "world").is_dir()
+    has_ledger = (d / "bot-data").is_dir()
+    rows.append((d.name, meta.get("saved_at", "?"), meta.get("from_run") or "-",
+                 "world" if has_world else "NO WORLD",
+                 "ledger" if has_ledger else "no ledger"))
+w = max((len(r[0]) for r in rows), default=4)
+for name, when, run, world, ledger in rows:
+    print(f"  {name:<{w}}  {when}  run {run:<4}  {world}, {ledger}")
+EOF
+}
+
 cmd_down() {
   if run_up; then
     kill "$(cat "$STATE/run.pid")" 2>/dev/null
@@ -792,6 +948,9 @@ cmd_console() {
 case "${1:-status}" in
   __library) return 0 2>/dev/null || exit 0 ;;
   up) shift; cmd_up "$@" ;;
+  save) shift; cmd_save "$@" ;;
+  restore) shift; cmd_restore "$@" ;;
+  saves) cmd_saves ;;
   status) cmd_status ;;
   analyze) shift; cmd_analyze "$@" ;;
   report) shift; cmd_report "$@" ;;
@@ -801,5 +960,5 @@ case "${1:-status}" in
   op) shift; cmd_op "$*" ;;
   host-test) cmd_host_test ;;
   down) shift; cmd_down "$@" ;;
-  *) echo "usage: lab.sh up|status|analyze|report|viewer|host-test|down" ; exit 1 ;;
+  *) echo "usage: lab.sh up|save|restore|saves|status|analyze|report|viewer|host-test|down" ; exit 1 ;;
 esac

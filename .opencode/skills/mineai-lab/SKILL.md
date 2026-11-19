@@ -18,6 +18,9 @@ around them.
 ./scripts/lab.sh viewer [up|down|status]                  # the LayaView spectator client alone
 ./scripts/lab.sh console "op LayaView"                    # server console command
 ./scripts/lab.sh op Sanskrita                             # grant op, remembering the real UUID
+./scripts/lab.sh save <name> [--force]                   # snapshot world + bot ledger together (stops the world)
+./scripts/lab.sh restore <name>                          # roll both back, then `up` (NOT --fresh)
+./scripts/lab.sh saves                                    # list the snapshots
 ./scripts/lab.sh down [--run-only]                        # stop run, host, viewer, world
 ```
 

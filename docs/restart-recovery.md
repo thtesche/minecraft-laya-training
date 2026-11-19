@@ -149,3 +149,8 @@ the latch, and walks to the gate to look.
 
 `lab.sh up --fresh` wipes this ledger with the world folder. That is not a detail: a fresh world
 whose ledger still remembers an old gate is a bot that starts with milestones it never earned.
+
+The same coupling runs the other way: `lab.sh save`/`restore` (see
+[operations.md](operations.md#saving-and-restoring-a-world)) snapshot and roll back the world and
+this ledger **together**, so a restored world never carries a ledger that remembers a different
+run's progress.
