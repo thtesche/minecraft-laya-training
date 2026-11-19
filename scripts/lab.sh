@@ -607,6 +607,18 @@ if log.exists():
 actions = [r for r in records if r.get("stage") == "action"]
 last = actions[-1] if actions else {}
 state_ = last.get("state", {})
+policy = [r for r in records if r.get("stage") == "policy"]
+overrides = [r for r in policy if r.get("reason") == "observer_better"]
+gaps = [r for r in policy if r.get("reason") == "observer_better_unoffered"]
+
+# The run's phase, not the day/night field the state carries: `prepare_end_dragon` is the
+# re-gear window beside the frame, and status has to say which of the late phases the run is
+# actually in for the override counts below to mean anything.
+try:
+    from mlaya.perception import phase_brief
+    run_phase = phase_brief(state_)[0] if state_ else None
+except Exception:
+    run_phase = None
 
 # The host's code is fixed at its start; the repo moves under it. Reporting the tree's HEAD
 # as the host's commit would say a patch is in play when the bot is still running the old one.
@@ -632,6 +644,12 @@ if len(actions) >= 6:
     moved = sum(abs((a.get("delta") or {}).get("pos_delta", 0)) for a in window)
     if len(labels) <= 2 and moved < 3:
         anomalies.append("stalled: " + "/".join(sorted(str(l) for l in labels)))
+# The re-gear window holds the body at the frame only while a kit craft can actually run; when
+# none can, the crossing is offered instead. A window that stays open with nothing progressing is
+# the shape run280 had, so it is worth naming rather than leaving to the generic stall check.
+if run_phase == "prepare_end_dragon" and actions:
+    if not any(a.get("progressed") for a in actions[-6:]):
+        anomalies.append("re-gear window at the frame: no kit step progressing")
 
 run_no = (state / "run_number").read_text().strip() if (state / "run_number").exists() else ""
 
@@ -653,6 +671,13 @@ if obs_log.exists():
                             "phase": last_obs.get("phase"),
                             "event": last_obs.get("event"),
                             "verdict": last_obs.get("verdict")}
+    # What the override machinery actually did: how many ticks the observer's `better` was
+    # force-run, how many disagreements named a label the phase never offered (the candidate-set
+    # gap, plan prepare_end_dragon Strang B), and how often it agreed at all.
+    observer["overrides"] = len(overrides)
+    observer["unoffered_gaps"] = len(gaps)
+    agrees = [r.get("verdict", {}).get("agree") for r in obs_rows]
+    observer["agreement"] = round(sum(1 for a in agrees if a) / len(agrees), 3) if agrees else None
 
 # The viewer reports itself through --state, so status can tell "the process is alive" apart
 # from "LayaView is actually in the world with a camera on the bot".
@@ -683,6 +708,7 @@ print(json.dumps({
             "number": run_no or None,
             "log": str(repo / "runs" / f"run{run_no}.log") if run_no else None,
             "iterations": last.get("iteration"),
+            "phase": run_phase,
             "last_label": last.get("label"),
             "last_status": last.get("status"),
             "health": hp, "food": food,
