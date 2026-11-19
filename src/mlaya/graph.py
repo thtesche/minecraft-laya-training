@@ -55,6 +55,16 @@ STALL_ESCALATE_REPEATS = 2
 # changes (`_run_observer`).
 OBSERVER_BETTER_REPEATS = 3
 
+# The late phases where the observer is the primary selector, not a bounded second opinion: the
+# stronghold march, the Overworld re-gear window, and the End fight (plan prepare_end_dragon Strang
+# B, 2026-11-19). Laya's head never saw these iterations in training, so it chooses them near-blind
+# (run281: 16 observer contradictions, one override); the observer did see them. A staged `better`
+# is already a *legal* candidate (`_run_observer` gates on `better in candidates`) and still has to
+# resolve (`_observer_override`), so it can never pick something illegal - here that legal pick is
+# taken every tick, without the `OBSERVER_BETTER_REPEATS` cooldown that paces a bounded override.
+# These observer-forced + progressed ticks are the gold labels Strang C trains the head on.
+OBSERVER_PRIMARY_PHASES = frozenset({"stronghold", "prepare_end_dragon", "end_dragon"})
+
 # A System-2 plan is a sequence, but only its first step used to be run: of the 44 escalations in
 # the last twelve runs, 39 came back with two or more steps and the rest was discarded, so the next
 # impasse paid for a whole new 34k-token call. The ledger keeps the remaining steps and takes the
@@ -2143,15 +2153,23 @@ class Agent:
         label is taken for the next tick - one-shot (cleared on read; a fresh verdict sets the
         next) - but only when it still resolves and is not the very label Laya chose, and never the
         same alternative past `OBSERVER_BETTER_REPEATS` ticks running (the cooldown that keeps a
-        wrong verdict from pinning the run into a new loop). The forced action is marked in the
-        decision record (`observer_forced`) so the report can tell it from a Laya choice, and a
-        `policy` line names it in the log beside the stall and unblock overrides.
+        wrong verdict from pinning the run into a new loop).
+
+        In the late phases (`OBSERVER_PRIMARY_PHASES`) the cooldown is lifted: there the observer is
+        the primary selector, because Laya's head never trained on those iterations and the observer
+        did. The pick is always a legal candidate that still resolves, so lifting the cooldown can
+        only ever force a legal move - and it is these forced-and-progressed ticks that Strang C
+        trains the head on. The forced action is marked in the decision record (`observer_forced`)
+        so the report can tell it from a Laya choice, and a `policy` line names it in the log beside
+        the stall and unblock overrides, with the phase and whether it was the primary selector.
         """
         better = self._pending_better
         self._pending_better = None
         if not better or better == laya_label:
             return None
-        if self._better_forced_label == better and self._better_forced_n >= OBSERVER_BETTER_REPEATS:
+        primary = perception.phase_brief(gs)[0] in OBSERVER_PRIMARY_PHASES
+        if (not primary and self._better_forced_label == better
+                and self._better_forced_n >= OBSERVER_BETTER_REPEATS):
             return None
         built = resolve(better, gs)
         if built is None:
@@ -2161,7 +2179,8 @@ class Agent:
         else:
             self._better_forced_label, self._better_forced_n = better, 1
         self.log.append({"stage": "policy", "reason": "observer_better",
-                         "iteration": iteration, "laya": laya_label, "via": better})
+                         "iteration": iteration, "laya": laya_label, "via": better,
+                         "phase": perception.phase_brief(gs)[0], "primary": primary})
         return {"action": built, "observer_forced": better,
                 "note": f"observer better -> {better}"}
 
@@ -2205,6 +2224,20 @@ class Agent:
             pass
         else:
             self._pending_better = None
+        # Instrument the contradictions the gate cannot act on: a disagree whose `better` the
+        # planner never offered this tick (`not in candidates`). This is the run281 pattern - 16 of
+        # 24 observer disagreements named a label the phase did not propose, so only one became an
+        # override. It is not a move we can force (an unoffered label is illegal, and forcing it
+        # blind is exactly what Strang B refuses), but it marks a gap in the candidate set for that
+        # phase - better widened there than the gate opened. Logged, not staged; the pending slot
+        # above is untouched.
+        if (record.get("stage") == "action" and agree is False and isinstance(better, str)
+                and better != laya_label and better not in candidates_n):
+            state = record.get("state")
+            phase = perception.phase_brief(state)[0] if isinstance(state, dict) and state else None
+            self.log.append({"stage": "policy", "reason": "observer_better_unoffered",
+                             "iteration": record.get("iteration"), "phase": phase,
+                             "laya": laya_label, "better": better, "candidates": candidates_n})
         if record.get("label") == self._better_forced_label and record.get("progressed"):
             self._better_forced_label, self._better_forced_n = None, 0
 

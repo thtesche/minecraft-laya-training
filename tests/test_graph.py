@@ -8153,9 +8153,59 @@ class ObserverBetterOverrideTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(out["action"], laya)
         self.assertNotIn("observer_forced", out)
 
+    async def test_a_primary_phase_lifts_the_cooldown(self) -> None:
+        # In the late phases (plan prepare_end_dragon Strang B) the observer is the primary
+        # selector: a staged `better` that is still a legal candidate is forced every tick, even
+        # past OBSERVER_BETTER_REPEATS, because Laya's head never trained on those iterations. The
+        # pick still has to resolve, so lifting the cooldown can only ever force a legal move.
+        from mlaya.graph import OBSERVER_BETTER_REPEATS
+        agent = self._agent()
+        agent._better_forced_label = "gather_scaffold"
+        agent._better_forced_n = OBSERVER_BETTER_REPEATS  # would bite outside a primary phase
+        agent._pending_better = "gather_scaffold"
+        laya = Action("gather_mushrooms", "collect_block", {}, "pick")
+        alt = Action("gather_scaffold", "collect_block", {}, "stack")
+        state = {"before": gs(dimension="minecraft:the_end"),
+                 "decision": Decision("gather_mushrooms"), "iteration": 7}
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: laya if lbl == "gather_mushrooms"
+                               else alt if lbl == "gather_scaffold" else None):
+            out = await agent._guard(state)
+        self.assertIs(out["action"], alt)
+        self.assertEqual(out["observer_forced"], "gather_scaffold")
+        # The policy line names the phase and marks it as the primary-selector path.
+        self.assertEqual(agent.log.records[-1]["phase"], "end_dragon")
+        self.assertTrue(agent.log.records[-1]["primary"])
+
+    async def test_an_overworld_lull_still_honours_the_cooldown(self) -> None:
+        # Outside the primary phases the bounded override is unchanged: the diamond-kit lull still
+        # lets Laya's own choice through once the cooldown is spent.
+        from mlaya.graph import OBSERVER_BETTER_REPEATS
+        agent = self._agent()
+        agent._better_forced_label = "gather_scaffold"
+        agent._better_forced_n = OBSERVER_BETTER_REPEATS
+        agent._pending_better = "gather_scaffold"
+        laya = Action("gather_mushrooms", "collect_block", {}, "pick")
+        alt = Action("gather_scaffold", "collect_block", {}, "stack")
+        state = {"before": gs(dimension="minecraft:overworld"),
+                 "decision": Decision("gather_mushrooms"), "iteration": 7}
+        with mock.patch.object(graph, "resolve",
+                               side_effect=lambda lbl, g, t=None: laya if lbl == "gather_mushrooms"
+                               else alt if lbl == "gather_scaffold" else None):
+            out = await agent._guard(state)
+        self.assertIs(out["action"], laya)
+        self.assertNotIn("observer_forced", out)
+
 
 class RunObserverIngestTest(unittest.IsolatedAsyncioTestCase):
     """`_run_observer` turns the observer's verdict into (or clears) the pending `better` override."""
+
+    class _Log:
+        def __init__(self) -> None:
+            self.records: list = []
+
+        def append(self, rec) -> None:
+            self.records.append(rec)
 
     def _agent(self, verdict) -> Agent:
         agent = Agent.__new__(Agent)
@@ -8163,6 +8213,7 @@ class RunObserverIngestTest(unittest.IsolatedAsyncioTestCase):
         agent._better_forced_label = None
         agent._better_forced_n = 0
         agent.observer = SimpleNamespace(ingest=lambda rec: {"verdict": verdict})
+        agent.log = self._Log()
         return agent
 
     def _rec(self, label="gather_mushrooms", candidates=None, progressed=False, stage="action"):
@@ -8229,6 +8280,26 @@ class RunObserverIngestTest(unittest.IsolatedAsyncioTestCase):
         agent._pending_better = "gather_scaffold"
         await agent._run_observer(self._rec(candidates=["gather_mushrooms", "mine_coal"]))
         self.assertIsNone(agent._pending_better)
+
+    async def test_an_unoffered_better_is_logged_as_a_candidate_gap(self) -> None:
+        # A disagree whose `better` the planner never offered this tick cannot be forced (it is
+        # illegal), but it marks a gap in the phase's candidate set - the run281 pattern (plan
+        # Strang B). It is logged, never staged.
+        agent = self._agent({"agree": False, "better": "mine_diamond"})
+        await agent._run_observer(self._rec())  # candidates lack mine_diamond
+        self.assertIsNone(agent._pending_better)
+        rec = agent.log.records[-1]
+        self.assertEqual(rec["reason"], "observer_better_unoffered")
+        self.assertEqual(rec["better"], "mine_diamond")
+        self.assertEqual(rec["laya"], "gather_mushrooms")
+
+    async def test_an_offered_better_is_not_logged_as_a_gap(self) -> None:
+        # The gap log is only for the unoffered case: a staged, legal `better` is not a gap.
+        agent = self._agent({"agree": False, "better": "gather_scaffold"})
+        await agent._run_observer(self._rec())  # gather_scaffold IS offered -> staged, not logged
+        self.assertEqual(agent._pending_better, "gather_scaffold")
+        self.assertFalse(any(r.get("reason") == "observer_better_unoffered"
+                             for r in agent.log.records))
 
 
 class AgentStateChannelsTest(unittest.TestCase):
