@@ -61,7 +61,11 @@ RESCUE_ABOVE = ("air", "cave_air")
 # offered. Kept as its own `view_blocks find` group: that call takes at most eight names.
 # `end_portal_frame` is the stronghold phase's landmark: it loads into the scan once the locate
 # phase has walked the bot to the stronghold, and that is what hands the tick to the activation.
-CHAIN_NAMES = ("lava", "chest", "furnace", "smoker", "gold_ore", "end_portal_frame")
+# `oak_planks` rides in this group for the same seven-name budget reason: the resource group
+# already sits at the eight names one `find` accepts. It is the wood a bot deep underground can
+# break without climbing back to a tree (the stronghold and mineshaft corridors), and it is what
+# `get_wood` falls back to when no log is within reach.
+CHAIN_NAMES = ("lava", "chest", "furnace", "smoker", "gold_ore", "end_portal_frame", "oak_planks")
 # The stew pantry, read in both dimensions: a bowl, a red and a brown mushroom brew a meal
 # whose bowl comes back from every bite, and both mushrooms grow on netherrack as well as on
 # Overworld soil. Its own `view_blocks find` group because the resource group already holds all
@@ -106,7 +110,7 @@ WARPED_FOREST_SQL = ("SELECT heading_degrees, distance_blocks, chunk_x, chunk_z 
                      "ORDER BY distance_blocks ASC LIMIT 1")
 # Groups whose nearest hit is worth naming in the narrative (Laya reads that text).
 NAMED_RESOURCES = RESOURCE_NAMES + ("lava", "spawner", "nether_bricks", "nether_brick_fence", "nether_brick_stairs",
-                                    "end_portal_frame", "red_mushroom", "brown_mushroom")
+                                    "end_portal_frame", "red_mushroom", "brown_mushroom", "oak_planks")
 RESOURCE_RADIUS = 64.0
 # How far the water rescue looks for dry land. The shore it needs to swim to is the one
 # reach the *last* live stranding missed: the nearest dry ground sat 65.1 m off, a whisker

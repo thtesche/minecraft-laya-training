@@ -537,6 +537,16 @@ SMOKER_LOGS = 4        # the server's smoker recipe: four logs *and* one carried
 # the carried count is zero forever.
 SMOKER_FURNACES = 2
 CHEST_PLANKS = 8
+# The wood a run deep underground can break without climbing back to a tree: the plank walls of
+# the stronghold and mineshaft corridors it is standing inside. `collect_block` matches a block
+# name exactly - only `logs` is a family selector on the host - so the request names the exact
+# plank the scan found, not a "planks" family.
+STRUCTURE_PLANKS = ("oak_planks", "spruce_planks", "birch_planks", "jungle_planks",
+                    "acacia_planks", "dark_oak_planks")
+# How far off a plank wall has to be for the body to break it without digging to it. The host
+# mines within a few blocks of reach, so a plank inside this is already at arm's length; one
+# further in sits behind rock, and rock needs a pickaxe.
+PLANK_REACH = 6.0
 # The overflow cells of the base's storage network, in the order they are filled: behind and
 # beside the main chest at `(bx, by+1, bz+1)`, marching in +z -- away from the furnace and the
 # smoker (both at `bz-1`) and from the portal's frame plane (which runs along `z == bz`, so no

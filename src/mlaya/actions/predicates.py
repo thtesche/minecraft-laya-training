@@ -525,6 +525,32 @@ def _can_mine(gs: GameState, block: str) -> bool:
     return not _pickaxe_due_for_spare(gs) or _tier_after_break(gs) >= need
 
 
+def _wood_block(gs: GameState) -> str:
+    """Which wood a `get_wood` tick should break: a tree, or the wall it is standing in.
+
+    Deep underground at the stronghold there is no tree within reach: live run282 it12-22, the
+    nearest log sat 59 m up at the surface while the corridor the bot stood in held 6 181 loaded
+    oak planks 20 m off, and four `get_wood` ticks answered
+    `[NO_REACHABLE_MATCHING_TARGETS]` on `logs` before the loop dug its way out. The host matches
+    a block name exactly (only `logs` is a family selector), so the fallback names the plank the
+    scan actually found.
+    """
+    logs = gs.resource_distance("logs")
+    planks = [h for name in STRUCTURE_PLANKS for h in (gs.resources or {}).get(name, [])]
+    if not planks:
+        return "logs"
+    nearest = min(planks, key=lambda h: h.distance)
+    # A tree still wins when it is the closer of the two: at the base the logs are a step away
+    # and a village's planks are not worth the walk.
+    if logs is not None and logs <= nearest.distance:
+        return "logs"
+    # A plank behind rock needs a pickaxe to dig to it; without one the tick would burn on a
+    # wall the body cannot open, and the tree - however far - is the only wood it can get.
+    if nearest.distance > PLANK_REACH and _pick_tier(gs.inventory, gs.tools) == 0:
+        return "logs"
+    return nearest.name
+
+
 def _worn(gs: GameState, item: str) -> bool:
     """Whether `item` is currently on the armour slots (equipped armour leaves the inventory)."""
     return any((m or {}).get("item") == item for m in gs.armor.values())

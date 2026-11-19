@@ -5624,6 +5624,55 @@ class WoodGateDeadZoneTest(unittest.TestCase):
         self.assertIsInstance(cands, list)
 
 
+class UndergroundWoodSourceTest(unittest.TestCase):
+    """`get_wood` breaks the plank wall it is standing in when no tree is within reach.
+
+    Live run282 it12-22: the bot sat fifteen blocks under the surface beside the end portal, the
+    nearest log 59 m up at the surface, and the corridor it stood in held 6 181 loaded oak planks
+    20 m off. Every `get_wood` tick asked the host for `logs` and answered
+    `[NO_REACHABLE_MATCHING_TARGETS]` four times before the loop dug its way out. The wood the
+    body is next to is the wood it can get, and the host matches a block name exactly - only
+    `logs` is a family selector - so the fallback names the plank the scan found.
+    """
+
+    def _deep(self, **inv) -> GameState:
+        g = gs(inventory=inv, tools={"pickaxe": "diamond"},
+               pos=(2161.5, -15.0, 683.5), dimension="minecraft:overworld",
+               health=20.0, food=18.0, phase="day")
+        g.resources = {"logs": [BlockHit("logs", "oak_log", 2150, 16, 732, 59.0)],
+                       "oak_planks": [BlockHit("oak_planks", "oak_planks", 2166, -2, 697, 19.7)]}
+        g.resource_found = {"logs": 10332, "oak_planks": 6181}
+        return g
+
+    def test_the_plank_wall_is_the_wood_when_no_tree_is_close(self) -> None:
+        a = resolve("get_wood", self._deep())
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "oak_planks")
+
+    def test_a_tree_still_wins_when_it_is_the_closer_wood(self) -> None:
+        g = self._deep()
+        g.resources["logs"] = [BlockHit("logs", "oak_log", 2161, -14, 684, 3.0)]
+        self.assertEqual(resolve("get_wood", g).args["block_name"], "logs")
+
+    def test_a_plank_behind_rock_is_not_asked_for_without_a_pickaxe(self) -> None:
+        # Digging 20 m through deepslate is a pickaxe job; without one the tick would burn on a
+        # wall the body cannot open, and the tree - however far - is the only wood it can get.
+        g = self._deep()
+        g.tools = {}
+        self.assertEqual(resolve("get_wood", g).args["block_name"], "logs")
+
+    def test_a_plank_at_arms_length_is_mined_with_no_tool(self) -> None:
+        g = self._deep()
+        g.tools = {}
+        g.resources["oak_planks"] = [BlockHit("oak_planks", "oak_planks", 2162, -15, 684, 1.4)]
+        self.assertEqual(resolve("get_wood", g).args["block_name"], "oak_planks")
+
+    def test_the_nether_still_has_no_wood_to_collect(self) -> None:
+        g = self._deep()
+        g.dimension = "minecraft:the_nether"
+        self.assertIsNone(resolve("get_wood", g))
+
+
 class FrameCompleteLatchTest(unittest.TestCase):
     """A finished frame stays finished when the bot roams off and the plane read goes blank.
 

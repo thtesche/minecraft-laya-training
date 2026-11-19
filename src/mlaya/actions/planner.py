@@ -1096,8 +1096,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
             # Gated here as well as in the offer: a label the policy still holds must not be able
             # to smuggle an impossible action through (same reason as `craft_bed`).
             return None
-        return Action(label, "collect_block", {"block_name": "logs", "count": 8},
-                      "gather logs to start the tech tree")
+        block = _wood_block(gs)
+        return Action(label, "collect_block", {"block_name": block, "count": 8},
+                      ("break the plank walls of the structure the bot is standing inside: deep "
+                       "underground no tree is within reach" if block != "logs" else
+                       "gather logs to start the tech tree"))
     if label == "mine_stone":
         if not _can_mine(gs, "stone"):
             return None
