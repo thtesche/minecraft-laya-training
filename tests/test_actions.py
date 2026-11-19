@@ -45,7 +45,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_EXIT_HOP_MIN, NETHER_EXIT_HOP_FLOOR, NETHER_GATE_LEASH_M,
                            _nether_haul_leashed,
                            NETHER_EXIT_CLIMB_REACH, NETHER_EXIT_CLIMB_STEP, NETHER_EXIT_CLIMB_MIN,
-                           NETHER_EXIT_CLIMB_SPAN, NETHER_BRIDGE_KEEP, HOARD_CAP, _scaffold_stack,
+                           NETHER_EXIT_CLIMB_SPAN, NETHER_BRIDGE_KEEP, HOARD_CAP,
+                           COMBAT_SCAFFOLD_BLOCKS, _scaffold_stack,
                            _nether_gate_distance,
                            NETHER_FOOD_MIN_RESERVE, NETHER_FOOD_EMERGENCY_FLOOR,
                            FOOD_BANK_KEEP, resolve, stronghold_complete,
@@ -6780,6 +6781,12 @@ class NetherExpeditionTest(unittest.TestCase):
         g = self._down(blaze_rod=9, cobblestone=64, netherrack=2)
         self.assertEqual(_scaffold_stack(g), 64)
         self.assertEqual(_scaffold_stack(self._down(blaze_rod=9)), 0)
+        # Soul sand is carried down there but is not scaffold: its collision box is 7/8 tall, so
+        # the server's selection (full cube, safe support) never picks it. Counting it would bound
+        # a hop to blocks that can never be placed.
+        g = self._down(blaze_rod=9, soul_sand=15)
+        self.assertEqual(_scaffold_stack(g), 0)
+        self.assertNotIn("soul_sand", COMBAT_SCAFFOLD_BLOCKS)
 
     def test_a_hop_the_pack_cannot_bridge_is_cut_to_the_floor(self) -> None:
         # Two blocks in hand cannot reach a 120 m aim; the hop is cut to what the pack can place,

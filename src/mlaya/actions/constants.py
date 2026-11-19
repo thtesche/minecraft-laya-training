@@ -933,10 +933,17 @@ NEUTRAL_HOSTILES = frozenset({"piglin", "zombified_piglin"})
 # takes the *first* carried name on the list and the route search counts only that item's stack
 # (`remainingScaffolds = inventory.get(scaffold.itemType)`). A pack of 2 netherrack and 16
 # smooth_basalt bridges two metres, not eighteen - see `_scaffold_stack`.
+#
+# Soul sand is deliberately not on the list. The policy validator only asks whether a block item
+# is registered, but the selection that uses it asks for a full cube with safe support, and soul
+# sand's collision box is 7/8 tall (`parkourTakeoff: "short"`, `navigate.test.ts`'s
+# `[0,0,0,1,0.875,1]`): it is neither a scaffold the pathfinder may place nor a roof the combat
+# reflex can build. Listing it would let `_scaffold_stack` count blocks the server can never put
+# down.
 SCAFFOLD_POLICY_BLOCKS = (
     "dirt", "cobblestone", "cobbled_deepslate",
     "netherrack", "basalt", "end_stone",
-    "smooth_basalt", "blackstone", "soul_sand",
+    "smooth_basalt", "blackstone",
 )
 COMBAT_SCAFFOLD_BLOCKS = frozenset(SCAFFOLD_POLICY_BLOCKS)
 # How many scaffold blocks the bot must carry before an enderman hunt is offered. The server's
