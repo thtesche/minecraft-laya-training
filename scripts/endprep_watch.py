@@ -136,8 +136,16 @@ def plan_quality(recs):
         return None
     lengths = [len(r.get("steps") or []) for r in plans]
     resolves = sum(1 for r in plans if r.get("resolved"))
-    unresolved = Counter(u for r in plans for u in (r.get("unresolved") or []))
-    recurrence = sum(c - 1 for c in unresolved.values() if c > 1)
+    # `unresolved` is a single label per escalation, not a list: counting it as an iterable
+    # counted its characters, so run291's four `eat_food` calls read as a recurrence of 25.
+    labels = []
+    for r in plans:
+        value = r.get("unresolved")
+        if isinstance(value, str):
+            labels.append(value)
+        elif isinstance(value, (list, tuple)):
+            labels.extend(str(v) for v in value)
+    recurrence = sum(c - 1 for c in Counter(labels).values() if c > 1)
     return {"plans": len(plans), "resolve_rate": resolves / len(plans),
             "avg_len": sum(lengths) / len(lengths) if lengths else 0,
             "recurrence": recurrence}
