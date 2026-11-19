@@ -72,6 +72,42 @@ def refusals(recs):
     return out
 
 
+def death_lines(recs):
+    """Deaths the loop noticed, with the cause the server names.
+
+    The loop writes a `policy`/`death` line when it re-applies the survival preset after a
+    respawn, and the cause lands in the `last_death` field of the state of the records that
+    follow - the same read `analysis._death_causes` makes. A health delta cannot find it: by the
+    time the next tick is logged the body is back at 20 (live, run288 it60: `explore` walked into
+    lava, the whole pack went to the ground, and the delta read `health_delta 0.0`).
+    """
+    out = []
+    for i, r in enumerate(recs):
+        if r.get("stage") == "policy" and r.get("reason") == "death":
+            cause = ""
+            for nxt in recs[i + 1:]:
+                cause = str((nxt.get("state") or {}).get("last_death") or "")
+                if cause:
+                    break
+            out.append(cause or "cause unreported")
+    return out
+
+
+def early_milestones(recs):
+    """Milestone latches already set on the first logged tick.
+
+    In a freshly restored world these must be empty; in a world the run continues in they are
+    the world's own history, so the pass has to say which of the two it is looking at.
+    """
+    acts = [r for r in recs if r.get("stage") == "action"]
+    if not acts:
+        return []
+    st = acts[0].get("state") or {}
+    flags = ("powder_stowed", "nether_entered", "end_portal_active", "slept_at_stronghold",
+             "stronghold_frame", "dragon_slain", "base")
+    return [f for f in flags if st.get(f)]
+
+
 def longest_defer(recs):
     run = best = 0
     for r in recs:
@@ -164,9 +200,9 @@ def main():
           f"host runtime {st['host']['runtime']}  world {st['world']['running']}")
     stall = Counter(r["label"] for r in dec if r.get("stage") == "action" and r["label"] in STALL_LABELS)
     print(f"sleep/wait: {dict(stall)}")
-    deaths = [r for r in dec if r.get("stage") == "action"
-              and (r.get("delta") or {}).get("health_delta", 0) <= -19]
-    print(f"Deaths: {len(deaths)}")
+    dead = death_lines(dec)
+    print(f"Deaths: {len(dead)}" + (f" - {', '.join(dead)}" if dead else ""))
+    print(f"Meilensteine beim ersten Tick: {early_milestones(dec) or 'keine'}")
 
 
 if __name__ == "__main__":
