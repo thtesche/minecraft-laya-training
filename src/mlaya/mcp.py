@@ -47,6 +47,10 @@ class ToolResult:
     settled: bool
     status: str | None = None
     raw: Any = None
+    # Settled results of *earlier* actions this call had to retrieve before its own submission
+    # could start (`RESULT_NOT_RETRIEVED` gating). They are the only record the loop ever gets of
+    # a foreground action that outlived the wait budget of the tick that issued it.
+    drained: tuple = ()
 
 
 def _find(obj: Any, *keys: str) -> Any:
@@ -114,7 +118,7 @@ def _envelope_state(data: Any) -> Any:
     return inner.get("state") if isinstance(inner, dict) else None
 
 
-def _held(res: ToolResult, waited_s: float | None = None) -> ToolResult:
+def _held(res: ToolResult, waited_s: float | None = None, drained: tuple = ()) -> ToolResult:
     """The refusal a foreground call ends with when its action did not settle in time.
 
     Names who holds the body and in what, as far as the last progress answer says: run89's hunt
@@ -135,7 +139,8 @@ def _held(res: ToolResult, waited_s: float | None = None) -> ToolResult:
             parts.append(f"{response.get('phaseTicks')} ticks")
     text = (f"[BODY_HELD] action {res.action_id} still running after the wait budget; "
             + ", ".join(parts))
-    return ToolResult(False, text, res.data, res.action_id, False, status="held", raw=res.raw)
+    return ToolResult(False, text, res.data, res.action_id, False, status="held", raw=res.raw,
+                      drained=drained)
 
 
 def _gated_id(res: ToolResult) -> tuple[str, str | None]:
@@ -257,6 +262,12 @@ class MCPExecutor:
             started = asyncio.get_running_loop().time()
             deadline = started + self.cfg.action_wait_ms / 1000
             res = ToolResult(False, "", None, None, False)
+            # A drained settlement is the only record the loop ever gets of an action that outlived
+            # the tick that issued it. run273 it6-8: `locate_stronghold` walked 1400 blocks and
+            # confirmed the frame, the drain retrieved that result to let `go_home` start, and the
+            # confirmation was thrown away with the drain - the bot turned around and walked home
+            # from the stronghold it had just found.
+            drained: list[ToolResult] = []
             for _ in range(3):
                 try:
                     res = _extract(await self._raw_call(tool, self._payload(tool, args, rationale)))
@@ -270,10 +281,11 @@ class MCPExecutor:
                 if pending:
                     # The refusal means *our* action never started, so draining the named result
                     # and resubmitting cannot double-run anything.
-                    drained = await self._wait_settled(pending, deadline)
-                    if not drained.settled:
-                        return _held(drained if drained.data else res,
-                                     asyncio.get_running_loop().time() - started)
+                    settled = await self._wait_settled(pending, deadline)
+                    if not settled.settled:
+                        return _held(settled if settled.data else res,
+                                     asyncio.get_running_loop().time() - started, tuple(drained))
+                    drained.append(settled)
                     continue
                 if not res.ok:
                     res = await self._recover(res, deadline)
@@ -282,8 +294,11 @@ class MCPExecutor:
                 waited = await self._wait_settled(res.action_id, deadline)
                 if not waited.settled:
                     return _held(waited if waited.data else res,
-                                 asyncio.get_running_loop().time() - started)
+                                 asyncio.get_running_loop().time() - started, tuple(drained))
                 res = waited
+            if drained:
+                res = ToolResult(res.ok, res.text, res.data, res.action_id, res.settled,
+                                 res.status, res.raw, tuple(drained))
             return res
 
     def _payload(self, tool: str, args: dict, rationale: str) -> dict:

@@ -93,6 +93,30 @@ class DrainTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res.ok)
         self.assertEqual([n for n, _ in calls], ["drop_item"])
 
+    async def test_a_drained_settlement_is_carried_on_the_result(self) -> None:
+        # The drain is the only place the loop ever sees an action that outlived its own tick: run273
+        # drained a 1400-block `locate_stronghold` to unblock `go_home` and lost the frame the locate
+        # had confirmed with the drain.
+        ex, calls = self._exec([_refused(PENDING), _settled(PENDING), _settled(MINE)])
+        res = await ex.call("drop_item", {}, "test")
+        self.assertTrue(res.ok)
+        self.assertEqual([d.action_id for d in res.drained], [PENDING])
+        self.assertTrue(res.drained[0].settled)
+
+    async def test_a_held_tick_keeps_the_drain_it_already_made(self) -> None:
+        ex = MCPExecutor(MCPConfig(max_polls=2))
+        script = [_refused(PENDING), _settled(PENDING)]
+        calls: list[str] = []
+
+        async def fake(name: str, args: dict):
+            calls.append(name)
+            return script.pop(0) if script else _held_progress(MINE)
+
+        ex._raw_call = fake  # type: ignore[assignment]
+        res = await ex.call("drop_item", {}, "test")
+        self.assertEqual(res.status, "held")
+        self.assertEqual([d.action_id for d in res.drained], [PENDING])
+
 
 def _held_progress(action_id: str) -> _Res:
     """A `wait_for_action` answer for an action the hostile reflex has suspended (run89)."""

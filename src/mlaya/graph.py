@@ -3316,6 +3316,34 @@ class Agent:
         if frame is not None:
             self._stronghold_frame = frame
 
+    def _note_drained(self, res) -> None:
+        """Book the durable facts of an earlier action this tick had to drain to get the body.
+
+        A foreground action that outlives its own tick is retrieved by the *next* tick's call, which
+        the server gates with `RESULT_NOT_RETRIEVED`: the executor drains it, gets the settlement,
+        and resubmits - discarding the answer. run273 it6-8: `locate_stronghold` walked 1400 blocks
+        and confirmed the frame at (2090, -10, 720), the drain retrieved that result so `go_home`
+        could start, and the confirmation went with it. `stronghold_frame` stayed empty,
+        `travel_to_stronghold` had no address, and the bot turned around and walked home from the
+        stronghold it had just found.
+
+        Only facts a settlement proves on its own are booked here - the frame cell is the one that
+        costs a run. A delta is not recoverable from a drain: the before/after pair belongs to the
+        tick that ran the action, not to the one that drained it.
+        """
+        for settled in getattr(res, "drained", ()):
+            frame = perception.parse_frame_confirmation(getattr(settled, "data", None))
+            if frame is None:
+                match = re.search(r"end_portal_frame at (-?\d+),\s*(-?\d+),\s*(-?\d+)",
+                                  getattr(settled, "text", "") or "")
+                if match:
+                    frame = tuple(int(v) for v in match.groups())
+            if frame is not None and self._stronghold_frame != frame:
+                self._stronghold_frame = frame
+                self._stronghold_estimated = True
+                self.log.append({"stage": "policy", "reason": "drained_frame_confirmation",
+                                 "action_id": settled.action_id, "frame": list(frame)})
+
     def _note_portal(self, action, ok: bool, delta: dict, res=None) -> None:
         """Remember that the end portal stands active (the stronghold goal), and how far the
         frame is filled.
@@ -4241,6 +4269,7 @@ class Agent:
         self._note_stow(action, _ok, delta)
         self._note_take_powder(action, _ok, _text, delta)
         self._note_locate(action, _ok, res)
+        self._note_drained(res)
         self._note_barter(action, _ok)
         self._note_portal(action, _ok, delta, res)
         self._note_sleep_stronghold(action, _ok, delta, res)

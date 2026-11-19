@@ -6675,6 +6675,38 @@ class NetherCrossingTest(unittest.TestCase):
         self.assertIsNone(agent._stronghold_frame)
         self.assertTrue(agent._stronghold_estimated)
 
+    def test_a_drained_locate_books_the_frame_it_confirmed(self) -> None:
+        # run273 it6-8: `locate_stronghold` walked 1400 blocks and confirmed the frame; the next
+        # tick's call was gated by RESULT_NOT_RETRIEVED, drained that settlement to get the body,
+        # and threw the answer away. `stronghold_frame` stayed empty, `travel_to_stronghold` had no
+        # address, and the bot walked home from the stronghold it had just found.
+        agent = self._agent()
+        agent.log = []
+        agent._stronghold_frame = None
+        agent._stronghold_estimated = False
+        settled = SimpleNamespace(ok=True, action_id="16764d87",
+                                  data={"confirmation": {"block": "end_portal_frame",
+                                                         "position": {"x": 2090, "y": -10, "z": 720}}},
+                                  text="Observed end_portal_frame at 2090, -10, 720.")
+        tick = SimpleNamespace(ok=False, action_id="110a77bd", data=None,
+                               text="[BODY_HELD] action 110a77bd still running", drained=(settled,))
+        agent._note_drained(tick)
+        self.assertEqual(agent._stronghold_frame, (2090, -10, 720))
+        self.assertTrue(agent._stronghold_estimated)
+        self.assertEqual([r["reason"] for r in agent.log
+                          if r.get("reason") == "drained_frame_confirmation"],
+                         ["drained_frame_confirmation"])
+
+    def test_a_drained_result_without_a_frame_books_nothing(self) -> None:
+        agent = self._agent()
+        agent.log = []
+        agent._stronghold_frame = None
+        settled = SimpleNamespace(ok=True, action_id="9", data={"status": "succeeded"},
+                                  text="Dropped 12 andesite.")
+        agent._note_drained(SimpleNamespace(data=None, text="", drained=(settled,)))
+        self.assertIsNone(agent._stronghold_frame)
+        self.assertEqual(agent.log, [])
+
     def test_lighting_the_gate_is_remembered_after_the_bot_walks_off_it(self) -> None:
         # `_portal_lit` is a scan read: the gate only shows up while its chunk is loaded. A run
         # that lights it and then roams must not read it back as unlit and reopen the obsidian
