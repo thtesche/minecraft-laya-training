@@ -21,9 +21,16 @@ import copy
 # policy table rather than merging into it.
 BASE_CHANGES: dict = {
     "navigation": {
+        # The six Overworld names are the server's own default; the three Nether names are the
+        # blocks the pack actually holds down there. A route may only place a block from this
+        # list, so a bot standing on a bridge with a lava sea between it and its gate is stranded
+        # by the list, not by the terrain (live, run290 it44-47: 16 smooth_basalt, 15 soul_sand
+        # and 7 blackstone carried, none of them admitted, every `leave_nether` hop answered
+        # `[NAVIGATION_STOPPED]`). Kept in step with `COMBAT_SCAFFOLD_BLOCKS` by hand.
         "scaffold_blocks": [
             "dirt", "cobblestone", "cobbled_deepslate",
             "netherrack", "basalt", "end_stone",
+            "smooth_basalt", "blackstone", "soul_sand",
         ],
         "hostile_avoidance_multiplier": 3.0,
         "bucket_fall_save": True,

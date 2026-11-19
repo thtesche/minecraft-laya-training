@@ -339,6 +339,11 @@ NETHER_EXIT_STAGING_DISTANCE = 120.0
 # terrain the walk can start from.
 NETHER_EXIT_HOP_SHRINKS = 2
 NETHER_EXIT_HOP_MIN = 30.0
+# The shortest a hop may be cut to by the scaffold the pack carries (see `_exit_hop`). A hop is a
+# bridge: one carried block per metre of air it crosses. Below this the pack cannot place anything
+# worth walking to, and the tick belongs to digging the blocks the crossing needs, not to a search
+# that gives up on eight metres of air.
+NETHER_EXIT_HOP_FLOOR = 8.0
 # The exit portal stands where the crossing left it, and a ravine or a dug shaft can put the body
 # far below that cell. Live, run210 it518-520: the bot stood at (-6.5, 18.0, -2.5) with the gate
 # remembered at (-10, 66, -4) - 48 blocks under the frame - and `enter_nether_portal` answered
@@ -351,6 +356,12 @@ NETHER_EXIT_CLIMB_REACH = 12.0
 # it. 16 is a pillar the 2000 ms search can plan; a 48 block climb in one target is not.
 NETHER_EXIT_CLIMB_STEP = 16.0
 NETHER_EXIT_CLIMB_MIN = 4.0
+# How close the body has to be to the gate's column before the climb takes the tick. The climb aims
+# at the gate's own cell, so a bot 100 m off is asked to walk 100 m and pillar up in one navigate:
+# the search times out and the exit never starts (live, run290 it44-47, the body 108 m from its
+# gate and 17 blocks under it, three hops refused in a row). The staging distance is the walk's
+# bound, not the climb's.
+NETHER_EXIT_CLIMB_SPAN = 12.0
 # How far a wave may walk from its own gate once the pack holds something worth bringing back.
 # The pearl budget (`NETHER_PEARL_SEARCH_M`) counts metres *walked*, and a Nether path is never
 # straight: run203 covered 3998 m of ground and ended 700 m from the gate, at 4 health, with 16
@@ -886,6 +897,14 @@ ZOMBIE_HUNT_RANGE = 24.0
 # Nether stack (`NETHER_COBBLE`) is never dropped.
 HOARD_KEEP = {"cobblestone": NETHER_COBBLE}
 HOARD_CAP = 64
+# ... except the block the Nether crossing is built from. A hop across open air costs one block
+# per metre of it, and the exit walk is staged in hops of `NETHER_EXIT_STAGING_DISTANCE` (120 m):
+# a pack capped at 64 cannot bridge a gate 108 m off. Live, run290 it42: the shed took 320 of the
+# 384 netherrack the march had hoovered down to the 64 cap, five ticks later the body stood at the
+# end of a bridge with 19 blocks left and the gate 108 m away over a lava sea, and every hop
+# answered `[NAVIGATION_STOPPED] search timed out after 4000 ms`. Two stacks cover the longest
+# hop the staging ever asks for.
+NETHER_BRIDGE_KEEP = 128
 
 HOSTILE_HUNTS = {"spider", "zombie", "skeleton", "creeper", "enderman",
                  "witch", "blaze", "piglin", "zombified_piglin"}
@@ -902,8 +921,16 @@ NEUTRAL_HOSTILES = frozenset({"piglin", "zombified_piglin"})
 # and `collect_mob_drop` refuses with `[COMBAT_BUILD_MATERIALS_MISSING]` when fewer than six of
 # these are carried at the build cell. Kept in step with `survival.py` by hand - predicates must
 # not import the policy module.
+#
+# The three Nether names are the ones the pack actually holds down there. The admitted list is
+# Overworld stock, and a bot stranded on a bridge answers `[NAVIGATION_STOPPED]` because the
+# pathfinder may only place blocks from it: live, run290 it44-47, the body stood at (96,49,34) on
+# a one-wide netherrack bridge with the gate 108 m away over a lava sea, carrying 19 netherrack,
+# 16 smooth_basalt, 15 soul_sand and 7 blackstone - and every hop timed out. All three are full
+# cubes with safe support, so they bridge and roof as readily as netherrack.
 COMBAT_SCAFFOLD_BLOCKS = frozenset({
     "dirt", "cobblestone", "cobbled_deepslate", "netherrack", "basalt", "end_stone",
+    "smooth_basalt", "blackstone", "soul_sand",
 })
 # How many scaffold blocks the bot must carry before an enderman hunt is offered. The server's
 # defensive roof needs six at the selected cell; the fight rebuilds the roof each teleport, so a

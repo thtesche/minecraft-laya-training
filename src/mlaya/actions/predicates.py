@@ -2323,11 +2323,21 @@ def _exit_hop(gs: GameState) -> float:
     pathfinder's own give-up counts the same way (run210 it339-342: three `[NAVIGATION_STOPPED]`
     timeouts on one 120 m hop, the body drifting 23 blocks between attempts), because a 2000 ms
     search that finds no route at 120 m will find none at 120 m again.
+
+    The hop is also cut to what the pack can place. A hop over open air is a bridge and a bridge
+    costs one carried block per metre of it: live, run290 it44-47, hops of 120, 60 and 30 m were
+    aimed at a lava sea with 51, 32 and 19 blocks in the pack, and each answered
+    `[NAVIGATION_STOPPED] ... search timed out after 4000 ms` - the search explored the whole air
+    column it could not fill and never started a step. A hop the scaffold can reach is a hop that
+    walks.
     """
     hop = NETHER_EXIT_STAGING_DISTANCE
     for _ in range(min(gs.nether_hop_repeats, NETHER_EXIT_HOP_SHRINKS)):
         hop = max(NETHER_EXIT_HOP_MIN, hop / 2.0)
-    return hop
+    # An empty pack bounds nothing: the walk is then bounded by the ground, not by the blocks, and
+    # the ladder's `gather_scaffold` offer is what fills it.
+    stack = _scaffold_stack(gs)
+    return max(NETHER_EXIT_HOP_FLOOR, min(hop, stack)) if stack else hop
 
 
 def _exit_cell(gs: GameState) -> tuple[int, int, int] | None:
@@ -2343,7 +2353,10 @@ def _exit_climb_needed(gs: GameState) -> bool:
     `[PORTAL_STOPPED] ... closest node was -9,18,-4` three ticks in a row. The pathfinder's closest
     reachable node was the body's own height, so the crossing has no route; the column has to be
     climbed. A hop aims at the height the body stands on, so this only bites once the walk is at
-    the doorstep stage - a gate 220 m away never needs climbing (run149, run203).
+    the doorstep stage - a gate 220 m away never needs climbing (run149, run203). The span test is
+    what keeps it there: live, run290 it44-47, the body 108 m from its gate and 17 blocks under it
+    was handed the climb branch, whose target is the gate's own cell - a 108 m walk and a pillar in
+    one navigate, refused three ticks running.
     """
     if gs.pos is None:
         return False
@@ -2351,7 +2364,7 @@ def _exit_climb_needed(gs: GameState) -> bool:
     if cell is None:
         return False
     span = math.dist((gs.pos[0], gs.pos[2]), (cell[0], cell[2]))
-    return span <= NETHER_EXIT_STAGING_DISTANCE and cell[1] - gs.pos[1] > NETHER_EXIT_CLIMB_REACH
+    return span <= NETHER_EXIT_CLIMB_SPAN and cell[1] - gs.pos[1] > NETHER_EXIT_CLIMB_REACH
 
 
 def _exit_climb(gs: GameState) -> float:
@@ -3348,7 +3361,13 @@ def _hoard_surplus(gs: GameState, inv: dict[str, int]) -> list[dict[str, int]]:
         if cnt > HOARD_CAP and name not in HOARD_KEEP:
             if name == "diamond" and goal_named:
                 continue
-            out.append({"item_name": name, "count": cnt - HOARD_CAP})
+            # In the Nether the surplus is the crossing: `navigate` bridges a lava sea one
+            # carried block per metre, and the exit walk is staged in hops of up to
+            # `NETHER_EXIT_STAGING_DISTANCE`. Shedding the bridge down to the general cap is how
+            # run290 ended 108 m from its gate, standing on a bridge it could not extend.
+            keep = NETHER_BRIDGE_KEEP if name == SCAFFOLD_BLOCK and _in_nether(gs) else HOARD_CAP
+            if cnt > keep:
+                out.append({"item_name": name, "count": cnt - keep})
     return out
 
 
@@ -3461,6 +3480,20 @@ def _combat_blocks_carried(inv: dict[str, int]) -> int:
     cobblestone, so the Nether stock and the Overworld stack are summed together.
     """
     return sum(int(inv.get(name, 0)) for name in COMBAT_SCAFFOLD_BLOCKS)
+
+
+def _scaffold_stack(gs: GameState) -> int:
+    """How many blocks the next route can place - the largest single carried scaffold stack.
+
+    The server's pathfinder selects one carried scaffold type (`preferredScaffoldItem`, the first
+    name on `navigation.scaffold_blocks` the bot carries) and counts only that item in the search's
+    scaffold budget. A pack of 19 netherrack, 16 smooth_basalt and 15 soul_sand can place nineteen
+    blocks on a route, not fifty - so a hop aimed past nineteen metres of air is a search that
+    gives up, not a walk that starts (live, run290 it44-47: 51, 32 and 19 netherrack against hops
+    of 120, 60 and 30 m, three `[NAVIGATION_STOPPED]` timeouts and a body that never moved).
+    """
+    inv = gs.inventory or {}
+    return max((int(inv.get(name, 0)) for name in COMBAT_SCAFFOLD_BLOCKS), default=0)
 
 
 def _chest_ready(gs: GameState) -> bool:

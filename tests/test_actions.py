@@ -42,8 +42,10 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
                            NETHER_HOPELESS_TICKS, NETHER_GATE_APPROACH, NETHER_EXIT_STAGING_DISTANCE,
-                           NETHER_EXIT_HOP_MIN, NETHER_GATE_LEASH_M, _nether_haul_leashed,
+                           NETHER_EXIT_HOP_MIN, NETHER_EXIT_HOP_FLOOR, NETHER_GATE_LEASH_M,
+                           _nether_haul_leashed,
                            NETHER_EXIT_CLIMB_REACH, NETHER_EXIT_CLIMB_STEP, NETHER_EXIT_CLIMB_MIN,
+                           NETHER_EXIT_CLIMB_SPAN, NETHER_BRIDGE_KEEP, HOARD_CAP, _scaffold_stack,
                            _nether_gate_distance,
                            NETHER_FOOD_MIN_RESERVE, NETHER_FOOD_EMERGENCY_FLOOR,
                            FOOD_BANK_KEEP, resolve, stronghold_complete,
@@ -4362,7 +4364,7 @@ class HomeBaseTest(unittest.TestCase):
         # it in hand and the server refused the only item the shed named - `[DROP_HELD]` on every
         # entry, `[DROP_INCOMPLETE] 1 of 1 item could not be dropped` as the answer. The toss of a
         # held item is allowed only when the caller says so.
-        g = self._home(self._geared(netherrack=125))
+        g = self._home(self._geared(netherrack=200))
         g.slots_used = 36
         g.dimension = "minecraft:the_nether"
         a = resolve("drop_junk", g)
@@ -6632,7 +6634,7 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertEqual(a.args["items"], [{"item_name": "flint_and_steel"}])
 
     def test_a_full_pack_sheds_before_the_igniter_is_crafted(self) -> None:
-        g = self._unlit_exit(blaze_rod=5, flint=1, iron_ingot=3, crafting_table=2, netherrack=128)
+        g = self._unlit_exit(blaze_rod=5, flint=1, iron_ingot=3, crafting_table=2, netherrack=192)
         g.slots_used = INVENTORY_SLOTS
         self.assertEqual(candidates(g), ["drop_junk"])
         self.assertNotIn("craft_flint_and_steel", candidates(g))
@@ -6723,6 +6725,42 @@ class NetherExpeditionTest(unittest.TestCase):
         a = resolve("leave_nether", g)
         self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), (g.pos[0], g.pos[2])),
                                NETHER_EXIT_HOP_MIN, delta=10.0)
+
+    def test_a_hop_is_cut_to_the_bridge_the_pack_can_build(self) -> None:
+        # Live, run290 it44-47: hops of 120, 60 and 30 m aimed at a lava sea with 51, 32 and 19
+        # netherrack in the pack. The server's pathfinder places scaffold from one carried item and
+        # counts only that item's stack, so an aim 120 m off is a search over air it cannot fill:
+        # three `[NAVIGATION_STOPPED] search timed out after 4000 ms` and a body that never moved.
+        g = self._down(blaze_rod=9, netherrack=19)
+        g.pos = (115.5, 49.0, 34.5)
+        g.nether_hop_repeats = 2
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.args["y"], 49)
+        self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), (g.pos[0], g.pos[2])),
+                              19.0, delta=1.0)
+
+    def test_the_scaffold_budget_is_one_stack_not_the_sum(self) -> None:
+        # `preferredScaffoldItem` selects one carried name, and the search's scaffold budget is that
+        # item's count: 19 netherrack, 16 smooth_basalt and 15 soul_sand bridge 19 metres, not 50.
+        g = self._down(blaze_rod=9, netherrack=19, smooth_basalt=16, soul_sand=15)
+        self.assertEqual(_scaffold_stack(g), 19)
+        g = self._down(blaze_rod=9, smooth_basalt=16, soul_sand=15)
+        self.assertEqual(_scaffold_stack(g), 16)
+
+    def test_a_ravine_is_climbed_only_where_the_walk_reaches_the_gate(self) -> None:
+        # The climb branch aims at the gate's own cell. Live, run290 it44-47: the body 108 m from
+        # its gate and 17 blocks under it was handed that target - a 108 m walk and a pillar in one
+        # navigate, refused three ticks running. Far off, the exit is staged in hops; the climb is
+        # the doorstep's job (run210).
+        g = self._down(blaze_rod=9, netherrack=128)
+        g.pos = (self.EXIT[0] - 60.4, 49.0, self.EXIT[2] + 5.5)
+        a = resolve("leave_nether", g)
+        self.assertNotEqual((a.args["x"], a.args["z"]), (self.EXIT[0], self.EXIT[2]))
+        g.pos = (self.EXIT[0] - 6.5, 49.0, self.EXIT[2] + 1.5)
+        a = resolve("leave_nether", g)
+        self.assertEqual((a.args["x"], a.args["z"]), (self.EXIT[0], self.EXIT[2]))
+        self.assertLess(a.args["y"], self.EXIT[1])
+        self.assertGreater(a.args["y"], 49)
 
     def test_an_exit_a_ravine_above_is_climbed_not_crossed(self) -> None:
         # Live, run210 it518-520: the bot stood at (-6.5, 18.0, -2.5) with the gate remembered at
@@ -11129,6 +11167,34 @@ class HoardSurplusKeepsGoalDiamondsTest(unittest.TestCase):
         g = geared(diamond=190, diamond_pickaxe=2, diamond_sword=1)
         self.assertFalse(_diamond_reason(g))
         self.assertIn("diamond", {s["item_name"] for s in _hoard_surplus(g, g.inventory)})
+
+
+class NetherBridgeKeepTest(unittest.TestCase):
+    """Down there the netherrack stack is the crossing, not hoard surplus.
+
+    `HOARD_CAP` (64) sheds everything above one stack. A hop across a lava sea costs one carried
+    block per metre of it, and the exit walk is staged in hops of up to `NETHER_EXIT_STAGING_DISTANCE`
+    (120 m). Live, run290 it42: the shed took 320 of the 384 netherrack the march had dug, five ticks
+    later the body stood at the end of a bridge with 19 blocks left, the gate 108 m away over a lava
+    sea, and every hop answered `[NAVIGATION_STOPPED] search timed out after 4000 ms`.
+    """
+
+    NETHER = "minecraft:the_nether"
+
+    def _below(self, **inv) -> GameState:
+        return gs(pos=(115.5, 49.0, 34.5), dimension=self.NETHER, inventory=dict(inv),
+                 tools={"pickaxe": "diamond"})
+
+    def test_the_bridge_reserve_is_two_stacks_not_one(self) -> None:
+        g = self._below(netherrack=384, blaze_rod=9)
+        surplus = {s["item_name"]: s["count"] for s in _hoard_surplus(g, g.inventory)}
+        self.assertEqual(surplus.get("netherrack"), 384 - NETHER_BRIDGE_KEEP)
+
+    def test_the_same_stack_is_surplus_in_the_overworld(self) -> None:
+        g = gs(pos=(-197.0, -47.0, -98.0), dimension="minecraft:overworld",
+              inventory={"netherrack": 384}, tools={"pickaxe": "diamond"})
+        surplus = {s["item_name"]: s["count"] for s in _hoard_surplus(g, g.inventory)}
+        self.assertEqual(surplus.get("netherrack"), 384 - HOARD_CAP)
 
 
 class StepAwayDropsWholeCellTest(unittest.TestCase):
