@@ -928,10 +928,17 @@ NEUTRAL_HOSTILES = frozenset({"piglin", "zombified_piglin"})
 # a one-wide netherrack bridge with the gate 108 m away over a lava sea, carrying 19 netherrack,
 # 16 smooth_basalt, 15 soul_sand and 7 blackstone - and every hop timed out. All three are full
 # cubes with safe support, so they bridge and roof as readily as netherrack.
-COMBAT_SCAFFOLD_BLOCKS = frozenset({
-    "dirt", "cobblestone", "cobbled_deepslate", "netherrack", "basalt", "end_stone",
+#
+# The order is the policy's own preference order, and it is not cosmetic: `preferredScaffoldItem`
+# takes the *first* carried name on the list and the route search counts only that item's stack
+# (`remainingScaffolds = inventory.get(scaffold.itemType)`). A pack of 2 netherrack and 16
+# smooth_basalt bridges two metres, not eighteen - see `_scaffold_stack`.
+SCAFFOLD_POLICY_BLOCKS = (
+    "dirt", "cobblestone", "cobbled_deepslate",
+    "netherrack", "basalt", "end_stone",
     "smooth_basalt", "blackstone", "soul_sand",
-})
+)
+COMBAT_SCAFFOLD_BLOCKS = frozenset(SCAFFOLD_POLICY_BLOCKS)
 # How many scaffold blocks the bot must carry before an enderman hunt is offered. The server's
 # defensive roof needs six at the selected cell; the fight rebuilds the roof each teleport, so a
 # hunt started on bare six runs dry on the first one. Sixteen is a working reserve well under the

@@ -169,7 +169,11 @@ def _scaffold_short(gs: GameState) -> bool:
     """
     if not _in_nether(gs) or (gs.health or 0) < ENDERMAN_HUNT_HEALTH:
         return False
-    if _combat_blocks_carried(gs.inventory) >= ENDERMAN_HUNT_BLOCKS:
+    # Two different needs, counted two different ways. The roof counts every admitted block the
+    # server can place (`countCapBlocks` sums them); the crossing counts only the one item the
+    # pathfinder selects, so a pack of 64 cobblestone and 2 netherrack has plenty for a fight and
+    # nothing for a lava sea (see `_bridge_short`).
+    if _combat_blocks_carried(gs.inventory) >= ENDERMAN_HUNT_BLOCKS and not _bridge_short(gs):
         return False
     if not _can_mine(gs, SCAFFOLD_BLOCK):
         return False
@@ -558,7 +562,8 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         return Action(label, "collect_block",
                       {"block_name": SCAFFOLD_BLOCK, "count": SCAFFOLD_MINE_BATCH},
                       f"mine {SCAFFOLD_BLOCK} for the roof and the bridge "
-                      f"({carried} carried, {ENDERMAN_HUNT_BLOCKS} wanted)")
+                      f"({carried} carried, {ENDERMAN_HUNT_BLOCKS} wanted, "
+                      f"{_scaffold_stack(gs)} the route can place)")
     if label == "search_enderman":
         if not _search_enderman_wanted(gs):
             return None

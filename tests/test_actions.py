@@ -27,7 +27,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                           _safe_spider_hunt, _safe_string_hunt,
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
                          ENDERMAN_HUNT_HEALTH,
-                         _scaffold_short, SCAFFOLD_MINE_BATCH,
+                         _scaffold_short, _bridge_short, SCAFFOLD_MINE_BATCH,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          _base_leveling_wanted, bed_pad_plan, _bed_pad_wanted, BED_PAD_BLOCK,
@@ -5408,6 +5408,36 @@ class ScaffoldRestockTest(unittest.TestCase):
         self.assertNotIn("gather_scaffold", candidates(g))
         self.assertIn("hunt_enderman", candidates(g))
 
+    def test_a_wave_far_from_its_gate_digs_the_bridge(self) -> None:
+        # The roof is stocked and the pack holds plenty of blocks in total, but the route may only
+        # place the one item it selects: live, run290 it47, the hop aimed 30 m with 19 netherrack
+        # carried and the search's closest node nineteen blocks away. Once the ground has refused
+        # a hop, the pack is the shortage and the wave digs where it stands.
+        g = self._wave(netherrack=19, smooth_basalt=16, soul_sand=15)
+        g.pos = (115.5, 49.0, 34.5)
+        g.nether_hop_repeats = 1
+        self.assertTrue(_bridge_short(g))
+        self.assertTrue(_scaffold_short(g))
+        self.assertIn("gather_scaffold", candidates(g))
+
+    def test_a_gate_within_the_stack_needs_no_bridge(self) -> None:
+        # The bridge need is the gap the hop was refused on, not a flat reserve: a wave standing at
+        # its gate's doorstep with 64 cobblestone has more than enough to cross it.
+        g = self._wave(netherrack=19, smooth_basalt=16, soul_sand=15)
+        g.pos = (18.5, 65.0, -1.5)
+        g.nether_hop_repeats = 1
+        self.assertFalse(_bridge_short(g))
+        self.assertFalse(_scaffold_short(g))
+
+    def test_a_refusal_the_pack_can_cover_does_not_send_the_wave_digging(self) -> None:
+        # A hop the ground refused once, with a stack longer than the span: the gap is not the
+        # scaffold's fault, so the wave keeps hunting rather than mining.
+        g = self._wave(cobblestone=0, netherrack=128)
+        g.pos = (115.5, 49.0, 34.5)
+        g.nether_hop_repeats = 1
+        self.assertEqual(_scaffold_stack(g), 128)
+        self.assertFalse(_bridge_short(g))
+
     def test_a_loaded_enderman_is_armed_even_past_the_budget(self) -> None:
         # The budget only decides whether the wave *roams* for more endermen; a loaded one is
         # still worth arming for, and while the pearls are owed the shortage is dug either way.
@@ -6739,13 +6769,26 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), (g.pos[0], g.pos[2])),
                               19.0, delta=1.0)
 
-    def test_the_scaffold_budget_is_one_stack_not_the_sum(self) -> None:
-        # `preferredScaffoldItem` selects one carried name, and the search's scaffold budget is that
-        # item's count: 19 netherrack, 16 smooth_basalt and 15 soul_sand bridge 19 metres, not 50.
-        g = self._down(blaze_rod=9, netherrack=19, smooth_basalt=16, soul_sand=15)
-        self.assertEqual(_scaffold_stack(g), 19)
+    def test_the_scaffold_budget_is_the_first_carried_name_not_the_largest(self) -> None:
+        # `preferredScaffoldItem` walks `navigation.scaffold_blocks` in its preference order and
+        # takes the first carried name; the search's scaffold budget is that item's count alone.
+        # 2 netherrack and 16 smooth_basalt bridge 2 metres, not 18.
+        g = self._down(blaze_rod=9, netherrack=2, smooth_basalt=16, soul_sand=15)
+        self.assertEqual(_scaffold_stack(g), 2)
         g = self._down(blaze_rod=9, smooth_basalt=16, soul_sand=15)
         self.assertEqual(_scaffold_stack(g), 16)
+        g = self._down(blaze_rod=9, cobblestone=64, netherrack=2)
+        self.assertEqual(_scaffold_stack(g), 64)
+        self.assertEqual(_scaffold_stack(self._down(blaze_rod=9)), 0)
+
+    def test_a_hop_the_pack_cannot_bridge_is_cut_to_the_floor(self) -> None:
+        # Two blocks in hand cannot reach a 120 m aim; the hop is cut to what the pack can place,
+        # and below the floor the tick belongs to digging, not to a search over air.
+        g = self._down(blaze_rod=9, netherrack=2, smooth_basalt=16)
+        g.pos = (115.5, 49.0, 34.5)
+        a = resolve("leave_nether", g)
+        self.assertAlmostEqual(math.dist((a.args["x"], a.args["z"]), (g.pos[0], g.pos[2])),
+                              NETHER_EXIT_HOP_FLOOR, delta=1.0)
 
     def test_a_ravine_is_climbed_only_where_the_walk_reaches_the_gate(self) -> None:
         # The climb branch aims at the gate's own cell. Live, run290 it44-47: the body 108 m from

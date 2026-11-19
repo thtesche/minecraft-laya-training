@@ -3483,17 +3483,43 @@ def _combat_blocks_carried(inv: dict[str, int]) -> int:
 
 
 def _scaffold_stack(gs: GameState) -> int:
-    """How many blocks the next route can place - the largest single carried scaffold stack.
+    """How many blocks the next route can place - the one item the server selects.
 
-    The server's pathfinder selects one carried scaffold type (`preferredScaffoldItem`, the first
-    name on `navigation.scaffold_blocks` the bot carries) and counts only that item in the search's
-    scaffold budget. A pack of 19 netherrack, 16 smooth_basalt and 15 soul_sand can place nineteen
-    blocks on a route, not fifty - so a hop aimed past nineteen metres of air is a search that
-    gives up, not a walk that starts (live, run290 it44-47: 51, 32 and 19 netherrack against hops
-    of 120, 60 and 30 m, three `[NAVIGATION_STOPPED]` timeouts and a body that never moved).
+    The server's pathfinder does not choose the biggest stack: `preferredScaffoldItem` walks
+    `navigation.scaffold_blocks` in its preference order and takes the first name the bot carries,
+    and the search's scaffold budget is that item's count alone. A pack of 2 netherrack, 16
+    smooth_basalt and 15 soul_sand can place two blocks on a route, not thirty-three - so a hop
+    aimed past two metres of air is a search that gives up, not a walk that starts (live, run290
+    it44-47: 51, 32 and 19 netherrack against hops of 120, 60 and 30 m, three
+    `[NAVIGATION_STOPPED]` timeouts and a body that never moved).
     """
     inv = gs.inventory or {}
-    return max((int(inv.get(name, 0)) for name in COMBAT_SCAFFOLD_BLOCKS), default=0)
+    for name in SCAFFOLD_POLICY_BLOCKS:
+        count = int(inv.get(name, 0))
+        if count:
+            return count
+    return 0
+
+
+def _bridge_short(gs: GameState) -> bool:
+    """Whether the exit walk was refused for want of blocks.
+
+    A hop is a bridge: one carried block per metre of air it crosses, and the pathfinder can only
+    place the one item it selects (see `_scaffold_stack`). Live, run290 it47: the body stood at
+    (115,49,34) with 19 netherrack, the hop aimed 30 m off, and the search's closest node was
+    (96,49,34) - exactly nineteen blocks away. The pack, not the terrain, was the shortage.
+
+    The rule waits for that evidence - a hop the ground has already refused - because most of the
+    Nether is solid floor and a wave that digs for a gap it was never stopped by is a wave that
+    stopped hunting.
+    """
+    if gs.pos is None or gs.nether_hop_repeats < 1:
+        return False
+    cell = _exit_cell(gs)
+    if cell is None:
+        return False
+    span = math.dist((gs.pos[0], gs.pos[2]), (cell[0], cell[2]))
+    return _scaffold_stack(gs) < min(NETHER_BRIDGE_KEEP, span)
 
 
 def _chest_ready(gs: GameState) -> bool:
