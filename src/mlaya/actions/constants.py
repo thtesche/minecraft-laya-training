@@ -275,6 +275,10 @@ ENDER_PEARLS = ENDER_EYES
 STRONGHOLD_BED_NEAR = 8
 # The vertical slack for the same test: the frame sits in a floor the bot may stand a step above.
 STRONGHOLD_BED_NEAR_Y = 4
+# How many times the loop may throw away a remembered frame cell and re-locate before it stops
+# trying. A `[PORTAL_NO_FRAME]` at the address it holds means the world has no frame there at all,
+# and re-throwing the eyes is the only way to get a cell the server can see.
+STRONGHOLD_FRAME_RELOCATE_MAX = 3
 # When the Nether trip has to end. Blazes hit hard, so the bot leaves at a quarter of its health
 # and well before it is hungry; both thresholds are checked on the state, never guessed at runtime.
 NETHER_RETURN_HEALTH = 8.0

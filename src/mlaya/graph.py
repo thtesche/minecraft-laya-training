@@ -26,7 +26,8 @@ from .actions import (candidates, inventory_relief, is_hostile_hunt, resolve,
                       nether_expedition_complete, stronghold_complete, BLAZE_POWDER_ITEM,
                       FORTRESS_MIN_M, BLAZE_ROD_ITEM, ENDER_EYE_ITEM, END_PORTAL_SOCKETS,
                       _portal_lit_scan, end_complete, _pearl_wave_trip,
-                      LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
+                      LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS,
+                       STRONGHOLD_FRAME_RELOCATE_MAX)
 from .actions.predicates import portal_lighting_blockers
 from .brain import Brain, escalate_to_system2, System2Dialogue, trajectory_digest
 from .mcp import _find
@@ -925,6 +926,8 @@ class Agent:
         # walk to before `activate_end_portal` can aim at anything. A locate "succeeds" the moment a
         # frame chunk loads, so this is the only record of where the frame actually is.
         self._stronghold_frame: tuple[int, int, int] | None = None
+        # How many times a `[PORTAL_NO_FRAME]` has thrown that address away (see `_note_portal`).
+        self._frame_relocates = 0
         # Pearl trips the waves have made (`_note_dimension`), counted once the rod haul is
         # stowed so the rod trip itself never counts. After `PEARL_WAVE_MAX_TRIPS` the Overworld
         # enderman roam takes over; a per-run latch, reset on a cold start like `_barter_attempts`.
@@ -3362,6 +3365,22 @@ class Agent:
                 self._frame_eyes = min(END_PORTAL_SOCKETS, self._frame_eyes + spent)
         if ok:
             self._end_portal_active = True
+        # A frame address the world does not have is not an address. `[PORTAL_NO_FRAME]` on the end
+        # portal says the cell the loop named holds no obsidian frame at all: run271 it61-67, three
+        # activations refused at (98,88,407) - a surface cell of short_grass, with no
+        # `end_portal_frame` loaded anywhere in the world - while `travel_to_stronghold` kept
+        # "succeeding" to it with the body already standing there. That cell came back through the
+        # loop's own checkpoint note, so a run that never located a stronghold inherited a
+        # coordinate it had never seen. Forgetting it puts `locate_stronghold` back on the offer and
+        # the eye throw re-confirms a frame the server can actually see; the cap keeps a stronghold
+        # the world will not load from turning the phase into a permanent re-throw.
+        elif "PORTAL_NO_FRAME" in text and self._stronghold_frame is not None:
+            self._frame_relocates += 1
+            if self._frame_relocates <= STRONGHOLD_FRAME_RELOCATE_MAX:
+                lost = self._stronghold_frame
+                self._stronghold_frame = None
+                self.log.append({"stage": "policy", "reason": "stronghold_frame_invalidated",
+                                 "cell": list(lost), "attempt": self._frame_relocates})
 
     def _note_sleep_stronghold(self, action, ok: bool, delta: dict, res=None) -> None:
         """Latch that the respawn point is pinned at the stronghold.

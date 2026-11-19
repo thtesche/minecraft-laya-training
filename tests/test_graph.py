@@ -19,7 +19,8 @@ from unittest import mock
 
 from mlaya import graph, perception, progress
 from mlaya.actions import (Action, candidates, nether_expedition_complete, resolve,
-                          tech_tree_complete, LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS)
+                          tech_tree_complete, LAVA_POOL_RETIRE_AFTER, LAVA_POOL_RETIRE_TICKS,
+                          STRONGHOLD_FRAME_RELOCATE_MAX)
 from mlaya.brain import Decision
 from mlaya.config import Settings
 from mlaya.graph import (Agent, BODY_BUSY_STOP, BODY_HELD_LIVE_STOP, BODY_HELD_STOP, BOXED_REPEATS, BOUNCE_WINDOW, BOUNCE_LABELS,
@@ -162,6 +163,7 @@ class WaterTicksTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -864,6 +866,7 @@ class PourSkipTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -986,6 +989,7 @@ class NetherLandmarkWriteOffTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -1158,6 +1162,7 @@ class StanceSkipTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -1381,6 +1386,7 @@ class RescueSkipTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -1671,6 +1677,7 @@ class StuckOfferTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -2607,6 +2614,7 @@ class FrameCompleteLatchTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -2853,6 +2861,7 @@ class FrameRefusalTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -2974,6 +2983,7 @@ class RecoverWriteOffTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -3335,6 +3345,7 @@ class DropHoleTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -3624,6 +3635,7 @@ class ChestSupportTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -3758,6 +3770,7 @@ class FurnaceSupportTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -3997,6 +4010,7 @@ class ChestLidTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -4202,6 +4216,7 @@ class ExpeditionDepartureChainTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -4409,6 +4424,7 @@ class PortalOpeningTest(unittest.IsolatedAsyncioTestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -4901,6 +4917,7 @@ class WorldBootstrapTest(unittest.IsolatedAsyncioTestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._nether_entered = False
         agent._frame_eyes = 0
         agent._pearl_wave_trips = 0
@@ -5019,6 +5036,7 @@ class CheckpointTest(unittest.IsolatedAsyncioTestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._pearl_wave_trips = 0
         agent._barter_attempts = 0
         agent._durable = progress.DurableFacts()
@@ -5109,6 +5127,7 @@ class CheckpointTest(unittest.IsolatedAsyncioTestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._pearl_wave_trips = 0
         agent._barter_attempts = 0
         gs = GameState(dimension="minecraft:overworld")
@@ -5362,6 +5381,7 @@ class StorageNetworkNotesTest(unittest.IsolatedAsyncioTestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -5819,6 +5839,7 @@ class PortalBaseAdoptTest(unittest.IsolatedAsyncioTestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -6110,6 +6131,7 @@ class NetherCrossingTest(unittest.TestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
@@ -6538,6 +6560,69 @@ class NetherCrossingTest(unittest.TestCase):
         self.assertEqual(agent._frame_eyes, 5)
         self.assertFalse(agent._end_portal_active)
 
+    def test_a_frame_the_world_does_not_have_is_forgotten(self) -> None:
+        # run271 it61-67: three activations refused at (98,88,407) - a surface cell of
+        # short_grass, with no `end_portal_frame` loaded anywhere in the world - while
+        # `travel_to_stronghold` kept "succeeding" to it with the body already standing there.
+        # The cell came back through the loop's own checkpoint note, so a run that never located
+        # a stronghold inherited an address it had never seen. Forgetting it is the only way
+        # `locate_stronghold` gets re-offered and the eyes re-throw at a frame the server sees.
+        agent = self._agent()
+        agent.log = []
+        agent._stronghold_frame = (98, 88, 407)
+        fill = Action("activate_end_portal", "activate_portal", {"x": 98, "y": 88, "z": 407}, "")
+        res = SimpleNamespace(data=None,
+                              text="Did not activate the portal.\n"
+                                   "[PORTAL_NO_FRAME] the named cell holds short_grass")
+        agent._note_portal(fill, False, {}, res)
+        self.assertIsNone(agent._stronghold_frame)
+        self.assertEqual([r for r in agent.log if r.get("reason") == "stronghold_frame_invalidated"],
+                         [{"stage": "policy", "reason": "stronghold_frame_invalidated",
+                           "cell": [98, 88, 407], "attempt": 1}])
+        # The tick's own read of the world carries the forgotten cell, so the offer falls back to
+        # the eye throw rather than a walk to a coordinate nothing has seen.
+        self.assertIsNone(agent._inject(gs()).stronghold_frame)
+
+    def test_a_frame_that_only_lacks_eyes_keeps_its_address(self) -> None:
+        # `[PORTAL_MISSING_EYES]` is the world confirming the frame stands and owes sockets;
+        # throwing it away here would send the run hunting a stronghold it is already standing
+        # at, spending eyes it no longer has.
+        agent = self._agent()
+        agent._stronghold_frame = (98, 88, 407)
+        fill = Action("activate_end_portal", "activate_portal", {"x": 98, "y": 88, "z": 407}, "")
+        res = SimpleNamespace(data=None,
+                              text="Did not activate the portal.\n"
+                                   "[PORTAL_MISSING_EYES] 7 empty sockets; 3 ender_eye carried.")
+        agent._note_portal(fill, False, {}, res)
+        self.assertEqual(agent._stronghold_frame, (98, 88, 407))
+        self.assertEqual(agent._frame_relocates, 0)
+
+    def test_the_relocation_stops_after_three_throws(self) -> None:
+        # A stronghold the world will not load must not turn the phase into a permanent re-throw:
+        # each one costs an eye and a System-2 call. The counter only moves while there is an
+        # address to throw away, so it counts re-locations, not refusals.
+        agent = self._agent()
+        agent.log = []
+        agent._stronghold_frame = (98, 88, 407)
+        fill = Action("activate_end_portal", "activate_portal", {"x": 98, "y": 88, "z": 407}, "")
+        res = SimpleNamespace(data=None, text="[PORTAL_NO_FRAME] the named cell holds short_grass")
+        locate = Action("locate_stronghold", "locate_stronghold",
+                        {"phase": "locate", "search_id": "stronghold"}, "")
+        found = SimpleNamespace(data={"confirmation": {"position": {"x": 200, "y": -40, "z": 300}}},
+                                text="Stronghold portal frame observed at 200, -40, 300.")
+        for _ in range(STRONGHOLD_FRAME_RELOCATE_MAX):
+            agent._note_portal(fill, False, {}, res)
+            self.assertIsNone(agent._stronghold_frame)
+            agent._note_locate(locate, True, found)
+            self.assertEqual(agent._stronghold_frame, (200, -40, 300))
+        # The cap is reached: a re-confirmed cell now stands, and the phase stops spending eyes
+        # hunting a stronghold it cannot reach.
+        agent._note_portal(fill, False, {}, res)
+        self.assertEqual(agent._stronghold_frame, (200, -40, 300))
+        self.assertEqual(sum(1 for r in agent.log
+                             if r.get("reason") == "stronghold_frame_invalidated"),
+                         STRONGHOLD_FRAME_RELOCATE_MAX)
+
     def test_an_earlier_count_is_not_walked_back_by_a_later_partial_fill(self) -> None:
         agent = self._agent()
         agent._frame_eyes = 9
@@ -6554,6 +6639,7 @@ class NetherCrossingTest(unittest.TestCase):
         # at - three locate successes in that run, and never one activate.
         agent = self._agent()
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         locate = Action("locate_stronghold", "locate_stronghold",
                         {"phase": "locate", "search_id": "stronghold"}, "")
         res = SimpleNamespace(data={"phase": "locate", "searchId": "stronghold",
@@ -6570,6 +6656,7 @@ class NetherCrossingTest(unittest.TestCase):
     def test_the_text_line_is_enough_when_the_payload_is_not(self) -> None:
         agent = self._agent()
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         locate = Action("locate_stronghold", "locate_stronghold", {"phase": "locate"}, "")
         res = SimpleNamespace(data=None, text="Observed end_portal_frame at -269, -36, -1819.")
         agent._note_locate(locate, True, res)
@@ -6580,6 +6667,7 @@ class NetherCrossingTest(unittest.TestCase):
         # travel step must not walk to a triangulation.
         agent = self._agent()
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         est = Action("locate_stronghold", "locate_stronghold", {"phase": "estimate"}, "")
         res = SimpleNamespace(data={"phase": "estimate", "estimate": {"x": -256.0, "z": -1872.0}},
                               text="Unconfirmed estimate: -256.0, -1872.0.")
@@ -6830,6 +6918,7 @@ class RememberedGateTest(unittest.IsolatedAsyncioTestCase):
         agent._end_portal_active = False
         agent._stronghold_estimated = False
         agent._stronghold_frame = None
+        agent._frame_relocates = 0
         agent._powder_exhausted = False
         agent._powder_cells = []
         agent._powder_bank = 0
