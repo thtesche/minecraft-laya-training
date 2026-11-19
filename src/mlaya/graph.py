@@ -165,8 +165,11 @@ def shut_in(text: str | None, pos) -> bool:
     return int(m.group(1)) <= BOXED_NODES and math.dist(closest, pos) <= BOXED_CLOSEST_M
 # A gathering action is refused with `[INVENTORY_FULL]` once all 36 carried slots are taken; the
 # unblock there is not terrain but pack space (stow at the base, else drop), so it routes through
-# a separate relief step.
-INVENTORY_CODES = ("INVENTORY_FULL",)
+# a separate relief step. A craft the host aborts mid-batch says the same thing in other words -
+# "needs inventory room to store 1 crafting_table" - and without reading it the pack stays full and
+# every craft fails forever (live, run277 it1-4: four `craft_pickaxe`/`craft_table` ticks refused
+# this way while the guard, seeing no `INVENTORY_FULL`, never injected the relief).
+INVENTORY_CODES = ("INVENTORY_FULL", "needs inventory room")
 
 # How many identical refusals in a row (same label, same tool-result code, no `progressed`) a
 # step may answer before the loop withholds it from the offer for `STUCK_COOLDOWN` ticks. A

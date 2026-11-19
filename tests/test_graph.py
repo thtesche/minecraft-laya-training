@@ -389,6 +389,25 @@ class GuardUnblockTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent._blocked_label, "mine_coal")
         self.assertEqual(agent._blocked_kind, "inventory")
 
+    def test_a_craft_aborted_for_want_of_room_is_an_inventory_block(self) -> None:
+        # run277 it1-4: the host aborts a craft mid-batch with "needs inventory room to store 1
+        # crafting_table". Same cause as [INVENTORY_FULL], different words - and unseen, the guard
+        # never injected the relief and four crafts failed in a row with the pack pinned at 36/36.
+        agent = self._agent()
+        agent._note_block("craft_pickaxe", False,
+                          "[CRAFT_EXECUTION_FAILED] Mineflayer stopped while executing the selected "
+                          "recipe batch: This crafting execution needs inventory room to store 1 "
+                          "crafting_table before the next recipe application.")
+        self.assertEqual(agent._blocked_label, "craft_pickaxe")
+        self.assertEqual(agent._blocked_kind, "inventory")
+
+    def test_a_craft_that_failed_for_other_reasons_is_not_an_inventory_block(self) -> None:
+        agent = self._agent()
+        agent._note_block("craft_pickaxe", False,
+                          "[CRAFT_EXECUTION_FAILED] Mineflayer stopped while executing the selected "
+                          "recipe batch: missing materials.")
+        self.assertIsNone(agent._blocked_label)
+
     async def test_inventory_block_stows_at_the_base_chest(self) -> None:
         agent = self._agent()
         agent._blocked_label = "mine_coal"
