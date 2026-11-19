@@ -365,6 +365,14 @@ class System2StateViewTest(unittest.TestCase):
         state["nether_trip"] = "pearls"
         self.assertEqual(_system2_state_view(state)["phase"], "nether_pearls")
 
+    def test_a_rod_trip_is_not_named_as_a_pearl_trip(self) -> None:
+        # The reverse of the test above: "rods" is a non-empty string, so a truthy test reads the
+        # rod haul as the pearl wave and System 2 gets a brief that says the powder is banked
+        # when nothing is banked (live, run287 it44-51).
+        state = self._nether_state()
+        state["nether_trip"] = "rods"
+        self.assertEqual(_system2_state_view(state)["phase"], "nether_rods")
+
     def test_the_base_is_marked_as_the_overworld_landmark(self) -> None:
         self.assertEqual(_system2_state_view(self._nether_state())["base"],
                          {"pos": [-77, 69, -27], "dimension": "overworld"})

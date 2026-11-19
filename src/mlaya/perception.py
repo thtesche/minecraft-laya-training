@@ -904,7 +904,13 @@ def _phase_key(source) -> str:
         # the planner's Nether block splits on, so the persona cannot call the trip a blaze hunt
         # while every offer down there is a pearl hunt (live, run220 it228: `search_enderman` chosen
         # on the tick, "killing blazes for blaze rods" in the sentence above it).
-        return "nether_pearls" if field("nether_trip") else "nether_rods"
+        # `nether_trip` is the slug "pearls" or "rods", so the test has to name the pearl slug:
+        # a rod trip is a non-empty string too, and truthiness put every Nether tick in the pearl
+        # brief (live, run287 it44-51: `nether_trip` "rods", no rod yet, powder unbanked, while
+        # the persona read "hunting endermen for ender pearls" and the brief claimed the haul was
+        # banked). An unset trip (a stub state, a torn log) is the rod trip, which is what the
+        # planner offers before anything is banked.
+        return "nether_pearls" if field("nether_trip") == "pearls" else "nether_rods"
     # An end portal standing is the stronghold done: from here the run's job is the crossing and the
     # dragon, whatever the kit looks like. Without this the post-portal window falls through to the
     # kit test and reads as the tech climb whenever the pickaxe is not diamond (live, run278 it8-13:

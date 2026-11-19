@@ -1033,6 +1033,11 @@ class PhasePersonaTest(unittest.TestCase):
         gs.nether_trip = "pearls"
         self.assertEqual(phase_persona(gs), PHASE_NETHER_PEARLS)
         self.assertIn("hunting endermen for ender pearls", gs.narrative())
+        # The other slug is a string too, so truthiness alone cannot tell the two trips apart:
+        # a rod trip has to keep the blaze persona (live, run287 it44-51, `nether_trip` "rods").
+        gs.nether_trip = "rods"
+        self.assertEqual(phase_persona(gs), PHASE_NETHER)
+        self.assertIn("killing blazes for blaze rods", gs.narrative())
 
     def test_system_two_reads_the_same_sentence_from_the_state_dict(self) -> None:
         # `escalate_to_system2` receives `gs.as_state()`, not the object: the sentence must
