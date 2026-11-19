@@ -353,6 +353,31 @@ def _hostile_count(gs) -> int:
 SURVIVAL_EVENT_PREFIXES = ("hostile:", "fire:", "recover footing:", "lava:",
                            "water:", "drowning:")
 
+# A hostile receipt that reports an engagement *ending* rather than a response being made: the
+# reflex stood down and the tick went to nobody. `settlement.ts` names these outcomes
+# `contact_ended`, `target_lost`, `target_unreachable`, `disengaged`, `cancelled`,
+# `capability_limit`. Counting them as acting is what kept the band shut for 26 ticks at the end
+# portal in run283, where silverfish came in and out of contact and the loop never got a tick back
+# (it3-34 deferred while `craft_pickaxe` and `move_bed_clear` sat offered).
+QUIET_HOSTILE_OUTCOMES = ("contact ended", "target lost", "target unreachable", "disengaged",
+                          "cancelled", "capability limit")
+
+
+def survival_acted(events: list[str]) -> bool:
+    """Whether a defer tick was answered by a reflex that did something for the body.
+
+    A hostile engagement that ended without a hit is not an answer to the danger: the loop is
+    still the only thing that can move the body, and the band has to let it.
+    """
+    for event in events:
+        text = str(event).lower()
+        if not text.startswith(SURVIVAL_EVENT_PREFIXES):
+            continue
+        if text.startswith("hostile:") and any(outcome in text for outcome in QUIET_HOSTILE_OUTCOMES):
+            continue
+        return True
+    return False
+
 _CODE_RE = re.compile(r"\[([A-Z][A-Z_]+)\]")
 
 # The two lines the server prints into every settled result's final progress
@@ -2445,7 +2470,7 @@ class Agent:
         """
         hurt = (before.health is not None and after.health is not None
                 and after.health < before.health)
-        acted = any(str(e).lower().startswith(SURVIVAL_EVENT_PREFIXES) for e in after.events)
+        acted = survival_acted(after.events)
         self._defer_quiet = 0 if (hurt or acted) else self._defer_quiet + 1
 
     async def _hold_wait(self, action, ok: bool) -> None:
