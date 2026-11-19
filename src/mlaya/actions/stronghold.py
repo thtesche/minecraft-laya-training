@@ -132,6 +132,10 @@ def _search_enderman_wanted(gs: GameState) -> bool:
     sixteen powder banked, sixteen eyes owed, no pearl in reach, the offer was `wait` alone. A bot
     at its own base with room in the pack and a gate that cannot open roams for the pearl instead
     of holding the tick.
+
+    Both Overworld branches are held to `ENDERMAN_ROAM_M`. The frontier edge the server names is not
+    necessarily near: run291 it125-134 sent the roam 533 and 505 blocks out twice, and each leg came
+    home with no pearl and half the pack's food gone.
     """
     inv = gs.inventory
     if (_ender_pearls(inv) >= _eyes_owed(gs) or _enderman_in_reach(gs)
@@ -143,9 +147,10 @@ def _search_enderman_wanted(gs: GameState) -> bool:
         return (gs.nether_travel < NETHER_PEARL_SEARCH_M
                 and int(getattr(gs, "explore_stalls", 0) or 0) < PEARL_MARCH_STALL_LIMIT)
     if gs.pearl_wave_trips >= PEARL_WAVE_MAX_TRIPS:
-        return True
+        return _frontier_within_roam_budget(gs)
     return (_at_base(gs) and gs.slots_used < INVENTORY_SLOTS
-            and not _nether_departure_ready(gs))
+            and not _nether_departure_ready(gs)
+            and _frontier_within_roam_budget(gs))
 
 
 def _scaffold_short(gs: GameState) -> bool:

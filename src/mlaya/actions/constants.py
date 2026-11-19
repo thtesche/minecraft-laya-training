@@ -864,6 +864,15 @@ WARPED_ARRIVAL_M = 32.0
 # that). Five, because a trip that barters once and kills a few endermen brings home two or three
 # pearls, so five waves cover the sixteen with room for the ones a trip comes home empty.
 PEARL_WAVE_MAX_TRIPS = 5
+# How far the Overworld enderman roam may walk to the nearest unobserved chunk edge. The Nether
+# march is bounded by `NETHER_PEARL_SEARCH_M` of ground it covers; the Overworld fallback had no
+# bound at all, so it marched to whatever the server's frontier table happened to have. Live,
+# run291 it125-134: the nearest frontier edge sat 533 and 505 blocks from the base, and each roam
+# leg landed the bot there, the next tick's `go_home` walked it back, and the round trip burned the
+# pack's food from 20 to 2 without ever loading an enderman. A search whose destination is half a
+# kilometre off is a trek, not a search: the roam stays local and the ticks go to the steps that
+# can actually open the pearl gate.
+ENDERMAN_ROAM_M = 160.0
 NETHER_COBBLE = 64
 # How far the Nether stack may run below `NETHER_COBBLE` before `mine_stone` refills it. The surplus
 # drop leaves exactly `NETHER_COBBLE` (`HOARD_KEEP`), and the next scaffold block took it to 63:

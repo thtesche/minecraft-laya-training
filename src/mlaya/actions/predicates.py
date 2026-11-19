@@ -1481,6 +1481,21 @@ def _retreat_heading(gs: GameState) -> float | None:
     return None
 
 
+def _frontier_within_roam_budget(gs: GameState) -> bool:
+    """Whether the nearest unobserved chunk edge is close enough for a roam to be a search.
+
+    `explore_frontier` walks to whatever edge the frontier table names, without asking how far it
+    is: live, run291 it125-134 the Overworld enderman roam took edges 533 and 505 blocks away, and
+    every leg ended with the body four hundred blocks from its own base, the pack's food down from
+    20 to 2, no enderman loaded, and the next tick spent `go_home`-ing the distance back. A search
+    is ground the bot can reach and cover; past `ENDERMAN_ROAM_M` the same label is a trek that
+    spends the food reserve and buys nothing. A tick with no distance read is not a far one: the
+    march keeps its heading rather than being withheld on a missing number.
+    """
+    distance = getattr(gs, "frontier_distance", None)
+    return distance is None or distance <= ENDERMAN_ROAM_M
+
+
 def _clear_march_heading(gs: GameState, base: float) -> float:
     """Turn a march's bearing once per `[EXPLORATION_ROUTE_STOPPED]` in a row.
 

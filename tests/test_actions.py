@@ -24,6 +24,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                           _centre,
                           _hoard_surplus, _idle_off_base, _gear_ready, _nether_prep_steps,
                          _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt, _safe_blaze_hunt, _safe_zombie_hunt,
+                         _frontier_within_roam_budget,
                           _safe_spider_hunt, _safe_string_hunt,
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
                          ENDERMAN_HUNT_HEALTH,
@@ -37,7 +38,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
                          BARTER_GOLD_BUDGET, BARTER_MAX_ATTEMPTS, BARTER_PEARL_BATCH,
                          BARTER_PIGLIN_RANGE, GOLD_BARTER_RESERVE, GOLD_HELMET_INGOTS,
-                         NETHER_PEARL_SEARCH_M, PEARL_WAVE_MAX_TRIPS,
+                         NETHER_PEARL_SEARCH_M, PEARL_WAVE_MAX_TRIPS, ENDERMAN_ROAM_M,
                          PEARL_MARCH_STALL_LIMIT, PEARL_MARCH_CHUNKS, EXPLORE_STALL_TURN,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
                            nether_expedition_complete, nether_expedition_open, NETHER_SEARCH_M,
@@ -77,7 +78,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            WATER_RESCUE_AFTER, OBSIDIAN_CAST_BATCH,
                            _chest_candidates, _chest_site, _plank_units, CHEST_PLANKS)
 from mlaya.perception import (BlockHit, GameState, FORTRESS_RADIUS, frame_obsidian_cells,
-                              parse_frontier_heading, parse_resources, parse_warped_forest)
+                              parse_frontier_distance, parse_frontier_heading, parse_resources, parse_warped_forest)
 
 
 def gs(**kw) -> GameState:
@@ -5196,6 +5197,19 @@ class FrontierHeadingParseTest(unittest.TestCase):
         self.assertIsNone(parse_frontier_heading({"response": {"data": {"result": {"query": {
             "rows": [["eastish"]]}}}}}))
 
+    def test_the_same_row_carries_the_distance_to_that_edge(self) -> None:
+        # The heading says which way; the distance says whether the walk is worth taking.
+        payload = {"response": {"data": {"result": {"query": {
+            "columns": ["heading_degrees", "distance_blocks"], "rows": [[254.0, 533.4]],
+            "returnedRows": 1}}}}}
+        self.assertEqual(parse_frontier_heading(payload), 254.0)
+        self.assertEqual(parse_frontier_distance(payload), 533.4)
+
+    def test_a_row_without_a_distance_is_no_distance(self) -> None:
+        payload = {"response": {"data": {"result": {"query": {"rows": [[254.0]]}}}}}
+        self.assertIsNone(parse_frontier_distance(payload))
+        self.assertIsNone(parse_frontier_distance({}))
+
 
 class WarpedForestParseTest(unittest.TestCase):
     """`frontier_navigation` names a warped forest as heading, distance and its chunk."""
@@ -5338,6 +5352,36 @@ class PearlMarchHeadingTest(unittest.TestCase):
         # (12.5 - -197, -3.5 - -98) -> away from the base, not the Nether landmarks.
         self.assertNotEqual(a.args["heading"], 48.5)
         self.assertNotEqual(a.args["heading"], 200.0)
+
+    def test_a_far_frontier_ends_the_overworld_roam(self) -> None:
+        # Live, run291 it125-134: with the pearl waves still owed, the Overworld fallback marched to
+        # frontier edges 533 and 505 blocks away, twice, and each leg ended four hundred blocks from
+        # the base with no pearl loaded and the pack's food down from 20 to 2 before `go_home`
+        # walked it back. The roam is a search for ground an enderman might be on, not a trek.
+        g = self._wave(heading=200.0)
+        g.dimension = "minecraft:overworld"
+        g.pearl_wave_trips = PEARL_WAVE_MAX_TRIPS
+        g.frontier_distance = 533.0
+        self.assertFalse(_search_enderman_wanted(g))
+        self.assertFalse(_frontier_within_roam_budget(g))
+        g.frontier_distance = ENDERMAN_ROAM_M
+        self.assertTrue(_search_enderman_wanted(g))
+        # A tick with no distance read is not a far one: the roam keeps its heading.
+        g.frontier_distance = None
+        self.assertTrue(_frontier_within_roam_budget(g))
+        self.assertTrue(_search_enderman_wanted(g))
+
+    def test_a_gate_that_cannot_open_is_not_answered_with_a_far_march(self) -> None:
+        # The fallback exists so a bot at its own base does not `wait` while the pearl gate is shut
+        # for reasons it cannot fix this tick. That only holds while the ground the roam would
+        # cover is within reach of the hunt.
+        g = self._wave(heading=200.0)
+        g.dimension = "minecraft:overworld"
+        g.base = (12, 65, -4)
+        g.frontier_distance = 480.0
+        self.assertFalse(_search_enderman_wanted(g))
+        g.frontier_distance = 60.0
+        self.assertTrue(_search_enderman_wanted(g))
 
     def test_a_stopped_march_turns_the_bearing_a_quadrant(self) -> None:
         # Live, run164 it159-161: the same eastward bearing from (132, 41, 0) answered

@@ -96,7 +96,7 @@ FORTRESS_RADIUS = 256.0
 # to walk to make it come in sight. Asking for it beats betting on an axis - the stripes were
 # described east-west in one source and north-south in the next, and the loop had no measurement
 # either way, because it never found a fortress to measure on.
-FRONTIER_HEADING_SQL = ("SELECT heading_degrees FROM frontier_navigation "
+FRONTIER_HEADING_SQL = ("SELECT heading_degrees, distance_blocks FROM frontier_navigation "
                         "WHERE is_frontier = 1 ORDER BY distance_blocks ASC LIMIT 1")
 # The pearl hunt's own landmark. Endermen are the one hostile the warped forest fills on its own -
 # every other Nether biome spawns them rarely, beside a pack that makes the hunt a fight - so the
@@ -726,6 +726,28 @@ def parse_frontier_heading(payload: Any) -> float | None:
     return None
 
 
+def parse_frontier_distance(payload: Any) -> float | None:
+    """Blocks from the live bot to that same frontier edge, or None when the row has no distance.
+
+    The heading alone says a direction; it does not say how far the walk is. Live, run291 it125-134:
+    the Overworld enderman roam took the nearest frontier edge at 533 and 505 blocks, and each leg
+    landed the bot four hundred-odd blocks from its own base, where the pack's food ran from 20 down
+    to 2 before the `go_home` leg walked it back. A march whose destination is half a kilometre off
+    is not a search, it is a trek the pack cannot pay for.
+    """
+    rows = get(payload, "response", "data", "result", "query", "rows")
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        cells = row if isinstance(row, list) else [row]
+        if len(cells) < 2:
+            return None
+        distance = _num(cells[1])
+        if distance is not None:
+            return round(float(distance), 1)
+    return None
+
+
 def parse_warped_forest(payload: Any) -> tuple[float, float, int, int] | None:
     """`WARPED_FOREST_SQL` -> (heading, distance, chunk_x, chunk_z) of the nearest recorded
     warped forest, or None when this run has never loaded one.
@@ -993,6 +1015,9 @@ class GameState:
     # Nether only (see `FRONTIER_HEADING_SQL`). None means "no frontier read this tick": the
     # fortress search then falls back to its own axis march.
     frontier_heading: float | None = None
+    # Blocks to that edge. None means the read gave no distance, which the roam budget treats as
+    # "no reason to withhold the march" rather than as a far one.
+    frontier_distance: float | None = None
     # The nearest recorded warped forest: (heading, distance, chunk_x, chunk_z). Endermen are what
     # that biome fills on its own, so the pearl march steers at it when the run has loaded one
     # (`WARPED_FOREST_SQL`, read in the Nether only).
@@ -1526,6 +1551,7 @@ class GameState:
             # the offer turned on both, and a tick that does not say what it saw cannot answer why
             # it walked where it walked.
             "frontier_heading": self.frontier_heading,
+            "frontier_distance": self.frontier_distance,
             "warped_forest": self.warped_forest,
             "nether_hop_repeats": self.nether_hop_repeats,
             "explore_stalls": self.explore_stalls,
@@ -1595,7 +1621,7 @@ class GameState:
                       "nether_trip",
                       "stronghold_estimated", "end_portal_active", "slept_at_stronghold",
                       "stronghold_frame", "powder_cells",
-                      "powder_bank", "frame_eyes", "frontier_heading", "warped_forest",
+                      "powder_bank", "frame_eyes", "frontier_heading", "frontier_distance", "warped_forest",
                       "explore_stalls", "nether_landmarks", "dead_end_cells",
                       "dragon_id", "dragon_health", "dragon_phase", "dragon_perched",
                       "end_entered", "dragon_slain"):
@@ -2673,8 +2699,10 @@ async def build(executor) -> GameState:
                 "read the compass heading to the nearest chunk edge the world has not observed",
             )
             gs.frontier_heading = parse_frontier_heading(coerce(frontier.data, frontier.text))
+            gs.frontier_distance = parse_frontier_distance(coerce(frontier.data, frontier.text))
         except Exception:
             gs.frontier_heading = None
+            gs.frontier_distance = None
         # The pearl hunt's landmark, read in the same breath: a warped forest is the one place
         # endermen fill without the rest of the Nether's hostile pack, so `search_enderman` steers
         # at it instead of walking a compass line. No row means this run has not loaded one yet.
