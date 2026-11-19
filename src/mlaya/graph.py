@@ -2933,7 +2933,7 @@ class Agent:
         self._lava_retired = retired
 
     def _track_stuck(self, label: str, ok: bool, text: str | None,
-                     progressed: bool) -> None:
+                     progressed: bool, delta: dict | None = None) -> None:
         """Withhold a label that keeps answering the identical refusal without progress.
 
         See `STUCK_REPEATS`/`STUCK_COOLDOWN`. Any success, any `progressed` tick, or a *different*
@@ -2946,6 +2946,13 @@ class Agent:
         whole window, and a second label refusing on every tick it got went uncounted (live, run17:
         `build_portal` withheld for 15 ticks, `light_portal` answering `[PORTAL_NO_FRAME]` 150 times
         beside it and never reaching the threshold).
+
+        A tick that brings something in also clears the label's escalation count. `_stall_dropped`
+        records *this* impasse, not the label's record for the run: once the step delivers, the
+        withholding has paced nothing. Live, run291: the orbit guard took `eat_food` off the offer
+        twice on a false positive, the count stayed at 2 for the rest of the run, and every later
+        tick where eating resolved went to System 2 or the ledger instead of to the meal - ten
+        escalations while stew sat in the pack and hunger fell to 5.
         """
         for held in list(self._stuck_off):
             self._stuck_off[held] -= 1
@@ -2956,6 +2963,8 @@ class Agent:
         if ok or progressed:
             self._stuck_reps.pop(label, None)
             self._stuck_code.pop(label, None)
+            if _yielded(delta) or (delta or {}).get("food_delta", 0) > 0:
+                self._stall_dropped.pop(label, None)
             return
         code = _fail_code(text)
         if code is None:
@@ -4440,7 +4449,7 @@ class Agent:
         self._note_dragon(action, _ok, res)
         self._note_landmark(action, delta, after)
         progressed = vmod.progressed(action.label, delta, _ok)
-        self._track_stuck(action.label, _ok, _text, progressed)
+        self._track_stuck(action.label, _ok, _text, progressed, delta)
         # After the stuck guard: it owns the countdown and the offer window, and a wandering
         # action is not a refusal, so the two runs of counts do not disturb each other.
         self._track_wander(action.label, res, after, delta)

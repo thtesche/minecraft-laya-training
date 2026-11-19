@@ -1734,6 +1734,28 @@ class StuckOfferTest(unittest.TestCase):
         agent._track_stuck("mine_obsidian", False, self.REFUSAL, False)
         self.assertEqual(agent._stuck_reps.get("mine_obsidian"), 1)
 
+    def test_a_delivering_tick_clears_the_escalation_count(self) -> None:
+        # Live, run291: `eat_food` was withheld twice on a guard false positive, `_stall_dropped`
+        # stayed at 2 for the rest of the run, and every later tick where eating resolved went to
+        # System 2 or the ledger instead of to the meal - ten escalations while stew sat in the
+        # pack and hunger fell to 5. A step that delivers has ended the impasse the count records.
+        agent = self._agent()
+        for _ in range(STUCK_REPEATS):
+            agent._track_stuck("eat_food", False, "[EAT_FOOD_MISSING] no stew", False)
+        self.assertEqual(agent._stall_dropped.get("eat_food"), 1)
+        agent._track_stuck("eat_food", True, "", True,
+                           {"inventory_delta": {"mushroom_stew": -1}, "food_delta": 6.0})
+        self.assertNotIn("eat_food", agent._stall_dropped)
+
+    def test_a_tick_that_only_walks_keeps_the_count(self) -> None:
+        # The orbit guard's ping-pong succeeds and moves but brings nothing in, so its escalation
+        # count survives the tick - the loop it paced is still there.
+        agent = self._agent()
+        agent._stall_dropped = {"explore": STALL_ESCALATE_REPEATS}
+        agent._track_stuck("explore", True, "", True,
+                           {"inventory_delta": {}, "food_delta": 0.0, "pos_delta": 4.0})
+        self.assertEqual(agent._stall_dropped.get("explore"), STALL_ESCALATE_REPEATS)
+
     def test_a_different_code_restarts_the_run(self) -> None:
         agent = self._agent()
         agent._track_stuck("mine_obsidian", False, "[CODE_A] x", False)
