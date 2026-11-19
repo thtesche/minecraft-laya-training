@@ -73,6 +73,12 @@ PHASE_PROGRESSIONS = (
     "nether_rods: kill blazes for rods, craft powder, bank it at the gate - each hunt serves the haul.",
     "nether_pearls: barter gold with piglins and hunt endermen for pearls - both pay for the eyes.",
     "stronghold: craft eyes of ender, throw to locate the stronghold, activate the end portal.",
+    "prepare_end_dragon: the portal is ALREADY active - this is the re-gear window beside the frame, "
+    "not the fight. The kit that came back from the Nether is rarely End-ready, so topping it up "
+    "here IS progress: replacing worn armour, crafting or farming arrows, camping a skeleton "
+    "spawner, laying the bed and sleeping to pin the respawn. Crossing with a broken kit is the "
+    "failure this phase exists to prevent; judge an idle step against the candidate that advances "
+    "the kit.",
     "end_dragon: the crossing has a precondition - the respawn must be pinned at the bed beside the "
     "frame, and that sleep only runs at night. Laying the bed, holding at the frame (`wait`) until "
     "dark, and sleeping there are the steps of this phase, not idling; stepping back through the "

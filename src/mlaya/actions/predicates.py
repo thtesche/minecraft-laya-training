@@ -2446,6 +2446,39 @@ def _end_bows_wanted(gs: GameState) -> int:
     return max(0, END_BOWS - _bows_held(gs))
 
 
+def _end_kit_ready(gs: GameState) -> bool:
+    """Whether the kit is good enough to cross into the End, so the re-gear window can stand down.
+
+    `_phase_key` reads this: in the Overworld with the portal lit, a kit that is not ready is the
+    `prepare_end_dragon` re-gear window, a ready one is the crossing (`end_dragon`). It is the one
+    predicate the phase and the entry gate share, so the window never offers a re-gear step the
+    gate would not have waited for.
+
+    A0-min stub (plan prepare_end_dragon, 2026-11-19): deliberately conservative so the phase
+    exists as a real target for the observer to steer against while the full predicate - a spare
+    sword (`END_SWORD_SPARE`) and the 128-arrow reserve or its `_end_supplies_ready` override - is
+    still A0-rest. It reads only what every post-stronghold state already carries: the worn diamond
+    armour (none of it worn out), a diamond sword to hand or in the pack, and at least one bow. It
+    never gates on a pickaxe or a shield - the End fight uses neither, so requiring them would hold
+    the window open on gear the crossing does not need. The dimension check stays in `_phase_key`;
+    this is the kit test, not the window.
+    """
+    inv = gs.inventory
+    for slot, _ in DIAMOND_ARMOR:
+        if _worn(gs, f"diamond_{slot}"):
+            continue
+        # The gold-helmet reserve counts as covered, the same exception `_gear_ready` carries: the
+        # diamond helmet sits in the pack while the gold piece is worn for piglin neutrality.
+        if slot == "helmet" and _worn(gs, GOLD_HELMET_ITEM) and _has(inv, "diamond_helmet"):
+            continue
+        return False
+    if _armor_worn_out(gs):
+        return False
+    if not (_has(inv, "diamond_sword") or str(gs.tools.get("sword", "")).lower() == "diamond"):
+        return False
+    return _bows_held(gs) >= 1
+
+
 def _string_goal(gs: GameState) -> int:
     """String still wanted: twelve for a bed, or three per bow the End reserve still owes."""
     if not _bed_available(gs):

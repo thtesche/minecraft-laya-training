@@ -1056,7 +1056,8 @@ class PhasePersonaTest(unittest.TestCase):
     def test_the_banked_powder_turns_the_overworld_to_the_stronghold(self) -> None:
         # The stronghold phase runs from the stow until the end portal stands active; both the
         # object and the logged dict must say so, and the Nether still owns its own sentence.
-        from mlaya.perception import PHASE_END, PHASE_NETHER, PHASE_STRONGHOLD, GameState, phase_persona
+        from mlaya.perception import (PHASE_END, PHASE_NETHER, PHASE_PREPARE_END, PHASE_STRONGHOLD,
+                                       GameState, phase_persona)
         state = {"dimension": "minecraft:overworld", "powder_stowed": True}
         self.assertEqual(phase_persona(state), PHASE_STRONGHOLD)
         g = GameState(dimension="minecraft:overworld", powder_stowed=True)
@@ -1064,12 +1065,25 @@ class PhasePersonaTest(unittest.TestCase):
         self.assertEqual(phase_persona(GameState.from_state(g.as_state())), PHASE_STRONGHOLD)
         g.end_portal_active = True
         self.assertNotEqual(phase_persona(g), PHASE_STRONGHOLD)
-        # The portal standing hands the run to the End, kit or no kit: run278 it8-13 held at the
-        # frame for the night sleep that pins the respawn while the phase read "diamond_kit" with a
-        # wooden pickaxe in hand, and the observer called the hold a loop.
-        self.assertEqual(phase_persona(g), PHASE_END)
+        # The portal standing hands the run out of the stronghold, but the kit that came back from
+        # the Nether is not End-ready, so in the Overworld beside the frame this is the re-gear
+        # window (`prepare_end_dragon`), not the fight yet (plan prepare_end_dragon, 2026-11-19).
+        # It still never reads as the tech climb run278 misjudged: a specific late phase, not
+        # `diamond_kit` with a wooden pickaxe in hand.
+        self.assertEqual(phase_persona(g), PHASE_PREPARE_END)
+        self.assertEqual(phase_persona(GameState.from_state(g.as_state())), PHASE_PREPARE_END)
         self.assertEqual(phase_persona({"dimension": "minecraft:overworld",
-                                       "end_portal_active": True}), PHASE_END)
+                                       "end_portal_active": True}), PHASE_PREPARE_END)
+        # The End dimension itself is always the fight, kit or no kit (handled before the window).
+        self.assertEqual(phase_persona({"dimension": "minecraft:the_end",
+                                        "end_portal_active": True}), PHASE_END)
+        # A kit that is End-ready closes the window: the crossing is `end_dragon`.
+        g.armor = {slot: {"tier": "diamond", "item": f"diamond_{slot}", "left": 100, "max": 100}
+                   for slot in ("helmet", "chestplate", "leggings", "boots")}
+        g.tools = {"sword": "diamond", "bow": "bow"}
+        g.inventory = {"diamond_sword": 1}
+        self.assertEqual(phase_persona(g), PHASE_END)
+        self.assertEqual(phase_persona(GameState.from_state(g.as_state())), PHASE_END)
         self.assertEqual(phase_persona({"dimension": "minecraft:the_nether",
                                         "powder_stowed": True}), PHASE_NETHER)
 
