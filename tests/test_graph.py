@@ -3211,25 +3211,27 @@ class SurfaceNoteTest(unittest.TestCase):
         self.assertIsNone(agent.surface)
 
     def test_a_probe_that_found_the_body_on_the_top_floor_is_recorded(self) -> None:
-        # Live, run285 it35,38,40,43: the body stood at y=71 on the grass its own column tops, the
-        # probe refused "already at the top" four times, and `establish_base` never ran because
-        # only one learned cell counted as surface.
+        # Live, run285 it35,38,40,43 and run286 it1: the body stood at y=71 (and y=66) on the
+        # grass its own column tops, the probe refused "already at the top" four times, and
+        # `establish_base` never ran because only one learned cell counted as surface. The refusal
+        # names the column and its top floor; the body never moved, so the position the tick
+        # observed is the proof.
         agent = self._agent()
-        agent.gs = GameState(pos=(-136.35, 71.0, -11.53))
         text = ("[NAVIGATION_STOPPED] Pathfinder stopped: [NAVIGATION_HEIGHT_REQUIRED] Column "
                 "-137, -12 has highest block grass_block at y=70; observed standable feet "
                 "heights: 71, 37, -1, -25, -53.")
-        agent._note_surface(self._Action("surface_up", {"x": -137, "z": -12}), False, text, None)
+        agent._note_surface(self._Action("surface_up", {"x": -137, "z": -12}), False, text,
+                            (-136.35, 71.0, -11.53))
         self.assertEqual(agent._surface_top, {(-137, -12): 71})
 
     def test_a_body_below_the_named_top_floor_is_not_out(self) -> None:
         # The refusal names the column's top floor; a body five blocks under it is still in the
         # cave and the next tick has to climb.
         agent = self._agent()
-        agent.gs = GameState(pos=(-47.5, -15.0, 4.6))
         text = ("[NAVIGATION_STOPPED] [NAVIGATION_HEIGHT_REQUIRED] Column -47, 4 has highest "
                 "block podzol at y=73; observed standable feet heights: 74, -15, -54.")
-        agent._note_surface(self._Action("surface_up", {"x": -47, "z": 4}), False, text, None)
+        agent._note_surface(self._Action("surface_up", {"x": -47, "z": 4}), False, text,
+                            (-47.5, -15.0, 4.6))
         self.assertEqual(agent._surface_top, {})
 
     def test_a_water_probe_remembers_the_column_it_failed_on(self) -> None:

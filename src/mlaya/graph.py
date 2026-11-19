@@ -3280,9 +3280,9 @@ class Agent:
             # columns, four "you are already at the top" refusals, and `establish_base` never ran
             # because `_at_surface` only trusted the one learned cell).
             top = perception.parse_column_top(text or "")
-            if top is not None and gs is not None and gs.pos is not None:
+            if top is not None and pos is not None:
                 (cx, cz), floor = top
-                if abs(math.floor(gs.pos[1]) - floor) <= 1:
+                if abs(math.floor(pos[1]) - floor) <= 1:
                     self._surface_top = {**self._surface_top, (cx, cz): floor}
 
     def _note_crossing(self, action, text: str = "") -> None:
