@@ -48,6 +48,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            NETHER_FOOD_MIN_RESERVE, NETHER_FOOD_EMERGENCY_FLOOR,
                            FOOD_BANK_KEEP, resolve, stronghold_complete,
                            STRONGHOLD_ARRIVAL_RANGE, _at_stronghold, _frame_distance, _frame_cell,
+                           _frame_descent, _tunnel_to_frame_wanted, STRONGHOLD_TUNNEL_TRIES,
                            _striding_to_stronghold, _stronghold_phase, _march_shed, _march_junk,
                            STRONGHOLD_MARCH_JUNK, _go_home_wanted, _cannot_heal,
                            _bed_materials_ready, _bed_item_from_wool, _bed_item_to_craft,
@@ -7892,6 +7893,76 @@ class StrongholdFrameAddressTest(unittest.TestCase):
         self.assertTrue(stronghold_complete(g))
         self.assertNotIn("activate_end_portal", candidates(g))
         self.assertIn("travel_to_stronghold", candidates(g))
+
+
+class StrongholdBuriedFrameTest(unittest.TestCase):
+    """A frame under the surface is dug to, not walked to.
+
+    run275 it4: the bot stood 33 m from the confirmed frame at (2090,-10,720), 73 blocks above it,
+    and `navigate` refused `[NAVIGATION_STOPPED] Pathfinder stopped: search timed out after 4000 ms`
+    on that column. `travel_to_stronghold` kept coming back onto the offer with nothing to reach,
+    and the fill never started. `tunnel_to` is the host action that carves a dry staircase to a
+    confirmed frame (docs/tunnel-to-design.md); the loop only has to hand it the cell.
+    """
+
+    FRAME = (2090, -10, 720)
+
+    def _at_the_stronghold(self, **inv) -> GameState:
+        stock = dict(flint_and_steel=1, bow=1, arrow=16, cobblestone=64, golden_helmet=1,
+                     cooked_mutton=64, white_bed=1, diamond_pickaxe=2, ender_eye=15)
+        stock.update(inv)
+        g = at_home(geared(**stock), base=(-10, 65, 60))
+        g.chest_pos = (-10, 65, 62)
+        g.powder_stowed = True
+        g.powder_bank = 18
+        g.dimension = "minecraft:overworld"
+        g.stronghold_estimated = True
+        g.stronghold_frame = self.FRAME
+        g.pos = (2077.5, 63.0, 749.6)
+        return g
+
+    def test_a_frame_under_the_surface_is_dug_not_walked(self) -> None:
+        g = self._at_the_stronghold()
+        self.assertEqual(_frame_descent(g), 73)
+        self.assertTrue(_tunnel_to_frame_wanted(g))
+        self.assertIn("tunnel_to_frame", candidates(g))
+        self.assertNotIn("travel_to_stronghold", candidates(g))
+        a = resolve("tunnel_to_frame", g)
+        self.assertEqual(a.tool, "tunnel_to")
+        self.assertEqual(a.args["target"], {"x": 2090, "y": -10, "z": 720})
+        self.assertEqual(a.args["search_id"], "stronghold")
+
+    def test_a_frame_the_walk_can_reach_is_still_walked(self) -> None:
+        # Three blocks below the feet is a column the pathfinder crosses; 73 is not.
+        g = self._at_the_stronghold()
+        g.stronghold_frame = (2090, 60, 720)
+        self.assertFalse(_tunnel_to_frame_wanted(g))
+        self.assertIn("travel_to_stronghold", candidates(g))
+        self.assertIsNone(resolve("tunnel_to_frame", g))
+
+    def test_a_frame_far_off_horizontally_is_a_walk_first(self) -> None:
+        # The dig starts where the body stands: a frame 1600 m away is the trek's job, not a
+        # staircase from the base.
+        g = self._at_the_stronghold()
+        g.pos = (-10, 65, 60)
+        self.assertFalse(_tunnel_to_frame_wanted(g))
+        self.assertIn("travel_to_stronghold", candidates(g))
+
+    def test_the_dig_gives_way_after_three_tries(self) -> None:
+        # A staircase the movement policy refuses (water or lava in the way) must not own the
+        # phase forever; past the cap the offer falls back to the walk.
+        g = self._at_the_stronghold()
+        g.frame_tunnel_tries = STRONGHOLD_TUNNEL_TRIES
+        self.assertFalse(_tunnel_to_frame_wanted(g))
+        self.assertIn("travel_to_stronghold", candidates(g))
+        self.assertIsNone(resolve("tunnel_to_frame", g))
+
+    def test_the_dig_closes_once_the_body_is_at_the_frame(self) -> None:
+        g = self._at_the_stronghold()
+        g.pos = (2090.5, -10.0, 720.5)
+        self.assertTrue(_at_stronghold(g))
+        self.assertIsNone(resolve("tunnel_to_frame", g))
+        self.assertIn("activate_end_portal", candidates(g))
 
 
 class StrongholdMarchShedTest(unittest.TestCase):

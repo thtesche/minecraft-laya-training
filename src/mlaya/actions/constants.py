@@ -111,6 +111,7 @@ CRITERIA: dict[str, str] = {
     "craft_ender_eye": "craft an eye of ender from one ender pearl and one blaze powder; twelve of them open the end portal",
     "locate_stronghold": "throw an eye of ender to find the stronghold, then travel to it and stand at the end portal frame",
     "travel_to_stronghold": "walk to the end portal frame the stronghold search already confirmed, so the fill can start at it",
+    "tunnel_to_frame": "dig a dry staircase down to the confirmed end portal frame when it sits deep under the surface, so the body can stand at its sockets",
     "activate_end_portal": "fill the end portal frame's empty sockets with the carried eyes of ender until the portal opens",
     # The stronghold bed phase: after the portal opens, a bed beside the stronghold resets the
     # spawn point so a death in the End does not send the bot back to the old base.

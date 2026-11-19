@@ -6713,6 +6713,25 @@ class NetherCrossingTest(unittest.TestCase):
         self.assertIsNone(agent._stronghold_frame)
         self.assertEqual(agent.log, [])
 
+    def test_a_tunnel_dig_is_counted(self) -> None:
+        # run275 it4: the walk to a frame 73 blocks under the surface timed out on the column, and
+        # the offer kept coming back. The dig is counted so the cap can hand the tick back to the
+        # walk once a staircase the movement policy refuses has been tried three times.
+        agent = self._agent()
+        agent.log = []
+        agent._frame_tunnel_tries = 0
+        agent._stronghold_frame = (2090, -10, 720)
+        dig = Action("tunnel_to_frame", "tunnel_to",
+                     {"target": {"x": 2090, "y": -10, "z": 720}, "search_id": "stronghold"}, "")
+        agent._note_frame_tunnel(dig, False, SimpleNamespace(data=None, text="[TUNNEL_NO_DRY_ROUTE]"))
+        agent._note_frame_tunnel(dig, True, SimpleNamespace(data=None, text=""))
+        self.assertEqual(agent._frame_tunnel_tries, 2)
+        self.assertEqual([r["attempt"] for r in agent.log if r.get("reason") == "frame_tunnel_dig"],
+                         [1, 2])
+        # A walk tick books nothing: the counter is the dig's, not the trek's.
+        agent._note_frame_tunnel(Action("travel_to_stronghold", "navigate", {"x": 2090}, ""), True, None)
+        self.assertEqual(agent._frame_tunnel_tries, 2)
+
     def test_lighting_the_gate_is_remembered_after_the_bot_walks_off_it(self) -> None:
         # `_portal_lit` is a scan read: the gate only shows up while its chunk is loaded. A run
         # that lights it and then roams must not read it back as unlit and reopen the obsidian

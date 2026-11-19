@@ -928,6 +928,10 @@ class Agent:
         self._stronghold_frame: tuple[int, int, int] | None = None
         # How many times a `[PORTAL_NO_FRAME]` has thrown that address away (see `_note_portal`).
         self._frame_relocates = 0
+        # How many staircase digs the loop has tried for that frame (`_note_frame_tunnel`): the
+        # walk cannot reach a frame buried under the surface, so the dig is capped rather than
+        # offered forever (see `STRONGHOLD_TUNNEL_TRIES`).
+        self._frame_tunnel_tries = 0
         # Pearl trips the waves have made (`_note_dimension`), counted once the rod haul is
         # stowed so the rod trip itself never counts. After `PEARL_WAVE_MAX_TRIPS` the Overworld
         # enderman roam takes over; a per-run latch, reset on a cold start like `_barter_attempts`.
@@ -1179,6 +1183,7 @@ class Agent:
         gs.stronghold_estimated = self._stronghold_estimated
         gs.stronghold_frame = self._stronghold_frame
         gs.powder_exhausted = self._powder_exhausted
+        gs.frame_tunnel_tries = getattr(self, "_frame_tunnel_tries", 0)
         gs.pearl_wave_trips = self._pearl_wave_trips
         gs.powder_cells = tuple(self._powder_cells)
         gs.powder_bank = self._powder_bank
@@ -2440,6 +2445,7 @@ class Agent:
         gs.stronghold_estimated = self._stronghold_estimated
         gs.stronghold_frame = self._stronghold_frame
         gs.powder_exhausted = self._powder_exhausted
+        gs.frame_tunnel_tries = getattr(self, "_frame_tunnel_tries", 0)
         gs.pearl_wave_trips = self._pearl_wave_trips
         gs.powder_cells = tuple(self._powder_cells)
         gs.powder_bank = self._powder_bank
@@ -3343,6 +3349,22 @@ class Agent:
                 self._stronghold_estimated = True
                 self.log.append({"stage": "policy", "reason": "drained_frame_confirmation",
                                  "action_id": settled.action_id, "frame": list(frame)})
+
+    def _note_frame_tunnel(self, action, ok: bool, res=None) -> None:
+        """Count a staircase dig toward the confirmed frame.
+
+        A frame buried under the surface has no pathfinder route, so the dig is the only step that
+        can put the body at the sockets. It is capped rather than offered forever: a staircase the
+        movement policy refuses (water or lava in the way) would otherwise own the phase tick after
+        tick, and after `STRONGHOLD_TUNNEL_TRIES` the offer falls back to the walk, which at least
+        keeps the label moving toward an escalation instead of digging the same column.
+        """
+        if action.label != "tunnel_to_frame":
+            return
+        self._frame_tunnel_tries = getattr(self, "_frame_tunnel_tries", 0) + 1
+        self.log.append({"stage": "policy", "reason": "frame_tunnel_dig",
+                        "attempt": self._frame_tunnel_tries,
+                        "frame": list(self._stronghold_frame or []), "ok": bool(ok)})
 
     def _note_portal(self, action, ok: bool, delta: dict, res=None) -> None:
         """Remember that the end portal stands active (the stronghold goal), and how far the
@@ -4269,6 +4291,7 @@ class Agent:
         self._note_stow(action, _ok, delta)
         self._note_take_powder(action, _ok, _text, delta)
         self._note_locate(action, _ok, res)
+        self._note_frame_tunnel(action, _ok, res)
         self._note_drained(res)
         self._note_barter(action, _ok)
         self._note_portal(action, _ok, delta, res)

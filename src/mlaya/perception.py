@@ -1279,6 +1279,12 @@ class GameState:
     # as soon as a frame chunk loads, so the confirmation can sit a hundred metres off the body and
     # the frame never appears in the 64 m scan `activate_end_portal` aims at.
     stronghold_frame: tuple[int, int, int] | None = None
+    # How many staircase digs the loop has already tried for that frame (`Agent._note_frame_tunnel`).
+    # A dig the movement policy refuses - water or lava in the way - must not become the phase's
+    # permanent answer, so the offer falls back to the walk once `STRONGHOLD_TUNNEL_TRIES` is spent.
+    # A per-run counter like `pearl_wave_trips`: a restart gets a fresh set of tries, which is the
+    # safe direction, since the host's landmarks for a half-digged staircase are durable.
+    frame_tunnel_tries: int = 0
     powder_exhausted: bool = False
     # Pearl trips the waves have made (Agent `_note_dimension`): a crossing counted once the rod
     # haul is already stowed (`powder_stowed`), so it never counts the rod trip itself. The waves

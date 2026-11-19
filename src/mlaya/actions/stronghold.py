@@ -17,6 +17,19 @@ END_PORTAL_FRAME = "end_portal_frame"
 # the body in the frame's neighbourhood - inside the 64 m scan, and inside the server's own approach
 # range for `activate_portal`.
 STRONGHOLD_ARRIVAL_RANGE = 3
+# How far below the surface a confirmed frame has to sit before the walk can no longer reach it.
+# `navigate` prices every dig it would have to take, and its pathfinder gives up on a deep column:
+# run275 it4, standing 33 m from the frame at (2090,-10,720), refused `[NAVIGATION_STOPPED]
+# Pathfinder stopped: search timed out after 4000 ms` while that frame loaded 74 blocks straight
+# below it. The host's `tunnel_to` owns the descent (docs/tunnel-to-design.md); the loop only has
+# to hand it the confirmed cell.
+STRONGHOLD_TUNNEL_DESCENT = 12
+# The same reach the block scan uses: the dig starts from where the body already stands, so a
+# frame the bot has not walked near yet is still a walk's job before it is a dig's.
+STRONGHOLD_TUNNEL_REACH = 64.0
+# A staircase the movement policy refuses (water or lava in the way) must not turn the phase into
+# an endless dig: after this many tries the offer falls back to the walk.
+STRONGHOLD_TUNNEL_TRIES = 3
 # The eye/pearl item names and the counts (`ENDER_EYES`, `END_PORTAL_SOCKETS`, `EYE_THROW_BUFFER`)
 # live in `constants`: the frame has twelve sockets, `activate_portal` needs a carried eye for
 # every one not already generated filled, and the extra four are the throw margin - the estimate
@@ -37,7 +50,8 @@ ENDERMAN_HUNT_HEALTH = 14.0
 # The labels this module owns; `planner.resolve` hands each of them to `resolve_stronghold`.
 STRONGHOLD_LABELS = frozenset({
     "hunt_enderman", "search_enderman", "gather_scaffold", "take_blaze_powder",
-    "craft_ender_eye", "locate_stronghold", "travel_to_stronghold", "activate_end_portal",
+    "craft_ender_eye", "locate_stronghold", "travel_to_stronghold", "tunnel_to_frame",
+    "activate_end_portal",
     "craft_bed_stronghold", "place_bed_stronghold", "sleep_stronghold",
 })
 
@@ -177,6 +191,40 @@ def _frame_distance(gs: GameState) -> float | None:
     x, y, z = gs.pos
     fx, fy, fz = gs.stronghold_frame
     return math.hypot(x - fx, y - fy, z - fz)
+
+
+def _frame_descent(gs: GameState) -> int | None:
+    """How many blocks the confirmed frame sits below the bot's feet, or None with no address.
+
+    Only the vertical gap decides the choice between the walk and the dig: a horizontal gap the
+    pathfinder can cross, a column 74 blocks deep it cannot (run275 it4). A frame at or above the
+    body's height is not a descent at all.
+    """
+    if gs.pos is None or gs.stronghold_frame is None:
+        return None
+    _, y, _ = gs.pos
+    _, fy, _ = gs.stronghold_frame
+    return max(0, int(y - fy))
+
+
+def _tunnel_to_frame_wanted(gs: GameState) -> bool:
+    """Whether the confirmed frame is out of the walk's reach and the dig still has tries left.
+
+    The dig starts where the body stands: `tunnel_to` walks to the nearest dry shore of the frame
+    and carves from there, so a frame the bot has not yet walked near is still the travel step's
+    job. The try cap keeps a staircase the movement policy refuses from becoming the phase's
+    permanent answer.
+    """
+    descent = _frame_descent(gs)
+    if descent is None or descent < STRONGHOLD_TUNNEL_DESCENT:
+        return False
+    if gs.pos is None or gs.stronghold_frame is None:
+        return False
+    x, _, z = gs.pos
+    fx, _, fz = gs.stronghold_frame
+    if math.hypot(x - fx, z - fz) > STRONGHOLD_TUNNEL_REACH:
+        return False
+    return gs.frame_tunnel_tries < STRONGHOLD_TUNNEL_TRIES
 
 
 def _at_stronghold(gs: GameState) -> bool:
@@ -380,7 +428,9 @@ def stronghold_candidates(gs: GameState) -> list[str]:
             if _frame_distance(gs) is not None:
                 if gs.slots_used >= INVENTORY_NEAR_FULL and (_droppable(gs, inv) or _march_shed(gs)):
                     out.append("drop_junk")
-                out.append("travel_to_stronghold")
+                # A frame buried under the surface has no pathfinder route: the walk would time out
+                # on the column (run275 it4), so the staircase is the step that owns the tick.
+                out.append("tunnel_to_frame" if _tunnel_to_frame_wanted(gs) else "travel_to_stronghold")
             return out
         # Standing at the frame: lay the carried bed, or craft one from the carried wool.
         if _has_bed(inv):
@@ -439,7 +489,9 @@ def stronghold_candidates(gs: GameState) -> list[str]:
             # list, which is why the offer gate reads `_march_shed` as well as `_droppable`.
             if gs.slots_used >= INVENTORY_NEAR_FULL and (_droppable(gs, inv) or _march_shed(gs)):
                 out.append("drop_junk")
-            out.append("travel_to_stronghold")
+            # Same split as the trek's own travel step: a frame deep under the ground is not a
+            # navigate target, it is a dig the host carves as one action.
+            out.append("tunnel_to_frame" if _tunnel_to_frame_wanted(gs) else "travel_to_stronghold")
             return out
         # No frame the loop knows the position of yet: throw the eyes and let the server find it.
         out.append("locate_stronghold")
@@ -612,6 +664,20 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         return Action(label, "navigate", {"x": x, "y": y, "z": z,
                                          "range": STRONGHOLD_ARRIVAL_RANGE,
                                          "dig": True, "scaffold": True}, why)
+    if label == "tunnel_to_frame":
+        # A frame buried under the surface has no pathfinder route: `navigate` times out on the
+        # column (run275 it4) and `activate_end_portal` refuses until the body stands at the
+        # sockets. `tunnel_to` carves the dry staircase the host owns (docs/tunnel-to-design.md)
+        # and leaves the bot beside the frame, which is what `_at_stronghold` then reads. The offer
+        # only lists it while the descent is real and the tries are not spent, so a label named
+        # outside that resolves to nothing rather than digging a column the walk could cross.
+        if not _tunnel_to_frame_wanted(gs):
+            return None
+        x, y, z = gs.stronghold_frame
+        return Action(label, "tunnel_to",
+                      {"target": {"x": x, "y": y, "z": z}, "search_id": "stronghold"},
+                      f"carve a dry staircase down to the end portal frame at {x},{y},{z}, "
+                      "which sits below the surface the walk cannot dig through")
     if label == "activate_end_portal":
         if not _at_stronghold(gs) or gs.end_portal_active:
             return None
