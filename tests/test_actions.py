@@ -8337,6 +8337,21 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         g.slept_at_stronghold = True
         self.assertEqual(stronghold_candidates(g), [])
 
+    def test_a_crossing_refused_on_the_pin_reopens_the_sleep(self) -> None:
+        # run276: the daytime bed click latched the pin, `enter_the_end` was refused three times with
+        # [END_PORTAL_RESPAWN_DISTANT] (the server never recorded that spawn), and the run drifted
+        # 160 blocks off the frame on iron chores. Clearing the latch shuts the entry window and puts
+        # the one step the run needs - the night sleep at the bed - back on the offer.
+        g = self._with_placed_bed(self._after_portal())
+        g.slept_at_stronghold = True
+        self.assertIn("enter_the_end", end_candidates(g))
+        self.assertEqual(stronghold_candidates(g), [])
+        g.slept_at_stronghold = False
+        self.assertEqual(end_candidates(g), [])
+        g.phase = "night"
+        self.assertEqual(stronghold_candidates(g), ["sleep_stronghold"])
+        self.assertEqual(resolve("sleep_stronghold", g).tool, "sleep")
+
     # --- the locate gate (the trek's bed requirement) ---
 
     def test_the_trek_takes_a_carried_bed_without_loose_wool(self) -> None:

@@ -7776,13 +7776,16 @@ class DeadEndTest(unittest.TestCase):
 
 
 class SleepStrongholdLatchTest(unittest.TestCase):
-    """The stronghold-respawn latch is pinned by an actual `sleep` call, never by the walk to it.
+    """The stronghold-respawn latch is pinned by an actual night sleep, never by a bed click.
 
     `place_bed_stronghold` and `sleep_stronghold` both resolve first to a `navigate` to the
     bedside and only then to the `sleep` that lays or clicks the bed. The latch keys on
     `action.tool == "sleep"` (mirroring `_note_bed`): the walk sets no spawn, and with the portal
     lit and a bed at the frame this latch closes the whole run, so latching it on a bare walk would
-    end the run before any bed was ever laid.
+    end the run before any bed was ever laid. A click is not a sleep either - by day the host
+    answers `respawnSet: true` without recording anything - so the latch also reads the payload's
+    `asleep`/`morning`, and `_note_end_crossing` clears it whenever the portal refuses the crossing
+    on the pin.
     """
 
     class _Action:
@@ -7791,14 +7794,32 @@ class SleepStrongholdLatchTest(unittest.TestCase):
             self.tool = tool
             self.args = {}
 
+    class _Result:
+        def __init__(self, data: dict) -> None:
+            self.data = data
+
     def _agent(self) -> Agent:
         agent = Agent.__new__(Agent)
         agent._slept_at_stronghold = False
+        agent._respawn_pin_clears = 0
         agent._end_entered = False
         agent._dragon_slain = False
         agent._end_portal_cell = None
         agent._slept_at_stronghold = False
+        agent.log = []
         return agent
+
+    def _night(self) -> "_Result":
+        return self._Result({"status": "succeeded",
+                            "sleep": {"asleep": True, "morning": True, "respawnSet": True}})
+
+    def _daytime_click(self) -> "_Result":
+        # What the host answers a daytime bed click with: `respawnSet: true`, but nothing recorded,
+        # because only `bot.sleep()` writes the personal respawn the portal guard reads.
+        return self._Result({"status": "succeeded",
+                            "sleep": {"asleep": False, "morning": False, "respawnSet": True,
+                                      "observation": "Respawn point set at the bed, but daytime "
+                                      "prevents sleeping (time is 759)."}})
 
     def test_the_walk_to_the_bed_does_not_latch(self) -> None:
         agent = self._agent()
@@ -7811,20 +7832,59 @@ class SleepStrongholdLatchTest(unittest.TestCase):
         agent._note_sleep_stronghold(self._Action("go_home", "navigate"), True, {})
         self.assertFalse(agent._slept_at_stronghold)
 
-    def test_the_place_that_clicks_the_bed_latches(self) -> None:
+    def test_the_place_that_only_clicks_the_bed_by_day_does_not_latch(self) -> None:
+        # run276 it10: the bed went down beside the frame and the click answered `respawnSet: true`,
+        # yet the portal still refused the crossing with [END_PORTAL_RESPAWN_DISTANT] - the server
+        # never recorded that spawn. Latching here is what made three `enter_the_end` ticks fail.
         agent = self._agent()
-        agent._note_sleep_stronghold(self._Action("place_bed_stronghold", "sleep"), True, {})
+        agent._note_sleep_stronghold(self._Action("place_bed_stronghold", "sleep"), True, {},
+                                     self._daytime_click())
+        self.assertFalse(agent._slept_at_stronghold)
+
+    def test_the_place_that_sleeps_in_the_bed_at_night_latches(self) -> None:
+        agent = self._agent()
+        agent._note_sleep_stronghold(self._Action("place_bed_stronghold", "sleep"), True, {},
+                                     self._night())
         self.assertTrue(agent._slept_at_stronghold)
 
     def test_the_night_sleep_latches(self) -> None:
         agent = self._agent()
-        agent._note_sleep_stronghold(self._Action("sleep_stronghold", "sleep"), True, {})
+        agent._note_sleep_stronghold(self._Action("sleep_stronghold", "sleep"), True, {},
+                                     self._night())
         self.assertTrue(agent._slept_at_stronghold)
 
     def test_a_refused_sleep_leaves_the_goal_open(self) -> None:
         agent = self._agent()
         agent._note_sleep_stronghold(self._Action("sleep_stronghold", "sleep"), False, {})
         self.assertFalse(agent._slept_at_stronghold)
+
+    def test_a_crossing_refused_on_the_pin_clears_the_latch(self) -> None:
+        agent = self._agent()
+        agent._slept_at_stronghold = True
+        agent._note_end_crossing(self._Action("enter_the_end", "enter_end_portal"), False,
+                                 "[END_PORTAL_RESPAWN_DISTANT] The last confirmed personal respawn "
+                                 "bed is 2204.98 blocks from this portal.")
+        self.assertFalse(agent._slept_at_stronghold)
+        self.assertEqual(agent.log[-1]["reason"], "respawn_pin_cleared")
+        self.assertEqual(agent.log[-1]["attempt"], 1)
+
+    def test_a_crossing_that_went_through_keeps_the_pin(self) -> None:
+        agent = self._agent()
+        agent._slept_at_stronghold = True
+        agent._note_end_crossing(self._Action("enter_the_end", "enter_end_portal"), True,
+                                 "Entered the End.")
+        self.assertTrue(agent._slept_at_stronghold)
+        self.assertEqual(agent.log, [])
+
+    def test_an_unrelated_refusal_keeps_the_pin(self) -> None:
+        agent = self._agent()
+        agent._slept_at_stronghold = True
+        agent._note_end_crossing(self._Action("enter_the_end", "navigate"), False,
+                                 "[NAVIGATION_STOPPED] no path found")
+        agent._note_end_crossing(self._Action("mine_iron", "mine_block"), False,
+                                 "[INVENTORY_FULL] pack full")
+        self.assertTrue(agent._slept_at_stronghold)
+        self.assertEqual(agent.log, [])
 
 
 class EndLatchTest(unittest.TestCase):

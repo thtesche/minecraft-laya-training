@@ -910,9 +910,12 @@ class Agent:
         self._end_portal_active = False
         self._stronghold_estimated = False
         self._powder_exhausted = False
-        # The stronghold bed phase: set once `sleep_stronghold` reports success, so the run's
-        # new end criterion (portal active + bed at stronghold + slept once) can close.
+        # The stronghold bed phase: set once `sleep_stronghold` reports an actual sleep, so the
+        # run's new end criterion (portal active + bed at stronghold + slept once) can close. A
+        # daytime bed click does not count, and a portal that refuses the crossing on the respawn
+        # pin clears it again (see `_note_sleep_stronghold` and `_note_end_crossing`).
         self._slept_at_stronghold = False
+        self._respawn_pin_clears = 0
         # Phase 5's latches (the End fight), each set on its own action's receipt: the End has been
         # entered at least once (`_note_end_entered`, on an `enter_end_portal` success), the dragon
         # has died (`_note_dragon`, from a kill receipt - the run's goal), and the Overworld cell of
@@ -3436,19 +3439,52 @@ class Agent:
         """Latch that the respawn point is pinned at the stronghold.
 
         `place_bed_stronghold` lays the bed and clicks it (one `sleep` call), and `sleep_stronghold`
-        sleeps in a bed already standing there - either one *clicked* bed sets the spawn, in daytime
-        too. Both carry their own label but the walk to the spot resolves under the same label with
-        the `navigate` tool, and that step sets nothing: it is the `sleep` call that pins the spawn.
-        So the latch keys on `action.tool == "sleep"`, mirroring `_note_bed` - without it a bare
-        walk to the bedside would close the run's end criterion (portal + bed at stronghold +
-        this latch) before any bed was ever laid. A refused `sleep` leaves the goal open.
+        sleeps in a bed already standing there - either one *clicked* bed, in daytime too. Both carry
+        their own label but the walk to the spot resolves under the same label with the `navigate`
+        tool, and that step sets nothing: it is the `sleep` call that pins the spawn. So the latch
+        keys on `action.tool == "sleep"`, mirroring `_note_bed` - without it a bare walk to the
+        bedside would close the run's end criterion (portal + bed at stronghold + this latch) before
+        any bed was ever laid. A refused `sleep` leaves the goal open.
+
+        A click is not a sleep, though. By day the host answers `respawnSet: true` from
+        `activateBlock` alone and records nothing - only `bot.sleep()`, which resolves after the
+        native entitySleep event, writes the personal respawn the portal-entry guard reads. So the
+        latch closes only on the payload a real sleep carries, `asleep` or `morning`. Live, run276
+        it10-15: the daytime click latched it, and three `enter_the_end` ticks were refused with
+        `[END_PORTAL_RESPAWN_DISTANT]` (the guard still counted the base bed, 2205 blocks off) while
+        the bot wandered off the frame.
         """
         if action.label not in ("sleep_stronghold", "place_bed_stronghold"):
             return
         if action.tool != "sleep":
             return
-        if ok:
+        if not ok:
+            return
+        sleep = _find(getattr(res, "data", None), "sleep") or {}
+        if bool(sleep.get("asleep")) or bool(sleep.get("morning")):
             self._slept_at_stronghold = True
+
+    def _note_end_crossing(self, action, ok: bool, text: str) -> None:
+        """Un-latch the stronghold respawn pin when the portal refuses the crossing on it.
+
+        The host's entry guard accepts the crossing only when the last *recorded* personal respawn is
+        within `respawn_within=128` of the portal, and only a night sleep records one. A latch the
+        daytime click closed (see `_note_sleep_stronghold`) therefore keeps `enter_the_end` offered
+        and refused forever: the end phase stays active, the stronghold bed phase returns an empty
+        offer because it reads the same latch, and the tick falls to whatever else is on the table
+        (live, run276: three refusals, then `mine_iron`/`craft_table` churn 160 blocks away).
+        Clearing it puts the one step the run actually needs back on the offer - walk to the bed,
+        wait for night, sleep - and the crossing goes through on the next attempt.
+        """
+        if action.tool != "enter_end_portal":
+            return
+        match = re.search(r"END_PORTAL_RESPAWN_(DISTANT|STALE|UNKNOWN)", text or "")
+        if match is None or not self._slept_at_stronghold:
+            return
+        self._slept_at_stronghold = False
+        self._respawn_pin_clears += 1
+        self.log.append({"stage": "policy", "reason": "respawn_pin_cleared",
+                        "code": match.group(0), "attempt": self._respawn_pin_clears})
 
     def _note_end_entered(self, after) -> None:
         """Latch that the End has been reached at least once.
@@ -4296,6 +4332,7 @@ class Agent:
         self._note_barter(action, _ok)
         self._note_portal(action, _ok, delta, res)
         self._note_sleep_stronghold(action, _ok, delta, res)
+        self._note_end_crossing(action, _ok, _text)
         self._note_end_entered(after)
         self._note_dragon(action, _ok, res)
         self._note_landmark(action, delta, after)
