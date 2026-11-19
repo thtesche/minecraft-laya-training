@@ -85,7 +85,11 @@ def end_candidates(gs: GameState) -> list[str]:
     """
     if _in_end(gs):
         return _end_combat_candidates(gs)
-    if not _overworld(gs) or not _end_phase_active(gs):
+    # The window opens with the portal, not with the bed sleep: run283 stood at the frame with a
+    # wooden pickaxe, no sword and no arrows while the bed chain fought the spawner box, and the
+    # phase `_phase_key` named `prepare_end_dragon` had no step behind it. The crossing below keeps
+    # the respawn guard, so opening the window does not let the body through unpinned.
+    if not _overworld(gs) or not _end_regear_window(gs):
         return []
     return _end_entry_candidates(gs)
 
@@ -128,9 +132,13 @@ def _end_entry_candidates(gs: GameState) -> list[str]:
     out.extend(regear)
     # Step through the active portal. The cell is the `activate_portal` centre (`end_portal_cell`),
     # or the stronghold frame itself as a fallback. The respawn guard is met by the stronghold
-    # sleep; the supply gate is not, and `resolve` carries `allow_low_supplies` when the arrow
-    # reserve cannot be built this far from base (`_end_supplies_ready`).
-    if (gs.end_portal_cell is not None or gs.stronghold_frame is not None) and not regear:
+    # sleep - `_end_phase_active`, not the wider window - so a kit that cannot be topped up here
+    # still crosses, but a body that has not pinned its respawn never does; the supply gate is not,
+    # and `resolve` carries `allow_low_supplies` when the arrow reserve cannot be built this far
+    # from base (`_end_supplies_ready`).
+    if (_end_phase_active(gs)
+            and (gs.end_portal_cell is not None or gs.stronghold_frame is not None)
+            and not regear):
         out.append("enter_the_end")
     return out
 

@@ -8422,7 +8422,21 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         self.assertEqual(stronghold_candidates(g), ["move_bed_clear"])
         a = resolve("move_bed_clear", g)
         self.assertEqual(a.tool, "navigate")     # the body is outside click reach of the bed
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (103, 60, 197))
+        # The bed block occupies (103,60,197), so the walk aims at the cell beside it: run283
+        # it36-38 navigated to the bed's own cell three times and the pathfinder answered "no path
+        # found ... closest node was 2091,-9,722".
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (102, 60, 197))
+
+    def test_the_bed_walk_ends_on_ground_the_scan_read(self) -> None:
+        # Where the ground scan proves a stance beside the bed, that cell is the target rather than
+        # a guessed ring cell - `navigate` refuses a column with no floor outright.
+        g = self._with_placed_bed(self._after_portal(), dx=3, dz=-3)
+        g.phase = "night"
+        g.hostile_cells = [(101, 59, 205)]
+        g.resources["cobblestone"] = [BlockHit("cobblestone", "cobblestone", 102, 59, 198, 2.0,
+                                              above="air")]
+        a = resolve("move_bed_clear", g)
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (102, 60, 198))
 
     def test_the_bed_is_taken_up_once_the_body_reaches_it(self) -> None:
         g = self._with_placed_bed(self._after_portal(), dx=3, dz=-3)
@@ -8791,10 +8805,16 @@ class EndFightTest(unittest.TestCase):
         self.assertTrue(steps)
         self.assertTrue(all(s in ("craft_diamond_sword", "craft_bow", "craft_arrows") for s in steps))
 
-    def test_the_entry_window_is_shut_until_the_respawn_is_pinned(self) -> None:
+    def test_the_crossing_waits_until_the_respawn_is_pinned(self) -> None:
+        # The window opens with the portal, not with the bed sleep: the kit crafts run while the bed
+        # chain is still fighting the spawner box (run283 it0-58, `prepare_end_dragon` with nothing
+        # behind it), but the body never steps through before the sleep pins its respawn.
         g = self._entry()
         g.slept_at_stronghold = False
-        self.assertEqual(end_candidates(g), [])
+        self.assertNotIn("enter_the_end", end_candidates(g))
+        g = self._entry(string=3, oak_log=1)
+        g.slept_at_stronghold = False
+        self.assertIn("craft_bow", end_candidates(g))
 
     def test_a_dead_dragon_closes_the_whole_phase(self) -> None:
         g = self._entry()
@@ -11225,6 +11245,25 @@ class DeferQuietTest(unittest.TestCase):
         agent._defer_quiet = 4
         agent._note_defer(gs(health=20.0),
                           gs(health=20.0, events=["hostile: target died; health 20 → 20/20"]))
+        self.assertEqual(agent._defer_quiet, 0)
+
+    def test_an_engagement_that_only_ended_is_still_quiet(self) -> None:
+        # "hostile: contact ended" is the reflex standing down, not working. Run283 it3-34 deferred
+        # 26 ticks in a row at the end portal because every one of them reported one, so the band
+        # never released and `craft_pickaxe` sat offered for 26 ticks.
+        agent = self._agent()
+        agent._defer_quiet = 4
+        agent._note_defer(gs(health=20.0),
+                          gs(health=20.0,
+                             events=["hostile: contact ended; interrupted navigate; health 20 → 20/20"]))
+        self.assertEqual(agent._defer_quiet, 5)
+        agent._defer_quiet = 4
+        agent._note_defer(gs(health=20.0),
+                          gs(health=20.0, events=["hostile: target lost; health 20 → 20/20"]))
+        self.assertEqual(agent._defer_quiet, 5)
+        agent._defer_quiet = 4
+        agent._note_defer(gs(health=20.0),
+                          gs(health=20.0, events=["fire: dry footing; health 20 → 20/20"]))
         self.assertEqual(agent._defer_quiet, 0)
 
     def test_a_hit_while_working_hands_contact_back(self) -> None:

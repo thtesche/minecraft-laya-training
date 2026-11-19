@@ -717,11 +717,16 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
             return None
         cell = hit.pos
         if not _at_bed(gs, cell):
-            bx, by, bz = cell
+            # The bed block occupies its own cell, so a navigate aimed at it has no floor to finish
+            # on: run283 it36-38 asked for (2093,-9,718) three times and the pathfinder answered
+            # "no path found ... closest node was 2091,-9,722". The stance beside the bed is the
+            # cell the walk can actually end on.
+            stance = _bed_reach_stance_at(gs, [cell]) or cell
+            sx, sy, sz = stance
             return Action(label, "navigate",
-                          {"x": bx, "y": by, "z": bz, "range": 1,
+                          {"x": sx, "y": sy, "z": sz, "range": 1,
                            "dig": True, "scaffold": True},
-                          "walk to the bed the spawner's box surrounds so it can be carried out")
+                          "walk beside the bed the spawner's box surrounds so it can be carried out")
         return Action(label, "collect_block",
                       {"block_name": hit.name, "count": 1},
                       "take the bed out of the nest's exclusion box so it can be re-laid clear of it")

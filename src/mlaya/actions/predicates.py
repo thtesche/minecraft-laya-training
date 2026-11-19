@@ -4358,8 +4358,8 @@ def _bed_reachable(gs: GameState) -> bool:
     return _click_gap(gs.pos, bed) <= BED_SLEEP_CLICK ** 2
 
 
-def _bed_reach_stance(gs: GameState) -> tuple[int, int, int] | None:
-    """The feet cell the bot must stand on for `sleep` to reach the gate bed, or None.
+def _bed_reach_stance_at(gs: GameState, bed: list[tuple[int, int, int]]) -> tuple[int, int, int] | None:
+    """The feet cell the body must stand on to reach a bed at `bed`, or None.
 
     The same shape as `_bed_stance`: a cell the ground scan proves standable, nearest to the body,
     that lands inside the click box. `navigate` to a column with no floor is refused outright
@@ -4369,7 +4369,6 @@ def _bed_reach_stance(gs: GameState) -> tuple[int, int, int] | None:
     tried. The bed's own cells are never a stance -- the block occupies them -- and neither is a
     cell of the lit gate, which would teleport the body before it could sleep.
     """
-    bed = _bed_cells(gs)
     if gs.pos is None or not bed:
         return None
     portal = gs.resources.get(PORTAL_BLOCK) or []
@@ -4391,6 +4390,11 @@ def _bed_reach_stance(gs: GameState) -> tuple[int, int, int] | None:
             for dx in (-1, 0, 1) for dz in (-1, 0, 1) if dx or dz]
     ring = [c for c in ring if usable(c)]
     return min(ring, key=near) if ring else None
+
+
+def _bed_reach_stance(gs: GameState) -> tuple[int, int, int] | None:
+    """The feet cell the bot must stand on for `sleep` to reach the gate bed, or None."""
+    return _bed_reach_stance_at(gs, _bed_cells(gs))
 
 
 def _bed_in_sleep_reach(gs: GameState) -> bool:
