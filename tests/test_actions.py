@@ -3914,6 +3914,27 @@ class HomeBaseTest(unittest.TestCase):
         self.assertIn("establish_base", candidates(g))
         self.assertNotIn("surface_up", candidates(g))
 
+    def test_a_column_proved_at_its_own_top_is_never_probed_again(self) -> None:
+        # Live, run285 it35,38,40,43: the bot walked off the column whose surface it had learned,
+        # stood at y=71 on the grass of the next one, and each probe of that new column refused
+        # "already at the top" -- four failed ticks, and `establish_base` never ran.
+        g = self._geared()
+        g.pos = (-136.35, 71.0, -11.53)      # column (-137, -12)
+        g.surface = (-134, 71, -15)         # learned in a column the bot left
+        g.surface_top = {(-137, -12): 71}   # the refusal named this column and this floor
+        self.assertIn("establish_base", candidates(g))
+        self.assertNotIn("surface_up", candidates(g))
+        self.assertIsNone(resolve("surface_up", g))
+
+    def test_a_floor_below_the_column_top_is_not_surface(self) -> None:
+        # The proof is per column and per height: five blocks under the named top floor is a cave
+        # under that column, not the surface.
+        g = self._geared()
+        g.pos = (-136.35, 66.0, -11.53)
+        g.surface_top = {(-137, -12): 71}
+        self.assertIn("surface_up", candidates(g))
+        self.assertNotIn("establish_base", candidates(g))
+
     def test_surface_up_probes_a_column_before_it_climbs(self) -> None:
         # First the height-less probe (the server names the surface, or walks the bot up when the
         # column is unambiguous) ...

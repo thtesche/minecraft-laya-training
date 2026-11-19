@@ -4493,10 +4493,22 @@ def _at_surface(gs: GameState) -> bool:
     `BASE_SURFACE_TOL` now only absorbs the odd slab or one-block dip at the column's own
     surface.
     """
-    if gs.surface is None or gs.pos is None:
+    if gs.pos is None:
         return False
     # Don't consider it "at surface" if in water - could be seabed
     if getattr(gs, "in_water", False):
+        return False
+    # The server's own proof, column by column: a probe of the column the body stands in that
+    # refused with `[NAVIGATION_HEIGHT_REQUIRED]` named that column's highest standable floor,
+    # and the feet were already on it. Nothing above it to climb to is open sky (live, run285
+    # it35,38,40,43: four probes of four columns, each refusing "already at the top", while
+    # `establish_base` stayed unoffered because only one learned cell counted). Being per column,
+    # this cannot let a cave floor read as surface: the refusal only ever names the column the
+    # body is in, and only when its top floor is the one under its feet.
+    top = gs.surface_top.get((math.floor(gs.pos[0]), math.floor(gs.pos[2])))
+    if top is not None and abs(gs.pos[1] - top) <= BASE_SURFACE_TOL:
+        return True
+    if gs.surface is None:
         return False
     sx, sy, sz = gs.surface
     if (math.floor(gs.pos[0]), math.floor(gs.pos[2])) != (sx, sz):

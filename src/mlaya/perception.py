@@ -1203,6 +1203,11 @@ class GameState:
     # not already proved wet instead of probing the same water every tick (live, run142 it55-57:
     # three identical refusals at (5.51, -19, -115.34), the body never moving).
     surface_wet: frozenset[tuple[int, int]] = frozenset()
+    # Columns `(x, z)` the server proved to be at their own top: a height-less `surface_up` probe
+    # of them refused with `[NAVIGATION_HEIGHT_REQUIRED]` while the bot's feet already rested on
+    # the highest standable floor it named. The loop owns this per run like `surface_wet`, so a
+    # body that is already out is not probed again every time it steps into the next column.
+    surface_top: dict[tuple[int, int], int] = field(default_factory=dict)
     # Cells of the portal opening (`portal_interior`) that hold a stray block, read from one
     # `view_blocks cells` scan while a frame build is pending. The opening sits *above* the
     # support layer and must end up air: a block left there is built around and `activate_portal`
@@ -1479,6 +1484,7 @@ class GameState:
             # the narrative now names the proof the loop holds (see `narrative`).
             "surface": list(self.surface) if self.surface is not None else None,
             "surface_wet": [list(cell) for cell in sorted(self.surface_wet)],
+            "surface_top": [[x, z, y] for (x, z), y in sorted(self.surface_top.items())],
             "furnace_pos": self.furnace_pos,
             "smoker_pos": self.smoker_pos,
             "bed_pos": self.bed_pos,
@@ -1631,6 +1637,10 @@ class GameState:
             (int(cell[0]), int(cell[1]))
             for cell in (data.get("surface_wet") or ())
             if isinstance(cell, (list, tuple)) and len(cell) == 2)
+        gs.surface_top = {
+            (int(cell[0]), int(cell[1])): int(cell[2])
+            for cell in (data.get("surface_top") or ())
+            if isinstance(cell, (list, tuple)) and len(cell) == 3}
         gs.pos = data.get("position")
         gs.inventory = dict(data.get("inventory") or {})
         gs.furnace_contents = dict(data.get("furnace_contents") or {})
@@ -2391,6 +2401,25 @@ def parse_surface_height(text: str) -> int | None:
         return None
     # Prefer the highest floor, but the caller must verify it's actually dry/open
     return max(floors)
+
+
+def parse_column_top(text: str) -> tuple[tuple[int, int], int] | None:
+    """A `[NAVIGATION_HEIGHT_REQUIRED]` answer -> (column, highest standable feet height) or None.
+
+    The refusal reads `Column -137, -12 has highest block grass_block at y=70; observed standable
+    feet heights: 71, 37, -1, -25, -53.` The column is the one the height-less probe aimed at, and
+    the floors are listed highest first, so the largest is the top of that column. Together they
+    say what no scan can: this column is open to sky at this height. Any other failure has no such
+    line and returns None.
+    """
+    m = re.search(r"Column (-?\d+), (-?\d+) has highest block .*?standable feet heights:\s*([^.]*)",
+                  text or "")
+    if not m:
+        return None
+    floors = [int(v) for v in re.findall(r"-?\d+", m.group(3))]
+    if not floors:
+        return None
+    return (int(m.group(1)), int(m.group(2))), max(floors)
 
 
 def parse_water_column(text: str) -> tuple[int, int] | None:

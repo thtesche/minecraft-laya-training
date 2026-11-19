@@ -559,6 +559,13 @@ class Agent:
     # in place, only replaced with a fresh set.
     _surface_wet: frozenset[tuple[int, int]] = frozenset()
 
+    # Columns whose `surface_up` probe refused with `[NAVIGATION_HEIGHT_REQUIRED]` while the body
+    # already stood on the floor that refusal named: the column is open to sky at that height, and
+    # re-probing it only adds another refusal. Class default for the same reason as `_durable` --
+    # a stub agent reads it through `_inject`, and an empty dict is "nothing proved yet". It is
+    # never mutated in place, only replaced with a fresh dict.
+    _surface_top: dict[tuple[int, int], int] = {}
+
     # Stances an `approach_lava` walk already ended on, with the ticks left in their cooldown.
     # Class default for the same reason as `_durable`: a stub agent built with `Agent.__new__`
     # reads it through `_inject`, and an empty dict is exactly "no lava body has been stood
@@ -737,6 +744,7 @@ class Agent:
         # server already named water cannot be climbed out of -- the same probe answers the same
         # way every tick -- so the next probe aims at another one (see `planner.surface_up`).
         self._surface_wet: set[tuple[int, int]] = set()
+        self._surface_top: dict[tuple[int, int], int] = {}
         # Lava cells a pour already failed on with `[BUCKET_NO_FACE]`. That answer is
         # structural -- no solid block beside that cell faces the bot -- so retrying it can
         # only fail again; remembering it lets the next tick pour elsewhere (live: the
@@ -1136,6 +1144,7 @@ class Agent:
         gs.want_iron_armor = self._want_iron_armor
         gs.surface = self.surface
         gs.surface_wet = frozenset(self._surface_wet)
+        gs.surface_top = dict(self._surface_top)
         gs.chest_pos = self.chest_pos
         gs.banked = dict(self.banked)
         gs.banked_stores = self._banked_stores
@@ -2501,6 +2510,7 @@ class Agent:
         """
         gs.surface = self.surface
         gs.surface_wet = frozenset(self._surface_wet)
+        gs.surface_top = dict(self._surface_top)
         gs.frame_complete = self._frame_complete
         gs.portal_lit = self._portal_lit
         gs.powder_stowed = self._powder_stowed
@@ -3220,7 +3230,9 @@ class Agent:
         may only be anchored on open-sky ground, and a mined tunnel's `air` overhead cannot be
         told from sky by any `view_blocks` reading (live, run9: the base landed at y=-16 under a
         y=73 surface). A failed *climb* (the request did carry a height) keeps the cell as it
-        was, so the next tick simply retries it.
+        was, so the next tick simply retries it. A refusal that names the column and a top floor
+        the body is already standing on is recorded in `_surface_top`, the proof `_at_surface`
+        uses so that column is never probed again.
         """
         if action.label != "surface_up":
             return
@@ -3261,6 +3273,17 @@ class Agent:
                 # If bot is in water state or near water, be cautious
                 pass
             self.surface = (int(action.args["x"]), y, int(action.args["z"]))
+            # The same refusal also names the column it looked at. When the body's own feet are
+            # already on that column's highest standable floor, the pathfinder stopped because
+            # there is nothing above it to climb to: the bot is out. Without that proof the loop
+            # re-probes every column it steps into (live, run285 it35,38,40,43: four probes, four
+            # columns, four "you are already at the top" refusals, and `establish_base` never ran
+            # because `_at_surface` only trusted the one learned cell).
+            top = perception.parse_column_top(text or "")
+            if top is not None and gs is not None and gs.pos is not None:
+                (cx, cz), floor = top
+                if abs(math.floor(gs.pos[1]) - floor) <= 1:
+                    self._surface_top = {**self._surface_top, (cx, cz): floor}
 
     def _note_crossing(self, action, text: str = "") -> None:
         """Stand the `_in_portal` rescue down around a crossing the loop asked for.

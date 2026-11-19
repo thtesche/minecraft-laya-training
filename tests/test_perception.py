@@ -569,9 +569,11 @@ class StorageNetworkParseTest(unittest.TestCase):
         g.on_ground = True
         g.surface = (-8, 63, 60)
         g.surface_wet = frozenset({(5, -115)})
+        g.surface_top = {(-137, -12): 71}
         rebuilt = GameState.from_state(jsonlib.loads(jsonlib.dumps(g.as_state())))
         self.assertEqual(rebuilt.surface, (-8, 63, 60))
         self.assertEqual(rebuilt.surface_wet, frozenset({(5, -115)}))
+        self.assertEqual(rebuilt.surface_top, {(-137, -12): 71})
         self.assertIn("open sky above", rebuilt.narrative())
         # A torn cell from an old log or a hand-written fixture leaves nothing proven, rather
         # than a short list `_at_surface` would later try to unpack.

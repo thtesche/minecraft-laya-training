@@ -2125,6 +2125,11 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         if gs.in_water:
             return None
         mx, mz = math.floor(gs.pos[0]), math.floor(gs.pos[2])
+        # A column the server already proved to be at its own top needs no probe: the body is
+        # standing on the floor that probe named. `_at_surface` reads the same proof, so this is
+        # the belt behind the buckle -- offer and resolver cannot disagree about being out.
+        if (mx, mz) in gs.surface_top:
+            return None
         # A column the probe already answered `[NAVIGATION_TARGET_WATER]` has no way up: its
         # top block is a fluid and the server's shore search reaches only 8 blocks, so the same
         # probe fails the same way every tick (live, run142 it55-57: three identical refusals at
