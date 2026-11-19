@@ -2993,18 +2993,26 @@ class Agent:
         that is not doing its job, and the window is the same countdown as the other two guards so it
         returns on its own.
         """
-        changed = (any(delta.get("inventory_delta") or {})
-                   or delta.get("armor_delta") or delta.get("armor_removed")
-                   or delta.get("offhand_delta") or delta.get("offhand_removed")
-                   or (delta.get("food_delta") or 0) != 0
-                   or (delta.get("pos_delta") or 0) != 0
-                   or delta.get("phase_changed")
-                   or delta.get("dimension_changed"))
+        # Everything but the clock: an item gained or lost, gear changed, a meal eaten, feet moved,
+        # a dimension crossed.
+        moved = (any(delta.get("inventory_delta") or {})
+                 or delta.get("armor_delta") or delta.get("armor_removed")
+                 or delta.get("offhand_delta") or delta.get("offhand_removed")
+                 or (delta.get("food_delta") or 0) != 0
+                 or (delta.get("pos_delta") or 0) != 0
+                 or delta.get("dimension_changed"))
+        changed = moved or delta.get("phase_changed")
         if label in PASS_TIME_LABELS:
             # Count the lull's no-change run for the escalation path; any change, or a different
             # label next tick, re-arms it. The dict holds one label at a time.
+            # For a lull the phase flip alone is not ground gained - it is the clock the wait is
+            # waiting on (the night sleep at the stronghold bed). It comes every ~10 ticks, the
+            # same length as the escalation window, so counting it re-arms the streak exactly as it
+            # reaches the threshold and a run pinned at the frame waits forever without ever asking
+            # System 2 (live, run279 it0-29: 27 consecutive `wait` ticks beside the lit portal, the
+            # streak reset by the flips at it4, it16 and it26, zero escalations).
             self._idle_wait_reps = (
-                {label: self._idle_wait_reps.get(label, 0) + 1} if not changed else {})
+                {label: self._idle_wait_reps.get(label, 0) + 1} if not moved else {})
             self._idle_reps.pop(label, None)
             return
         # A tick spent on anything else is not the lull continuing: clear the pass-time streak so

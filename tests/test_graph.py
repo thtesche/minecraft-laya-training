@@ -2051,11 +2051,25 @@ class IdleOfferGuardTest(unittest.TestCase):
         for _ in range(5):
             agent._track_idle("wait", self._nothing())
         self.assertEqual(agent._idle_wait_reps, {"wait": 5})
-        agent._track_idle("wait", self._some_change(phase_changed=True))
+        agent._track_idle("wait", self._some_change(pos_delta=3.0))
         self.assertEqual(agent._idle_wait_reps, {})
         for _ in range(4):
             agent._track_idle("wait", self._nothing())
         agent._track_idle("mine_coal", self._nothing())
+        self.assertEqual(agent._idle_wait_reps, {})
+
+    def test_the_clock_turning_alone_does_not_re_arm_a_lull(self) -> None:
+        # run279 it0-29: the bot held at the stronghold frame for the night sleep, and the day/night
+        # flip at it4, it16 and it26 reset the streak every time it neared IDLE_ESCALATE_REPEATS, so
+        # the pass-time escalation - the only path out of a run that waits forever - never fired.
+        # A phase flip is what the wait is waiting for, not progress.
+        agent = self._agent()
+        for _ in range(IDLE_ESCALATE_REPEATS):
+            agent._track_idle("wait", self._some_change(phase_changed=True))
+        self.assertEqual(agent._idle_wait_reps, {"wait": IDLE_ESCALATE_REPEATS})
+        self.assertEqual(agent._stuck_off, {})      # the label itself is still not withheld
+        # A flip that comes with real movement is still a change.
+        agent._track_idle("wait", self._some_change(phase_changed=True, pos_delta=2.0))
         self.assertEqual(agent._idle_wait_reps, {})
 
     def test_a_label_already_withheld_is_not_counted_again(self) -> None:
