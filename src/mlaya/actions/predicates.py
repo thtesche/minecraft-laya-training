@@ -1099,7 +1099,10 @@ def _bed_at_stronghold(gs: GameState) -> bool:
     """Whether a bed of any colour stands within reach of the stronghold frame.
 
     Keyed on the remembered frame cell: once the bot has stood at the frame it knows where
-    "beside the stronghold" is, and any bed within STRONGHOLD_BED_NEAR blocks counts.
+    "beside the stronghold" is, and any bed within STRONGHOLD_BED_REACH blocks counts. The reach
+    is wider than the bedside cells because the bed the run pins its respawn on may have been dug
+    out of the rock a pocket away from the nest (`_bed_pocket_cell`), and a bed that far out is
+    still the stronghold's, not a cave leftover.
     """
     if gs.stronghold_frame is None:
         return False
@@ -1107,11 +1110,59 @@ def _bed_at_stronghold(gs: GameState) -> bool:
     for hits in gs.resources.values():
         for h in hits:
             if h.name.endswith("_bed"):
-                if (abs(h.x - fx) <= STRONGHOLD_BED_NEAR
-                        and abs(h.z - fz) <= STRONGHOLD_BED_NEAR
+                if (abs(h.x - fx) <= STRONGHOLD_BED_REACH
+                        and abs(h.z - fz) <= STRONGHOLD_BED_REACH
                         and abs(h.y - fy) <= STRONGHOLD_BED_NEAR_Y):
                     return True
     return False
+
+
+def _stronghold_bed_hit(gs: GameState):
+    """The bed the stronghold sleep would use: the nearest one within reach of the frame."""
+    frame = gs.stronghold_frame
+    if frame is None:
+        return None
+    fx, fy, fz = frame
+    beds = []
+    for key, hits in gs.resources.items():
+        for h in hits:
+            if not hasattr(h, "pos"):
+                continue
+            name = getattr(h, "name", None)
+            if not isinstance(name, str):
+                name = key
+            if not (isinstance(name, str) and name.endswith("_bed")):
+                continue
+            if (abs(h.x - fx) <= STRONGHOLD_BED_REACH
+                    and abs(h.z - fz) <= STRONGHOLD_BED_REACH
+                    and abs(h.y - fy) <= STRONGHOLD_BED_NEAR_Y):
+                beds.append(h)
+    if not beds:
+        return None
+    if gs.pos is None:
+        return beds[0]
+    x, y, z = gs.pos
+    return min(beds, key=lambda h: (h.x - x) ** 2 + (h.y - y) ** 2 + (h.z - z) ** 2)
+
+
+def _stronghold_bed_cell(gs: GameState) -> tuple[int, int, int] | None:
+    """The cell of that bed, as the sleep's exclusion box is measured from it."""
+    hit = _stronghold_bed_hit(gs)
+    return hit.pos if hit is not None else None
+
+
+def _bed_sleep_safe(gs: GameState) -> bool:
+    """Whether the bed beside the frame can actually be slept in.
+
+    The silverfish spawner stands on the frame ring itself, so the bed laid at the frame sits in
+    its exclusion box (live, run280: bed (2093,-9,717), spawner (2091,-10,722), nearest silverfish
+    8.0 blocks away -> every night tick refused, the respawn never pinned, the portal never
+    entered). When that is the case the bed has to move, not the sleep be retried.
+    """
+    cell = _stronghold_bed_cell(gs)
+    if cell is None:
+        return _sleep_safe(gs)
+    return _sleep_box_clear(gs, cell)
 
 
 def _bed_wool_owed(gs: GameState, inv: dict[str, int]) -> str | None:
@@ -1137,25 +1188,58 @@ def _bed_wool_owed(gs: GameState, inv: dict[str, int]) -> str | None:
     return bed_item[: -len("_bed")] + "_wool"
 
 
+def _bed_pocket_cell(gs: GameState) -> tuple[int, int, int] | None:
+    """A cell dug out of the rock, straight away from the nest, for the respawn bed.
+
+    The direction is the axis on which frame and nearest hostile differ most, so the pocket opens
+    on the far side of the frame from the spawner: twelve blocks out puts the bed seventeen blocks
+    from a nest sitting on the frame ring, past the eight-block box, and still a short walk from
+    the portal the respawn has to be within. The navigate digs it - the frame room is closed rock,
+    so no scan can call the pocket standable before it is cut.
+    """
+    if gs.stronghold_frame is None:
+        return None
+    fx, fy, fz = gs.stronghold_frame
+    if not gs.hostile_cells:
+        return None
+    nest = min(gs.hostile_cells, key=lambda c: abs(c[0] - fx) + abs(c[2] - fz))
+    dx, dz = fx - nest[0], fz - nest[2]
+    if abs(dx) >= abs(dz):
+        return (fx + (1 if dx >= 0 else -1) * STRONGHOLD_BED_POCKET, fy, fz)
+    return (fx, fy, fz + (1 if dz >= 0 else -1) * STRONGHOLD_BED_POCKET)
+
+
+def _at_bed(gs: GameState, cell: tuple[int, int, int]) -> bool:
+    """Whether the body stands within click reach of a bed at `cell`."""
+    return gs.pos is not None and _click_gap(gs.pos, [cell]) <= BED_SLEEP_CLICK ** 2
+
+
 def _bed_stronghold_stance(gs: GameState) -> tuple[int, int, int] | None:
-    """A clear cell beside the stronghold frame where a bed may be laid.
+    """A clear cell beside the stronghold frame where a bed may be laid and slept in.
 
     The bot's own cell is tried first (no walk needed), then the four orthogonal neighbours
-    of the frame. Returns None when nothing is known standable.
+    of the frame - but only cells whose exclusion box is empty. A bed laid inside the nest's box
+    is a bed the server refuses the sleep at, and the run then spends its nights on it (run280).
+    When every cell beside the frame is in the box, the pocket dug away from the nest is the spot.
+    Returns None when nothing is known standable and no nest is recorded to dig away from.
     """
     if gs.stronghold_frame is None or gs.pos is None:
         return None
     fx, fy, fz = gs.stronghold_frame
     cell = (math.floor(gs.pos[0]), math.floor(gs.pos[1]), math.floor(gs.pos[2]))
+    near = []
     if (abs(cell[0] - fx) <= STRONGHOLD_BED_NEAR
             and abs(cell[2] - fz) <= STRONGHOLD_BED_NEAR
             and abs(cell[1] - fy) <= 2):
-        return cell
+        near.append(cell)
     for dx, dz in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-        cell = (fx + dx, fy, fz + dz)
-        if _standable_at(gs, cell):
-            return cell
-    return None
+        cand = (fx + dx, fy, fz + dz)
+        if _standable_at(gs, cand):
+            near.append(cand)
+    clear = [c for c in near if _sleep_box_clear(gs, c)]
+    if clear:
+        return min(clear, key=lambda c: (c[0] - cell[0]) ** 2 + (c[2] - cell[2]) ** 2)
+    return _bed_pocket_cell(gs)
 
 
 def _standable_at(gs: GameState, cell: tuple[int, int, int]) -> bool:
@@ -2334,6 +2418,27 @@ def _bows_held(gs: GameState) -> int:
 def _end_arrows_wanted(gs: GameState) -> int:
     """Arrows still short of the End fight's reserve. Never negative."""
     return max(0, END_ARROWS - int(gs.inventory.get(ARROW_ITEM, 0)))
+
+
+def _end_supplies_ready(gs: GameState) -> bool:
+    """Whether the arrow reserve the portal gate asks for can still be filled from where the bot
+    stands.
+
+    The host pauses a crossing below 16 edible items or 32 arrows. At the stronghold that reserve
+    is out of reach: the arrow chain needs a skeleton camp, chickens or planks for sticks, none of
+    which exist 1300 blocks from base in a deepslate portal room, and the run's pickaxe came back
+    from the Nether wooden. Holding the portal shut for it burned eight escalations in run280
+    without producing a single arrow, while the dragon is fought with crystals and a diamond
+    sword. So the crossing takes the same override the Nether crossing does whenever the chain
+    that could fill the gate cannot run here.
+    """
+    if _end_arrows_wanted(gs) <= 0:
+        return True
+    inv = gs.inventory
+    return (_has(inv, "crafting_table")
+            and inv.get(FLINT_ITEM, 0) > 0
+            and inv.get("stick", 0) > 0
+            and inv.get("string", 0) > 0)
 
 
 def _end_bows_wanted(gs: GameState) -> int:
@@ -4018,8 +4123,57 @@ def _underground(gs: GameState, feet_y: float) -> bool:
     return feet_y < floor - SLEEP_DEPTH_TOL
 
 
+def _sleep_box_clear(gs: GameState, cell: tuple[int, int, int]) -> bool:
+    """Whether no loaded hostile sits in the vanilla exclusion box around a bed at `cell`.
+
+    The box is measured from the bed block, not the body: `|dx| <= 8, |dy| <= 5, |dz| <= 8`.
+    """
+    bx, by, bz = cell
+    return not any(abs(hx - bx) <= SLEEP_HOSTILE_BOX_X
+                   and abs(hy - by) <= SLEEP_HOSTILE_BOX_Y
+                   and abs(hz - bz) <= SLEEP_HOSTILE_BOX_Z
+                   for hx, hy, hz in gs.hostile_cells)
+
+
+def _standing_beds(gs: GameState) -> list[tuple[int, int, int]]:
+    """Every bed cell the scan sees, nearest first."""
+    beds = []
+    for key, hits in gs.resources.items():
+        for h in hits:
+            # A hit's own name is the bed block; a scan group key is the fallback, since some
+            # states carry the group name where the concrete block name should be.
+            name = getattr(h, "name", None)
+            if not isinstance(name, str):
+                name = key
+            if isinstance(name, str) and name.endswith("_bed") and hasattr(h, "pos"):
+                beds.append(h.pos)
+    if gs.pos is None:
+        return beds
+    x, y, z = gs.pos
+    return sorted(beds, key=lambda c: (c[0] - x) ** 2 + (c[1] - y) ** 2 + (c[2] - z) ** 2)
+
+
+def _sleep_bed_cell(gs: GameState) -> tuple[int, int, int] | None:
+    """The bed the `sleep` call would use: the nearest standing bed to the body.
+
+    The host walks to any bed within 32 blocks before laying a carried one, so this is the cell
+    its hostile check is centred on. None when no bed stands in the scan.
+    """
+    beds = _standing_beds(gs)
+    return beds[0] if beds else None
+
+
 def _sleep_safe(gs: GameState) -> bool:
-    """No hostile close enough for the game to refuse the sleep (`SLEEP_HOSTILE_CLEAR`)."""
+    """No hostile close enough for the game to refuse the sleep.
+
+    Measured from the bed the sleep would use, not from the body: the server's box is centred on
+    the bed block (`SLEEP_HOSTILE_BOX_*`). With no bed in the scan, or no hostile cell recorded,
+    the older body-centred radius (`SLEEP_HOSTILE_CLEAR`) is the fallback, and it is deliberately
+    wider than the game's own eight blocks so a bed is never laid for a sleep that will be refused.
+    """
+    bed = _sleep_bed_cell(gs)
+    if bed is not None and gs.hostile_cells:
+        return _sleep_box_clear(gs, bed)
     return gs.nearest_hostile is None or gs.nearest_hostile > SLEEP_HOSTILE_CLEAR
 
 
@@ -4035,8 +4189,8 @@ def _unsafe_beds(gs: GameState) -> list:
     for hit in gs.resources.get("white_bed") or []:
         if not _underground(gs, hit.y):
             continue
-        if frame is not None and (abs(hit.x - frame[0]) <= STRONGHOLD_BED_NEAR
-                                  and abs(hit.z - frame[2]) <= STRONGHOLD_BED_NEAR
+        if frame is not None and (abs(hit.x - frame[0]) <= STRONGHOLD_BED_REACH
+                                  and abs(hit.z - frame[2]) <= STRONGHOLD_BED_REACH
                                   and abs(hit.y - frame[1]) <= STRONGHOLD_BED_NEAR_Y):
             continue
         out.append(hit)

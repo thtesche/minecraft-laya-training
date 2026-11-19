@@ -116,6 +116,7 @@ CRITERIA: dict[str, str] = {
     # The stronghold bed phase: after the portal opens, a bed beside the stronghold resets the
     # spawn point so a death in the End does not send the bot back to the old base.
     "craft_bed_stronghold": "craft a bed from any three wool of one colour and enough wood, ready to set the stronghold spawn",
+    "move_bed_clear": "take up a bed that stands inside the monster exclusion box around it and re-lay it in a pocket dug clear of the nest, so the stronghold sleep can happen at all",
     "place_bed_stronghold": "walk to a clear spot beside the stronghold frame and lay the bed there, pinning the respawn point at the stronghold",
     "sleep_stronghold": "sleep once in the stronghold bed to confirm the new spawn point, after which the run enters the End to fight the dragon",
     # Phase 5, the Ender Dragon fight (see `actions/end.py`). The combat tools are the server's;
@@ -276,6 +277,14 @@ ENDER_PEARLS = ENDER_EYES
 STRONGHOLD_BED_NEAR = 8
 # The vertical slack for the same test: the frame sits in a floor the bot may stand a step above.
 STRONGHOLD_BED_NEAR_Y = 4
+# How far out the run digs a bed pocket when every cell beside the frame sits inside the nest's
+# exclusion box (see `SLEEP_HOSTILE_BOX_X`). Twelve blocks puts the bed clear of a spawner that
+# stands on the frame itself, and it is still a short walk from the portal the respawn has to be
+# within (the host's `respawn_within` is 128).
+STRONGHOLD_BED_POCKET = 12
+# The reach `_bed_at_stronghold` counts as "the stronghold bed": the bedside cells plus a pocket
+# dug that far out. A bed outside it is a cave bed the run should take back up, not the pin.
+STRONGHOLD_BED_REACH = STRONGHOLD_BED_NEAR + STRONGHOLD_BED_POCKET
 # How many times the loop may throw away a remembered frame cell and re-locate before it stops
 # trying. A `[PORTAL_NO_FRAME]` at the address it holds means the world has no frame there at all,
 # and re-throwing the eyes is the only way to get a cell the server can see.
@@ -623,6 +632,15 @@ NON_FOOTING_BLOCKS = ("white_bed", PORTAL_BLOCK, "chest", "trapped_chest", "barr
 SLEEP_HOSTILE_CLEAR = 12.0
 SLEEP_DEPTH_TOL = 16
 SURFACE_FALLBACK_Y = 56
+# The box the game checks around the *bed* before it lets a sleep happen: any hostile within 8
+# blocks horizontally and 5 vertically of the bed block makes `sleep` refuse. The host reads the
+# same numbers (`HOSTILE_SLEEP_HORIZONTAL_RANGE`/`HOSTILE_SLEEP_VERTICAL_RANGE`). A bed's spot is
+# a different question from the body's: run280's frame bed at (2093,-9,717) sat 8.0 blocks from
+# the nearest silverfish while the bot itself stood 4 blocks away, so the body-centred
+# `SLEEP_HOSTILE_CLEAR` read "safe" on a bed the server would never let it sleep in.
+SLEEP_HOSTILE_BOX_X = 8
+SLEEP_HOSTILE_BOX_Y = 5
+SLEEP_HOSTILE_BOX_Z = 8
 
 # Passive food animals and the raw drop `collect_mob_drop` should ask for.
 FOOD_MOBS = {"cow": "beef", "pig": "porkchop", "chicken": "chicken",

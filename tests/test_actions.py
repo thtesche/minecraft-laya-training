@@ -55,6 +55,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            _bed_at_stronghold, _bed_wool_owed, _pack_clutter, _sleep_safe,
                            _bed_stronghold_stance, STRONGHOLD_BED_NEAR, _has_bed, _at_stance,
                            _bed_needs_moving, _unsafe_beds,
+                           _bed_sleep_safe, _stronghold_bed_cell, _bed_pocket_cell,
+                           _sleep_box_clear, STRONGHOLD_BED_POCKET, _end_supplies_ready,
                            stronghold_candidates,
                            end_candidates, resolve_end, end_complete, END_LABELS,
                            _in_end, _crystals_loaded, _dragon_alive, _dragon_perched,
@@ -8352,6 +8354,85 @@ class StrongholdBedPhaseTest(unittest.TestCase):
         self.assertEqual(stronghold_candidates(g), ["sleep_stronghold"])
         self.assertEqual(resolve("sleep_stronghold", g).tool, "sleep")
 
+    # --- the bed inside the spawner's box (run280's dead end) ---
+
+    def test_a_bed_in_the_spawner_box_is_carried_out_not_waited_on(self) -> None:
+        # Vanilla refuses a sleep with any hostile within 8 blocks horizontally and 5 vertically of
+        # the *bed*, and the silverfish spawner stands on the frame ring itself: run280's bed at
+        # (2093,-9,717) sat 8.0 blocks from the nearest silverfish, so every night tick offered
+        # `wait` and the respawn was never pinned. A bed whose own box is occupied has to move.
+        g = self._with_placed_bed(self._after_portal(), dx=3, dz=-3)
+        g.phase = "night"
+        g.hostiles = [("silverfish", 7, 4.3)]
+        g.nearest_hostile = 4.3
+        g.hostile_cells = [(101, 59, 205)]
+        self.assertFalse(_sleep_safe(g))
+        self.assertFalse(_bed_sleep_safe(g))
+        self.assertEqual(stronghold_candidates(g), ["move_bed_clear"])
+        a = resolve("move_bed_clear", g)
+        self.assertEqual(a.tool, "navigate")     # the body is outside click reach of the bed
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (103, 60, 197))
+
+    def test_the_bed_is_taken_up_once_the_body_reaches_it(self) -> None:
+        g = self._with_placed_bed(self._after_portal(), dx=3, dz=-3)
+        g.pos = (103.5, 60.0, 197.5)
+        g.hostile_cells = [(101, 59, 205)]
+        a = resolve("move_bed_clear", g)
+        self.assertEqual(a.tool, "collect_block")
+        self.assertEqual(a.args["block_name"], "white_bed")
+
+    def test_a_nest_that_thins_out_leaves_the_bed_where_it_is(self) -> None:
+        # The spawner's population drops as the bot fights (run280 it160: zero silverfish, the sleep
+        # succeeded). With nothing in the box the bed stays and the night sleep is the step.
+        g = self._with_placed_bed(self._after_portal(), dx=3, dz=-3)
+        g.phase = "night"
+        g.hostiles = [("silverfish", 0, None)]
+        g.nearest_hostile = 17.9
+        g.hostile_cells = []
+        self.assertTrue(_bed_sleep_safe(g))
+        self.assertEqual(stronghold_candidates(g), ["sleep_stronghold"])
+
+    def test_the_relay_digs_a_pocket_on_the_far_side_of_the_nest(self) -> None:
+        # Every cell beside the frame is in the box, so the stance is a pocket dug twelve blocks out
+        # along the axis the nest sits on, away from it - still well inside the portal's 128-block
+        # respawn reach.
+        g = self._after_portal(white_bed=1)
+        g.hostile_cells = [(101, 59, 205)]
+        self.assertEqual(_bed_pocket_cell(g), (100, 60, 188))
+        self.assertEqual(_bed_stronghold_stance(g), (100, 60, 188))
+        a = resolve("place_bed_stronghold", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (100, 60, 188))
+        # A nest to the west opens the pocket east: the box decides the direction, not a fixed axis.
+        g2 = self._after_portal(white_bed=1)
+        g2.hostile_cells = [(95, 60, 200)]
+        self.assertEqual(_bed_pocket_cell(g2), (112, 60, 200))
+
+    def test_a_bed_laid_in_the_pocket_is_slept_in_and_not_hauled_home(self) -> None:
+        g = self._with_placed_bed(self._after_portal(), dx=0, dz=-STRONGHOLD_BED_POCKET)
+        g.pos = (100.0, 60.0, 188.0)
+        g.phase = "night"
+        g.hostiles = [("silverfish", 7, 12.0)]
+        g.nearest_hostile = 12.0
+        g.hostile_cells = [(101, 59, 205)]
+        g.base = self.BASE_FAR
+        self.assertTrue(_bed_at_stronghold(g))      # twelve blocks out is still the stronghold's bed
+        self.assertTrue(_bed_sleep_safe(g))
+        self.assertFalse(_bed_needs_moving(g))      # not a cave bed to carry back to base
+        self.assertEqual(stronghold_candidates(g), ["sleep_stronghold"])
+        self.assertEqual(resolve("sleep_stronghold", g).tool, "sleep")
+
+    def test_the_sleep_box_matches_the_game(self) -> None:
+        g = self._after_portal()
+        g.hostile_cells = [(100, 60, 208)]
+        self.assertFalse(_sleep_box_clear(g, (100, 60, 200)))
+        g.hostile_cells = [(100, 60, 209)]
+        self.assertTrue(_sleep_box_clear(g, (100, 60, 200)))
+        g.hostile_cells = [(100, 65, 200)]
+        self.assertFalse(_sleep_box_clear(g, (100, 60, 200)))
+        g.hostile_cells = [(100, 66, 200)]
+        self.assertTrue(_sleep_box_clear(g, (100, 60, 200)))
+
     # --- the locate gate (the trek's bed requirement) ---
 
     def test_the_trek_takes_a_carried_bed_without_loose_wool(self) -> None:
@@ -8678,6 +8759,26 @@ class EndFightTest(unittest.TestCase):
         g = self._entry()                       # no portal cell latched yet
         a = resolve_end("enter_the_end", g)
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FRAME)
+
+    def test_enter_the_end_crosses_when_the_reserve_cannot_be_built(self) -> None:
+        # run280: the portal gate wants 32 arrows and the stronghold carried 2. The chain that fills
+        # it - skeleton camps, chickens, planks for sticks - does not exist 1300 blocks from base in
+        # a deepslate portal room, and eight escalations went into `enter_the_end` without a single
+        # arrow being crafted. The crossing takes the host's override instead of stalling on it.
+        g = self._entry(arrow=2)
+        self.assertFalse(_end_supplies_ready(g))
+        a = resolve_end("enter_the_end", g)
+        self.assertTrue(a.args["allow_low_supplies"])
+
+    def test_enter_the_end_holds_while_the_reserve_can_still_be_crafted(self) -> None:
+        # With flint, sticks and string in the pack the gate is worth opening properly first.
+        g = self._entry(arrow=2, flint=4, stick=3, string=12)
+        self.assertTrue(_end_supplies_ready(g))
+        self.assertNotIn("allow_low_supplies", resolve_end("enter_the_end", g).args)
+        # A full reserve needs no override either.
+        g2 = self._entry(arrow=128)
+        self.assertTrue(_end_supplies_ready(g2))
+        self.assertNotIn("allow_low_supplies", resolve_end("enter_the_end", g2).args)
 
     def test_position_end_navigates_to_the_fountain(self) -> None:
         a = resolve_end("position_end", self._end())

@@ -1428,6 +1428,17 @@ class HostileParseTest(unittest.TestCase):
         self.assertEqual(gs.hostiles, [("creeper", 1, None)])
         self.assertIn("creeper x1", gs.narrative())
 
+    def test_hostile_positions_are_kept_as_cells(self) -> None:
+        # The sleep refusal is a box drawn around the *bed*, not the body, so the loop needs each
+        # hostile's cell and not only its distance from the bot (run280: the frame bed sat 8.0
+        # blocks from a silverfish while the body stood 4.3 away, and every night was refused).
+        st = _status({"nearby": {"hostiles": [
+            {"name": "silverfish", "distance": 4.3, "position": {"x": 2092, "y": -12, "z": 724}},
+            {"name": "zombie", "distance": 9.0},
+        ]}})
+        gs = parse_status(st)
+        self.assertEqual(gs.hostile_cells, [(2092, -12, 724)])
+
 
 class DroppedItemsParseTest(unittest.TestCase):
     """`view_status.nearby.droppedItems` is unbounded by distance and is what lets the loop walk

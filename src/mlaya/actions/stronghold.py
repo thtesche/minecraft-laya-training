@@ -53,6 +53,7 @@ STRONGHOLD_LABELS = frozenset({
     "craft_ender_eye", "locate_stronghold", "travel_to_stronghold", "tunnel_to_frame",
     "activate_end_portal",
     "craft_bed_stronghold", "place_bed_stronghold", "sleep_stronghold",
+    "move_bed_clear",
 })
 
 
@@ -405,6 +406,16 @@ def stronghold_candidates(gs: GameState) -> list[str]:
             # off the frame: `wait` holds it on the bed's own cell until night (the `wait` resolve
             # carries the stronghold hold). `_sleep_safe` mirrors the resolve; `go_home`/`explore`
             # are shut for this phase, which is what would otherwise march the body off.
+            if not _bed_sleep_safe(gs):
+                # The bed stands inside the spawner's exclusion box, and the box is centred on
+                # the bed, not the body: no night will ever let this one be slept in (run280
+                # waited 17 escalations on it). The bed has to be carried out to a pocket dug
+                # clear of the nest, and `place_bed_stronghold` lays it there.
+                if gs.slots_used >= INVENTORY_NEAR_FULL and (_droppable(gs, inv) or _march_shed(gs)):
+                    out.append("drop_junk")
+                else:
+                    out.append("move_bed_clear")
+                return out
             if gs.phase == "night" and not gs.sleeping and _sleep_safe(gs):
                 out.append("sleep_stronghold")
             else:
@@ -698,6 +709,22 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": bed_item}], "temporary_workstation": True},
                       f"craft a {bed_item} for the stronghold respawn point")
+    if label == "move_bed_clear":
+        if not _overworld(gs) or _bed_sleep_safe(gs):
+            return None
+        hit = _stronghold_bed_hit(gs)
+        if hit is None:
+            return None
+        cell = hit.pos
+        if not _at_bed(gs, cell):
+            bx, by, bz = cell
+            return Action(label, "navigate",
+                          {"x": bx, "y": by, "z": bz, "range": 1,
+                           "dig": True, "scaffold": True},
+                          "walk to the bed the spawner's box surrounds so it can be carried out")
+        return Action(label, "collect_block",
+                      {"block_name": hit.name, "count": 1},
+                      "take the bed out of the nest's exclusion box so it can be re-laid clear of it")
     if label == "place_bed_stronghold":
         if not _overworld(gs) or not _has_bed(inv) or _bed_at_stronghold(gs):
             return None
@@ -717,6 +744,16 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
             return None
         if not _bed_at_stronghold(gs):
             return None
+        cell = _stronghold_bed_cell(gs)
+        if cell is not None and not _at_bed(gs, cell):
+            # The host walks to the bed inside the sleep call, but a 30 s route through a pocket
+            # dug for it is a tick the loop cannot see: walking it here keeps the sleep itself
+            # short and the progression measurable.
+            bx, by, bz = cell
+            return Action(label, "navigate",
+                          {"x": bx, "y": by, "z": bz, "range": 1,
+                           "dig": True, "scaffold": True},
+                          "walk to the stronghold bed before sleeping on it")
         return Action(label, "sleep", {},
                       "sleep at the stronghold to pin the respawn point there")
     return None

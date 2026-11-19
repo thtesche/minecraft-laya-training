@@ -111,8 +111,9 @@ def _end_entry_candidates(gs: GameState) -> list[str]:
     if _has(inv, BUCKET_ITEM) and not _has(inv, WATER_BUCKET):
         out.append("fill_bucket")
     # Step through the active portal. The cell is the `activate_portal` centre (`end_portal_cell`),
-    # or the stronghold frame itself as a fallback; the supply gate (16 food + 32 arrows) and the
-    # respawn guard are both already met by the stronghold phase, so no low-supplies override.
+    # or the stronghold frame itself as a fallback. The respawn guard is met by the stronghold
+    # sleep; the supply gate is not, and `resolve` carries `allow_low_supplies` when the arrow
+    # reserve cannot be built this far from base (`_end_supplies_ready`).
     if gs.end_portal_cell is not None or gs.stronghold_frame is not None:
         out.append("enter_the_end")
     return out
@@ -173,8 +174,10 @@ def resolve_end(label: str, gs: GameState) -> Action | None:
         if cell is None:
             return None
         x, y, z = cell
-        return Action(label, "enter_end_portal",
-                      {"x": int(x), "y": int(y), "z": int(z)},
+        args = {"x": int(x), "y": int(y), "z": int(z)}
+        if not _end_supplies_ready(gs):
+            args["allow_low_supplies"] = True
+        return Action(label, "enter_end_portal", args,
                       "step into the active end portal to travel to the End")
     if label == "position_end":
         if not _in_end(gs):

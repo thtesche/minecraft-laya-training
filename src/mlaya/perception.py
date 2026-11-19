@@ -947,6 +947,11 @@ class GameState:
     tools: dict[str, str] = field(default_factory=dict)
     hostiles: list[tuple[str, int, float | None]] = field(default_factory=list)
     nearest_hostile: float | None = None
+    # Every nearby hostile as an integer cell. The game's sleep check is a box around the *bed*,
+    # not the body, so a bed can be refused while the bot standing next to it reads clear: run280
+    # held `nearest_hostile` at 4.3 while the frame bed at (2093,-9,717) sat 8.0 blocks from the
+    # nearest silverfish, inside the box, and every sleep there was refused.
+    hostile_cells: list[tuple[int, int, int]] = field(default_factory=list)
     players: list[str] = field(default_factory=list)
     last_death_cause: str | None = None
     last_death_age_s: float | None = None
@@ -1431,6 +1436,7 @@ class GameState:
             "armor": self.armor,
             "offhand": self.offhand,
             "hostiles": self.hostiles,
+            "hostile_cells": self.hostile_cells,
             "players": self.players,
             "last_death": self.last_death_cause,
             "death_pos": self.death_pos,
@@ -1547,7 +1553,7 @@ class GameState:
         gs = cls()
         for field in ("health", "food", "phase", "raining", "on_ground", "in_water",
                       "dimension", "slots_used", "tools", "tool_meta", "armor", "offhand",
-                      "hostiles", "players", "unread", "death_pos", "drops", "base", "chest_pos",
+                      "hostiles", "hostile_cells", "players", "unread", "death_pos", "drops", "base", "chest_pos",
                       "base_adopted", "furnace_pos", "smoker_pos", "bed_pos",
                       "furnace_occupied", "furnace_blocked",
                       "sleeping", "resource_found", "mobs", "piglins", "barter_attempts", "banked",
@@ -2006,6 +2012,15 @@ def parse_status(data: dict) -> GameState:
         if dist is None and isinstance(nearest, dict):
             dist = nearest.get("distance")
         gs.hostiles.append((str(m.get("name") or "?"), int(m.get("count") or 1), _num(dist)))
+        # The cell too: the sleep refusal is a box around the bed, which no body-centred distance
+        # can answer. `nearby.hostiles` rows carry `position`; a row without one just contributes
+        # no cell and the bed tests fall back to the body's nearest hostile.
+        pos = m.get("position")
+        if isinstance(pos, dict):
+            try:
+                gs.hostile_cells.append((int(pos["x"]), int(pos["y"]), int(pos["z"])))
+            except (KeyError, TypeError, ValueError):
+                pass
     dists = [d for _, _, d in gs.hostiles if d is not None]
     gs.nearest_hostile = min(dists) if dists else None
 
