@@ -657,6 +657,15 @@ def candidates(gs: GameState) -> list[str]:
             # the server keeps refusing owns every tick forever: run124 it18-36, eighteen ticks of
             # "No new action started; body owner: hostile_reflex" with nothing else on the list.
             # Once the guard has withheld it, the tick falls to the rest of the Nether chain.
+            # The piglin pass wears out on the head mid-trip, and the spare is two ticks of work
+            # when the gold is already carried: run271 it7-46, the helmet went 73 -> 10 of 77 with
+            # 16 raw gold, a furnace, a table and two coal in the pack, and no step down here able
+            # to use any of it. It comes ahead of the wave's own logic because once the piece
+            # breaks, every piglin in sight turns hostile and the trip loses the precondition the
+            # whole chain is built on.
+            repair = _nether_helmet_repair_steps(gs)
+            if repair and repair[0] not in gs.stuck_labels:
+                return repair
             # A pack full of droppable junk (netherrack) reads as "out of room" and would send the
             # bot home with nothing. The junk frees itself with `drop_junk`; the room does not. So
             # while the pack is full of something that can be dropped, the bot sheds it and keeps
@@ -1652,7 +1661,7 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return resolve("craft_furnace", gs)
     if label == "craft_gold_helmet":
         if (inv.get(GOLD_INGOT, 0) < GOLD_HELMET_INGOTS or not _has(inv, "crafting_table")
-                or _has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+                or _gold_helmet_made(gs) or not _pack_room_for(gs, GOLD_HELMET_ITEM)):
             return None
         return Action(label, "craft_item",
                       {"items": [{"item_name": GOLD_HELMET_ITEM}], "temporary_workstation": True},

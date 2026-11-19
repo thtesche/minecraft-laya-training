@@ -20,7 +20,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                           _nether_haul_home,
                            _nether_topup_wanted, _nether_food_secured,
                           _nether_pearl_wave_wanted, _pearls_owed, _powder_is_eye_fuel, _powder_needs_securing, _powder_target, _rods_target,
-                          _frame_needs_obsidian, _furnace_site, _gold_reserve_short, _known_footings,
+                          _frame_needs_obsidian, _furnace_site, _gold_ingots_wanted, _gold_reserve_short, _known_footings,
                           _centre,
                           _hoard_surplus, _idle_off_base, _gear_ready, _nether_prep_steps,
                          _pearl_wave_trip, _search_enderman_wanted, _safe_enderman_hunt, _safe_blaze_hunt, _safe_zombie_hunt,
@@ -36,7 +36,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                          BASE_RADIUS, BED_SLEEP_CLICK, INVENTORY_NEAR_FULL, INVENTORY_SLOTS, inventory_relief, SLEEP_OFF_BASE_STEP,
                          NETHER_COBBLE, NETHER_COBBLE_SLACK,
                          BARTER_GOLD_BUDGET, BARTER_MAX_ATTEMPTS, BARTER_PEARL_BATCH,
-                         BARTER_PIGLIN_RANGE, GOLD_BARTER_RESERVE,
+                         BARTER_PIGLIN_RANGE, GOLD_BARTER_RESERVE, GOLD_HELMET_INGOTS,
                          NETHER_PEARL_SEARCH_M, PEARL_WAVE_MAX_TRIPS,
                          PEARL_MARCH_STALL_LIMIT, PEARL_MARCH_CHUNKS, EXPLORE_STALL_TURN,
                          DEFER_QUIET_TICKS, HUNT_BATCH, HUNT_HURRY, ZOMBIE_FLESH_BATCH, _hunt_count,
@@ -6289,6 +6289,59 @@ class NetherExpeditionTest(unittest.TestCase):
         a = resolve("swap_to_gold_helmet", g)
         self.assertEqual(a.tool, "equip")
         self.assertEqual(a.args["items"], [{"item_name": "golden_helmet", "destination": "head"}])
+
+    def test_a_worn_out_gold_helmet_is_reminted_down_here(self) -> None:
+        # run271 it7-46: the gold piece went 73 -> 10 of 77 on the head while 16 raw gold, a
+        # furnace, a table and two coal sat in the pack. Every gold step is gated to the Overworld
+        # lull, so nothing in the Nether branch could mint the spare the piglins were about to
+        # make hostile - the pass the whole trip is fought around simply ran out.
+        g = self._down(raw_gold=16, furnace=1, crafting_table=1, coal=2)
+        g.armor["helmet"] = {"item": "golden_helmet", "left": 10.0, "max": 77.0}
+        self.assertEqual(candidates(g), ["smelt_gold"])
+        a = resolve("smelt_gold", g)
+        self.assertEqual(a.tool, "smelt_item")
+        self.assertEqual(a.args["item_name"], "raw_gold")
+
+    def test_the_spare_is_crafted_when_the_ingots_are_already_in_the_pack(self) -> None:
+        g = self._down(gold_ingot=5, crafting_table=1)
+        g.armor["helmet"] = {"item": "golden_helmet", "left": 10.0, "max": 77.0}
+        self.assertEqual(candidates(g), ["craft_gold_helmet"])
+        a = resolve("craft_gold_helmet", g)
+        self.assertEqual(a.args["items"], [{"item_name": "golden_helmet"}])
+
+    def test_a_helmet_at_half_durability_is_not_replaced(self) -> None:
+        # The floor is the same one the diamond kit uses: a piece with room left is not yet a
+        # reason to spend the trip's gold.
+        g = self._down(raw_gold=16, furnace=1, crafting_table=1, coal=2)
+        g.armor["helmet"] = {"item": "golden_helmet", "left": 40.0, "max": 77.0}
+        self.assertNotIn("smelt_gold", candidates(g))
+        self.assertIsNone(resolve("smelt_gold", g))
+
+    def test_a_spare_gold_helmet_goes_on_over_a_worn_out_one(self) -> None:
+        # The slot is already gold, so the swap is a replacement rather than a change of tier:
+        # `_gold_helmet_needed` used to read only the diamond-on-head case and never saw this.
+        g = self._down(golden_helmet=1)
+        g.armor["helmet"] = {"item": "golden_helmet", "left": 8.0, "max": 77.0}
+        self.assertEqual(candidates(g), ["swap_to_gold_helmet"])
+        a = resolve("swap_to_gold_helmet", g)
+        self.assertEqual(a.args["items"], [{"item_name": "golden_helmet", "destination": "head"}])
+
+    def test_a_full_pack_refuses_the_spare_helmet_craft(self) -> None:
+        # The helmet lands in a slot of its own: the ingot stack it is made from is only partly
+        # spent, so it does not free one itself.
+        g = self._down(gold_ingot=16, crafting_table=1)
+        g.armor["helmet"] = {"item": "golden_helmet", "left": 8.0, "max": 77.0}
+        g.slots_used = INVENTORY_SLOTS
+        self.assertIsNone(resolve("craft_gold_helmet", g))
+        g.slots_used = INVENTORY_SLOTS - 1
+        self.assertIsNotNone(resolve("craft_gold_helmet", g))
+
+    def test_a_worn_out_helmet_owes_its_five_ingots_again(self) -> None:
+        g = self._down(raw_gold=16, furnace=1, crafting_table=1, coal=2)
+        g.armor["helmet"] = {"item": "golden_helmet", "left": 10.0, "max": 77.0}
+        self.assertEqual(_gold_ingots_wanted(g), GOLD_HELMET_INGOTS + GOLD_BARTER_RESERVE)
+        g.armor["helmet"] = {"item": "golden_helmet", "left": 60.0, "max": 77.0}
+        self.assertEqual(_gold_ingots_wanted(g), GOLD_BARTER_RESERVE)
 
     def test_a_full_pack_with_no_haul_does_not_turn_round(self) -> None:
         # run199 it0-297: the trip ended on the tick it arrived, 36 times, because the pack sat at

@@ -2273,6 +2273,33 @@ def _furnace_needs_draining(gs: GameState) -> bool:
     return gs.furnace_pos is not None and gs.furnace_occupied and not gs.furnace_blocked
 
 
+def _gold_helmet_worn_out(gs: GameState) -> bool:
+    """Whether the gold helmet on the head is close to breaking.
+
+    Piglin neutrality rides on one worn gold piece, and a gold helmet has 77 uses: live, run271
+    it7-41, the piece went 73 -> 10 of 77 across thirty-four Nether ticks while the pack held 16
+    raw gold, a furnace and a crafting table. Nothing in the Nether branch could turn any of it
+    into a spare, so the pass the whole trip is fought around was simply running out.
+    """
+    meta = gs.armor.get("helmet") or {}
+    if meta.get("item") != GOLD_HELMET_ITEM:
+        return False
+    left, maximum = meta.get("left"), meta.get("max")
+    return (isinstance(left, (int, float)) and isinstance(maximum, (int, float))
+            and maximum > 0 and left / maximum < LOW_DURABILITY)
+
+
+def _gold_helmet_made(gs: GameState) -> bool:
+    """A gold helmet this trip can count on: in the pack or on the head, and not about to break.
+
+    The worn-out piece is not "made": it is the reason a second one has to be minted, and every
+    gold gate that reads the helmet as done while it is on its last use closes the craft that
+    would replace it.
+    """
+    return ((_has(gs.inventory, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM))
+            and not _gold_helmet_worn_out(gs))
+
+
 def _gold_helmet_needed(gs: GameState) -> bool:
     """Whether the diamond helmet still stands where a gold one has to go.
 
@@ -2285,9 +2312,16 @@ def _gold_helmet_needed(gs: GameState) -> bool:
     diamond helmet and the gold piece went on only at it342, six Nether ticks deep, the bot
     piglin-exposed the whole gap). `_nether_departure_ready` already requires the gold helmet in
     hand, so it only ever reads true where the gate is stocked and about to open.
+
+    A spare in the pack also goes on over a gold piece that is about to break: the slot is
+    already gold, so the swap is a replacement rather than a change of tier.
     """
-    return ((_in_nether(gs) or _nether_departure_ready(gs)) and _worn(gs, "diamond_helmet")
-            and (gs.inventory.get(GOLD_HELMET_ITEM, 0) > 0 or _worn(gs, GOLD_HELMET_ITEM)))
+    if not (_in_nether(gs) or _nether_departure_ready(gs)):
+        return False
+    if _gold_helmet_worn_out(gs):
+        return _has(gs.inventory, GOLD_HELMET_ITEM)
+    return (_worn(gs, "diamond_helmet")
+            and (_has(gs.inventory, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)))
 
 
 def _bows_held(gs: GameState) -> int:
@@ -2473,11 +2507,13 @@ def _gold_ingots_wanted(gs: GameState) -> int:
     """Ingots the pack has to hold for the trip: the helmet piece, plus the barter reserve.
 
     The helmet is counted only while it is still in the pack - once it is crafted the five ingots
-    are gone into it, and only the barter reserve remains to be banked.
+    are gone into it, and only the barter reserve remains to be banked. A helmet worn down past
+    the durability floor counts again: those five ingots are about to be lost, and the trip that
+    still needs piglins neutral needs them minted a second time.
     """
     inv = gs.inventory
     want = 0
-    if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+    if not _gold_helmet_made(gs):
         want += GOLD_HELMET_INGOTS
     if _pearls_owed(gs) > 0:
         want += GOLD_BARTER_RESERVE
@@ -2546,6 +2582,31 @@ def _gold_reserve_steps(gs: GameState) -> list[str]:
     return []
 
 
+def _nether_helmet_repair_steps(gs: GameState) -> list[str]:
+    """The gold helmet a Nether trip has to re-mint, in order, or [].
+
+    The piglin pass wears out on the head, and the gold for a spare is usually already in the pack:
+    the rod haul and the barter reserve both carry raw gold, and the expedition carries its own
+    furnace and table. Every other gold step is gated to the Overworld lull (`_nether_idle`), so
+    down here the chain had no offer at all - live, run271 it7-46, the helmet went 73 -> 10 of 77
+    with 16 raw gold, a furnace, a crafting table and two coal in the pack, and no step that could
+    use any of it. Only material already in reach is offered, the same rule as the prep list: this
+    never digs for gold that is not in the pack.
+    """
+    if not _in_nether(gs) or not _gold_helmet_worn_out(gs) or _has(gs.inventory, GOLD_HELMET_ITEM):
+        return []
+    inv = gs.inventory
+    # The craft needs a slot for the piece it produces: the ingot stack it is made from is only
+    # partly spent, so it does not free one itself.
+    if inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS and _has(inv, "crafting_table") \
+            and gs.slots_used < INVENTORY_SLOTS:
+        return ["craft_gold_helmet"]
+    if (_has(inv, RAW_GOLD) and _smelting_reach(gs) and _gold_smelt_room(gs)
+            and inv.get(GOLD_INGOT, 0) < _gold_ingots_wanted(gs)):
+        return ["smelt_gold"]
+    return []
+
+
 def _nether_prep_steps(gs: GameState) -> list[str]:
     """The Nether prep to offer in the daytime lull once the gate frame stands, in order, or [].
 
@@ -2600,7 +2661,7 @@ def _all_nether_prep_steps(gs: GameState) -> list[str]:
     if not _has(inv, BOWL_ITEM) and _plank_units(inv) >= 3 and table:
         out.append("craft_bowl")
     # Gold helmet: mine the ore, smelt it, craft the piece (worn later, in the Nether).
-    if not (_has(inv, GOLD_HELMET_ITEM) or _worn(gs, GOLD_HELMET_ITEM)):
+    if not _gold_helmet_made(gs):
         if inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS:
             if table:
                 out.append("craft_gold_helmet")
