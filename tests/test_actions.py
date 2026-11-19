@@ -4273,6 +4273,25 @@ class HomeBaseTest(unittest.TestCase):
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), (-197, -46, -97))
         self.assertEqual(a.args["items"], [{"item_name": "tuff", "count": 64}])
 
+    def test_at_the_lid_the_deposit_owns_the_tick(self) -> None:
+        # Live, run291 it90-93: home with 35/36 slots, the model took `search_enderman` over the
+        # deposit standing on the same offer, walked 400 m out, and `go_home` called it straight
+        # back - two ticks per 800 m, and the pack never shed a block.
+        g = self._home(self._geared(tuff=64, netherrack=39))
+        g.chest_pos = (-197, -46, -97)
+        g.slots_used = 35
+        self.assertEqual(candidates(g), ["stow_surplus"])
+
+    def test_a_refused_lid_does_not_own_the_run(self) -> None:
+        # The stuck guard's cooldown is the anti-deadlock: the withheld deposit is out of the
+        # offer (the filter at the end of `candidates`), so the tick falls to the rest of the tree.
+        g = self._home(self._geared(tuff=64, netherrack=39))
+        g.chest_pos = (-197, -46, -97)
+        g.slots_used = 35
+        g.stuck_labels = frozenset({"stow_surplus"})
+        self.assertNotIn("stow_surplus", candidates(g))
+        self.assertIn("mine_stone", candidates(g))
+
     def test_stow_surplus_digs_the_block_off_the_chest_lid(self) -> None:
         # Live, run26: the base sat two blocks under the surface, a cobblestone came to rest
         # directly on the chest, and `use_container` answered `[CHEST_BLOCKED]` on every tick, so

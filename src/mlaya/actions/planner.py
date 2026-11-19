@@ -954,6 +954,13 @@ def candidates(gs: GameState) -> list[str]:
     elif gs.slots_used >= INVENTORY_NEAR_FULL:
         if at_chest:
             if _sheddable(gs, inv):
+                # Live, run291 it90-93: at home with 35/36 slots the model took `search_enderman`
+                # over the deposit standing on the same offer, walked 400 m out, and `go_home`
+                # called it straight back - two ticks per 800 m, no pearl, no powder. A pack that
+                # owes the chest its surplus while standing at the lid has one step to run; the
+                # stuck guard's cooldown is the anti-deadlock for a lid the ground keeps refusing.
+                if "stow_surplus" not in gs.stuck_labels:
+                    return ["stow_surplus"]
                 out.append("stow_surplus")
         elif _droppable(gs, inv):
             # No chest to hold it: shed the surplus on the ground rather than stall the gather.
