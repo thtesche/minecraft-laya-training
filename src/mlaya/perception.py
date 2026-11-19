@@ -873,7 +873,9 @@ def _phase_key(source) -> str:
     climb is over and only the crossing is left. In the Overworld the stronghold follows the Nether
     haul: once the blaze powder is banked (`powder_stowed`) and until the end portal stands active
     (`end_portal_active`), the run is out for eyes of ender and the stronghold (docs/stronghold.md).
-    Both are loop latches that only ever set, so the phase cannot flicker with the world.
+    Both are loop latches that only ever set, so the phase cannot flicker with the world. Once the
+    end portal stands active, the End owns the run: the entry window beside the frame and every
+    re-entry read as `end_dragon`, not as the kit climb the run already finished.
     """
     def field(name: str, default=None):
         return source.get(name, default) if isinstance(source, dict) else getattr(source, name, default)
@@ -888,6 +890,13 @@ def _phase_key(source) -> str:
         # while every offer down there is a pearl hunt (live, run220 it228: `search_enderman` chosen
         # on the tick, "killing blazes for blaze rods" in the sentence above it).
         return "nether_pearls" if field("nether_trip") else "nether_rods"
+    # An end portal standing is the stronghold done: from here the run's job is the crossing and the
+    # dragon, whatever the kit looks like. Without this the post-portal window falls through to the
+    # kit test and reads as the tech climb whenever the pickaxe is not diamond (live, run278 it8-13:
+    # the bot held at the frame for the night sleep that pins the respawn while the observer's phase
+    # said "diamond_kit" and called the hold a "wait/mine_coal loop").
+    if field("end_portal_active"):
+        return "end_dragon"
     if field("powder_stowed") and not field("end_portal_active"):
         return "stronghold"
     tools = field("tools") or {}

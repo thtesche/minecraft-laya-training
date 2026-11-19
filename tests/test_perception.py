@@ -1056,7 +1056,7 @@ class PhasePersonaTest(unittest.TestCase):
     def test_the_banked_powder_turns_the_overworld_to_the_stronghold(self) -> None:
         # The stronghold phase runs from the stow until the end portal stands active; both the
         # object and the logged dict must say so, and the Nether still owns its own sentence.
-        from mlaya.perception import PHASE_NETHER, PHASE_STRONGHOLD, GameState, phase_persona
+        from mlaya.perception import PHASE_END, PHASE_NETHER, PHASE_STRONGHOLD, GameState, phase_persona
         state = {"dimension": "minecraft:overworld", "powder_stowed": True}
         self.assertEqual(phase_persona(state), PHASE_STRONGHOLD)
         g = GameState(dimension="minecraft:overworld", powder_stowed=True)
@@ -1064,6 +1064,12 @@ class PhasePersonaTest(unittest.TestCase):
         self.assertEqual(phase_persona(GameState.from_state(g.as_state())), PHASE_STRONGHOLD)
         g.end_portal_active = True
         self.assertNotEqual(phase_persona(g), PHASE_STRONGHOLD)
+        # The portal standing hands the run to the End, kit or no kit: run278 it8-13 held at the
+        # frame for the night sleep that pins the respawn while the phase read "diamond_kit" with a
+        # wooden pickaxe in hand, and the observer called the hold a loop.
+        self.assertEqual(phase_persona(g), PHASE_END)
+        self.assertEqual(phase_persona({"dimension": "minecraft:overworld",
+                                       "end_portal_active": True}), PHASE_END)
         self.assertEqual(phase_persona({"dimension": "minecraft:the_nether",
                                         "powder_stowed": True}), PHASE_NETHER)
 
