@@ -7619,6 +7619,46 @@ class StrongholdPhaseTest(unittest.TestCase):
         self.assertEqual(a.tool, "use_container")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), overflow)
 
+    def test_at_the_powder_lid_the_withdraw_owns_the_tick(self) -> None:
+        # Live, run291 it35-52: six `take_blaze_powder` ticks each resolved to a navigate onto the
+        # chest, and on the tick after every arrival the model took the hunt, a mine or the walk
+        # home instead - the bot crossed the lid nine times, `powder_bank` stayed 16, carried
+        # powder 0, sixteen eyes owed. Standing over the cell that holds the powder, nothing that
+        # walks away is on the offer.
+        g = self._home(ender_pearl=5, mobs=[("enderman", "hostile", 12, 18.0)])
+        g.powder_cells = (self.CHEST,)
+        self.assertEqual(candidates(g), ["take_blaze_powder"])
+        a = resolve("take_blaze_powder", g)
+        self.assertEqual(a.tool, "use_container")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.CHEST)
+
+    def test_the_lid_gate_does_not_walk_when_the_powder_is_elsewhere(self) -> None:
+        # The gate only owns the tick at the lid. Away from it the step is still the walk there,
+        # and the hunt rides along with it - run291's loop was the model leaving the lid, not the
+        # offer missing the withdraw.
+        g = self._home(ender_pearl=5, mobs=[("enderman", "hostile", 12, 18.0)])
+        overflow = (-190, -46, -100)
+        g.powder_cells = (overflow,)
+        self.assertIn("hunt_enderman", candidates(g))
+        a = resolve("take_blaze_powder", g)
+        self.assertEqual(a.tool, "navigate")
+        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), overflow)
+
+    def test_a_refused_lid_gives_the_tick_back(self) -> None:
+        # The stuck guard's cooldown is the anti-deadlock: a lid the ground keeps refusing must not
+        # hold the run at the chest forever.
+        g = self._home(ender_pearl=5, mobs=[("enderman", "hostile", 12, 18.0)])
+        g.powder_cells = (self.CHEST,)
+        g.stuck_labels = frozenset({"take_blaze_powder"})
+        self.assertIn("hunt_enderman", candidates(g))
+
+    def test_a_pack_that_can_craft_does_not_wait_behind_the_lid(self) -> None:
+        # The gate closes only when nothing can be crafted yet: a pack that already holds powder
+        # and a pearl crafts the eyes where it stands instead of opening the chest for more.
+        g = self._home(ender_pearl=5, blaze_powder=2, mobs=[("enderman", "hostile", 12, 18.0)])
+        g.powder_cells = (self.CHEST,)
+        self.assertIn("craft_ender_eye", candidates(g))
+
     def test_the_enderman_hunt_is_offered_when_the_fight_is_safe(self) -> None:
         g = self._home(mobs=[("enderman", "hostile", 12, 18.0)])
         self.assertIn("hunt_enderman", candidates(g))

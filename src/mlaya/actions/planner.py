@@ -867,6 +867,20 @@ def candidates(gs: GameState) -> list[str]:
     # sleep to reset the spawn). The chain lives in `stronghold.stronghold_candidates`,
     # Overworld-gated there, so it stays silent while a powder top-up runs the bot through the gate.
     if nether_expedition_complete(gs):
+        # The powder the haul banked at the gate chest is the only source of the eyes this phase
+        # owes, and every other step on the offer walks away from the lid. Live, run291 it35-52:
+        # six `take_blaze_powder` ticks each resolved to a navigate onto the chest, and on the tick
+        # after every arrival the model took the hunt, a mine or the walk home instead - the bot
+        # crossed the lid nine times, `powder_bank` stayed 16, carried powder 0, sixteen eyes owed.
+        # Standing over a cell that holds powder, the withdraw owns the tick; the stuck guard's
+        # cooldown is what lets the run move on when the lid itself keeps refusing. A pack that
+        # already carries powder crafts the eyes from it, so the gate only closes the lid when
+        # nothing can be crafted yet - otherwise the craft it could run this tick waits behind the
+        # withdraw.
+        if (_take_powder_wanted(gs) and not _can_craft_ender_eye(gs)
+                and _powder_lid_underfoot(gs)
+                and "take_blaze_powder" not in gs.stuck_labels):
+            return ["take_blaze_powder"]
         out.extend(stronghold_candidates(gs))
         # --- Phase 5: the End fight (the step after the stronghold sleep) ---
         # Once the respawn is pinned at the frame the run no longer stops here: a short window fills

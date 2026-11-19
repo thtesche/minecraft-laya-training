@@ -275,6 +275,29 @@ def _frame_cell(gs: GameState) -> tuple[int, int, int] | None:
     return gs.stronghold_frame
 
 
+def _powder_cells(gs: GameState) -> list[tuple[int, int, int]]:
+    """The chest cells the loop remembers holding the banked blaze powder.
+
+    `stow_blaze_powder` records the cell a deposit actually reached (`gs.powder_cells`,
+    `Agent._note_stow`), which is not always `chest_pos`; a state that never booked a stow falls
+    back to the main chest. Empty cells are dropped by `_note_take_powder`, so an empty list means
+    no lid is known to hold powder.
+    """
+    cells = [tuple(c) for c in gs.powder_cells]
+    if cells:
+        return cells
+    return [tuple(gs.chest_pos)] if gs.chest_pos else []
+
+
+def _powder_lid_underfoot(gs: GameState) -> bool:
+    """Whether the body stands over a chest the banked powder is in.
+
+    The same reach the deposit rule uses (`_near_cell`), so the withdraw is a lid the bot is
+    already at, never a journey: the walk belongs to `go_home`/`stow_surplus`.
+    """
+    return any(_near_cell(gs, cell) for cell in _powder_cells(gs))
+
+
 def _take_powder_wanted(gs: GameState) -> bool:
     """Whether the banked blaze powder has to come back out of the chest to craft eyes.
 
@@ -619,7 +642,9 @@ def resolve_stronghold(label: str, gs: GameState) -> Action | None:
         # remembered cell has come up empty. The banked tracking only follows food, not powder,
         # so the exact count is not read: the withdraw asks for what the eyes owe and takes what
         # the chest holds.
-        cells = [tuple(c) for c in gs.powder_cells] or [tuple(gs.chest_pos)]
+        cells = _powder_cells(gs)
+        if not cells:
+            return None
         cell = next((c for c in cells if _near_cell(gs, c)), cells[0])
         if not _near_cell(gs, cell):
             cx, cy, cz = cell
