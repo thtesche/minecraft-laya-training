@@ -2336,6 +2336,29 @@ class OrbitGuardTest(unittest.TestCase):
                                (0.1 if i % 2 == 0 else 0.0, 63.0, 0.0))
         self.assertEqual(agent._stuck_off, {})
 
+    def test_a_label_that_never_walks_is_not_orbiting(self) -> None:
+        # Live, run291: every `eat_food` tick reported `pos_delta` 0.0 while the roam walked
+        # hundreds of blocks between meals. The trail summed those gaps - 2207 walked, 384 net -
+        # and withheld the meal twice, which sent the loop to System 2 eight times for a hunger
+        # it was already fixing. A tick the label did not walk is not its orbit.
+        agent = self._agent()
+        for i in range(ORBIT_WINDOW * 2):
+            delta = self._nothing()
+            delta["pos_delta"] = 0.0
+            delta["food_delta"] = 4.0
+            agent._track_orbit("eat_food", delta,
+                               self.CELL_A if i % 2 == 0 else self.CELL_B)
+        self.assertEqual(agent._orbit_path, {})
+        self.assertEqual(agent._stuck_off, {})
+        self.assertEqual(agent.log, [])
+
+    def test_a_label_that_walks_is_still_measured(self) -> None:
+        # The exemption reads the label's own tick, not the label: the same ping-pong with a
+        # `pos_delta` on every tick still fills the window and is withheld.
+        agent = self._agent()
+        self._pingpong(agent, "explore", ORBIT_WINDOW)
+        self.assertEqual(agent._stuck_off.get("explore"), STUCK_COOLDOWN)
+
     def test_a_tick_that_gains_inventory_starts_the_window_over(self) -> None:
         # A bot working a vein bounces over a few cells too; a gained item is real progress,
         # however it moved, so the window resets and the gather is never read as orbiting.

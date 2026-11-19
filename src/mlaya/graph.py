@@ -3117,6 +3117,13 @@ class Agent:
         however it moved, so it starts the window over - a bot working a vein or a grove bounces
         over a few cells too, and only the fruitless bounce is caught. The steps that exist to pass
         time are exempt, like the idle guard, and a label already withheld is not counted against.
+
+        A tick whose own action did not move the body is no evidence either: the trail measures the
+        distance between the cells a label ended on, and when the label itself stands still that
+        distance belongs to whatever ran in between. Live, run291: every `eat_food` tick reported
+        `pos_delta` 0.0, yet the window summed the 2207 blocks the roam walked between meals and
+        read the meal as an orbit - twice, which took eating off the offer and paid eight System-2
+        calls for a hunger the loop was already fixing.
         """
         if label in PASS_TIME_LABELS:
             self._orbit_path.pop(label, None)
@@ -3131,6 +3138,10 @@ class Agent:
         # meal eaten. A tick that walks five blocks and gives three cobblestone away has not got
         # anywhere, and the window reset on it 39 times so the guard never filled.
         if _yielded(delta) or (delta or {}).get("dimension_changed"):
+            self._orbit_path.pop(label, None)
+            return
+        if (delta or {}).get("pos_delta", 0.0) < 0.5:
+            # The label did not walk this tick, so the gap to the previous one is not its orbit.
             self._orbit_path.pop(label, None)
             return
         trail = self._orbit_path.setdefault(label, [])
