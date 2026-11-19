@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from mlaya import perception
 from mlaya.perception import (EDIBLE_NAMES, FORTRESS_RADIUS, GROUND_LIMIT, GROUND_NAMES,
                               NETHER_GROUND_LIMIT, NETHER_GROUND_NAMES,
                               RESCUE_GROUND_LIMIT, RESCUE_GROUND_NAMES,
@@ -1742,6 +1743,44 @@ class ParseBlockAboveTest(unittest.TestCase):
         self.assertIsNone(parse_block_above("[INVENTORY_FULL] No free slot"))
         self.assertIsNone(parse_block_above(""))
         self.assertIsNone(parse_block_above(None))
+
+
+class FrameConfirmationParseTest(unittest.TestCase):
+    """A frame cell is a coordinate the answer *names as the frame block*.
+
+    run274 it0: the new run drained the `navigate` the previous run left running, and the fallback
+    that accepted any triple read that walk's start cell (2080, 64, 751) as the stronghold's
+    address - the loop then had an address for a portal 74 blocks below it.
+    """
+
+    LOCATE = {"phase": "locate", "searchId": "stronghold",
+              "estimate": {"x": 2080.04, "z": 751.98},
+              "confirmation": {"block": "end_portal_frame", "position": {"x": 2090, "y": -10, "z": 720}}}
+
+    def test_the_locate_confirmation_is_the_cell(self) -> None:
+        self.assertEqual(perception.parse_frame_confirmation(self.LOCATE), (2090, -10, 720))
+
+    def test_a_nested_confirmation_is_still_the_cell(self) -> None:
+        payload = {"response": {"data": {"result": {"output": {"result": self.LOCATE}}}}}
+        self.assertEqual(perception.parse_frame_confirmation(payload), (2090, -10, 720))
+
+    def test_a_ledger_row_is_read_as_json(self) -> None:
+        row = {"response": {"data": {"result": {"query": {"rows": [[json.dumps(self.LOCATE)]]}}}}}
+        self.assertEqual(perception.parse_frame_confirmation(row), (2090, -10, 720))
+
+    def test_an_estimate_without_a_confirmation_is_not_a_cell(self) -> None:
+        self.assertIsNone(perception.parse_frame_confirmation(
+            {"phase": "estimate", "estimate": {"x": 2080.04, "z": 751.98}}))
+
+    def test_a_walk_position_is_not_a_frame(self) -> None:
+        navigate = {"navigation": {"target": {"x": -10, "y": 65, "z": 59},
+                                   "start": {"x": 2080.34, "y": 64, "z": 751.49},
+                                   "end": {"x": -9.57, "y": 66, "z": 59.44}},
+                    "status": "succeeded"}
+        self.assertIsNone(perception.parse_frame_confirmation(navigate))
+
+    def test_a_frame_block_named_without_coordinates_is_not_a_cell(self) -> None:
+        self.assertIsNone(perception.parse_frame_confirmation({"block": "end_portal_frame"}))
 
 
 if __name__ == "__main__":

@@ -6698,11 +6698,17 @@ class NetherCrossingTest(unittest.TestCase):
                          ["drained_frame_confirmation"])
 
     def test_a_drained_result_without_a_frame_books_nothing(self) -> None:
+        # run274 it0: the drained settlement was the previous run's `navigate`, and its start cell
+        # (2080, 64, 751) is a body position, not a portal.
         agent = self._agent()
         agent.log = []
         agent._stronghold_frame = None
-        settled = SimpleNamespace(ok=True, action_id="9", data={"status": "succeeded"},
-                                  text="Dropped 12 andesite.")
+        settled = SimpleNamespace(ok=True, action_id="110a77bd",
+                                  data={"navigation": {"target": {"x": -10, "y": 65, "z": 59},
+                                                       "start": {"x": 2080.34, "y": 64, "z": 751.49},
+                                                       "end": {"x": -9.57, "y": 66, "z": 59.44}},
+                                        "status": "succeeded"},
+                                  text="Navigation succeeded.")
         agent._note_drained(SimpleNamespace(data=None, text="", drained=(settled,)))
         self.assertIsNone(agent._stronghold_frame)
         self.assertEqual(agent.log, [])

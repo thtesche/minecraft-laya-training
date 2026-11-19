@@ -448,6 +448,10 @@ STRONGHOLD_FRAME_SQL = (
     "SELECT payload_json FROM events WHERE event_type = 'stronghold_located' "
     "ORDER BY event_id DESC LIMIT 1")
 
+# The block a locate confirmation names when the frame is real. A settlement that merely carries a
+# coordinate - a navigate's start, a body position - does not name it, and is not a frame.
+END_PORTAL_FRAME_BLOCK = "end_portal_frame"
+
 # The checkpoint the loop writes itself (`graph.Agent._write_checkpoint`): the counters no ledger
 # can prove, such as how many pearl waves this run has already spent.
 CHECKPOINT_PREFIX = "mlaya checkpoint:"
@@ -580,7 +584,12 @@ def parse_frame_confirmation(payload: Any) -> tuple[int, int, int] | None:
                     confirmed = cell(node["confirmation"])
                     if confirmed is not None:
                         return confirmed
-                found = found or cell(node)
+                # A bare coordinate is a frame cell only where the same object names the frame
+                # block. Every settlement carries a `position` for where the body stood: run274
+                # it0 drained a `navigate` and booked its start cell (2080, 64, 751) as the
+                # stronghold's address, because the fallback read any triple as a frame.
+                if node.get("block") == END_PORTAL_FRAME_BLOCK:
+                    found = found or cell(node)
                 stack.extend(node.values())
             elif isinstance(node, list):
                 stack.extend(node)
