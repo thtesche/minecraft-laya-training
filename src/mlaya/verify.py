@@ -150,13 +150,13 @@ INVENTORY_LABELS = {
     # read as a wasted tick - and a tick the verifier calls wasted is dropped from the corpus,
     # so the fine-tune never sees the state in which a stray bed is being fetched.
     "take_bed",
-    # The four crafts that had no rule at all. Live, run269 it131: `craft_pickaxe_spare` answered
+    # The crafts that had no rule at all. Live, run269 it131: `craft_pickaxe_spare` answered
     # ok with `diamond: -3, stick: -2, diamond_pickaxe: +1` and the verifier called it a wasted
     # tick - the exact step `_expedition_ready` waits for, so the tick that clears the gate's last
     # requirement reads as doing nothing. Across the archived logs 93 of 95 `craft_pickaxe_spare`,
-    # 55 of 65 `craft_bowl`, 14 of 26 `craft_stew` and 6 of 9 `craft_smoker` ticks landed their
-    # item in the pack and were counted as no-progress.
-    "craft_pickaxe_spare", "craft_bowl", "craft_stew", "craft_smoker",
+    # 55 of 65 `craft_bowl` and 14 of 26 `craft_stew` ticks landed their item in the pack and were
+    # counted as no-progress.
+    "craft_pickaxe_spare", "craft_bowl", "craft_stew",
     "craft_bed_stronghold",
 }
 

@@ -10130,16 +10130,19 @@ class PortalLitIsAWorldFactTest(unittest.TestCase):
         self.assertIn("craft_flint_and_steel", candidates(g))
 
 
-class SmokerBesideTheFurnaceTest(unittest.TestCase):
-    """A smoker is not a better furnace, it is a different one, and it stands next to it.
+class CookingStandsOnTheFurnaceTest(unittest.TestCase):
+    """The furnace is the only station the host will open, so it is the only one the loop builds.
 
-    The user proposed it: a food station at the base, so the bot comes home and cooks in bulk what
-    it gathered out there. The correction of the day was that a smoker processes food only - which
-    is exactly why it belongs *beside* the furnace rather than replacing it. The tech tree still
-    needs a furnace for iron, and a smoker would refuse the ore.
+    A food station at the base was the user's shape for the run, and a smoker would have doubled
+    the cook rate. The host's `smelt_item` disagrees: it checks the named cell for a *furnace*
+    and answers `[FURNACE_NOT_PRESENT] The exact station cell contains smoker, not a furnace`
+    for anything else (live, run288 it123/it126 - the loop crafted the smoker, stood it beside
+    the furnace, then had two cooks refused at its cell). A facility the action cannot use is a
+    furnace and a tick spent on nothing, so the craft and the placement are gone and every cook
+    names the furnace.
 
-    Cooking is the only smelting this run does in bulk - live, twenty cooked items in twenty ticks,
-    one per tick at eighteen seconds - and every one of them is food.
+    Cooking is still the only smelting this run does in bulk - live, twenty cooked items in
+    twenty ticks - and every one of them is food.
     """
 
     BASE = (-197, -47, -98)
@@ -10147,8 +10150,6 @@ class SmokerBesideTheFurnaceTest(unittest.TestCase):
     SMOKER = (-196, -46, -99)
 
     def _base_with_raw_meat(self, **inv) -> GameState:
-        # The wood the run already hoards also carries the smoker recipe: server's recipe is
-        # four logs plus a carried furnace, and one more furnace stays behind as station.
         g = at_home(geared(oak_log=12, **inv))
         g.chest_pos = (self.BASE[0] + 2, self.BASE[1], self.BASE[2] + 2)
         g.furnace_pos = self.FURNACE
@@ -10156,116 +10157,54 @@ class SmokerBesideTheFurnaceTest(unittest.TestCase):
         g.food = 20.0
         return g
 
-    def test_the_smoker_stands_beside_the_furnace(self) -> None:
-        # The furnace takes (bx, by+1, bz-1), the chest sits at bz+1 and the portal's frame plane
-        # runs along z == bz. The one cell free of all three is next to the furnace on the other
-        # side of x - which is where the user wanted the bot to come back and cook.
-        from mlaya.actions import _smoker_site
-        g = self._base_with_raw_meat()
-        self.assertEqual(_smoker_site(g), self.SMOKER)
-        self.assertNotEqual(_smoker_site(g), g.furnace_pos)
-
-    def test_a_bed_on_that_cell_still_refuses(self) -> None:
-        from mlaya.actions import _smoker_site
-        g = self._base_with_raw_meat()
-        g.resources = {"white_bed": [BlockHit("white_bed", 1.0,
-                                              self.SMOKER[0], self.SMOKER[1],
-                                              self.SMOKER[2], 1.0)]}
-        self.assertIsNone(_smoker_site(g))
-
-    def test_it_is_built_once_there_is_food_a_second_furnace_and_four_logs(self) -> None:
-        # The server's recipe, not a fiction: four logs *and* one furnace go into the smoker,
-        # which is why a second furnace has to be carried - run78's "four planks and a coal"
-        # was answered `[CRAFT_MATERIALS_MISSING] oak_log x3` against one carried log.
-        g = self._base_with_raw_meat(beef=12, furnace=2)
-        self.assertIn("craft_smoker", candidates(g))
-        a = resolve("craft_smoker", g)
-        self.assertEqual(a.tool, "craft_item")
-        self.assertEqual(a.args["items"], [{"item_name": "smoker"}])
-
-    def test_a_standing_furnace_is_the_station_the_recipe_leaves_behind(self) -> None:
-        # The furnace in the recipe is a material, so the craft must leave a station behind - but
-        # a furnace *standing* at the base is already one. Requiring two in the pack made the
-        # smoker unreachable for every run: the run crafts one furnace and `place_furnace` stands
-        # it there, so the carried count is zero from then on (live, run247: one furnace for 51
-        # of 62 ticks, never a second, never a smoker).
-        g = self._base_with_raw_meat(beef=12, furnace=1)
-        self.assertIn("craft_smoker", candidates(g))
-        a = resolve("craft_smoker", g)
-        self.assertEqual(a.args["items"], [{"item_name": "smoker"}])
-
-    def test_one_furnace_and_no_station_is_still_not_enough(self) -> None:
-        # With nothing standing, the recipe's furnace would be the only station cooking has.
-        g = self._base_with_raw_meat(beef=12, furnace=1)
-        g.furnace_pos = None
-        self.assertNotIn("craft_smoker", candidates(g))
-        self.assertIsNone(resolve("craft_smoker", g))
-
-    def test_the_second_furnace_is_crafted_for_the_recipe(self) -> None:
-        # The other half of the accounting: the base furnace stands, the pack is empty, so the
-        # craft that the old gate suppressed forever is offered again - exactly when the recipe
-        # can run, and not before.
-        g = self._base_with_raw_meat(beef=12, cobblestone=40)
-        self.assertIn("craft_furnace", candidates(g))
-        a = resolve("craft_furnace", g)
-        self.assertEqual(a.args["items"], [{"item_name": "furnace"}])
-        g.inventory["furnace"] = 1                  # the craft produced it
-        self.assertIn("craft_smoker", candidates(g))
-        self.assertNotIn("craft_furnace", candidates(g))   # one in hand is enough now
-
-    def test_no_second_furnace_before_the_recipe_can_run(self) -> None:
-        # No meat, or no logs: the cobble is not spent on a facility the run cannot use yet.
-        g = self._base_with_raw_meat(cobblestone=40)
-        self.assertNotIn("craft_furnace", candidates(g))
-        g = self._base_with_raw_meat(beef=12, cobblestone=40)
-        g.inventory["oak_log"] = 3
-        self.assertNotIn("craft_furnace", candidates(g))
-
-    def test_the_recipe_wants_logs_and_a_planks_hoard_does_not_answer_for_them(self) -> None:
-        # run78 carried oak_log 1 and the server named `oak_log x3` missing - four logs are
-        # the recipe, and planks (however many `_plank_units` counts) are not part of it.
-        g = self._base_with_raw_meat(beef=12, furnace=2)
-        g.inventory["oak_log"] = 1
-        self.assertNotIn("craft_smoker", candidates(g))
-        self.assertIsNone(resolve("craft_smoker", g))
-
-    def test_without_food_waiting_there_is_nothing_to_speed_up(self) -> None:
-        g = self._base_with_raw_meat(cobblestone=40, furnace=2)
-        self.assertNotIn("craft_smoker", candidates(g))
-
-    def test_craft_first_then_place_then_never_again(self) -> None:
-        # The order is the point: there is nothing to stand until the recipe has run, so
-        # `place_smoker` is not offered against a base the bot is merely standing next to.
-        g = self._base_with_raw_meat(beef=12, furnace=2)
-        self.assertIn("craft_smoker", candidates(g))
-        self.assertNotIn("place_smoker", candidates(g))
-
-        g.inventory["smoker"] = 1                 # the recipe produced one
-        self.assertIn("place_smoker", candidates(g))
-        a = resolve("place_smoker", g)
-        self.assertEqual(a.tool, "place_block")
-        self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.SMOKER)
-
-        g.smoker_pos = self.SMOKER                 # and it is latched on that success
-        self.assertNotIn("place_smoker", candidates(g))
-        self.assertNotIn("craft_smoker", candidates(g))
-
-    def test_food_goes_into_the_smoker_and_ore_still_goes_into_the_furnace(self) -> None:
-        # The split that matters. A smoker would refuse raw iron, so passing its cell to
-        # `smelt_iron` would trade a faster cook for a tech tree that cannot finish.
+    def test_a_standing_smoker_is_not_a_station(self) -> None:
+        # The cell the cook names is the furnace's even when a smoker stands next to it: the
+        # run288 refusal came from the loop aiming a cook at the smoker it had just placed.
+        from mlaya.actions import _cooking_station
         g = self._base_with_raw_meat(beef=12, coal=3)
         g.smoker_pos = self.SMOKER
+        self.assertEqual(_cooking_station(g), self.FURNACE)
         cook = resolve("cook_food", g)
-        self.assertEqual((cook.args["x"], cook.args["y"], cook.args["z"]), self.SMOKER)
+        self.assertEqual((cook.args["x"], cook.args["y"], cook.args["z"]), self.FURNACE)
 
-        g.inventory["raw_iron"] = 3
+    def test_ore_and_food_share_that_one_station(self) -> None:
+        g = self._base_with_raw_meat(beef=12, coal=3, raw_iron=3)
+        g.smoker_pos = self.SMOKER
         iron = resolve("smelt_iron", g)
         self.assertEqual((iron.args["x"], iron.args["y"], iron.args["z"]), self.FURNACE)
 
-    def test_without_a_smoker_food_still_cooks_in_the_furnace(self) -> None:
-        g = self._base_with_raw_meat(beef=12, coal=3)
-        cook = resolve("cook_food", g)
-        self.assertEqual((cook.args["x"], cook.args["y"], cook.args["z"]), self.FURNACE)
+    def test_the_smoker_is_never_crafted_or_placed(self) -> None:
+        # Every ingredient the old recipe wanted, and no offer: the host cannot cook in one, so
+        # the craft would only cost four logs and a furnace.
+        g = self._base_with_raw_meat(beef=12, furnace=2)
+        self.assertNotIn("craft_smoker", candidates(g))
+        self.assertNotIn("place_smoker", candidates(g))
+        self.assertIsNone(resolve("craft_smoker", g))
+        self.assertIsNone(resolve("place_smoker", g))
+
+    def test_no_second_furnace_is_mined_for_a_recipe_that_cannot_run(self) -> None:
+        # The furnace the base already has used to be worth a second one in the pack for the
+        # smoker recipe. With no smoker, cobble is not spent on a spare the loop never uses.
+        g = self._base_with_raw_meat(beef=12, cobblestone=40)
+        self.assertNotIn("craft_furnace", candidates(g))
+
+    def test_a_furnace_is_still_crafted_when_the_pack_has_none(self) -> None:
+        g = self._base_with_raw_meat(beef=12, cobblestone=40)
+        g.furnace_pos = None
+        self.assertIn("craft_furnace", candidates(g))
+        a = resolve("craft_furnace", g)
+        self.assertEqual(a.args["items"], [{"item_name": "furnace"}])
+
+    def test_a_standing_smoker_keeps_the_chest_picker_off_its_cell(self) -> None:
+        # `smoker_pos` is not a station any more, but it is still a block the base layout must
+        # not build on: the picker skips the cell it stands on like it skips the furnace.
+        from mlaya.actions import _chest_candidates
+        g = self._base_with_raw_meat()
+        cell = (self.BASE[0], self.BASE[1] + 1, self.BASE[2] + 1)   # the layout's own chest cell
+        g.smoker_pos = cell
+        self.assertNotIn(cell, _chest_candidates(g))
+        g.smoker_pos = None
+        self.assertIn(cell, _chest_candidates(g))
 
     def test_away_from_the_base_nothing_cooks_without_a_carried_furnace(self) -> None:
         # run78's eight `[WORKSTATION_NOT_CARRIED]`: the station stood at the base and the cook

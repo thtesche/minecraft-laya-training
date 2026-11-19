@@ -3721,74 +3721,6 @@ def _furnace_args(gs: GameState) -> dict | None:
     return {"block_name": "furnace", "x": fx, "y": fy, "z": fz}
 
 
-def _smoker_site(gs: GameState) -> tuple[int, int, int] | None:
-    """The cell the base smoker goes on: beside the furnace, clear of the chest and the frame.
-
-    The furnace takes `(bx, by+1, bz-1)`, the chest sits at `(bx, by+1, bz+1)` and the portal's
-    frame plane runs along `z == bz`, so the cell next to the furnace on the other side of x is
-    the one that is free of all three. The bed refusal is the furnace's: a bed on that cell would
-    answer `[PLACE_TARGET_OCCUPIED]`, and `make_room` would dig away the respawn bed to clear it.
-    """
-    if gs.base is None:
-        return None
-    bx, by, bz = gs.base
-    cell = (bx + 1, by + 1, bz - 1)
-    if any(hit.pos == cell for hit in gs.resources.get("white_bed", [])):
-        return None
-    return cell
-
-
-def _smoker_worth_placing(gs: GameState) -> bool:
-    """Whether standing a smoker at the base is the next thing to do there.
-
-    Food only, and only once there is food to cook and a way to light it. Cooking is the one
-    thing this run does in bulk - live, twenty cooked items in twenty ticks, one per tick at
-    eighteen seconds - and it is all food, so the station that doubles the smelt rate is worth
-    the recipe. The materials are asked by `craft_smoker` alone (`_smoker_craft_ready`): the
-    placement step must not refuse a smoker it already carries because of a material question
-    it no longer answers.
-    """
-    if gs.base is None or gs.smoker_pos is not None or not _at_base(gs):
-        return False
-    return _first_cookable(gs.inventory) is not None
-
-
-def _smoker_craft_ready(gs: GameState) -> bool:
-    """The server's smoker recipe: four logs *and* a carried furnace - and a station left over.
-
-    "four planks and a coal" was never a smoker: live, run78 offered the craft with one log
-    carried and the server answered `[CRAFT_MATERIALS_MISSING] oak_log x3` - the recipe wants
-    four logs plus one furnace, and that furnace is a material too. What the recipe must not
-    take away is the station `cook_food` and `smelt_iron` run on, hence `SMOKER_FURNACES` total.
-
-    Total, not carried. The old reading demanded two furnaces *in the pack*, and no run can ever
-    hold two: `craft_furnace` is offered only while no furnace is reachable, so the one furnace a
-    run makes ends up standing at the base and the carried count is zero from then on. Live,
-    run247: one furnace carried for 51 of 62 ticks, never a second, never a smoker. A furnace
-    that stands is a station the recipe cannot eat, so it counts.
-    """
-    inv = gs.inventory
-    carried = inv.get("furnace", 0)
-    return (_has(inv, "crafting_table") and _logs(inv) >= SMOKER_LOGS
-            and carried >= 1
-            and carried + (1 if gs.furnace_pos is not None else 0) >= SMOKER_FURNACES)
-
-
-def _smoker_furnace_owed(gs: GameState) -> bool:
-    """Whether the smoker recipe still needs a furnace the pack does not have.
-
-    The other half of the same accounting: the recipe consumes a carried furnace, and the run
-    crafts exactly one, which `place_furnace` stands at the base. With nothing left in hand the
-    craft is blocked for the rest of the run, so the second furnace has to be made on purpose -
-    but only when the rest of the recipe is already in hand, so the cobble and the tick are not
-    spent on a facility the run cannot use yet.
-    """
-    inv = gs.inventory
-    return (gs.furnace_pos is not None and gs.smoker_pos is None and _at_base(gs)
-            and not _has(inv, "smoker") and inv.get("furnace", 0) == 0
-            and _logs(inv) >= SMOKER_LOGS and _first_cookable(inv) is not None)
-
-
 def _furnace_worth_placing(gs: GameState) -> bool:
     """Whether standing the carried furnace at the base is the next thing to do there.
 
@@ -3878,17 +3810,21 @@ def _gold_smelt_room(gs: GameState) -> bool:
 
 
 def _cooking_station(gs: GameState) -> tuple[int, int, int] | None:
-    """The cell food should be smelted at: the smoker if one stands at the base, else the furnace.
+    """The cell food is cooked at: the furnace standing at the base, and nothing else.
 
-    A smoker is not a better furnace, it is a different one: it processes *food only* and runs at
-    double speed. The tech tree still needs the furnace for iron, so the smoker stands beside it
-    rather than replacing it - and that is the user's shape for the base, the bot coming home to
-    cook in bulk what it gathered out there, instead of cooking one item per tick wherever it
-    happens to stand.
+    A smoker would cook food twice as fast, and the base layout has room for one beside the
+    furnace - but the host's `smelt_item` opens a *furnace* window and answers
+    `[FURNACE_NOT_PRESENT] The exact station cell contains smoker, not a furnace` for any other
+    block (live, run288 it123/it126: the loop built the smoker it had planned for, then cooked
+    twice into it and got refused both times). Naming the smoker's cell is therefore a refusal
+    per cook, and the only station the action can open is the furnace.
+
+    `smoker_pos` still tracks a smoker that stands, because it is a block the base plan has to
+    keep clear of - it just never cooks in it.
     """
     if not _at_base(gs):
         return None
-    return gs.smoker_pos if gs.smoker_pos is not None else gs.furnace_pos
+    return gs.furnace_pos
 
 
 def _cooking_reach(gs: GameState) -> bool:
@@ -3921,8 +3857,9 @@ def _smelt_args(gs: GameState, item_name: str, count: int, fuel_name: str,
     the base from the far side of the map, answered ok. The temporary workstation is the branch that
     was always there and always worked, so away from the base it is simply the right one.
 
-    `station` is passed rather than inferred: iron has to go in the furnace and food in the
-    smoker, and a smoker would refuse the ore.
+    `station` is passed rather than inferred so the caller states which block the input belongs
+    in: ore and food both go into the furnace, and a cell that is not one is refused by the host
+    before the smelt ever starts.
     """
     args: dict = {"item_name": item_name, "count": count, "fuel_item_name": fuel_name}
     if station is None:

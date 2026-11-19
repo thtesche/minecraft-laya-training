@@ -21,8 +21,6 @@ CRITERIA: dict[str, str] = {
     "craft_stone_pickaxe": "craft a stone pickaxe at a crafting table from cobblestone and sticks",
     "mine_iron": "mine iron ore for raw iron using the stone pickaxe the bot carries",
     "mine_coal": "mine coal ore to use as furnace fuel",
-    "craft_smoker": "craft a smoker at the base from four logs and a carried furnace: every cook after it runs at double speed, and the furnace standing beside it stays the workstation for iron, which a smoker refuses. The recipe eats a furnace, so it is only worth it when the pack has one to spare",
-    "place_smoker": "stand the carried smoker next to the furnace at the base, where the cooking is done; the furnace stays for ore",
     "craft_furnace": "craft a furnace at a crafting table from eight cobblestone",
     "smelt_iron": "smelt raw iron into iron ingots in the furnace the bot carries; one pass loads at most 3 raw iron onto one coal",
     "craft_iron_pickaxe": "craft an iron pickaxe at a crafting table from three iron ingots and sticks",
@@ -214,7 +212,7 @@ SMELT_BATCH = 3
 # cook in the Nether-prep lull is not interleaved with mining the way iron smelting is - it should
 # clear the stock in a few actions, not thirty (run247 cooked ~21 meat three at a time). One coal
 # unit smelts eight (`_furnace_fuel`), and a furnace at ~10 s/item cooks eight in ~80 s, well
-# inside the action wait budget (a smoker halves it); so eight is one coal's worth per action.
+# inside the action wait budget; so eight is one coal's worth per action.
 # Wood is unaffected - its capacity of one binds before this cap does.
 COOK_BATCH = 8
 
@@ -530,12 +528,6 @@ _GEAR_KEEP = ("golden_helmet",)
 # all stand there, and the bot walks back to it to deploy them. Eight planks make a chest, which
 # is how a full pack sheds surplus blocks without scattering them on the ground.
 CHEST_ITEM = "chest"
-SMOKER_LOGS = 4        # the server's smoker recipe: four logs *and* one carried furnace
-# Furnaces the base needs *in total*, not in the pack: one is consumed by the recipe, one stays
-# as the station for `cook_food` and `smelt_iron`. Counting them as carried was the reason the
-# smoker never got built - the run crafts exactly one furnace, and once it is stood at the base
-# the carried count is zero forever.
-SMOKER_FURNACES = 2
 CHEST_PLANKS = 8
 # The wood a run deep underground can break without climbing back to a tree: the plank walls of
 # the stronghold and mineshaft corridors it is standing inside. `collect_block` matches a block
@@ -548,8 +540,8 @@ STRUCTURE_PLANKS = ("oak_planks", "spruce_planks", "birch_planks", "jungle_plank
 # further in sits behind rock, and rock needs a pickaxe.
 PLANK_REACH = 6.0
 # The overflow cells of the base's storage network, in the order they are filled: behind and
-# beside the main chest at `(bx, by+1, bz+1)`, marching in +z -- away from the furnace and the
-# smoker (both at `bz-1`) and from the portal's frame plane (which runs along `z == bz`, so no
+# beside the main chest at `(bx, by+1, bz+1)`, marching in +z -- away from the furnace (at
+# `bz-1`) and from the portal's frame plane (which runs along `z == bz`, so no
 # candidate ever touches it).
 STORAGE_SITES = ((0, 3), (-1, 2), (1, 2), (-1, 1), (1, 1), (-2, 2), (2, 2),
                  (0, 4), (-2, 3), (2, 3), (-2, 1), (2, 1), (-1, 3), (1, 3),

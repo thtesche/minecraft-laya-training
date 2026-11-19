@@ -142,12 +142,11 @@ def candidates(gs: GameState) -> list[str]:
             out.append("place_furnace")
         elif not _stronghold_phase(gs):
             out.append("go_home")
-    # The smoker is the same idea one step on: it does not replace the furnace (ore still needs
-    # that one) but it doubles the rate for the only thing this run smelts in bulk. Offered at the
-    # base only, because the whole point is cooking *at* the base rather than wherever the bot
-    # happened to gather the meat.
-    if _smoker_worth_placing(gs) and _has(inv, "smoker"):
-        out.append("place_smoker")
+    # There is no smoker step. The host's `smelt_item` opens a furnace window and answers
+    # `[FURNACE_NOT_PRESENT]` for every other block, so a smoker standing beside the furnace is a
+    # decoration the loop cannot cook in (live, run288 it123/it126: `cook_food` aimed at the
+    # smoker cell the loop itself had placed, twice refused). A facility the action cannot use
+    # is a tick and a furnace spent on nothing, so the craft and the placement are not offered.
     raw_meat = _first_cookable(inv)
     cook_fuel = _furnace_fuel(inv)
     if ((_has(inv, "furnace") or _furnace_ready(gs)) and raw_meat and not eating
@@ -344,16 +343,13 @@ def candidates(gs: GameState) -> list[str]:
             out.append("craft_table")
         if tier >= 1 and tier < STONE_PICK_TIER and table and cobble >= 3 and _can_sticks(inv, logs, planks):
             out.append("craft_stone_pickaxe")
-        if tier >= 1 and table and cobble >= 8 and (not furnace or _smoker_furnace_owed(gs)):
-            # The second half is not greed: the smoker's recipe eats a carried furnace, and the
-            # run's only furnace is the one `place_furnace` stood at the base. Without this the
-            # craft is offered exactly once per run and the smoker is never built (live, run247:
-            # one furnace carried, no second, no smoker). It fires only when the rest of the
-            # recipe is already in hand, so it cannot become a cobble farm.
+        if tier >= 1 and table and cobble >= 8 and not furnace:
+            # A furnace is only worth the cobble when the pack has none: the one a run makes is
+            # stood at the base as the station, and a second one in the pack is the portable
+            # workstation `smelt_item` needs away from it. (The smoker used to be the reason for
+            # a second furnace here; the host's `smelt_item` will not open one, so that half of
+            # the accounting is gone and this gate cannot become a cobble farm.)
             out.append("craft_furnace")
-        if (tier >= 1 and table and gs.smoker_pos is None and _at_base(gs)
-                and _smoker_craft_ready(gs) and _first_cookable(inv) is not None):
-            out.append("craft_smoker")
         if (_smelting_reach(gs) and raw_iron >= 1 and coal >= 1 and iron < _iron_goal(gs)
                 and _smelt_room(gs, "raw_iron")):
             out.append("smelt_iron")
@@ -1160,21 +1156,6 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         return Action(label, "craft_item",
                       {"items": [{"item_name": "stone_pickaxe"}], "temporary_workstation": True},
                       "craft a stone pickaxe at the carried crafting table")
-    if label == "craft_smoker":
-        if not _smoker_craft_ready(gs) or not _has(inv, "crafting_table"):
-            return None
-        return Action(label, "craft_item",
-                      {"items": [{"item_name": "smoker"}], "temporary_workstation": True},
-                      "craft a smoker so food is cooked faster at the base")
-    if label == "place_smoker":
-        cell = _smoker_site(gs)
-        if (gs.smoker_pos is not None or not _smoker_worth_placing(gs) or cell is None
-                or not _has(inv, "smoker")):
-            return None
-        sx, sy, sz = cell
-        return Action(label, "place_block",
-                      {"block_name": "smoker", "x": sx, "y": sy, "z": sz},
-                      "place the carried smoker beside the furnace at the base")
     if label == "craft_furnace":
         if inv.get("cobblestone", 0) < 8 or not _has(inv, "crafting_table"):
             return None
