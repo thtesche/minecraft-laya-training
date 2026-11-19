@@ -189,9 +189,28 @@ def _at_stronghold(gs: GameState) -> bool:
     from `locate_stronghold` to `activate_end_portal`: a frame loads in a chunk a hundred metres
     away, the label came onto the offer, resolved to nothing, and the tick went to `eat_food`
     instead (run173 it72, it76).
+
+    The distance is measured twice on purpose. The host's `navigate` stops at a Pathfinder *node*,
+    an integer block, and calls the walk finished when that node is within `range` of the target
+    cell; the entity position sits up to 0.71 blocks further from the corner than the node the body
+    stood on. A bot the server reports as arrived can therefore read 3.16 m from a frame the same
+    range calls 3 m away. Live, run272 it14-17: four `travel_to_stronghold` ticks "succeeded" at
+    (100.52, 89, 405.37) with `pos_delta` 0 while this test read 3.16 > 3, so `activate_end_portal`
+    never reached the offer, the walk was dropped as idle, and the run wandered 450 m away from the
+    portal it was standing next to.
     """
     distance = _frame_distance(gs)
-    return distance is not None and distance <= STRONGHOLD_ARRIVAL_RANGE
+    if distance is None:
+        return False
+    if distance <= STRONGHOLD_ARRIVAL_RANGE:
+        return True
+    cell = _frame_cell(gs)
+    if cell is None or gs.pos is None:
+        return False
+    x, y, z = gs.pos
+    fx, fy, fz = cell
+    return (math.hypot(math.floor(x) - fx, math.floor(y) - fy, math.floor(z) - fz)
+            <= STRONGHOLD_ARRIVAL_RANGE)
 
 
 def _frame_cell(gs: GameState) -> tuple[int, int, int] | None:

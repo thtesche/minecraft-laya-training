@@ -7836,6 +7836,32 @@ class StrongholdFrameAddressTest(unittest.TestCase):
         self.assertEqual(a.tool, "activate_portal")
         self.assertEqual((a.args["x"], a.args["y"], a.args["z"]), self.FRAME)
 
+    def test_the_node_the_server_stopped_on_counts_as_arrival(self) -> None:
+        # run272 it14-17: the body stood on the Pathfinder node (100,89,405), exactly 3.0 blocks
+        # from the frame cell (98,88,407), while its entity position (100.52, 89.0, 405.37) reads
+        # 3.16. `navigate` reported success with pos_delta 0 four ticks running and
+        # `activate_end_portal` never reached the offer, because the arrival test measured from the
+        # entity while the host measured from the node.
+        g = self._home(ender_eye=16)
+        g.stronghold_estimated = True
+        g.stronghold_frame = (98, 88, 407)
+        g.pos = (100.52, 89.0, 405.37)
+        self.assertGreater(_frame_distance(g), STRONGHOLD_ARRIVAL_RANGE)
+        self.assertTrue(_at_stronghold(g))
+        self.assertIn("activate_end_portal", candidates(g))
+        self.assertNotIn("travel_to_stronghold", candidates(g))
+
+    def test_two_nodes_away_is_not_arrival(self) -> None:
+        # The widening is one block of slack for the entity/node offset, not a licence to fill a
+        # frame the body cannot reach: the feet cell here is 4 blocks off in a straight line.
+        g = self._home(ender_eye=16)
+        g.stronghold_estimated = True
+        g.stronghold_frame = (98, 88, 407)
+        g.pos = (102.5, 89.0, 405.5)
+        self.assertFalse(_at_stronghold(g))
+        self.assertIn("travel_to_stronghold", candidates(g))
+        self.assertIsNone(resolve("activate_end_portal", g))
+
     def test_the_scan_hit_beats_the_recorded_cell(self) -> None:
         # The world's own block is the target the server validates; the recorded confirmation is
         # only the fallback for a frame the scan cannot see.
