@@ -241,6 +241,15 @@ class PrefixTest(unittest.TestCase):
         self.assertIn("`blocked_goal`", content)
         self.assertIn("`needs`", content)
 
+    def test_the_night_hold_before_the_crossing_is_taught(self) -> None:
+        # run279 it0-16: the bot held at the frame for the night sleep that pins the respawn before
+        # the first crossing, and the judge called that wait idle on every tick, because no phase
+        # line named the sleep as the crossing's precondition.
+        content = system_prefix()["content"]
+        self.assertIn("end_dragon", content)
+        self.assertIn("respawn", content)
+        self.assertIn("night", content)
+
 
 class GearLineTest(unittest.TestCase):
     """The judge reads the kit's real state - the shield in the off-hand, the armour worn, a tool

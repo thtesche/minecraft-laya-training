@@ -73,6 +73,10 @@ PHASE_PROGRESSIONS = (
     "nether_rods: kill blazes for rods, craft powder, bank it at the gate - each hunt serves the haul.",
     "nether_pearls: barter gold with piglins and hunt endermen for pearls - both pay for the eyes.",
     "stronghold: craft eyes of ender, throw to locate the stronghold, activate the end portal.",
+    "end_dragon: the crossing has a precondition - the respawn must be pinned at the bed beside the "
+    "frame, and that sleep only runs at night. Laying the bed, holding at the frame (`wait`) until "
+    "dark, and sleeping there are the steps of this phase, not idling; stepping back through the "
+    "portal after a death is part of the fight too.",
 )
 
 
