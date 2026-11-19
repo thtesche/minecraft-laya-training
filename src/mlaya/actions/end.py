@@ -91,7 +91,14 @@ def end_candidates(gs: GameState) -> list[str]:
 
 
 def _end_entry_candidates(gs: GameState) -> list[str]:
-    """The Overworld entry/re-entry window: best-effort pumpkin, top up the MLG water, step through."""
+    """The Overworld entry/re-entry window: re-gear locally, then step through.
+
+    Best-effort pumpkin, the MLG water, and - since plan prepare_end_dragon - the kit crafts that
+    can run at the frame before the crossing. The window is the phase `_phase_key` calls
+    `prepare_end_dragon`: the kit that came back from the Nether is rarely End-ready (run282 stood
+    at the frame with a wooden pickaxe, no sword and no arrows), and without steps in this list the
+    phase name would be a label with nothing behind it.
+    """
     inv = gs.inventory
     out: list[str] = []
     # Best-effort: wear a carried carved pumpkin so the enderman gaze never provokes one.
@@ -110,11 +117,20 @@ def _end_entry_candidates(gs: GameState) -> list[str]:
         out.append("craft_bucket")
     if _has(inv, BUCKET_ITEM) and not _has(inv, WATER_BUCKET):
         out.append("fill_bucket")
+    # --- the re-gear window (plan prepare_end_dragon, A0-rest) ---
+    # The crafts that can run at the frame come ahead of the crossing, and the crossing is withheld
+    # only while one of them can actually progress this tick. That is the anti-deadlock: when
+    # nothing here can advance the kit, the body crosses on what it carries rather than loop on a
+    # reserve it cannot build - run280 held the portal shut for eight escalations on an arrow chain
+    # that produced a single arrow. `_end_kit_ready` is the same predicate `_phase_key` reads, so
+    # the phase and the gate close at the same moment.
+    regear = [] if _end_kit_ready(gs) else _end_regear_steps(gs)
+    out.extend(regear)
     # Step through the active portal. The cell is the `activate_portal` centre (`end_portal_cell`),
     # or the stronghold frame itself as a fallback. The respawn guard is met by the stronghold
     # sleep; the supply gate is not, and `resolve` carries `allow_low_supplies` when the arrow
     # reserve cannot be built this far from base (`_end_supplies_ready`).
-    if gs.end_portal_cell is not None or gs.stronghold_frame is not None:
+    if (gs.end_portal_cell is not None or gs.stronghold_frame is not None) and not regear:
         out.append("enter_the_end")
     return out
 

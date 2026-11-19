@@ -62,6 +62,8 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                            _in_end, _crystals_loaded, _dragon_alive, _dragon_perched,
                            _end_stone_short, CARVED_PUMPKIN, END_STONE, END_STONE_RESERVE,
                            END_HEALTH_FLOOR, END_FOUNTAIN_CELL, BUCKET_IRON,
+                           _end_kit_ready, _end_regear_steps, END_SWORD_SPARE, END_ARROWS,
+                           FLINT_ITEM, FEATHER_ITEM, LOW_DURABILITY,
                            STEW_ITEM, STEW_BATCH, BOWL_ITEM,
                            MUSHROOM_CAP, MUSHROOM_BATCH, MUSHROOM_SEED,
                            _mushroom_short, _mushroom_pantry_wanted,
@@ -8674,6 +8676,71 @@ class EndFightTest(unittest.TestCase):
         self.assertNotIn("craft_bucket", cands)
         self.assertNotIn("fill_bucket", cands)
         self.assertIn("enter_the_end", cands)
+
+    # --- the re-gear window (plan prepare_end_dragon, A0-rest) ---
+
+    def test_an_end_ready_kit_crosses_without_a_re_gear_step(self) -> None:
+        # Bow carried, armour worn, sword in hand, and no chain here to build the arrow reserve:
+        # the reserve is not a gate where it cannot be filled, so the window closes at once.
+        g = self._entry(bow=1)
+        self.assertTrue(_end_kit_ready(g))
+        cands = end_candidates(g)
+        self.assertIn("enter_the_end", cands)
+        self.assertNotIn("craft_diamond_sword", cands)
+        self.assertNotIn("craft_arrows", cands)
+
+    def test_a_sword_at_the_end_of_its_life_wants_a_spare_first(self) -> None:
+        # The perch fight is a long melee and nothing on the island replaces a snapped sword, so a
+        # worn piece is only End-ready with `END_SWORD_SPARE` in the pack - and the craft that makes
+        # it rides ahead of the crossing.
+        g = self._entry(bow=1, diamond=2, oak_log=1)
+        g.tool_meta = {"sword": {"tier": "diamond", "item": "diamond_sword", "left": 40, "max": 599}}
+        self.assertFalse(_end_kit_ready(g))
+        cands = end_candidates(g)
+        self.assertIn("craft_diamond_sword", cands)
+        self.assertIsNotNone(resolve("craft_diamond_sword", g))
+        self.assertNotIn("enter_the_end", cands)      # withheld while the craft can still run
+        g.inventory["diamond_sword"] = END_SWORD_SPARE
+        self.assertTrue(_end_kit_ready(g))           # the spare is in the pack: the window closes
+        self.assertIn("enter_the_end", end_candidates(g))
+
+    def test_a_missing_bow_is_crafted_before_the_crossing(self) -> None:
+        g = self._entry(string=3, oak_log=1)
+        self.assertFalse(_end_kit_ready(g))
+        cands = end_candidates(g)
+        self.assertIn("craft_bow", cands)
+        self.assertIsNotNone(resolve("craft_bow", g))
+        self.assertNotIn("enter_the_end", cands)
+
+    def test_the_arrow_reserve_holds_the_portal_only_where_it_can_be_built(self) -> None:
+        # 128 banked: met. Short of it with the chain in hand: stay and craft. Short of it with no
+        # chain at the frame: cross on what is carried - run280 burned eight escalations holding the
+        # portal shut for a reserve that produced nothing.
+        self.assertTrue(_end_kit_ready(self._entry(bow=1, arrow=END_ARROWS)))
+        g = self._entry(bow=1, flint=8, feather=6, oak_log=1, string=3)
+        self.assertFalse(_end_kit_ready(g))
+        cands = end_candidates(g)
+        self.assertIn("craft_arrows", cands)
+        self.assertNotIn("enter_the_end", cands)
+        g = self._entry(bow=1)
+        self.assertTrue(_end_kit_ready(g))
+        self.assertIn("enter_the_end", end_candidates(g))
+
+    def test_no_offered_re_gear_step_can_fail_to_resolve(self) -> None:
+        # The anti-deadlock invariant: the crossing is withheld only while a listed step resolves,
+        # so an offer that cannot bind would stall the window instead of filling the kit.
+        for g in (self._entry(bow=1, diamond=2, oak_log=1),
+                  self._entry(bow=1, flint=1, feather=1, oak_log=1, string=3),
+                  self._entry(string=3, oak_log=1)):
+            for step in _end_regear_steps(g):
+                self.assertIsNotNone(resolve(step, g), f"{step} offered but unresolvable")
+
+    def test_the_window_offers_no_farm_step(self) -> None:
+        # Chickens, gravel and skeletons are A2's question (a *loaded* spawner beside the
+        # stronghold); a frame-side hunt that may never load is the hold the plan refuses.
+        steps = _end_regear_steps(self._entry(bow=1, flint=1, feather=1, oak_log=1, string=3))
+        self.assertTrue(steps)
+        self.assertTrue(all(s in ("craft_diamond_sword", "craft_bow", "craft_arrows") for s in steps))
 
     def test_the_entry_window_is_shut_until_the_respawn_is_pinned(self) -> None:
         g = self._entry()

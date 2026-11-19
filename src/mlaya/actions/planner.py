@@ -1228,7 +1228,10 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                       {"items": [{"item_name": BOW_ITEM}], "temporary_workstation": True},
                       "craft a bow from string and sticks - one in hand and a spare for the End")
     if label == "craft_arrows":
-        if (not _nether_idle(gs) or not _has(inv, "crafting_table")
+        # The craft runs in the Nether lull and, since plan prepare_end_dragon, in the re-gear
+        # window beside an active end portal: the reserve is an End goal, and a kit that reached the
+        # frame short of it can still top up there when flint, feather and sticks are in the pack.
+        if (not (_nether_idle(gs) or _end_regear_window(gs)) or not _has(inv, "crafting_table")
                 or _bows_held(gs) < 1
                 or not _has(inv, FLINT_ITEM) or not _has(inv, FEATHER_ITEM)
                 or not _can_sticks(inv, _logs(inv), _planks(inv))

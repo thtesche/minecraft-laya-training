@@ -1087,6 +1087,23 @@ class PhasePersonaTest(unittest.TestCase):
         self.assertEqual(phase_persona({"dimension": "minecraft:the_nether",
                                         "powder_stowed": True}), PHASE_NETHER)
 
+    def test_a_worn_out_sword_reopens_the_re_gear_window(self) -> None:
+        # The full `_end_kit_ready` (plan prepare_end_dragon, A0-rest): the window closes on a kit
+        # that can fight, and a sword at 5% of its life with nothing in the pack is not that kit -
+        # the island has no wood and no iron to make another.
+        from mlaya.perception import PHASE_END, PHASE_PREPARE_END, GameState, phase_persona
+        g = GameState(dimension="minecraft:overworld", end_portal_active=True)
+        g.armor = {slot: {"tier": "diamond", "item": f"diamond_{slot}", "left": 300, "max": 400}
+                   for slot in ("helmet", "chestplate", "leggings", "boots")}
+        g.tools = {"sword": "diamond", "bow": "bow"}
+        g.tool_meta = {"sword": {"tier": "diamond", "item": "diamond_sword", "left": 30, "max": 599}}
+        self.assertEqual(phase_persona(g), PHASE_PREPARE_END)
+        g.inventory = {"diamond_sword": 1}          # the spare is in the pack
+        self.assertEqual(phase_persona(g), PHASE_END)
+        g.inventory = {}
+        g.armor["boots"] = {"tier": "diamond", "item": "diamond_boots", "left": 20, "max": 429}
+        self.assertEqual(phase_persona(g), PHASE_PREPARE_END)   # a piece below 15% is not a kit
+
 
 class FurnaceContentsParseTest(unittest.TestCase):
     """What a `use_container inspect` on a furnace reported.

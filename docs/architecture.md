@@ -1655,7 +1655,14 @@ which tool the moment allows.
   the entry/re-entry window: wear a carried `carved_pumpkin` when there is one (it hides the
   enderman gaze; best-effort, never crafted and never a gate), top an empty bucket up into the MLG
   water at a source, and step into `end_portal_cell` — the `activate_portal` centre, with the
-  stronghold frame as the fallback. In the End it is the fight, in the order the fight walks it:
+  stronghold frame as the fallback. Ahead of the crossing sit the **re-gear crafts** (plan
+  prepare_end_dragon, A0-rest): `craft_diamond_sword`, `craft_bow` and `craft_arrows`, offered only
+  under their own resolver preconditions, and the crossing is withheld only while one of them can
+  still bind. `_end_kit_ready` is the predicate `_phase_key` uses to name that window
+  `prepare_end_dragon`; the 128-arrow reserve gates the crossing only where the chain can actually
+  run (`_end_supplies_ready`), because holding the portal shut for a reserve that cannot be built
+  at the frame is the run280 deadlock wearing a phase name. In the End it is the fight, in the
+  order the fight walks it:
   heal below `END_HEALTH_FLOOR = 12.0` (the diamond kit, the MLG water and food are the only
   buffers by design — no potions, no golden apples), recover a death's drops through the shared
   `recover_drops` (its `_can_recover` gate already restricts it to a death in the current

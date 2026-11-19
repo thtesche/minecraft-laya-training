@@ -717,6 +717,11 @@ END_ARROWS = 128
 # A bow that breaks cannot be replaced in the End: there is no wood, no string and no crafting
 # table down there. One carried spare is cheap next to losing the ranged answer mid-fight.
 END_BOWS = 2
+# The same argument for the sword. The perch fight is a long melee and a diamond sword lasts 599
+# swings; a kit that crosses with one sword and nothing in the pack has no way to replace one that
+# snaps on the island. The spare is demanded only once the worn piece is actually near the end
+# (`LOW_DURABILITY`), so a full-health sword never holds the portal shut for a second craft.
+END_SWORD_SPARE = 1
 # --- The End fight itself (docs: the Phase 5 plan; the server owns the combat) ---
 # The exit fountain the End island generates at the world origin. On arrival the bot stands on an
 # obsidian platform offset from it, and nothing of the fight loads until the body is near the

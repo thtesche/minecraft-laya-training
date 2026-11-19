@@ -2420,6 +2420,18 @@ def _end_arrows_wanted(gs: GameState) -> int:
     return max(0, END_ARROWS - int(gs.inventory.get(ARROW_ITEM, 0)))
 
 
+def _end_regear_window(gs: GameState) -> bool:
+    """The Overworld window beside an active end portal, before the dragon is dead.
+
+    The re-gear crafts need a place to run: the frame stands, the body is still in the Overworld,
+    and the fight has not started. Unlike `_end_phase_active` this does not require the respawn to
+    be pinned - the kit is built whether or not the bed sleep has happened yet, and the bed chain
+    owns the ticks before it.
+    """
+    return (_overworld(gs) and bool(gs.end_portal_active)
+            and not getattr(gs, "dragon_slain", False))
+
+
 def _end_supplies_ready(gs: GameState) -> bool:
     """Whether the arrow reserve the portal gate asks for can still be filled from where the bot
     stands.
@@ -2431,13 +2443,17 @@ def _end_supplies_ready(gs: GameState) -> bool:
     without producing a single arrow, while the dragon is fought with crystals and a diamond
     sword. So the crossing takes the same override the Nether crossing does whenever the chain
     that could fill the gate cannot run here.
+
+    The stick is read as `_can_sticks` rather than as a literal `stick` in the pack: a carried log
+    crafts one, and a gate that counts only the stick already made would call the chain unrunnable
+    while `craft_arrows` still binds.
     """
     if _end_arrows_wanted(gs) <= 0:
         return True
     inv = gs.inventory
     return (_has(inv, "crafting_table")
             and inv.get(FLINT_ITEM, 0) > 0
-            and inv.get("stick", 0) > 0
+            and _can_sticks(inv, _logs(inv), _planks(inv))
             and inv.get("string", 0) > 0)
 
 
@@ -2454,14 +2470,18 @@ def _end_kit_ready(gs: GameState) -> bool:
     predicate the phase and the entry gate share, so the window never offers a re-gear step the
     gate would not have waited for.
 
-    A0-min stub (plan prepare_end_dragon, 2026-11-19): deliberately conservative so the phase
-    exists as a real target for the observer to steer against while the full predicate - a spare
-    sword (`END_SWORD_SPARE`) and the 128-arrow reserve or its `_end_supplies_ready` override - is
-    still A0-rest. It reads only what every post-stronghold state already carries: the worn diamond
-    armour (none of it worn out), a diamond sword to hand or in the pack, and at least one bow. It
-    never gates on a pickaxe or a shield - the End fight uses neither, so requiring them would hold
-    the window open on gear the crossing does not need. The dimension check stays in `_phase_key`;
-    this is the kit test, not the window.
+    The five slots the End fight actually uses (plan prepare_end_dragon, Kit-Ziel): the four diamond
+    pieces worn and none of them below `LOW_DURABILITY`, a diamond sword to hand that is not about to
+    snap - or a spare in the pack if it is, `END_SWORD_SPARE` - at least one bow, and the 128-arrow
+    reserve. It never gates on a pickaxe or a shield: the fight uses neither, so requiring them would
+    hold the window open on gear the crossing does not need. The dimension check stays in
+    `_phase_key`; this is the kit test, not the window.
+
+    The arrow reserve is a gate only where it can still be built. `_end_supplies_ready` is the
+    escape hatch the crossing already uses: at the stronghold the flint-stick-feather chain needs
+    materials the run never carried there, and run280 spent eight escalations holding the portal shut
+    for a reserve that produced nothing. Requiring 128 arrows where no chain can run would be that
+    same deadlock wearing a phase name.
     """
     inv = gs.inventory
     for slot, _ in DIAMOND_ARMOR:
@@ -2476,7 +2496,42 @@ def _end_kit_ready(gs: GameState) -> bool:
         return False
     if not (_has(inv, "diamond_sword") or str(gs.tools.get("sword", "")).lower() == "diamond"):
         return False
-    return _bows_held(gs) >= 1
+    # A sword at the end of its durability is survivable only with a spare: the island has no wood
+    # to plank and no iron to smelt, so a snapped sword stays snapped. Where the server reports no
+    # durability at all, the piece is taken at face value rather than held against a number.
+    sword = _tool_durability(gs, "sword")
+    if (sword and sword[0] < LOW_DURABILITY
+            and int(inv.get("diamond_sword", 0)) < END_SWORD_SPARE):
+        return False
+    if _bows_held(gs) < 1:
+        return False
+    return not (_end_arrows_wanted(gs) > 0 and _end_supplies_ready(gs))
+
+
+def _end_regear_steps(gs: GameState) -> list[str]:
+    """The kit crafts the re-gear window can actually advance this tick, or [].
+
+    Every step here is listed only under its own resolver's preconditions, so an offer never turns
+    into a failed tick, and the crossing is never withheld for a step that cannot run. The farm
+    steps (chickens, gravel, skeletons) are deliberately absent: A2 is about a *loaded* spawner
+    beside the stronghold, and a frame-side hunt that may never load is the hold the plan refuses -
+    the same reason `_stronghold_supply_steps` keeps the farm out of the march.
+    """
+    inv = gs.inventory
+    table = _has(inv, "crafting_table")
+    sticks = _can_sticks(inv, _logs(inv), _planks(inv))
+    out: list[str] = []
+    # The spare sword: the resolver binds it only while none is carried, which is exactly the case
+    # once the worn piece is the one in hand.
+    if (table and sticks and inv.get("diamond", 0) >= 2 and not _has(inv, "diamond_sword")
+            and _pick_tier(inv, gs.tools) >= DIAMOND_PICK_TIER):
+        out.append("craft_diamond_sword")
+    if _end_bows_wanted(gs) > 0 and table and inv.get("string", 0) >= BOW_STRING and sticks:
+        out.append("craft_bow")
+    if (_end_arrows_wanted(gs) > 0 and _bows_held(gs) > 0 and table and sticks
+            and _has(inv, FLINT_ITEM) and _has(inv, FEATHER_ITEM)):
+        out.append("craft_arrows")
+    return out
 
 
 def _string_goal(gs: GameState) -> int:
