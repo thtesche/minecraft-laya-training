@@ -1736,7 +1736,13 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
                           "climb up the column the Nether exit portal stands on")
         if cell is not None:
             x, y, z = cell
-            return Action(label, "enter_nether_portal", {"x": x, "y": y, "z": z},
+            # `allow_low_supplies` on purpose, same as the outbound crossing: the server pauses
+            # a portal entry below 16 food *and* 32 arrows (`portal-policy.ts`), and the way *home*
+            # is exactly where those supplies cannot be gathered. Live, run292: the bot woke in the
+            # Nether at 0/16 food and 0/32 arrows, every `leave_nether` answered
+            # `[PORTAL_LOW_SUPPLIES]`, and it burned to death in lava two ticks later.
+            return Action(label, "enter_nether_portal",
+                          {"x": x, "y": y, "z": z, "allow_low_supplies": True},
                           "cross back through the Nether exit portal with the rods")
         # No portal block in the scan: the way home is the cell the crossing left the bot
         # standing on - this run watched that crossing (`nether_arrival`), or the server
@@ -1755,7 +1761,8 @@ def resolve(label: str | None, gs: GameState, target=None) -> Action | None:
         # refusals, so the bot stood in its own gateway for the rest of the run). Arrival first,
         # then the crossing, is the server's own two-step.
         if gs.pos is not None and math.dist((gs.pos[0], gs.pos[2]), (ax, az)) <= 2.0:
-            return Action(label, "enter_nether_portal", {"x": ax, "y": ay, "z": az},
+            return Action(label, "enter_nether_portal",
+                          {"x": ax, "y": ay, "z": az, "allow_low_supplies": True},
                           "cross back through the Nether exit portal with the rods")
         # The walk never aims at the portal cell itself: `navigate` refuses an active portal cell
         # outright - `[NAVIGATION_PORTAL_INTENT_REQUIRED]`, whatever the `range` - so a target

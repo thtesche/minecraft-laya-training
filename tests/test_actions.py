@@ -6314,11 +6314,13 @@ class NetherExpeditionTest(unittest.TestCase):
         # arrows` with a stocked expedition).
         self.assertTrue(a.args["allow_low_supplies"])
 
-    def test_the_crossing_needs_no_low_supplies_override_to_leave_the_nether(self) -> None:
-        # The guard only applies on the way in: coming home, the destination is the Overworld.
+    def test_the_way_out_crosses_with_the_same_low_supplies_override(self) -> None:
+        # The guard applies on the way home too, not only on the way in: live, run292 answered
+        # `[PORTAL_LOW_SUPPLIES] 0/16 food 0/32 arrows` to a `leave_nether` crossing - the bot
+        # was IN the Nether, where neither supply can be gathered, and died two ticks later.
         g = self._with_exit(self._down(blaze_rod=9))
         a = resolve("leave_nether", g)
-        self.assertNotIn("allow_low_supplies", a.args)
+        self.assertTrue(a.args["allow_low_supplies"])
 
     def test_the_first_crossing_waits_for_a_bed_at_the_base(self) -> None:
         # Fix 4. A death in the Nether respawns at the last bed; without one laid the respawn
@@ -6932,6 +6934,19 @@ class NetherExpeditionTest(unittest.TestCase):
         self.assertEqual(resolve("leave_nether", g).tool, "navigate")
         g.pos = (self.EXIT[0] + 1.5, float(self.EXIT[1]), self.EXIT[2])
         self.assertEqual(resolve("leave_nether", g).tool, "enter_nether_portal")
+
+    def test_the_way_home_crosses_even_without_food_and_arrows(self) -> None:
+        # The server pauses a portal entry below 16 food *and* 32 arrows (`portal-policy.ts`) -
+        # and the Nether is exactly where neither can be gathered. Live, run292: the bot woke in
+        # the Nether at 0/16 food and 0/32 arrows, every `leave_nether` answered
+        # `[PORTAL_LOW_SUPPLIES]`, and it burned to death in lava two ticks later. The way home
+        # carries the same override as the way out.
+        g = self._down(blaze_rod=9)
+        g.food = 2.0
+        g.inventory = {"cobblestone": 5}
+        a = resolve("leave_nether", g)
+        self.assertEqual(a.tool, "enter_nether_portal")
+        self.assertTrue(a.args["allow_low_supplies"])
 
     def test_a_run_born_in_the_nether_walks_the_remembered_gate(self) -> None:
         # Cold start: this run never crossed, so there is no arrival - and the gate it did
