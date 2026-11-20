@@ -28,7 +28,7 @@ from mlaya.actions import (_all_nether_prep_steps, _armor_worn_out, _barter_pear
                           _safe_spider_hunt, _safe_string_hunt,
                          _enderman_in_reach, _combat_blocks_carried, ENDERMAN_HUNT_BLOCKS,
                          ENDERMAN_HUNT_HEALTH,
-                         _scaffold_short, _bridge_short, SCAFFOLD_MINE_BATCH,
+                         _scaffold_short, _bridge_short, _hop_needs_scaffold, SCAFFOLD_MINE_BATCH,
                          _in_portal, _leave_portal_target,
                          _portal_lit, Action, _armor_to_wear, candidates,
                          _base_leveling_wanted, bed_pad_plan, _bed_pad_wanted, BED_PAD_BLOCK,
@@ -6542,6 +6542,26 @@ class NetherExpeditionTest(unittest.TestCase):
         g.nether_gate = None
         g.resources = {}
         self.assertEqual(candidates(g), ["explore"])
+
+    def test_a_refused_hop_digs_its_own_blocks_before_it_walks_it(self) -> None:
+        # run294 it188-195: the wave stood on its own bridge at (207,33,-197) with an empty scaffold
+        # stack, `leave_nether` was the only label on the list, and it answered `[NAVIGATION_STOPPED]
+        # search timed out after 4000 ms` five times at the same cell before `explore` failed on
+        # `repeated_execution_checkpoint`. The restock that would have opened the hop sat behind the
+        # hop it was supposed to make possible.
+        g = self._down(blaze_powder=16, ender_pearl=2)
+        g.nether_arrival = (120, 40, 60)
+        g.nether_hop_repeats = 1
+        self.assertTrue(_hop_needs_scaffold(g))
+        self.assertEqual(candidates(g), ["gather_scaffold"])
+        a = resolve("gather_scaffold", g)
+        self.assertEqual((a.tool, a.args["block_name"]), ("collect_block", "netherrack"))
+        # The restock is a one-tick detour, not a new job: with the stack aboard the wave is back
+        # on the pearls it came for.
+        g.inventory["netherrack"] = 128
+        self.assertFalse(_hop_needs_scaffold(g))
+        self.assertNotIn("gather_scaffold", candidates(g))
+        self.assertIn("search_enderman", candidates(g))
 
     def test_the_gold_pass_is_minted_at_home_before_the_next_wave(self) -> None:
         # The other half of the same lesson: coming home is not enough. The gate still burns and

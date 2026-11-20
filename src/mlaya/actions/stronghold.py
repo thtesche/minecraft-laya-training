@@ -182,7 +182,24 @@ def _scaffold_short(gs: GameState) -> bool:
         return False
     if not _can_mine(gs, SCAFFOLD_BLOCK):
         return False
-    return _ender_pearls(gs.inventory) < _eyes_owed(gs)
+    # The pearls are the usual reason to be carrying blocks at all; a hop the ground has already
+    # refused is the other one, and it stands even when the pearls are met - a wave that cannot
+    # walk home is not finished, it is stuck (`_hop_needs_scaffold`).
+    return _ender_pearls(gs.inventory) < _eyes_owed(gs) or _bridge_short(gs)
+
+
+def _hop_needs_scaffold(gs: GameState) -> bool:
+    """Whether the way home has to dig its own blocks before it can walk it.
+
+    `_bridge_short` is the evidence (a hop the ground already refused for want of blocks) and
+    `_scaffold_short` is the step able to act on it; an offer `resolve` turns into None is exactly
+    the stall this is meant to end. Live, run294 it188-195: the wave stood on its own bridge at
+    (207,33,-197) with an empty scaffold stack, `leave_nether` was the only label on the list, and
+    it answered `[NAVIGATION_STOPPED] Pathfinder stopped: search timed out after 4000 ms` five
+    times at the same cell before `explore` failed on `repeated_execution_checkpoint`. The restock
+    the ladder could have reached sat behind the return hop it was supposed to make possible.
+    """
+    return _bridge_short(gs) and _scaffold_short(gs)
 
 
 def _frame_distance(gs: GameState) -> float | None:

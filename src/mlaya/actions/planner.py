@@ -729,6 +729,13 @@ def candidates(gs: GameState) -> list[str]:
                     # `count: 0`, which the host rejects (run220 it485-487, three dead ticks with
                     # 7 pearls against 7 owed).
                     out.append("hunt_enderman")
+                elif _hop_needs_scaffold(gs) and not junk_full:
+                    # The way home is a bridge, and the ground has already refused this one for
+                    # want of blocks: dig the Nether's own floor here rather than offer the hop
+                    # again at the same cell (see `_hop_needs_scaffold`, run294 it188-195). A pack
+                    # full of droppable junk sheds first - without a free slot the dig lands
+                    # nowhere.
+                    out.append("gather_scaffold")
                 elif _nether_must_return(gs) and not junk_full:
                     out.append("leave_nether" if _way_home_known(gs) else "explore")
                 elif junk_full:
@@ -766,7 +773,12 @@ def candidates(gs: GameState) -> list[str]:
             else:
                 # --- Rod wave (Welle 1) ---
                 rods = _blaze_rods(inv)
-                if rods >= _rods_target(gs):
+                if _hop_needs_scaffold(gs) and not junk_full:
+                    # The haul is only home once the gate is walkable: a hop the ground refused for
+                    # want of blocks is dug here, in the Nether's own floor, before the wave offers
+                    # it again at the same cell (see `_hop_needs_scaffold`).
+                    out.append("gather_scaffold")
+                elif rods >= _rods_target(gs):
                     # The rod haul is complete: walk back through the gate and stow it. The pearls
                     # are a later wave's job, not this trip's - a death with the rods in the pack
                     # would lose the whole haul, so securing them at home comes first. With no
