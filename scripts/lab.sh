@@ -70,6 +70,10 @@ mkdir -p "$STATE"
 
 log() { printf '%s\n' "$*"; }
 
+# Set by `--fresh` for the length of one `up`: it turns off the host-as-world-proof (see
+# `world_ready`) because the world the host is connected to is the one the wipe just deleted.
+FRESH_WIPE=0
+
 world_up() {
   # `timeout` because a stalled daemon must not hang the lab: an unreachable container is
   # treated as down, and `up` starts it again.
@@ -128,6 +132,11 @@ world_ready() {
   nc -z -w 1 127.0.0.1 "$MC_PORT" 2>/dev/null || return 1
   grep -q 'Done (' "$REPO/infra/world/logs/latest.log" 2>/dev/null && return 0
   timeout 15 docker compose -f "$COMPOSE" logs world 2>/dev/null | grep -q 'Done (' && return 0
+  # A host that is connected is not proof after a wipe: its mineflayer session is holding a
+  # world that no longer exists (live, run296: `--fresh` deleted the world, the old host kept
+  # reporting `connected`, the gate opened while the server was still unpacking its jars, and
+  # the runtime the lab then started timed out joining a server that did not listen yet).
+  [[ $FRESH_WIPE == 1 ]] && return 1
   host_connected
 }
 
@@ -426,6 +435,15 @@ cmd_up() {
       docker compose -f "$COMPOSE" down
       log "world container stopped for the wipe"
     fi
+    # The same hazard one folder over: the wipe deletes the host's bot ledger under it, and a
+    # host that keeps playing a ledger it no longer has is the stale connection that later
+    # vouchs for a world that is not up yet.
+    if host_up; then
+      pkill -f 'src/server/host.ts'
+      log "MCP host stopped for the wipe"
+      sleep 2
+    fi
+    FRESH_WIPE=1
     rm -rf "$REPO/infra/world" "$MCP_DATA_ROOT"
     log "world and the bot's ledger wiped: fresh world from the seed in infra/docker-compose.yml"
   fi
@@ -441,6 +459,7 @@ cmd_up() {
     return 1
   fi
   log "world ready on 127.0.0.1:$MC_PORT"
+  FRESH_WIPE=0
 
   if ! ensure_mcp_branch; then
     return 1
