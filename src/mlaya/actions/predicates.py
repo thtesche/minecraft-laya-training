@@ -2438,6 +2438,24 @@ def _gold_helmet_made(gs: GameState) -> bool:
             and not _gold_helmet_worn_out(gs))
 
 
+def _piglin_pass_gone(gs: GameState) -> bool:
+    """Whether the bot stands in the Nether with nothing gold worn and nothing to wear.
+
+    Piglin neutrality rides on one worn gold piece, and the piece wears out on the head (77 uses)
+    or is lost outright to a death down there. Live, run294 it200-206: the golden helmet broke at
+    (52,36,-321) with a piglin_brute at 1 block and a piglin at 6; the wave kept offering
+    `explore` and `collect_drops` for six ticks, the bot was slain by Piglin, and the whole haul -
+    16 raw gold, the diamond helmet, the pickaxe - went with it. A trip that has lost the pass is
+    not a trip to keep hunting on: the way home is the only step that can still save the haul, and
+    the gold for a new piece is mined where gold can be mined safely - in the Overworld.
+    """
+    if not _in_nether(gs):
+        return False
+    if any(_worn(gs, item) for item in GOLD_ARMOUR_ITEMS):
+        return False
+    return not _has(gs.inventory, GOLD_HELMET_ITEM)
+
+
 def _gold_helmet_needed(gs: GameState) -> bool:
     """Whether the diamond helmet still stands where a gold one has to go.
 
@@ -2851,6 +2869,36 @@ def _nether_helmet_repair_steps(gs: GameState) -> list[str]:
     if (_has(inv, RAW_GOLD) and _smelting_reach(gs) and _gold_smelt_room(gs)
             and inv.get(GOLD_INGOT, 0) < _gold_ingots_wanted(gs)):
         return ["smelt_gold"]
+    return []
+
+
+def _gold_helmet_recovery_steps(gs: GameState) -> list[str]:
+    """The gold chain the Overworld has to run again when the piglin pass is no longer there.
+
+    The Nether branch ends the wave the moment the pass is gone (`_piglin_pass_gone`), but coming
+    home is only half of it: the gate still burns, the pearl waves still have to walk through it,
+    and the gold for a new piece has to be dug, smelted and crafted somewhere. That somewhere is
+    the Overworld - the Nether has no safe place to stand and mine while piglins are hostile, and
+    the dig, the furnace and the table are all base work (live, run294: the helmet broke at it205
+    and the bot died with it; at it206-210 it stood at its own base with 16 raw gold in the pack
+    and no step on the list able to use any of it, because every gold step was scoped to the
+    daytime lull of `prepare_nether` and the run had moved on to the stronghold).
+
+    The same three steps as the lull's chain, in the same order, gated only on what can progress
+    right now. The dig keeps the lull's daylight rule - it tunnels down from the base and the run
+    sleeps at night. It is deliberately not part of `_all_nether_prep_steps`: that list is the
+    crossing gate of a trip that has not started, and this is the repair of one that already ended.
+    """
+    if _in_nether(gs) or not _overworld(gs) or _gold_helmet_made(gs) or not _portal_built(gs):
+        return []
+    inv = gs.inventory
+    if inv.get(GOLD_INGOT, 0) >= GOLD_HELMET_INGOTS and _has(inv, "crafting_table"):
+        return ["craft_gold_helmet"]
+    if (_has(inv, RAW_GOLD) and _smelting_reach(gs) and _gold_smelt_room(gs)
+            and inv.get(GOLD_INGOT, 0) < _gold_ingots_wanted(gs)):
+        return ["smelt_gold"]
+    if (gs.phase != "night" and _can_mine(gs, GOLD_ORE) and _gold_ore_available(gs)):
+        return ["mine_gold"]
     return []
 
 

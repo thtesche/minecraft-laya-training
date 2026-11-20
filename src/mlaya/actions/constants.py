@@ -784,6 +784,9 @@ FEATHER_ITEM = "feather"
 # pack held exactly one `diamond_pickaxe` with the trip stocked and the gate lit.
 NETHER_PICKAXES = 2
 GOLD_HELMET_ITEM = "golden_helmet"
+# Any worn gold armour piece keeps piglins neutral on sight, not only the helmet: the pass the
+# whole Nether trip is fought around is one slot of gold, whichever slot it is (`_piglin_pass_gone`).
+GOLD_ARMOUR_ITEMS = ("golden_helmet", "golden_chestplate", "golden_leggings", "golden_boots")
 GOLD_HELMET_INGOTS = 5
 GOLD_ORE = "gold_ore"
 RAW_GOLD = "raw_gold"

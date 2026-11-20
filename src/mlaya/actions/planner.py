@@ -662,6 +662,20 @@ def candidates(gs: GameState) -> list[str]:
             repair = _nether_helmet_repair_steps(gs)
             if repair and repair[0] not in gs.stuck_labels:
                 return repair
+            # The pass is gone and nothing carried can put it back on: the helmet broke, or a death
+            # took the whole pack. Every piglin in sight is hostile from here, so the wave's own
+            # logic - hunt, roam, barter, bridge - is a list of ways to die holding what was won.
+            # The trip ends on the way home, and the gold is re-minted in the Overworld, where
+            # mining it costs nothing but a pickaxe (live, run294 it200-206: the helmet broke at a
+            # piglin_brute 1 block away, `explore` and `collect_drops` kept the offer for six
+            # ticks, and the bot died with 16 raw gold and its diamond kit in the lava).
+            if _piglin_pass_gone(gs):
+                home = "leave_nether" if _way_home_known(gs) else "explore"
+                # Filtered like the ladder above it: a home walk the stall guards have just
+                # withheld falls back to the normal ladder rather than re-offering it (see the
+                # `repeated_execution_checkpoint` rule at the bottom of this function).
+                if home not in gs.stuck_labels:
+                    return [home]
             # A pack full of droppable junk (netherrack) reads as "out of room" and would send the
             # bot home with nothing. The junk frees itself with `drop_junk`; the room does not. So
             # while the pack is full of something that can be dropped, the bot sheds it and keeps
@@ -999,6 +1013,13 @@ def candidates(gs: GameState) -> list[str]:
     if _overworld(gs) and not _stronghold_phase(gs):
         out.extend(_nether_prep_steps(gs))
         out.extend(_end_supply_steps(gs))
+
+    # The piglin pass, re-minted at home. A wave that came back without a gold piece - it broke
+    # down there, or a death took the pack - cannot go back through the gate, and the pearl waves
+    # are still ahead of the run even once the stronghold opened. Offered at the base only, so the
+    # march to the frame is never pulled off the line for a gold dig (see `_gold_helmet_recovery_steps`).
+    if _overworld(gs) and _at_base(gs):
+        out.extend(_gold_helmet_recovery_steps(gs))
 
     # Home-base ground work. Once the gate is lit, a daytime maintenance step digs away the stray
     # terrain and reflex-placed defence scaffold that pile up above ground level around the base, so

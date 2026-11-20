@@ -6268,11 +6268,17 @@ class NetherExpeditionTest(unittest.TestCase):
         return g
 
     def _down(self, **inv) -> GameState:
-        """The bot in the Nether, helmet worn, no exit portal loaded."""
+        """The bot in the Nether, helmet worn, no exit portal loaded.
+
+        The head carries the gold piece: a trip without the piglin pass ends on the way home
+        (`_piglin_pass_gone`), so the shared fixture has to be a trip that is allowed to work.
+        Tests about the pass itself put a diamond piece on the head.
+        """
         g = gs(pos=(12.5, 65.0, -3.5), dimension=self.NETHER, inventory=dict(inv),
                tools={"pickaxe": "diamond", "sword": "diamond"},
                armor={s: {"item": f"diamond_{s}"} for s in
-                      ("helmet", "chestplate", "leggings", "boots")},
+                      ("chestplate", "leggings", "boots")}
+                     | {"helmet": {"item": "golden_helmet", "left": 70.0, "max": 77.0}},
                offhand="shield", health=20.0, food=18.0)
         g.base = self.BASE
         g.nether_entered = True
@@ -6457,7 +6463,9 @@ class NetherExpeditionTest(unittest.TestCase):
 
     # --- down there ---
     def test_the_gold_helmet_goes_on_first(self) -> None:
+        # The spare is in the pack and the diamond piece is still on the head: the swap is the step.
         g = self._down(golden_helmet=1)
+        g.armor["helmet"] = {"item": "diamond_helmet"}
         self.assertIn("swap_to_gold_helmet", candidates(g))
         a = resolve("swap_to_gold_helmet", g)
         self.assertEqual(a.tool, "equip")
@@ -6516,11 +6524,49 @@ class NetherExpeditionTest(unittest.TestCase):
         g.armor["helmet"] = {"item": "golden_helmet", "left": 60.0, "max": 77.0}
         self.assertEqual(_gold_ingots_wanted(g), GOLD_BARTER_RESERVE)
 
+    def test_a_trip_that_lost_the_gold_pass_comes_home(self) -> None:
+        # run294 it200-206: the golden helmet broke at a piglin_brute 1 block away, the wave kept
+        # offering `explore` and `collect_drops` for six ticks, and the bot died with 16 raw gold
+        # and its diamond kit in the lava. With nothing gold worn and no spare in the pack every
+        # piglin in sight is hostile, so the way home is the only step that can still save the haul.
+        g = self._with_exit(self._down(raw_gold=16, crafting_table=1))
+        del g.armor["helmet"]
+        # Standing on the gate: the way home is a step through it.
+        self.assertEqual(candidates(g), ["leave_portal"])
+        # The gate loaded but a long walk away: the way home is the march to it.
+        g = self._down(raw_gold=16)
+        del g.armor["helmet"]
+        self.assertEqual(candidates(g), ["leave_nether"])
+        # No gate at all: nothing to walk to, so the wave keeps moving (a held still is no way out).
+        g.nether_arrival = None
+        g.nether_gate = None
+        g.resources = {}
+        self.assertEqual(candidates(g), ["explore"])
+
+    def test_the_gold_pass_is_minted_at_home_before_the_next_wave(self) -> None:
+        # The other half of the same lesson: coming home is not enough. The gate still burns and
+        # the pearl waves still walk through it, but every gold step was scoped to the daytime lull
+        # of `prepare_nether` - a run that had moved on to the stronghold stood at its own base with
+        # 16 raw gold and nothing on the list able to use it (run294 it206-210).
+        g = self._home(raw_gold=16, furnace=1, crafting_table=1, coal=4)
+        del g.armor["helmet"]
+        g.inventory.pop("golden_helmet", None)
+        cand = candidates(g)
+        self.assertIn("smelt_gold", cand)
+        self.assertIsNone(resolve("enter_portal", g))
+        g.inventory["raw_gold"] = 0
+        g.inventory["gold_ingot"] = 5
+        self.assertEqual(candidates(g)[candidates(g).index("craft_gold_helmet")],
+                         "craft_gold_helmet")
+
     def test_a_full_pack_with_no_haul_does_not_turn_round(self) -> None:
         # run199 it0-297: the trip ended on the tick it arrived, 36 times, because the pack sat at
         # the full threshold with nothing in it worth carrying home. A pack that is merely full is
         # not a haul to protect; the bot keeps working until the hunt is actually out of chances.
+        # (The gold piece is worn here: without the piglin pass the trip ends at once, which is a
+        # different rule - see `test_a_trip_that_lost_the_gold_pass_comes_home`.)
         g = self._down()
+        g.armor["helmet"] = {"item": "golden_helmet", "left": 60.0, "max": 77.0}
         g.slots_used = INVENTORY_NEAR_FULL
         self.assertNotIn("leave_nether", candidates(g))
         self.assertIn("explore", candidates(g))
@@ -6579,6 +6625,7 @@ class NetherExpeditionTest(unittest.TestCase):
         # piece is a hard precondition, so the swap owns the tick outright - nothing else is
         # offered while the diamond helmet is still on a gold piece's slot.
         g = self._down(golden_helmet=1)
+        g.armor["helmet"] = {"item": "diamond_helmet"}
         self.assertEqual(candidates(g), ["swap_to_gold_helmet"])
         # The exploration/search steps that shared the list before are gone until the swap runs.
         g.resources = {"netherrack": [BlockHit("netherrack", "netherrack", 20, 65, 0, 9.0)]}
