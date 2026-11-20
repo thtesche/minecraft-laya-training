@@ -87,6 +87,11 @@ ADOPT_CHEST_RADIUS = 4
 # right after (Agent `_note_crossing`).
 PORTAL_INTENT_TICKS = 3
 
+# A column's top standable floor sits on a tree canopy when the refusal's highest block is a
+# leaf; the ground floor under that canopy is within a tree's height of it. A body standing on
+# a listed floor that close to the top is on open surface, not in a cave (Agent `_note_surface`).
+SURFACE_CANOPY_TOL = 8
+
 # Tool-result codes that mean "the bot's surroundings block the action". `craft_item` and
 # `smelt_item` place a carried workstation beside the bot; in a 1x1 excavation shaft there
 # is no replaceable cell, so the tool answers `[WORKSTATION_PLACEMENT_FAILED] ... no_cell`.
@@ -3301,9 +3306,17 @@ class Agent:
             # because `_at_surface` only trusted the one learned cell).
             top = perception.parse_column_top(text or "")
             if top is not None and pos is not None:
-                (cx, cz), floor = top
-                if abs(math.floor(pos[1]) - floor) <= 1:
-                    self._surface_top = {**self._surface_top, (cx, cz): floor}
+                (cx, cz), floor, floors = top
+                feet = math.floor(pos[1])
+                # Standing on the column's top floor: nothing above to climb, the bot is out.
+                # Standing on a lower floor the refusal itself lists as standable, within a tree's
+                # height of that top, is the ground under a canopy - open surface too (live, run294
+                # it5: "Column -142, 216 has highest block acacia_leaves at y=73; standable feet
+                # heights: 74, 67, -35" with feet at 67; the column never counted as proved, the
+                # probe kept coming, and it8 even climbed the bot onto the leaves). A cave floor is
+                # far below the column's top, so it stays excluded by the same test.
+                if abs(feet - floor) <= 1 or (feet in floors and floor - feet <= SURFACE_CANOPY_TOL):
+                    self._surface_top = {**self._surface_top, (cx, cz): feet}
 
     def _note_crossing(self, action, text: str = "") -> None:
         """Stand the `_in_portal` rescue down around a crossing the loop asked for.

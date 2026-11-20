@@ -2435,14 +2435,16 @@ def parse_surface_height(text: str) -> int | None:
     return max(floors)
 
 
-def parse_column_top(text: str) -> tuple[tuple[int, int], int] | None:
-    """A `[NAVIGATION_HEIGHT_REQUIRED]` answer -> (column, highest standable feet height) or None.
+def parse_column_top(text: str) -> tuple[tuple[int, int], int, list[int]] | None:
+    """A `[NAVIGATION_HEIGHT_REQUIRED]` answer -> (column, highest standable feet height, floors).
 
     The refusal reads `Column -137, -12 has highest block grass_block at y=70; observed standable
     feet heights: 71, 37, -1, -25, -53.` The column is the one the height-less probe aimed at, and
     the floors are listed highest first, so the largest is the top of that column. Together they
-    say what no scan can: this column is open to sky at this height. Any other failure has no such
-    line and returns None.
+    say what no scan can: this column is open to sky at this height. The full list matters too:
+    when a tree stands in the column its top floor is the canopy (`acacia_leaves at y=73; ... 74,
+    67, -35`), and the body's own feet sit on the ground floor the refusal also lists - open
+    surface under the canopy, not a cave. Any other failure has no such line and returns None.
     """
     m = re.search(r"Column (-?\d+), (-?\d+) has highest block .*?standable feet heights:\s*([^.]*)",
                   text or "")
@@ -2451,7 +2453,7 @@ def parse_column_top(text: str) -> tuple[tuple[int, int], int] | None:
     floors = [int(v) for v in re.findall(r"-?\d+", m.group(3))]
     if not floors:
         return None
-    return (int(m.group(1)), int(m.group(2))), max(floors)
+    return (int(m.group(1)), int(m.group(2))), max(floors), floors
 
 
 def parse_water_column(text: str) -> tuple[int, int] | None:

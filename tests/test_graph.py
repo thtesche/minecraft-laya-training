@@ -3279,6 +3279,20 @@ class SurfaceNoteTest(unittest.TestCase):
                             (-47.5, -15.0, 4.6))
         self.assertEqual(agent._surface_top, {})
 
+    def test_the_ground_floor_under_a_tree_canopy_is_out_too(self) -> None:
+        # Live, run294 it5: the body stood at y=67 on the grass of a column whose top floor (74)
+        # sits on acacia leaves - the refusal listed 67 as standable, but the old test only
+        # trusted the maximum floor, so the column never counted as proved, `surface_up` kept
+        # coming every tick, and it8 climbed the bot onto the leaves. The ground under a canopy
+        # is open surface; a cave floor (-35) is far below the top and stays excluded.
+        agent = self._agent()
+        text = ("[NAVIGATION_STOPPED] Pathfinder stopped: [NAVIGATION_HEIGHT_REQUIRED] Column "
+                "-142, 216 has highest block acacia_leaves at y=73; observed standable feet "
+                "heights: 74, 67, -35.")
+        agent._note_surface(self._Action("surface_up", {"x": -142, "z": 216}), False, text,
+                            (-141.5, 67.0, 216.6))
+        self.assertEqual(agent._surface_top, {(-142, 216): 67})
+
     def test_a_water_probe_remembers_the_column_it_failed_on(self) -> None:
         # Live, run142 it55-57: the probe of (5, -115) answered the same water refusal three
         # ticks running with the body never moving. The refusal names the column the server
