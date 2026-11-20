@@ -31,7 +31,7 @@ def load_env(path: Path | None = None, override: bool = False) -> bool:
 class LLMConfig(BaseModel):
     # System 2 escalation: the local Strata server (OpenAI-compatible), mirroring the
     # provider configured in OpenCode. The key comes from the environment (.env).
-    model: str = "qwen3.8-flash-next-q2_0"
+    model: str = "qwen3.8-flash-next-iq3_xxs"
     api_key_env: str = "STRATA_API_KEY"
     max_tokens: int = 4096
     base_url: str = "http://192.168.0.109:8080/v1"
@@ -58,7 +58,7 @@ class ObserverConfig(BaseModel):
     # reuses the whole prior prompt). The ceilings below are the generous ones from the Strata model
     # definition in OpenChamber (context 200k / input 185k / output 16384, reasoning high) - the live
     # System-2 `[llm]` stays at its own, tighter budget.
-    model: str = "qwen3.8-flash-next-q2_0"
+    model: str = "qwen3.8-flash-next-iq3_xxs"
     api_key_env: str = "STRATA_API_KEY"
     base_url: str = "http://192.168.0.109:8080/v1"
     max_tokens: int = 16_384          # the model's output ceiling, for the full-reasoning event turns
