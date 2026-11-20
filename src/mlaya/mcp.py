@@ -30,6 +30,13 @@ RUNNING_STATES = {"accepted", "pending"}
 STUCK_ELAPSED_MS = 240_000
 STUCK_TRAVELLED_BLOCKS = 400.0
 STUCK_FROM_START_BLOCKS = 10.0
+# The other way to get nowhere: not a walk that ends where it began but a body that never left
+# the cell. Live, run294 it328-330: `gather_mushrooms` held the foreground for three ticks at
+# (-509,33,-142) with the loop answering `[BODY_HELD]` on every one - the guard above could not
+# see it, because its tell is 400 blocks of travel and this action travelled none. While the
+# foreground owns the body the loop cannot act at all, so a long action that moved nothing is the
+# same deadlock wearing different numbers.
+STUCK_IDLE_TRAVELLED_BLOCKS = 5.0
 
 
 def clip(text: str, limit: int = 200) -> str:
@@ -340,7 +347,11 @@ class MCPExecutor:
 
     @staticmethod
     def _stuck_facts(res: ToolResult) -> str | None:
-        """The progress facts of an action that runs long, travels far and ends where it began."""
+        """The progress facts of an action that runs long and gets nowhere.
+
+        Two shapes of nowhere, and the guard has to see both: the walk that travels far and ends
+        where it began, and the action that never moved the body at all (see the constants).
+        """
         data = res.data if isinstance(res.data, dict) else {}
         progress = _find(data, "progress")
         if not isinstance(progress, dict):
@@ -349,11 +360,15 @@ class MCPExecutor:
         elapsed = inner.get("elapsedMs")
         travelled = inner.get("distanceTravelledBlocks")
         from_start = inner.get("distanceFromStartBlocks")
-        if (isinstance(elapsed, (int, float)) and elapsed >= STUCK_ELAPSED_MS
-                and isinstance(travelled, (int, float)) and travelled >= STUCK_TRAVELLED_BLOCKS
+        if not (isinstance(elapsed, (int, float)) and elapsed >= STUCK_ELAPSED_MS
+                and isinstance(travelled, (int, float))):
+            return None
+        if (travelled >= STUCK_TRAVELLED_BLOCKS
                 and isinstance(from_start, (int, float)) and from_start <= STUCK_FROM_START_BLOCKS):
             return (f"{elapsed / 1000:.0f} s elapsed, {travelled:.0f} blocks travelled, "
                     f"{from_start:.1f} blocks from start")
+        if travelled <= STUCK_IDLE_TRAVELLED_BLOCKS:
+            return f"{elapsed / 1000:.0f} s elapsed, {travelled:.1f} blocks travelled"
         return None
 
     async def _cancel_stuck(self, action_id: str, facts: str) -> ToolResult:

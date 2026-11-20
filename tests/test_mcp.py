@@ -264,6 +264,41 @@ class StuckForegroundTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.status, "held")
         self.assertNotIn("cancel_foreground_action", calls)
 
+    async def test_an_action_that_never_moved_the_body_is_cancelled(self) -> None:
+        # run294 it328-330: `gather_mushrooms` held the foreground three ticks at (-509,33,-142),
+        # every tick answering `[BODY_HELD]`. The oscillating guard reads 400 blocks of travel and
+        # this action travelled none, so the deadlock waited out the poll budget instead of ending.
+        script = [
+            _oscillating(MINE, 260_000, 0.0, 0.4),
+            _oscillating(MINE, 300_000, 1.2, 0.6),
+            _Res(structured={"response": {"format": "json", "data": {
+                "state": "cancellation_requested", "actionId": MINE,
+                "cancellation": {"kind": "cancellation_requested", "action": "collect_block"}}}}),
+            _settled(MINE, status="cancelled"),
+        ]
+        ex, calls = self._exec(script)
+        res = await ex.call("collect_block", {"block_name": "netherrack"}, "test")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.status, "cancelled")
+        self.assertIn("[STUCK_FOREGROUND]", res.text)
+        self.assertEqual(calls, ["collect_block", "wait_for_action",
+                                 "cancel_foreground_action", "wait_for_action"])
+
+    async def test_a_short_action_still_in_place_is_not_cancelled(self) -> None:
+        # A dig that has not moved yet is not stuck: the guard waits for the elapsed floor.
+        cfg = MCPConfig(action_wait_ms=50, poll_ms=10)
+        ex = MCPExecutor(cfg)
+        calls: list[str] = []
+
+        async def fake(name: str, args: dict):
+            calls.append(name)
+            return _oscillating(MINE, 30_000, 0.0, 0.0)
+
+        ex._raw_call = fake  # type: ignore[assignment]
+        res = await ex.call("collect_block", {}, "test")
+        self.assertEqual(res.status, "held")
+        self.assertNotIn("cancel_foreground_action", calls)
+
     async def test_a_cancel_refused_by_the_server_is_reported_not_retried(self) -> None:
         script = [
             _oscillating(MINE, 300_000, 1427.0, 2.3),
